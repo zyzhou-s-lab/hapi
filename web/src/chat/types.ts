@@ -2,8 +2,6 @@ import type { AttachmentMetadata, MessageStatus } from '@/types/api'
 import type { ThreadGoal } from '@/types/api'
 import type { InlineMediaSource } from '@/chat/inlineMediaSource'
 
-import type { OmpTurnFooter } from '@/chat/ompTurnFooter'
-
 export type UsageData = {
     input_tokens: number
     output_tokens: number
@@ -16,6 +14,8 @@ export type UsageData = {
     scope_role?: string
     service_tier?: string
     cost_usd?: number
+    /** omp generation time for this call, milliseconds. Absent means unknown. */
+    generation_duration_ms?: number
 }
 
 export type ModelRefusalFallbackEvent = {
@@ -182,7 +182,6 @@ export type NormalizedMessage = ({
     parentToolUseId?: string | null
     meta?: unknown
     usage?: UsageData
-    ompTurnFooter?: OmpTurnFooter
     status?: MessageStatus
     originalText?: string
     invokedAt?: number | null
@@ -262,7 +261,6 @@ export type AgentTextBlock = {
     invokedAt?: number | null
     durationMs?: number
     usage?: UsageData
-    ompTurnFooter?: OmpTurnFooter
     model?: string | null
     roundSummary?: RoundSummary
     text: string
@@ -277,7 +275,6 @@ export type AgentReasoningBlock = {
     invokedAt?: number | null
     durationMs?: number
     usage?: UsageData
-    ompTurnFooter?: OmpTurnFooter
     model?: string | null
     roundSummary?: RoundSummary
     text: string
@@ -292,7 +289,6 @@ export type CodexReviewBlock = {
     invokedAt?: number | null
     durationMs?: number
     usage?: UsageData
-    ompTurnFooter?: OmpTurnFooter
     model?: string | null
     roundSummary?: RoundSummary
     review: CodexReview
@@ -307,7 +303,6 @@ export type CliOutputBlock = {
     invokedAt?: number | null
     durationMs?: number
     usage?: UsageData
-    ompTurnFooter?: OmpTurnFooter
     model?: string | null
     roundSummary?: RoundSummary
     text: string
@@ -361,7 +356,6 @@ export type ToolCallBlock = {
     invokedAt?: number | null
     durationMs?: number
     usage?: UsageData
-    ompTurnFooter?: OmpTurnFooter
     model?: string | null
     roundSummary?: RoundSummary
     tool: ChatToolCall

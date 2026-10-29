@@ -1463,7 +1463,7 @@ describe('normalizeDecryptedMessage', () => {
         expect(JSON.stringify(normalized)).not.toContain('provider-response-id')
     })
 
-    it('keeps an omp turn footer on the canonical assistant message', () => {
+    it('keeps omp generation duration on canonical usage and drops a non-positive one', () => {
         const message = makeMessage({
             role: 'agent',
             content: {
@@ -1475,27 +1475,18 @@ describe('normalizeDecryptedMessage', () => {
                         role: 'assistant',
                         model: 'magpie/group',
                         content: [{ type: 'text', text: 'done' }],
-                        usage: { input_tokens: 3_800, output_tokens: 2_100, cost_usd: 0.85 },
-                        ompTurnFooter: {
-                            elapsedMs: 47_900,
-                            inputTokens: 3_800,
-                            outputTokens: 2_100,
-                            turnTokens: 203_000,
-                            turnCostUsd: 0.85,
-                            ignored: true
+                        usage: {
+                            input_tokens: 3_800,
+                            output_tokens: 2_100,
+                            cost_usd: 0.85,
+                            generation_duration_ms: 28_075
                         }
                     }
                 }
             }
         })
         expect(normalizeDecryptedMessage(message)).toMatchObject({
-            ompTurnFooter: {
-                elapsedMs: 47_900,
-                inputTokens: 3_800,
-                outputTokens: 2_100,
-                turnTokens: 203_000,
-                turnCostUsd: 0.85
-            }
+            usage: { output_tokens: 2_100, generation_duration_ms: 28_075 }
         })
     })
 

@@ -3,7 +3,6 @@ import { inlineMediaSourceFromWire } from '@/chat/inlineMediaSource'
 import { AGENT_MESSAGE_PAYLOAD_TYPE, asNumber, asString, isObject } from '@hapi/protocol'
 import { isClaudeChatVisibleMessage } from '@hapi/protocol/messages'
 import { parseAgentTimestampMs } from '@/chat/agentTimestamp'
-import { parseOmpTurnFooter } from '@/chat/ompTurnFooter'
 
 function normalizeToolResultPermissions(value: unknown): ToolResultPermission | undefined {
     if (!isObject(value)) return undefined
@@ -332,6 +331,7 @@ function normalizeAssistantOutput(
     const inputTokens = usage ? asNumber(usage.input_tokens) : null
     const outputTokens = usage ? asNumber(usage.output_tokens) : null
     const model = asString(message.model) ?? null
+    const generationDurationMs = nonNegativeNumber(usage?.generation_duration_ms)
 
     return {
         id: messageId,
@@ -352,9 +352,11 @@ function normalizeAssistantOutput(
             reasoning_output_tokens: asNumber(usage?.reasoning_output_tokens) ?? undefined,
             service_tier: asString(usage?.service_tier) ?? undefined,
             context_window: asNumber(usage?.context_window) ?? undefined,
-            cost_usd: asNumber(usage?.cost_usd) ?? undefined
-        } : undefined,
-        ompTurnFooter: parseOmpTurnFooter(message.ompTurnFooter)
+            cost_usd: asNumber(usage?.cost_usd) ?? undefined,
+            ...(generationDurationMs !== undefined && generationDurationMs > 0
+                ? { generation_duration_ms: generationDurationMs }
+                : {})
+        } : undefined
     }
 }
 

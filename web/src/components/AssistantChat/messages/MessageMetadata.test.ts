@@ -64,6 +64,24 @@ describe('buildMessageMetadataLabels', () => {
         expect(parts).toContain('Cost: $0.0310')
     })
 
+    it('adds tok/s from summed output and generation duration', () => {
+        const parts = buildMessageMetadataLabels({
+            usage: {
+                input_tokens: 3_800,
+                output_tokens: 2_100,
+                generation_duration_ms: 2_100 * 1000 / 74.8
+            }
+        })
+        expect(parts).toContain('tok/s: 74.8')
+    })
+
+    it('omits tok/s when the card has no generation duration', () => {
+        const parts = buildMessageMetadataLabels({
+            usage: { input_tokens: 100, output_tokens: 200 }
+        })
+        expect(parts.some(part => part.startsWith('tok/s'))).toBe(false)
+    })
+
     it('does not drop a Duration line when durationMs is exactly 0', () => {
         const parts = buildMessageMetadataLabels({ durationMs: 0 })
         expect(parts).toContain('Duration: 0.0s')

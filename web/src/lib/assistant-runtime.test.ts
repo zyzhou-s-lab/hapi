@@ -8,7 +8,6 @@ import {
     findLatestCompletedBoundaryId,
     getBlockPresentationTimestamp,
     getResponseGroupTimestamps,
-    ompTurnFooterAnchors,
     useHappyRuntime
 } from './assistant-runtime'
 import type { AgentEventBlock, AgentTextBlock, CliOutputBlock, ToolCallBlock, UserTextBlock } from '@/chat/types'
@@ -217,28 +216,37 @@ describe('assignThreadMessageIds', () => {
     })
 })
 
-describe('ompTurnFooterAnchors', () => {
-    const footer = { elapsedMs: 47_900, inputTokens: 10, outputTokens: 2, turnTokens: 12 }
-
-    it('puts the footer on the first block of the card that contains it', () => {
-        const anchors = ompTurnFooterAnchors([
+describe('aggregateResponseGroups generation duration', () => {
+    it('sums duration across model calls and drops it when any call lacks one', () => {
+        const complete = aggregateResponseGroups([
             userText('u1'),
-            toolCall('tool'),
-            agentText('draft'),
-            agentEvent('notice', { type: 'message', message: 'note' }),
-            agentText('answer', { ompTurnFooter: footer })
+            agentText('a1', {
+                localId: 'L1',
+                usage: { input_tokens: 1, output_tokens: 100, generation_duration_ms: 1_000 }
+            }),
+            agentText('a2', {
+                localId: 'L2',
+                usage: { input_tokens: 1, output_tokens: 50, generation_duration_ms: 500 }
+            })
         ])
-        expect(anchors.size).toBe(1)
-        expect(anchors.get('answer')).toEqual(footer)
-    })
+        expect(complete.get('a1')?.usage).toMatchObject({
+            output_tokens: 150,
+            generation_duration_ms: 1_500
+        })
 
-    it('keeps one footer for a joined tool-then-answer card', () => {
-        const anchors = ompTurnFooterAnchors([
-            toolGroup('tools', [toolCall('read')]),
-            agentText('answer', { ompTurnFooter: footer })
+        const partial = aggregateResponseGroups([
+            userText('u2'),
+            agentText('b1', {
+                localId: 'L1',
+                usage: { input_tokens: 1, output_tokens: 100, generation_duration_ms: 1_000 }
+            }),
+            agentText('b2', {
+                localId: 'L2',
+                usage: { input_tokens: 1, output_tokens: 50 }
+            })
         ])
-        expect([...anchors.keys()]).toEqual(['tools'])
-        expect(anchors.get('tools')).toEqual(footer)
+        expect(partial.get('b1')?.usage?.output_tokens).toBe(150)
+        expect(partial.get('b1')?.usage?.generation_duration_ms).toBeUndefined()
     })
 })
 

@@ -46,14 +46,6 @@ describe('reduceTimeline', () => {
         expect(blocks[0].kind).toBe('user-text')
     })
 
-    it('copies an omp turn footer onto the assistant blocks of that message', () => {
-        const footer = { elapsedMs: 47_900, turnTokens: 203_000, inputTokens: 3_800, outputTokens: 2_100 }
-        const { blocks } = reduceTimeline([
-            makeAgentMessage('done', { ompTurnFooter: footer })
-        ], makeContext())
-        expect(blocks).toHaveLength(1)
-        expect(blocks[0]).toMatchObject({ kind: 'agent-text', ompTurnFooter: footer })
-    })
 
     it('does not filter XML-like user text (filtering is in normalize layer)', () => {
         const text = '<task-notification> <summary>Some task</summary> </task-notification>'

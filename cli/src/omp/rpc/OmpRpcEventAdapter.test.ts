@@ -772,55 +772,19 @@ describe('OmpRpcEventAdapter', () => {
     });
 });
 
-describe('OmpRpcEventAdapter turn footer', () => {
-    function call(text: string, stopReason: 'toolUse' | 'stop', extra: Record<string, unknown> = {}): JsonObject {
+describe('OmpRpcEventAdapter generation duration', () => {
+    function call(text: string, stopReason: 'toolUse' | 'stop', duration?: number): JsonObject {
         return {
             ...assistantMessage(text),
             stopReason,
-            ...extra
+            ...(duration === undefined ? {} : { duration })
         };
     }
 
-    it('keeps tool-use calls open and emits Tern totals on the terminal message', () => {
+    it('records each model call duration on usage, including tool-use calls', () => {
         const harness = createHarness();
-        harness.adapter.handle(rpcEvent({
-            type: 'message_end',
-            message: { role: 'user', timestamp: 1_000, steering: false }
-        }));
-        harness.adapter.handle(rpcEvent({
-            type: 'message_end',
-            message: call('tool', 'toolUse', {
-                usage: {
-                    input: 100,
-                    output: 50,
-                    cacheRead: 10,
-                    cacheWrite: 5,
-                    totalTokens: 165,
-                    cost: { input: 0.5, output: 0, cacheRead: 0, cacheWrite: 0, total: 0.5 }
-                },
-                timestamp: 1_100,
-                duration: 800,
-                ttft: 200,
-                completedAt: 2_000
-            })
-        }));
-        harness.adapter.handle(rpcEvent({
-            type: 'message_end',
-            message: call('answer', 'stop', {
-                usage: {
-                    input: 3_800,
-                    output: 2_100,
-                    cacheRead: 198_000,
-                    cacheWrite: 0,
-                    totalTokens: 203_900,
-                    cost: { input: 0.25, output: 0, cacheRead: 0, cacheWrite: 0, total: 0.25 }
-                },
-                timestamp: 1_700_000_000_000,
-                duration: 2_100 * 1000 / 74.8,
-                ttft: 4_300,
-                completedAt: 1_000 + 47_900
-            })
-        }));
+        harness.adapter.handle(rpcEvent({ type: 'message_end', message: call('tool', 'toolUse', 800) }));
+        harness.adapter.handle(rpcEvent({ type: 'message_end', message: call('answer', 'stop', 28_075) }));
 
         expect(harness.canonicalMessages).toHaveLength(2);
         const toolCall = harness.canonicalMessages[0];
@@ -828,70 +792,19 @@ describe('OmpRpcEventAdapter turn footer', () => {
         if (toolCall?.type !== 'assistant' || answer?.type !== 'assistant') {
             throw new Error('expected assistant commits');
         }
+        expect(toolCall.message).toMatchObject({ usage: { output_tokens: 7, generation_duration_ms: 800 } });
+        expect(answer.message).toMatchObject({ usage: { output_tokens: 7, generation_duration_ms: 28_075 } });
         expect(toolCall.message).not.toHaveProperty('ompTurnFooter');
-        expect(answer.message).toMatchObject({
-            ompTurnFooter: {
-                requestStartedAtMs: 1_700_000_000_000,
-                elapsedMs: 47_900,
-                inputTokens: 3_800,
-                outputTokens: 2_100,
-                cacheReadTokens: 198_000,
-                ttftMs: 4_300,
-                durationMs: 2_100 * 1000 / 74.8,
-                turnTokens: 100 + 5 + 50 + 3_800 + 2_100,
-                turnCostUsd: 0.75
-            }
-        });
+        expect(answer.message).not.toHaveProperty('ompTurnFooter');
     });
 
-    it('omits timing the event did not carry and drops a zero-usage turn', () => {
+    it('omits duration when the event did not carry a positive value', () => {
         const harness = createHarness();
-        harness.adapter.handle(rpcEvent({
-            type: 'message_end',
-            message: call('empty', 'stop', {
-                usage: {
-                    input: 0,
-                    output: 0,
-                    cacheRead: 0,
-                    cacheWrite: 0,
-                    totalTokens: 0,
-                    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 }
-                }
-            })
-        }));
-        const committed = harness.canonicalMessages[0];
-        if (committed?.type !== 'assistant') throw new Error('expected assistant');
-        expect(committed.message).not.toHaveProperty('ompTurnFooter');
-    });
-
-    it('does not let an agent-attributed user message reset the turn clock', () => {
-        const harness = createHarness();
-        harness.adapter.handle(rpcEvent({
-            type: 'message_end',
-            message: { role: 'user', timestamp: 5_000 }
-        }));
-        harness.adapter.handle(rpcEvent({
-            type: 'message_end',
-            message: { role: 'user', timestamp: 9_000, attribution: 'agent' }
-        }));
-        harness.adapter.handle(rpcEvent({
-            type: 'message_end',
-            message: call('answer', 'stop', {
-                completedAt: 8_000,
-                usage: {
-                    input: 1,
-                    output: 1,
-                    cacheRead: 0,
-                    cacheWrite: 0,
-                    totalTokens: 2,
-                    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 }
-                }
-            })
-        }));
-        const committed = harness.canonicalMessages[0];
-        if (committed?.type !== 'assistant') throw new Error('expected assistant');
-        expect(committed.message).toMatchObject({
-            ompTurnFooter: { elapsedMs: 3_000, turnTokens: 2 }
-        });
+        harness.adapter.handle(rpcEvent({ type: 'message_end', message: call('answer', 'stop') }));
+        harness.adapter.handle(rpcEvent({ type: 'message_end', message: call('zero', 'stop', 0) }));
+        for (const committed of harness.canonicalMessages) {
+            if (committed.type !== 'assistant') throw new Error('expected assistant');
+            expect(committed.message?.usage).not.toHaveProperty('generation_duration_ms');
+        }
     });
 });

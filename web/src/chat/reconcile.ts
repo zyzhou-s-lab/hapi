@@ -15,7 +15,6 @@ import type {
     RoundModelUsage,
     UsageData,
 } from '@/chat/types'
-import type { OmpTurnFooter } from '@/chat/ompTurnFooter'
 import { areInlineMediaSourcesEqual } from '@/chat/inlineMediaSource'
 
 export type ChatBlocksById = Map<string, ChatBlock>
@@ -41,21 +40,9 @@ function areUsageDataEqual(left?: UsageData, right?: UsageData): boolean {
         && left.thread_id === right.thread_id
         && left.scope_role === right.scope_role
         && left.service_tier === right.service_tier
+        && left.generation_duration_ms === right.generation_duration_ms
 }
 
-function areOmpTurnFootersEqual(left?: OmpTurnFooter, right?: OmpTurnFooter): boolean {
-    if (left === right) return true
-    if (!left || !right) return false
-    return left.requestStartedAtMs === right.requestStartedAtMs
-        && left.elapsedMs === right.elapsedMs
-        && left.inputTokens === right.inputTokens
-        && left.outputTokens === right.outputTokens
-        && left.cacheReadTokens === right.cacheReadTokens
-        && left.ttftMs === right.ttftMs
-        && left.durationMs === right.durationMs
-        && left.turnTokens === right.turnTokens
-        && left.turnCostUsd === right.turnCostUsd
-}
 
 function areRoundModelUsagesEqual(left: RoundModelUsage, right: RoundModelUsage): boolean {
     return left.inputTokens === right.inputTokens
@@ -176,7 +163,6 @@ function areAgentTextBlocksEqual(left: AgentTextBlock, right: AgentTextBlock): b
         && left.createdAt === right.createdAt
         && left.meta === right.meta
         && areRoundSummariesEqual(left.roundSummary, right.roundSummary)
-        && areOmpTurnFootersEqual(left.ompTurnFooter, right.ompTurnFooter)
 }
 
 function areAgentReasoningBlocksEqual(left: AgentReasoningBlock, right: AgentReasoningBlock): boolean {
@@ -185,7 +171,6 @@ function areAgentReasoningBlocksEqual(left: AgentReasoningBlock, right: AgentRea
         && left.createdAt === right.createdAt
         && left.meta === right.meta
         && areRoundSummariesEqual(left.roundSummary, right.roundSummary)
-        && areOmpTurnFootersEqual(left.ompTurnFooter, right.ompTurnFooter)
 }
 
 function areCliOutputBlocksEqual(left: CliOutputBlock, right: CliOutputBlock): boolean {
@@ -195,7 +180,6 @@ function areCliOutputBlocksEqual(left: CliOutputBlock, right: CliOutputBlock): b
         && left.source === right.source
         && left.meta === right.meta
         && areRoundSummariesEqual(left.roundSummary, right.roundSummary)
-        && areOmpTurnFootersEqual(left.ompTurnFooter, right.ompTurnFooter)
 }
 
 function areGeneratedImageBlocksEqual(left: GeneratedImageBlock, right: GeneratedImageBlock): boolean {
@@ -225,7 +209,6 @@ function areCodexReviewBlocksEqual(left: CodexReviewBlock, right: CodexReviewBlo
         && left.createdAt === right.createdAt
         && left.meta === right.meta
         && areRoundSummariesEqual(left.roundSummary, right.roundSummary)
-        && areOmpTurnFootersEqual(left.ompTurnFooter, right.ompTurnFooter)
 }
 
 function areAgentEventBlocksEqual(left: AgentEventBlock, right: AgentEventBlock): boolean {
@@ -252,7 +235,6 @@ function areToolCallsEqual(left: ToolCallBlock, right: ToolCallBlock, childrenSa
         && left.tool.execCompletedAt === right.tool.execCompletedAt
         && arePermissionsEqual(left.tool.permission, right.tool.permission)
         && areRoundSummariesEqual(left.roundSummary, right.roundSummary)
-        && areOmpTurnFootersEqual(left.ompTurnFooter, right.ompTurnFooter)
 }
 
 function reconcileBlockList(blocks: ChatBlock[], prevById: ChatBlocksById): ChatBlock[] {
