@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs'
 import {
     AssistantRuntimeProvider,
     type ChatModelAdapter,
@@ -41,6 +42,11 @@ vi.mock('@/components/AssistantChat/StatusBar', () => ({
 vi.mock('@/hooks/useComposerDraft', () => ({
     useComposerDraft: () => ({ sessionId: undefined, complete: true, restoredAny: false, hasStoredAttachments: false }),
 }))
+const pwaState = vi.hoisted(() => ({
+    isStandalone: false,
+    isIOS: false,
+}))
+
 vi.mock('@/hooks/usePlatform', () => ({
     usePlatform: () => ({
         isTelegram: false,
@@ -57,8 +63,8 @@ vi.mock('@/hooks/usePWAInstall', () => ({
         installState: 'idle',
         canInstall: false,
         canInstallIOS: false,
-        isStandalone: false,
-        isIOS: false,
+        isStandalone: pwaState.isStandalone,
+        isIOS: pwaState.isIOS,
         promptInstall: async () => false,
         dismissInstall: () => {},
     }),
@@ -95,6 +101,8 @@ function TestRuntime(props: { withSettings?: boolean; onExpandedChange?: (expand
 
 describe('HappyComposer plain-text expansion', () => {
     beforeEach(() => {
+        pwaState.isStandalone = false
+        pwaState.isIOS = false
         localStorage.clear()
         localStorage.setItem('hapi.composer.richMentions', '0')
     })
@@ -169,6 +177,29 @@ describe('HappyComposer plain-text expansion', () => {
 
         fireEvent.click(screen.getByRole('button', { name: 'Composer settings' }))
         expect(screen.getByText('misc.permissionMode').closest('div.absolute')?.className).toContain('bottom-12')
+    })
+
+    it('counts the bottom safe area once, and not at all on iOS PWA', () => {
+        const css = readFileSync('src/index.css', 'utf8')
+        const base = css.match(/\.composer-floating-shell \{[^}]+\}/)?.[0] ?? ''
+        const ios = css.match(/\.composer-floating-shell-ios-pwa \{[^}]+\}/)?.[0] ?? ''
+        expect(base.match(/safe-area-inset-bottom/g)).toHaveLength(1)
+        expect(ios).toContain('padding-bottom: 0.5rem')
+        expect(ios).not.toContain('safe-area')
+
+        pwaState.isIOS = true
+        pwaState.isStandalone = true
+        render(<TestRuntime />)
+        const shell = screen.getByTestId('composer-shell')
+        expect(shell.className).toBe('composer-floating-shell composer-floating-shell-ios-pwa')
+        expect(shell.className).not.toContain('pb-0')
+        expect(shell.className).not.toContain('pb-3')
+
+        fireEvent.click(screen.getByRole('button', { name: 'Expand message editor' }))
+        expect(shell.className).toContain('pb-0')
+        expect(shell.className).not.toContain('pb-3')
+        expect(shell.className).not.toContain('composer-floating-shell')
+        expect(shell.className).not.toContain('safe-area-inset-bottom')
     })
 
     it('closes settings when clicking outside while preserving inside and trigger interactions', () => {

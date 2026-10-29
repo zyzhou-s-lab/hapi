@@ -2363,7 +2363,7 @@ export function HappyComposer(props: {
 
     const shellClassName = isExpanded
         ? `z-[60] flex min-h-0 flex-col bg-[var(--app-bg)] px-3 ${bottomPaddingClass} max-sm:fixed max-sm:inset-x-0 max-sm:top-0 max-sm:h-[var(--tg-viewport-stable-height,var(--app-viewport-height,100dvh))] max-sm:pt-[calc(0.5rem+env(safe-area-inset-top))] sm:absolute sm:inset-0 sm:pt-2`
-        : 'composer-floating-shell'
+        : `composer-floating-shell${isIOSPWA ? ' composer-floating-shell-ios-pwa' : ''}`
     const innerClassName = isExpanded
         ? 'mx-auto flex min-h-0 w-full max-w-content flex-1 flex-col'
         : 'pointer-events-auto relative mx-auto w-full max-w-content'

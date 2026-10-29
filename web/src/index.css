@@ -363,14 +363,32 @@ html:has(.chat-scroll-y) #root {
     padding: 0.5rem 0.75rem max(0.75rem, env(safe-area-inset-bottom, 0px));
 }
 
-.composer-floating-frame {
+/* iOS standalone already insets the layout for the home indicator. */
+.composer-floating-shell-ios-pwa {
+    padding-bottom: 0.5rem;
+}
+
+.composer-floating-frame,
+.composer-floating-chrome {
     border: 1px solid var(--app-composer-border);
     background-color: var(--app-secondary-bg);
     background-color: var(--app-composer-surface);
     box-shadow: var(--app-composer-shadow);
-    border-radius: 26px;
     -webkit-backdrop-filter: blur(12px);
     backdrop-filter: blur(12px);
+}
+
+.composer-floating-frame {
+    border-radius: 26px;
+}
+
+.composer-floating-chrome {
+    margin-inline: 0.75rem;
+    border-radius: 20px;
+}
+
+.composer-floating-chrome:not(:has(*)) {
+    display: none;
 }
 
 @media (hover: hover) and (pointer: fine) {

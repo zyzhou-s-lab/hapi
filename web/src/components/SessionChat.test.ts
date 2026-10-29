@@ -79,6 +79,33 @@ describe('chatComposerGridPlacement', () => {
         expect(placement.thread).toContain('col-start-1')
         expect(placement.dock).toContain('col-start-1')
     })
+
+    it('positions the expanded dock against the chat column, not the stage', () => {
+        const expanded = chatComposerGridPlacement({
+            terminalShown: false,
+            composerExpanded: true,
+            outlineOpen: false,
+        })
+        expect(expanded.stage).not.toContain('relative')
+        expect(expanded.dock).toContain('absolute')
+        expect(expanded.dock).toContain('inset-0')
+
+        const collapsed = chatComposerGridPlacement({
+            terminalShown: false,
+            composerExpanded: false,
+            outlineOpen: false,
+        })
+        expect(collapsed.stage).toContain('relative')
+
+        const terminalExpanded = chatComposerGridPlacement({
+            terminalShown: true,
+            composerExpanded: true,
+            outlineOpen: false,
+        })
+        expect(terminalExpanded.stage ?? '').not.toContain('relative')
+        expect(terminalExpanded.dock).toContain('absolute')
+        expect(terminalExpanded.dock).toContain('inset-0')
+    })
 })
 
 describe('resolvePiContextWindow', () => {
