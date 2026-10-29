@@ -5,7 +5,7 @@ import {
     addMessage,
     addImportedMessage,
     cancelQueuedMessage,
-    deleteLiveReasoningSnapshots,
+    deleteLiveMessageSnapshots,
     deleteQueuedMessageById,
     claimIndeterminateMessage,
     lookupQueuedMessage,
@@ -55,8 +55,8 @@ export class MessageStore {
         return addMessage(this.db, sessionId, content, localId, scheduledAt, createdAt)
     }
 
-    deleteLiveReasoningSnapshots(sessionId: string, streamId: string, keepMessageId?: string): number {
-        return deleteLiveReasoningSnapshots(this.db, sessionId, streamId, keepMessageId)
+    deleteLiveMessageSnapshots(sessionId: string, streamId: string, keepMessageId?: string): number {
+        return deleteLiveMessageSnapshots(this.db, sessionId, streamId, keepMessageId)
     }
 
     addImportedMessage(sessionId: string, content: unknown, localId: string, createdAt: number): { message: StoredMessage; inserted: boolean } {
@@ -68,7 +68,7 @@ export class MessageStore {
         message: Pick<StoredMessage, 'content' | 'createdAt' | 'localId' | 'invokedAt' | 'scheduledAt' | 'deliveryState'>
     ): StoredMessage {
         // 中文注释：重复会话合并时需要保留源消息的时间戳和排队信息，因此走专门的复制入口而不是普通 addMessage。
-        return copyStoredMessageToSession(this.db, sessionId, message)
+        return this.db.transaction(() => copyStoredMessageToSession(this.db, sessionId, message))()
     }
 
     copyMessagesToSession(

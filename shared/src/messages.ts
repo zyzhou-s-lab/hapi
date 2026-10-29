@@ -69,46 +69,36 @@ export function isRedundantGoalStatusMessageText(value: unknown): boolean {
         || /^Goal (active|paused|complete|blocked|limited by (?:budget|usage))(?:$|\s+·\s+)/.test(message)
 }
 
-/**
- * ACP agents stream thoughts one token at a time, so the CLI coalesces them
- * into a buffer and re-sends the whole buffer under a stable stream id every
- * few hundred milliseconds. Every snapshot but the newest is dead weight: the
- * buffer only ever grows, so an older snapshot is a strict prefix of a newer
- * one and the timeline collapses them back into a single block anyway.
- *
- * These two readers let the hub and the web keep one message per stream
- * instead of one per snapshot. They are deliberately separate:
- *
- *  - `getReasoningStreamId` answers "which stream does this belong to" and so
- *    also matches the settled message that closes a stream. That message is
- *    what triggers the final cleanup of its own leftovers.
- *  - `getLiveReasoningStreamId` answers "is this a replaceable snapshot", and
- *    so only ever matches something safe to drop.
- *
- * Anything unrecognised reads as `null`, which means "keep it".
- */
-function readReasoningStreamId(value: unknown, liveOnly: boolean): string | null {
+/** Read kind-safe identities for cumulative snapshots. Only explicit live
+ * snapshots are replaceable; a settled snapshot is authoritative even when its
+ * content is shorter or empty. Ordinary assistant messages remain independent. */
+function readMessageStreamId(value: unknown, liveOnly: boolean): string | null {
     const record = unwrapRoleWrappedRecordEnvelope(value)
     if (record?.role !== 'agent') return null
 
     const content = record.content
-    if (!isObject(content) || content.type !== AGENT_MESSAGE_PAYLOAD_TYPE) return null
-
+    if (!isObject(content)) return null
     const data = isObject(content.data) ? content.data : null
-    if (!data || data.type !== 'reasoning') return null
-    if (liveOnly && data.live !== true) return null
+    if (!data || (liveOnly && data.live !== true)) return null
 
-    const id = data.id
-    if (typeof id !== 'string' || id.trim().length === 0) return null
-    return id
+    if (content.type === AGENT_MESSAGE_PAYLOAD_TYPE
+        && (data.type === 'reasoning' || (data.type === 'message' && data.streamSnapshot === true))) {
+        const id = data.id
+        return typeof id === 'string' && id.trim().length > 0 ? `codex:${data.type}:${id}` : null
+    }
+    if (content.type === 'output' && data.type === 'assistant' && data.streamSnapshot === true) {
+        const uuid = data.uuid
+        return typeof uuid === 'string' && uuid.trim().length > 0 ? `output:assistant:${uuid}` : null
+    }
+    return null
 }
 
-export function getReasoningStreamId(value: unknown): string | null {
-    return readReasoningStreamId(value, false)
+export function getMessageStreamId(value: unknown): string | null {
+    return readMessageStreamId(value, false)
 }
 
-export function getLiveReasoningStreamId(value: unknown): string | null {
-    return readReasoningStreamId(value, true)
+export function getLiveMessageStreamId(value: unknown): string | null {
+    return readMessageStreamId(value, true)
 }
 
 export function isRedundantGoalStatusEventContent(value: unknown): boolean {

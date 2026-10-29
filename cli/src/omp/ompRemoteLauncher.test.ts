@@ -1384,6 +1384,46 @@ describe('ompRemoteLauncher RPC lifecycle', () => {
         await expect(launch).rejects.toThrow('OMP RPC transport crashed');
     });
 
+    it.each(['cleanup', 'abort', 'switch', 'transport'])(
+        'stops trailing canonical snapshots on launcher %s', async (boundary) => {
+            const { session, rpcHandlers, canonicalMessages } = createSessionStub([], { closeQueue: false });
+            const launch = ompRemoteLauncher(session as never);
+            await vi.waitFor(() => expect(rpcHandlers.has('abort')).toBe(true));
+            vi.useFakeTimers();
+            try {
+                const message = {
+                    role: 'assistant', content: [{ type: 'text', text: 'partial' }],
+                    provider: 'test', model: 'test-model', stopReason: 'stop',
+                    usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, totalTokens: 2,
+                        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } }
+                };
+                emitEvent('message_start', { message });
+                emitEvent('message_update', { message, assistantMessageEvent: { type: 'text_delta', delta: 'partial' } });
+                vi.advanceTimersByTime(75);
+                expect(canonicalMessages).toHaveLength(1);
+                expect(canonicalMessages[0]).toMatchObject({ streamSnapshot: true, live: true });
+                emitEvent('message_update', { message: { ...message, content: [{ type: 'text', text: 'pending' }] },
+                    assistantMessageEvent: { type: 'text_delta', delta: 'pending' } });
+                if (boundary === 'transport') {
+                    for (const listener of harness.closedListeners) listener(new Error('stream transport closed'));
+                    await expect(launch).rejects.toThrow('stream transport closed');
+                } else {
+                    if (boundary === 'abort' || boundary === 'switch') await rpcHandlers.get(boundary)!(undefined);
+                    session.queue.close();
+                    await launch;
+                }
+                // The RPC listener can still be invoked by already queued work;
+                // neither it nor the pending timer may publish after teardown.
+                emitEvent('message_end', { message });
+                vi.advanceTimersByTime(1000);
+                expect(canonicalMessages).toHaveLength(1);
+            } finally {
+                vi.clearAllTimers();
+                vi.useRealTimers();
+            }
+        }
+    );
+
     it('propagates cleanup failure', async () => {
         harness.close.mockRejectedValueOnce(new Error('OMP RPC close failed'));
         const { session } = createSessionStub([

@@ -1,6 +1,58 @@
 import { describe, expect, it } from 'vitest'
 import { normalizeAgentRecord } from '@/chat/normalizeAgent'
 
+describe('canonical assistant snapshots', () => {
+    it('preserves whole-message identity, reasoning, text, tools and usage', () => {
+        const normalized = normalizeAgentRecord('row-1', null, 1, {
+            type: 'output',
+            data: {
+                type: 'assistant', uuid: 'omp-response', streamSnapshot: true, live: true,
+                message: {
+                    model: 'gpt-5.5',
+                    content: [
+                        { type: 'thinking', thinking: 'Inspecting' },
+                        { type: 'text', text: 'Answer' },
+                        { type: 'tool_use', id: 'read-1', name: 'read', input: { path: 'a.ts' } }
+                    ],
+                    usage: { input_tokens: 10, output_tokens: 4, reasoning_output_tokens: 2, cost_usd: 0.01 }
+                }
+            }
+        })
+        expect(normalized).toMatchObject({
+            streamSnapshot: { id: 'output:assistant:omp-response', live: true },
+            model: 'gpt-5.5',
+            content: [
+                { type: 'reasoning', text: 'Inspecting' },
+                { type: 'text', text: 'Answer' },
+                { type: 'tool-call', id: 'read-1', name: 'read', input: { path: 'a.ts' } }
+            ],
+            usage: { input_tokens: 10, output_tokens: 4, reasoning_output_tokens: 2, cost_usd: 0.01 }
+        })
+    })
+
+    it.each([false, undefined])('retains empty final snapshots with live=%s', (live) => {
+        expect(normalizeAgentRecord('final-row', null, 2, {
+            type: 'output',
+            data: {
+                type: 'assistant', uuid: 'omp-response', streamSnapshot: true, live,
+                message: { content: [] }
+            }
+        })).toMatchObject({
+            role: 'agent', content: [],
+            streamSnapshot: { id: 'output:assistant:omp-response', live: false }
+        })
+    })
+
+    it('does not opt legacy assistant records into snapshot replacement', () => {
+        const normalized = normalizeAgentRecord('legacy-row', null, 1, {
+            type: 'output',
+            data: { type: 'assistant', uuid: 'legacy', message: { content: 'Complete answer' } }
+        })
+        expect(normalized).toMatchObject({ content: [{ type: 'text', text: 'Complete answer' }] })
+        expect(normalized).not.toHaveProperty('streamSnapshot')
+    })
+})
+
 describe('normalizeAgentRecord — agentTimestamp exposure', () => {
     it.each(['blocked', 'usageLimited'] as const)('preserves %s Codex goal status', (status) => {
         const normalized = normalizeAgentRecord('goal-row', null, 1, {

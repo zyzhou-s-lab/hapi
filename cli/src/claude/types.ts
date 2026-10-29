@@ -72,6 +72,9 @@ export const RawJSONLinesSchema = z.discriminatedUnion("type", [
     type: z.literal("assistant"),
     message: RawMessageSchema.optional(),
     requestId: z.string().optional(),
+    // Cumulative assistant snapshots share a UUID; only intermediate ones are live.
+    streamSnapshot: z.boolean().optional(),
+    live: z.boolean().optional(),
   }),
 
   // Summary message - validates summary and leafUuid

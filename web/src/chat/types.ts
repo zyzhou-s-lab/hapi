@@ -166,6 +166,8 @@ export type NormalizedMessage = ({
 } | {
     role: 'agent'
     content: NormalizedAgentContent[]
+    /** Whole assistant snapshots replace every earlier block, including on empty final output. */
+    streamSnapshot?: { id: string; live: boolean }
 } | {
     role: 'event'
     content: AgentEvent

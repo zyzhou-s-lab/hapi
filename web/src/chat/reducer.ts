@@ -122,11 +122,35 @@ function collectRenderedToolIds(blocks: ChatBlock[]): Set<string> {
     return ids
 }
 
+function collapseAssistantSnapshots(messages: NormalizedMessage[]): NormalizedMessage[] {
+    const positions = new Map<string, number>()
+    const result: NormalizedMessage[] = []
+    for (const message of messages) {
+        const snapshot = message.role === 'agent' ? message.streamSnapshot : undefined
+        if (!snapshot) {
+            result.push(message)
+            continue
+        }
+        const position = positions.get(snapshot.id)
+        if (position === undefined) {
+            positions.set(snapshot.id, result.length)
+            result.push(message)
+            continue
+        }
+        const previous = result[position]
+        // A replayed live update must never resurrect content removed by a final.
+        if (previous.role === 'agent' && previous.streamSnapshot?.live === false && snapshot.live) continue
+        result[position] = { ...message, createdAt: previous.createdAt }
+    }
+    return result
+}
+
 export function reduceChatBlocks(
     normalized: NormalizedMessage[],
     agentState: AgentState | null | undefined,
     options: ReduceChatBlocksOptions = {}
 ): { blocks: ChatBlock[]; hasReadyEvent: boolean; latestUsage: LatestUsage | null; latestGoal: ThreadGoal | null } {
+    normalized = collapseAssistantSnapshots(normalized)
     const permissionsById = getPermissions(agentState)
     const titleChangesByToolUseId = collectTitleChanges(normalized)
 

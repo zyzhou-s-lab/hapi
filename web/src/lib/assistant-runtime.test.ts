@@ -13,6 +13,9 @@ import {
 import type { AgentEventBlock, AgentTextBlock, CliOutputBlock, ToolCallBlock, UserTextBlock } from '@/chat/types'
 import { buildVisibleChatBlocks, type ToolGroupBlock, type VisibleChatBlock } from '@/chat/toolGroups'
 import type { Session } from '@/types/api'
+import { normalizeAgentRecord } from '@/chat/normalizeAgent'
+import { reduceChatBlocks } from '@/chat/reducer'
+import { reconcileChatBlocks, type ChatBlocksById } from '@/chat/reconcile'
 
 const assistantUiMocks = vi.hoisted(() => ({
     useExternalMessageConverter: vi.fn((input: {
@@ -186,6 +189,53 @@ describe('useHappyRuntime event visibility', () => {
             'retry',
             'answer'
         ])
+    })
+
+    it('refreshes canonical reasoning and text wrappers in place and drops an empty final', () => {
+        let previous: ChatBlocksById = new Map()
+        const blocksFor = (id: string, content: unknown[], live: boolean, outputTokens = 0) => {
+            const normalized = normalizeAgentRecord(id, null, 1, {
+                type: 'output', data: {
+                    type: 'assistant', uuid: 'omp-stream', streamSnapshot: true, live,
+                    message: { content, usage: { input_tokens: 10, output_tokens: outputTokens } }
+                }
+            })
+            if (!normalized) throw new Error('Expected canonical snapshot')
+            const reconciled = reconcileChatBlocks(reduceChatBlocks([normalized], null).blocks, previous)
+            previous = reconciled.byId
+            return buildVisibleChatBlocks(reconciled.blocks, { hasMoreMessages: false })
+        }
+        const content = [
+            { type: 'thinking', thinking: 'Inspect' },
+            { type: 'text', text: 'Answer' }
+        ]
+        const view = renderHook(({ blocks }) => useHappyRuntime({
+            session: session('omp'), blocks, isRunning: true, isSending: false,
+            onSendMessage: () => undefined, onAbort: async () => undefined,
+            messagesVersion: 0, historyVersion: 0
+        }), { initialProps: { blocks: blocksFor('row-1', content, true) } })
+        const first = assistantUiMocks.useExternalMessageConverter.mock.calls.at(-1)![0]
+        const grownContent = [
+            { type: 'thinking', thinking: 'Inspect the implementation' },
+            { type: 'text', text: 'Answer with details' }
+        ]
+        view.rerender({ blocks: blocksFor('row-2', grownContent, true) })
+        const grown = assistantUiMocks.useExternalMessageConverter.mock.calls.at(-1)![0]
+        expect(grown.messages.map(entry => entry.threadMessageId)).toEqual(first.messages.map(entry => entry.threadMessageId))
+        expect(grown.messages[0]).not.toBe(first.messages[0])
+        expect(grown.messages[1]).not.toBe(first.messages[1])
+        expect(grown.messages.map(grown.callback)).toMatchObject([
+            { content: [{ type: 'reasoning', text: 'Inspect the implementation' }] },
+            { content: [{ type: 'text', text: 'Answer with details' }] }
+        ])
+        view.rerender({ blocks: blocksFor('row-final', grownContent, false, 7) })
+        const final = assistantUiMocks.useExternalMessageConverter.mock.calls.at(-1)![0]
+        expect(final.messages[0]).not.toBe(grown.messages[0])
+        expect(final.messages.map(final.callback)[0]).toMatchObject({
+            metadata: { custom: { usage: { input_tokens: 10, output_tokens: 7 } } }
+        })
+        view.rerender({ blocks: blocksFor('row-empty-final', [], false) })
+        expect(assistantUiMocks.useExternalMessageConverter.mock.calls.at(-1)![0].messages).toEqual([])
     })
 })
 

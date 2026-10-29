@@ -53,6 +53,46 @@ function reasoningTextOf(message: { content: unknown }): string {
 }
 
 describe('cli session handlers', () => {
+    it('streams canonical assistant snapshots without repeated lifecycle effects or late-live broadcasts', () => {
+        const store = new Store(':memory:')
+        try {
+            const session = store.sessions.getOrCreateSession('assistant-stream-effects', {}, null, 'default')
+            const socket = new FakeSocket()
+            const events: SyncEvent[] = []
+            const activities: number[] = []
+            const background: unknown[] = []
+            registerSessionHandlers(socket as unknown as CliSocketWithData, {
+                store,
+                resolveSessionAccess: () => ({ ok: true, value: session }),
+                emitAccessError: () => { throw new Error('unexpected access error') },
+                onWebappEvent: event => events.push(event),
+                onSessionActivity: (_sid, at) => activities.push(at),
+                onBackgroundTaskDelta: (_sid, delta) => background.push(delta)
+            })
+            const send = (text: string, live: boolean) => socket.trigger('message', {
+                sid: session.id, createdAt: 1000,
+                message: { role: 'agent', content: { type: 'output', data: {
+                    type: 'assistant', uuid: 'stream', streamSnapshot: true, live,
+                    message: { content: [{ type: 'text', text }] }
+                } } }
+            })
+            send('part', true)
+            send('partial', true)
+            expect(activities).toEqual([])
+            expect(background).toEqual([])
+            expect(events.map(event => event.type)).toEqual(['message-received', 'message-received'])
+            send('final', false)
+            const finalEvents = events.length
+            const finalActivities = activities.length
+            send('late replay', true)
+            expect(events).toHaveLength(finalEvents)
+            expect(activities).toHaveLength(finalActivities)
+            expect(socket.roomEvents).toHaveLength(3)
+            expect(store.messages.getAllMessages(session.id)).toHaveLength(1)
+            expect(store.messages.getAllMessages(session.id)[0]).toMatchObject({ createdAt: 1000, localId: null })
+        } finally { store.close() }
+    })
+
     it('preserves immediate queued rows for cleared handoff transfer', () => {
         const store = new Store(':memory:')
         const session = store.sessions.getOrCreateSession('clear-end', {}, null, 'default')

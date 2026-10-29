@@ -3,7 +3,7 @@ import { z } from 'zod'
 import { randomUUID } from 'node:crypto'
 import type { CopilotAgentMode } from '@hapi/protocol'
 import type { AgentState, CodexCollaborationMode, Metadata, PermissionMode } from '@hapi/protocol/types'
-import { getReasoningStreamId, isRedundantGoalStatusEventContent } from '@hapi/protocol/messages'
+import { getLiveMessageStreamId, isRedundantGoalStatusEventContent } from '@hapi/protocol/messages'
 import type { Store, StoredSession } from '../../../store'
 import type { SyncEvent } from '../../../sync/syncEngine'
 import { TodosSchema } from '../../../sync/todos'
@@ -136,25 +136,18 @@ export function registerSessionHandlers(socket: CliSocketWithData, deps: Session
 
         const msg = store.messages.addMessage(sid, content, localId, undefined, createdAt)
 
-        // A reasoning stream arrives as a series of growing snapshots under one
-        // stable id, so a stream should cost one row rather than one per
-        // interval. Retire the earlier snapshots only once their replacement is
-        // stored: these are separate transactions, and clearing first would let
-        // a crash in between take the whole stream. Only rows marked live are
-        // eligible, so the settled message that closes a stream survives and
-        // also sweeps up its own leftovers.
-        const reasoningStreamId = getReasoningStreamId(content)
-        if (reasoningStreamId) {
-            store.messages.deleteLiveReasoningSnapshots(sid, reasoningStreamId, msg.id)
-        }
+        const liveSnapshot = getLiveMessageStreamId(content) !== null
+        // Storage returns the authoritative final when a late provisional row
+        // is rejected. Do not replay that final's side effects or broadcast it.
+        if (liveSnapshot && getLiveMessageStreamId(msg.content) === null) return
 
-        if (shouldRecordSessionActivity(content)) {
+        if (!liveSnapshot && shouldRecordSessionActivity(content)) {
             onSessionActivity?.(sid, msg.createdAt)
         }
 
         const storedTodos = store.sessions.getSession(sid)?.todos
         const parsedTodos = TodosSchema.safeParse(storedTodos)
-        const nextTodos = applyTodoMessageContent(parsedTodos.success ? parsedTodos.data : null, content)
+        const nextTodos = liveSnapshot ? null : applyTodoMessageContent(parsedTodos.success ? parsedTodos.data : null, content)
         if (nextTodos) {
             const updated = store.sessions.setSessionTodos(sid, nextTodos, msg.createdAt, session.namespace)
             if (updated) {
@@ -173,7 +166,7 @@ export function registerSessionHandlers(socket: CliSocketWithData, deps: Session
             }
         }
 
-        const teamDelta = extractTeamStateFromMessageContent(content)
+        const teamDelta = liveSnapshot ? null : extractTeamStateFromMessageContent(content)
         if (teamDelta) {
             const existingSession = store.sessions.getSession(sid)
             const existingTeamState = existingSession?.teamState as import('@hapi/protocol/types').TeamState | null | undefined
@@ -198,7 +191,7 @@ export function registerSessionHandlers(socket: CliSocketWithData, deps: Session
             }
         }
 
-        const bgDelta = extractBackgroundTaskDelta(content)
+        const bgDelta = liveSnapshot ? null : extractBackgroundTaskDelta(content)
         if (bgDelta) {
             onBackgroundTaskDelta?.(sid, bgDelta)
         }

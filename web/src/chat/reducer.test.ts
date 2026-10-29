@@ -662,3 +662,135 @@ describe('reduceChatBlocks', () => {
         expect(assistant?.kind === 'agent-text' ? assistant.roundSummary : undefined).toEqual(summary)
     })
 })
+
+describe('canonical assistant snapshot reduction', () => {
+    function snapshot(
+        id: string,
+        content: unknown[],
+        live: boolean | undefined,
+        usage?: Record<string, number>,
+        uuid = 'omp-response'
+    ): NormalizedMessage {
+        const message = normalizeDecryptedMessage(decryptedMessage(id, {
+            role: 'agent',
+            content: {
+                type: 'output',
+                data: { type: 'assistant', uuid, streamSnapshot: true, live, message: { content, usage, model: 'gpt-5.5' } }
+            }
+        }, 1))
+        if (!message) throw new Error('Snapshot must survive normalization')
+        return message
+    }
+
+    it('grows reasoning and text in place, keeping distinct content slots and response identities', () => {
+        const first = snapshot('row-1', [
+            { type: 'thinking', thinking: 'Inspect' },
+            { type: 'text', text: 'Answer' },
+            { type: 'text', text: 'Second' }
+        ], true)
+        const next = snapshot('row-2', [
+            { type: 'thinking', thinking: 'Inspect the implementation' },
+            { type: 'text', text: 'Answer with details' },
+            { type: 'text', text: 'Second paragraph' }
+        ], true)
+        const before = reduceChatBlocks([first], null)
+        const after = reduceChatBlocks([first, next], null)
+        expect(after.blocks.map(block => block.id)).toEqual(before.blocks.map(block => block.id))
+        expect(after.blocks).toMatchObject([
+            { kind: 'agent-reasoning', text: 'Inspect the implementation' },
+            { kind: 'agent-text', text: 'Answer with details' },
+            { kind: 'agent-text', text: 'Second paragraph' }
+        ])
+        expect(reduceChatBlocks([next], null).blocks.map(block => block.id)).toEqual(before.blocks.map(block => block.id))
+        const another = snapshot('row-3', [{ type: 'text', text: 'Another response' }], true, undefined, 'other-response')
+        expect(reduceChatBlocks([first, next, another], null).blocks).toHaveLength(4)
+    })
+
+    it('treats a shorter final as authoritative and ignores later live replay', () => {
+        const live = snapshot('live', [
+            { type: 'thinking', thinking: 'Provisional reasoning' },
+            { type: 'text', text: 'Provisional answer that must disappear' }
+        ], true)
+        const final = snapshot('final', [{ type: 'text', text: 'Done' }], false)
+        const replay = snapshot('replay', [
+            { type: 'thinking', thinking: 'Provisional reasoning replayed' },
+            { type: 'text', text: 'Provisional answer replayed' }
+        ], true)
+        expect(reduceChatBlocks([live, final, replay], null).blocks).toMatchObject([
+            { kind: 'agent-text', text: 'Done' }
+        ])
+    })
+
+    it.each([false, undefined])('removes every provisional block for an empty final with live=%s', (live) => {
+        const before = snapshot('live', [
+            { type: 'thinking', thinking: 'Thinking' },
+            { type: 'text', text: 'Draft' }
+        ], true)
+        const final = snapshot('final', [], live, { input_tokens: 10, output_tokens: 0 })
+        const reduced = reduceChatBlocks([before, final, before], null)
+        const reconciled = reconcileChatBlocks(reduced.blocks, new Map(
+            reduceChatBlocks([before], null).blocks.map(block => [block.id, block])
+        ))
+        expect(reconciled.blocks).toEqual([])
+        expect(reconciled.byId.size).toBe(0)
+        expect(reduced.latestUsage).toMatchObject({ inputTokens: 10, outputTokens: 0 })
+    })
+
+    it('keeps final tool input, tool results and usage without duplicate tool cards', () => {
+        const live = snapshot('live', [
+            { type: 'text', text: 'Reading' },
+            { type: 'tool_use', id: 'read-1', name: 'read', input: { path: 'a' } }
+        ], true)
+        const final = snapshot('final', [
+            { type: 'tool_use', id: 'read-1', name: 'read', input: { path: 'a.ts' } }
+        ], false, { input_tokens: 100, output_tokens: 12 })
+        const result = normalizeDecryptedMessage(decryptedMessage('result', {
+            role: 'agent', content: { type: 'output', data: {
+                type: 'user', uuid: 'result-1', message: { content: [
+                    { type: 'tool_result', tool_use_id: 'read-1', content: 'file contents' }
+                ] }
+            } }
+        }, 3))
+        if (!result) throw new Error('Expected a tool result')
+        const reduced = reduceChatBlocks([live, final, result], null)
+        expect(reduced.blocks).toMatchObject([{
+            kind: 'tool-call', tool: { id: 'read-1', state: 'completed', input: { path: 'a.ts' }, result: 'file contents' }
+        }])
+        expect(reduced.latestUsage).toMatchObject({ inputTokens: 100, outputTokens: 12 })
+    })
+
+    it('invalidates reconciled text, reasoning and tools when only final usage changes', () => {
+        const content = [
+            { type: 'thinking', thinking: 'Reason' },
+            { type: 'text', text: 'Answer' },
+            { type: 'tool_use', id: 'read-1', name: 'read', input: { path: 'a.ts' } }
+        ]
+        const firstUsage = { input_tokens: 10, output_tokens: 5, reasoning_output_tokens: 1, cost_usd: 0.01 }
+        const finalUsage = { ...firstUsage, reasoning_output_tokens: 3, cost_usd: 0.02 }
+        const before = reduceChatBlocks([snapshot('live', content, true, firstUsage)], null)
+        const previous = new Map(before.blocks.map(block => [block.id, block]))
+        const after = reduceChatBlocks([snapshot('final', content, false, finalUsage)], null)
+        const reconciled = reconcileChatBlocks(after.blocks, previous)
+        for (const [index, block] of reconciled.blocks.entries()) {
+            expect(block.id).toBe(before.blocks[index].id)
+            expect(block).not.toBe(before.blocks[index])
+            expect(block).toMatchObject({ usage: finalUsage })
+        }
+        expect(reconcileChatBlocks(after.blocks, reconciled.byId).blocks[0]).toBe(reconciled.blocks[0])
+    })
+
+    it('keeps unmarked legacy assistant rows separate even when UUIDs match', () => {
+        const messages = ['First', 'Second'].map((text, index) => {
+            const message = normalizeDecryptedMessage(decryptedMessage(`legacy-${index}`, {
+                role: 'agent', content: { type: 'output', data: {
+                    type: 'assistant', uuid: 'same-uuid', message: { content: text }
+                } }
+            }, index))
+            if (!message) throw new Error('Expected legacy assistant message')
+            return message
+        })
+        expect(reduceChatBlocks(messages, null).blocks).toMatchObject([
+            { kind: 'agent-text', text: 'First' }, { kind: 'agent-text', text: 'Second' }
+        ])
+    })
+})

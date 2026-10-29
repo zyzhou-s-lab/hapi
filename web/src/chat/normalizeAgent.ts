@@ -339,6 +339,9 @@ function normalizeAssistantOutput(
         createdAt,
         model,
         role: 'agent',
+        ...(data.streamSnapshot === true ? {
+            streamSnapshot: { id: `output:assistant:${uuid}`, live: data.live === true }
+        } : {}),
         isSidechain,
         parentToolUseId,
         content: blocks,

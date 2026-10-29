@@ -3,8 +3,8 @@ import { AGENT_MESSAGE_PAYLOAD_TYPE } from './modes'
 import {
     extractAssistantPlainText,
     extractNotifySummary,
-    getLiveReasoningStreamId,
-    getReasoningStreamId,
+    getLiveMessageStreamId,
+    getMessageStreamId,
     isRedundantGoalStatusEventContent,
     splitNotifySummary,
     stripNotifySummaryFooter,
@@ -364,42 +364,48 @@ describe('isRedundantGoalStatusEventContent (regression-guard for messages.ts ed
     })
 })
 
-describe('reasoning stream identity', () => {
-    function reasoningContent(overrides: Record<string, unknown> = {}) {
-        return {
-            role: 'agent',
-            content: {
-                type: AGENT_MESSAGE_PAYLOAD_TYPE,
-                data: { type: 'reasoning', message: 'thinking', id: 'stream-1', ...overrides }
-            }
-        }
+describe('message stream identity', () => {
+    function snapshot(type: string, data: Record<string, unknown>) {
+        return { role: 'agent', content: { type, data } }
     }
 
-    test('reads the stream id from a live snapshot', () => {
-        expect(getReasoningStreamId(reasoningContent({ live: true }))).toBe('stream-1')
-        expect(getLiveReasoningStreamId(reasoningContent({ live: true }))).toBe('stream-1')
+    test.each([
+        [AGENT_MESSAGE_PAYLOAD_TYPE, { type: 'reasoning', id: 'stream-1' }, 'codex:reasoning:stream-1'],
+        [AGENT_MESSAGE_PAYLOAD_TYPE, { type: 'message', id: 'stream-1', streamSnapshot: true }, 'codex:message:stream-1'],
+        ['output', { type: 'assistant', uuid: 'stream-1', streamSnapshot: true }, 'output:assistant:stream-1']
+    ])('reads kind-safe %s snapshot identities', (type, data, id) => {
+        expect(getMessageStreamId(snapshot(type, data))).toBe(id)
+        expect(getLiveMessageStreamId(snapshot(type, data))).toBeNull()
+        expect(getMessageStreamId(snapshot(type, { ...data, live: true }))).toBe(id)
+        expect(getLiveMessageStreamId(snapshot(type, { ...data, live: true }))).toBe(id)
+        expect(getLiveMessageStreamId(snapshot(type, { ...data, live: 'yes' }))).toBeNull()
+        expect(getLiveMessageStreamId(snapshot(type, { ...data, live: false }))).toBeNull()
     })
 
-    test('treats a settled reasoning message as part of the stream but not as live', () => {
-        expect(getReasoningStreamId(reasoningContent())).toBe('stream-1')
-        expect(getLiveReasoningStreamId(reasoningContent())).toBeNull()
-    })
-
-    test('does not treat a non-boolean live marker as live', () => {
-        expect(getLiveReasoningStreamId(reasoningContent({ live: 'yes' }))).toBeNull()
+    test('unwraps supported envelopes and recognizes an empty final', () => {
+        const value = snapshot('output', { type: 'assistant', uuid: 'uuid', streamSnapshot: true, message: { content: [] } })
+        for (const envelope of [value, { message: value }, { data: { message: value } }, { payload: { message: value } }]) {
+            expect(getMessageStreamId(envelope)).toBe('output:assistant:uuid')
+            expect(getLiveMessageStreamId(envelope)).toBeNull()
+        }
     })
 
     test.each([
-        ['a user-role envelope', { role: 'user', content: { type: AGENT_MESSAGE_PAYLOAD_TYPE, data: { type: 'reasoning', id: 'stream-1' } } }],
-        ['a different payload type', { role: 'agent', content: { type: 'event', data: { type: 'reasoning', id: 'stream-1' } } }],
-        ['a different data type', { role: 'agent', content: { type: AGENT_MESSAGE_PAYLOAD_TYPE, data: { type: 'message', id: 'stream-1' } } }],
-        ['a missing id', { role: 'agent', content: { type: AGENT_MESSAGE_PAYLOAD_TYPE, data: { type: 'reasoning' } } }],
-        ['a blank id', { role: 'agent', content: { type: AGENT_MESSAGE_PAYLOAD_TYPE, data: { type: 'reasoning', id: '   ' } } }],
-        ['a non-string id', { role: 'agent', content: { type: AGENT_MESSAGE_PAYLOAD_TYPE, data: { type: 'reasoning', id: 7 } } }],
-        ['a non-object value', 'reasoning']
+        ['user envelope', { role: 'user', content: { type: 'codex', data: { type: 'reasoning', id: 'id' } } }],
+        ['different payload', snapshot('event', { type: 'reasoning', id: 'id' })],
+        ['ordinary codex text', snapshot('codex', { type: 'message', id: 'id', live: true })],
+        ['ordinary canonical assistant', snapshot('output', { type: 'assistant', uuid: 'id', live: true })],
+        ['canonical user snapshot', snapshot('output', { type: 'user', uuid: 'id', streamSnapshot: true })],
+        ['non-boolean marker', snapshot('output', { type: 'assistant', uuid: 'id', streamSnapshot: 'true' })],
+        ['missing id', snapshot('codex', { type: 'reasoning' })],
+        ['blank id', snapshot('codex', { type: 'reasoning', id: '   ' })],
+        ['non-string id', snapshot('codex', { type: 'reasoning', id: 7 })],
+        ['blank uuid', snapshot('output', { type: 'assistant', uuid: ' ', streamSnapshot: true })],
+        ['non-string uuid', snapshot('output', { type: 'assistant', uuid: 7, streamSnapshot: true })],
+        ['non-object', 'reasoning']
     ])('returns null for %s', (_label, value) => {
-        expect(getReasoningStreamId(value)).toBeNull()
-        expect(getLiveReasoningStreamId(value)).toBeNull()
+        expect(getMessageStreamId(value)).toBeNull()
+        expect(getLiveMessageStreamId(value)).toBeNull()
     })
 })
 
