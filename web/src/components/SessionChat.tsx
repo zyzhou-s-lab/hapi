@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { flushSync } from 'react-dom'
 import { useNavigate } from '@tanstack/react-router'
 import { PRESERVE_SESSION_SIDEBAR_SCROLL } from '@/lib/sessionNavigation'
@@ -36,7 +36,7 @@ import { HappyComposer, type ComposerSendError } from '@/components/AssistantCha
 import { codexModelAdvertisesFastTier, getEffectiveCodexServiceTier } from '@/components/AssistantChat/codexFastMode'
 import type { PendingSchedule } from '@/components/AssistantChat/ScheduleTimePicker'
 import { resolvePendingSchedule } from '@/components/AssistantChat/ScheduleTimePicker'
-import { HappyThread } from '@/components/AssistantChat/HappyThread'
+import { HappyThread, measureComposerDockInset } from '@/components/AssistantChat/HappyThread'
 import { QueuedMessagesBar } from '@/components/AssistantChat/QueuedMessagesBar'
 import { TodoPanel } from '@/fork-features/task-panel/TodoPanel'
 import { ScratchlistDrawer } from '@/components/AssistantChat/ScratchlistPanel'
@@ -1875,6 +1875,64 @@ function SessionChatInner(props: SessionChatProps) {
         pendingSendIntentRef,
     })
 
+    const composerDockRef = useRef<HTMLDivElement>(null)
+    const composerExpandedRef = useRef(false)
+    const [composerExpanded, setComposerExpanded] = useState(false)
+    const [composerDockHeight, setComposerDockHeight] = useState(0)
+    const handleComposerExpandedChange = useCallback((expanded: boolean) => {
+        composerExpandedRef.current = expanded
+        setComposerExpanded(expanded)
+        if (expanded) setComposerDockHeight(0)
+    }, [])
+    useLayoutEffect(() => {
+        const dock = composerDockRef.current
+        if (!dock) return
+        const publish = () => {
+            const hidden = dock.getClientRects().length === 0
+            const next = measureComposerDockInset(dock.getBoundingClientRect().height, {
+                expanded: composerExpandedRef.current,
+                hidden,
+            })
+            setComposerDockHeight((prev) => prev === next ? prev : next)
+        }
+        publish()
+        if (typeof ResizeObserver === 'undefined') return
+        const observer = new ResizeObserver(publish)
+        observer.observe(dock)
+        const viewport = window.visualViewport
+        viewport?.addEventListener('resize', publish)
+        window.addEventListener('resize', publish)
+        return () => {
+            observer.disconnect()
+            viewport?.removeEventListener('resize', publish)
+            window.removeEventListener('resize', publish)
+        }
+    }, [])
+    const terminalShown = terminalVisible && canViewAgentTerminal
+    const chatStageClassName = terminalShown
+        ? (composerExpanded ? undefined : 'relative')
+        : composerExpanded
+            ? 'grid min-h-0 flex-1 grid-rows-[minmax(0,1fr)_auto]'
+            : 'relative grid min-h-0 flex-1 grid-rows-[minmax(0,1fr)_auto]'
+    const composerDockClassName = composerExpanded
+        ? `absolute inset-0 z-[60] flex min-h-0 flex-col${outlineOpen ? ' max-sm:hidden' : ''}`
+        : terminalShown
+            ? (outlineOpen ? 'max-sm:hidden' : undefined)
+            : `pointer-events-none z-20 row-start-2 overflow-visible${outlineOpen ? ' max-sm:hidden' : ''}`
+    const threadBottomInsetPx = measureComposerDockInset(composerDockHeight, {
+        expanded: composerExpanded,
+        hidden: terminalShown,
+    })
+    useLayoutEffect(() => {
+        const dock = composerDockRef.current
+        if (!dock) return
+        const next = measureComposerDockInset(dock.getBoundingClientRect().height, {
+            expanded: composerExpandedRef.current,
+            hidden: dock.getClientRects().length === 0,
+        })
+        setComposerDockHeight((prev) => prev === next ? prev : next)
+    }, [composerExpanded, terminalShown, outlineOpen])
+
     return (
         <div className="flex h-full min-h-0 flex-col">
             <SessionHeader
@@ -1937,7 +1995,8 @@ function SessionChatInner(props: SessionChatProps) {
                                 className={terminalVisible ? 'flex-1 min-h-0' : 'hidden'}
                             />
                         )}
-                        <div className={(terminalVisible && canViewAgentTerminal) ? 'hidden' : 'flex min-h-0 flex-1 flex-col'}>
+                        <div className={chatStageClassName}>
+                        <div className={terminalShown ? 'hidden' : 'row-start-1 row-span-2 flex min-h-0 flex-col'}>
 
                     <HappyThread
                         // Key with prefix: different components under the same session
@@ -1971,12 +2030,18 @@ function SessionChatInner(props: SessionChatProps) {
                         historyVersion={props.historyVersion}
                         forceScrollToken={forceScrollToken}
                         outlineOpen={outlineOpen}
+                        bottomInsetPx={threadBottomInsetPx}
                         outlineItems={outlineItems}
                         onOutlineOpenChange={setOutlineOpen}
                     />
                     </div>
 
-                    <div className={outlineOpen ? 'max-sm:hidden' : undefined}>
+                    <div
+                        ref={composerDockRef}
+                        data-testid="composer-dock"
+                        className={composerDockClassName}
+                    >
+                    <div className="pointer-events-auto">
                     {codexCollaborationModeSupported && codexModelsState.error ? (
                         <div className="px-3 pb-2">
                             <div className="mx-auto w-full max-w-content rounded-md bg-[var(--app-subtle-bg)] p-3 text-sm text-red-600">
@@ -2031,8 +2096,10 @@ function SessionChatInner(props: SessionChatProps) {
                                 && !controlledByUser}
                         />
                     </div>
+                    </div>
 
                     <HappyComposer
+                        onExpandedChange={handleComposerExpandedChange}
                         key={`composer-${props.session.id}`}
                         sessionId={props.session.id}
                         canRestoreAttachments={props.session.active}
@@ -2258,6 +2325,7 @@ function SessionChatInner(props: SessionChatProps) {
                         onSuppressSendErrorRestore={props.onSuppressSendErrorRestore}
                         pendingSendIntentRef={pendingSendIntentRef}
                         />
+                    </div>
                     </div>
                     </div>
                 </DragDropZone>

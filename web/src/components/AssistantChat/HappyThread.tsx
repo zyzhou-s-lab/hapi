@@ -125,6 +125,16 @@ const MESSAGE_ANCHOR_SELECTOR = '.happy-thread-messages > [id]'
 // A wider proximity threshold makes a downward-reading user enter tail mode
 // early; the next content/layout update then snaps the viewport to the end.
 const AUTO_SCROLL_RESUME_THRESHOLD_PX = 1
+
+/** Blank the thread keeps under the floating dock. Expanded/hidden docks reserve nothing. */
+export function measureComposerDockInset(
+    heightPx: number,
+    options: { expanded: boolean; hidden: boolean }
+): number {
+    if (options.expanded || options.hidden) return 0
+    if (!Number.isFinite(heightPx) || heightPx <= 0) return 0
+    return Math.ceil(heightPx)
+}
 const MANUAL_SCROLL_EPSILON_PX = 1
 const INITIAL_SCROLL_SETTLE_MS = 1800
 const INITIAL_SCROLL_SETTLE_DELAYS_MS = [0, 16, 50, 120, 250, 500, 900, 1400, 1800] as const
@@ -275,7 +285,7 @@ export async function loadUntilVisibleBoundaryChanges(options: {
     return loadedAny
 }
 
-function NewMessagesIndicator(props: { count: number; onClick: () => void }) {
+function NewMessagesIndicator(props: { count: number; onClick: () => void; bottomInsetPx: number }) {
     const { t } = useTranslation()
     if (props.count === 0) {
         return null
@@ -284,6 +294,9 @@ function NewMessagesIndicator(props: { count: number; onClick: () => void }) {
     return (
         <button
             onClick={props.onClick}
+            style={props.bottomInsetPx > 0
+                ? { bottom: `calc(${props.bottomInsetPx}px + 0.75rem)` }
+                : undefined}
             className="absolute bottom-20 left-1/2 -translate-x-1/2 bg-[var(--app-button)] text-[var(--app-button-text)] px-3 py-1.5 rounded-full text-sm font-medium shadow-lg animate-bounce-in z-10"
         >
             {t('misc.newMessage', { n: props.count })} &#8595;
@@ -353,6 +366,7 @@ export function ConversationOutlinePanel(props: {
     onLoadMore: () => void
     onSelect: (item: ConversationOutlineItem) => void
     onClose: () => void
+    bottomInsetPx?: number
 }) {
     const { t, locale } = useTranslation()
     const [searchQuery, setSearchQuery] = useState('')
@@ -369,6 +383,7 @@ export function ConversationOutlinePanel(props: {
     return (
         <aside
             className="absolute inset-y-0 right-0 z-30 flex w-full max-w-[24rem] flex-col bg-[var(--app-bg)] shadow-2xl sm:w-[24rem]"
+            style={props.bottomInsetPx && props.bottomInsetPx > 0 ? { bottom: props.bottomInsetPx } : undefined}
             aria-label={t('session.outline.title')}
         >
             <div aria-hidden="true" className="pointer-events-none absolute inset-y-0 -left-px w-px bg-[var(--app-border)]" />
@@ -511,6 +526,8 @@ export function HappyThread(props: {
     outlineItems: readonly ConversationOutlineItem[]
     onOutlineOpenChange: (open: boolean) => void
     onOutlineItemClick?: (item: ConversationOutlineItem) => void
+    /** Pixels of scroll content kept clear of the floating composer dock. */
+    bottomInsetPx?: number
 }) {
     const { t, locale } = useTranslation()
     const { preferences: headerMetadata } = useSessionHeaderMetadata()
@@ -611,6 +628,16 @@ export function HappyThread(props: {
                 ? Math.max(0, (viewport.offsetWidth - viewport.clientWidth) / 2)
                 : 0
             viewport.style.setProperty('--chat-scroll-gutter-inline', `${gutter}px`)
+            // Keyboard and safe-area changes shrink the viewport without a
+            // content mutation. Stay pinned when the user was already at the tail.
+            if (
+                autoScrollEnabledRef.current
+                && atBottomRef.current
+                && !pendingScrollRef.current
+            ) {
+                viewport.scrollTo({ top: viewport.scrollHeight, behavior: 'instant' })
+                lastScrollTopRef.current = viewport.scrollTop
+            }
         }
 
         updateScrollbarGutter()
@@ -1561,6 +1588,14 @@ export function HappyThread(props: {
         clearFailureRetryTimer
     ])
 
+    const bottomInsetPx = props.bottomInsetPx ?? 0
+    useLayoutEffect(() => {
+        if (pendingScrollRef.current) return
+        if (atBottomRef.current && autoScrollEnabledRef.current) {
+            scrollToBottomInstant()
+        }
+    }, [bottomInsetPx, scrollToBottomInstant])
+
 
     const showSkeleton = props.isSyncingTail && props.rawMessagesCount === 0
     const handleShareTurn = useCallback((
@@ -1685,7 +1720,11 @@ export function HappyThread(props: {
                         className="app-scroll-y chat-scroll-y min-h-0 flex-1 overflow-x-hidden focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--app-link)]"
                         tabIndex={0}
                     >
-                        <div ref={contentRef} className="chat-scroll-content mx-auto w-full max-w-content min-w-0 p-3">
+                        <div
+                            ref={contentRef}
+                            className="chat-scroll-content mx-auto w-full max-w-content min-w-0 p-3"
+                            style={bottomInsetPx > 0 ? { paddingBottom: bottomInsetPx } : undefined}
+                        >
                             <div ref={topSentinelRef} className="h-px w-full" aria-hidden="true" />
                             {showSkeleton ? (
                                 <MessageSkeleton />
@@ -1735,12 +1774,17 @@ export function HappyThread(props: {
                         </div>
                     </div>
                 </ThreadPrimitive.Viewport>
-                <NewMessagesIndicator count={props.unseenCount} onClick={scrollToBottom} />
+                <NewMessagesIndicator
+                    count={props.unseenCount}
+                    onClick={scrollToBottom}
+                    bottomInsetPx={bottomInsetPx}
+                />
                 {props.outlineOpen ? (
                     <>
                         <button
                             type="button"
                             className="absolute inset-0 z-20 bg-black/20"
+                            style={bottomInsetPx > 0 ? { bottom: bottomInsetPx } : undefined}
                             aria-label={t('session.outline.close')}
                             onClick={() => props.onOutlineOpenChange(false)}
                         />
@@ -1753,6 +1797,7 @@ export function HappyThread(props: {
                             }}
                             onSelect={handleOutlineSelect}
                             onClose={() => props.onOutlineOpenChange(false)}
+                            bottomInsetPx={bottomInsetPx}
                         />
                     </>
                 ) : null}

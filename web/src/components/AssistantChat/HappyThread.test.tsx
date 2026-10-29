@@ -10,6 +10,7 @@ import {
     getScrollIntent,
     hasAppliedHistoryVersion,
     isNestedScrollEvent,
+    measureComposerDockInset,
     loadUntilVisibleBoundaryChanges,
     locateOutlineTargetMessage,
     prependMissingUserSnapshot,
@@ -39,6 +40,19 @@ const outlineItems: ConversationOutlineItem[] = [
     }
 ]
 
+
+describe('measureComposerDockInset', () => {
+    it('reserves the measured dock height, rounding up so the last message stays clear', () => {
+        expect(measureComposerDockInset(120.2, { expanded: false, hidden: false })).toBe(121)
+    })
+
+    it('reserves nothing while the composer is expanded or the dock is hidden', () => {
+        expect(measureComposerDockInset(180, { expanded: true, hidden: false })).toBe(0)
+        expect(measureComposerDockInset(180, { expanded: false, hidden: true })).toBe(0)
+        expect(measureComposerDockInset(0, { expanded: false, hidden: false })).toBe(0)
+        expect(measureComposerDockInset(Number.NaN, { expanded: false, hidden: false })).toBe(0)
+    })
+})
 describe('nested scroll event ownership', () => {
     it('recognizes events from a nested scroll viewport and its descendants', () => {
         const nested = document.createElement('div')

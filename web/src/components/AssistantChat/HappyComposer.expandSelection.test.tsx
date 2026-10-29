@@ -73,13 +73,14 @@ const adapter: ChatModelAdapter = {
     async *run() {},
 }
 
-function TestRuntime(props: { withSettings?: boolean }) {
+function TestRuntime(props: { withSettings?: boolean; onExpandedChange?: (expanded: boolean) => void }) {
     const runtime = useLocalRuntime(adapter)
     return (
         <AssistantRuntimeProvider runtime={runtime}>
             <HappyComposer
                 agentFlavor={props.withSettings ? 'claude' : undefined}
                 onPermissionModeChange={props.withSettings ? () => {} : undefined}
+                onExpandedChange={props.onExpandedChange}
             />
             {props.withSettings ? (
                 <button
@@ -133,6 +134,41 @@ describe('HappyComposer plain-text expansion', () => {
             expect(nextCollapsedInput.selectionDirection).toBe('backward')
             expect(document.activeElement).toBe(nextCollapsedInput)
         })
+    })
+
+    it('floats the collapsed composer and keeps the expanded shell solid', () => {
+        const onExpandedChange = vi.fn()
+        render(<TestRuntime withSettings onExpandedChange={onExpandedChange} />)
+
+        const shell = screen.getByTestId('composer-shell')
+        const frame = screen.getByTestId('composer-frame')
+        expect(shell).toHaveAttribute('data-floating', 'true')
+        expect(shell).not.toHaveAttribute('data-expanded')
+        expect(shell.className).toContain('composer-floating-shell')
+        expect(shell.className).not.toContain('bg-[var(--app-bg)]')
+        expect(frame.className).toContain('composer-floating-frame')
+        expect(frame.className).toContain('backdrop-blur-md')
+        expect(frame.className).not.toContain('rounded-[20px]')
+
+        fireEvent.click(screen.getByRole('button', { name: 'Composer settings' }))
+        expect(screen.getByText('misc.permissionMode').closest('div.absolute')?.className).toContain('bottom-[100%]')
+        fireEvent.click(screen.getByRole('button', { name: 'Composer settings' }))
+
+        fireEvent.click(screen.getByRole('button', { name: 'Expand message editor' }))
+
+        expect(onExpandedChange).toHaveBeenCalledWith(true)
+        expect(shell).toHaveAttribute('data-expanded', 'true')
+        expect(shell).not.toHaveAttribute('data-floating')
+        expect(shell.className).toContain('bg-[var(--app-bg)]')
+        expect(shell.className).toContain('sm:absolute')
+        expect(shell.className).toContain('sm:inset-0')
+        expect(shell.className).not.toContain('composer-floating-shell')
+        expect(frame.className).toContain('rounded-[20px]')
+        expect(frame.className).toContain('bg-[var(--app-secondary-bg)]')
+        expect(frame.className).not.toContain('composer-floating-frame')
+
+        fireEvent.click(screen.getByRole('button', { name: 'Composer settings' }))
+        expect(screen.getByText('misc.permissionMode').closest('div.absolute')?.className).toContain('bottom-12')
     })
 
     it('closes settings when clicking outside while preserving inside and trigger interactions', () => {
