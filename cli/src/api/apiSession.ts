@@ -339,6 +339,10 @@ export class ApiSessionClient extends EventEmitter {
 
         this.socket.on('connect', () => {
             logger.debug('Socket connected successfully')
+            // sendBuffer is flushed before this event. Packets already handed to
+            // the engine are not replayed, so forget dedupe keys and let a retry
+            // through. The hub collapses an identical snapshot.
+            this.lastStreamBodies.clear()
             this.awaitingMaterializedConnection = false
             this.rpcHandlerManager.onSocketConnect(this.socket)
             if (this.hasConnectedOnce) {
@@ -359,6 +363,8 @@ export class ApiSessionClient extends EventEmitter {
 
         this.socket.on('disconnect', (reason) => {
             logger.debug('[API] Socket disconnected:', reason)
+            // In-flight emits are not put back into sendBuffer.
+            this.lastStreamBodies.clear()
             this.rpcHandlerManager.onSocketDisconnect()
             this.terminalManager.closeAll()
             if (this.hasConnectedOnce) {
@@ -1059,7 +1065,11 @@ export class ApiSessionClient extends EventEmitter {
         const streamKey = streamSnapshotKey(body)
         const encoded = streamKey ? JSON.stringify(body) : null
         if (streamKey && encoded && this.lastStreamBodies.get(streamKey) === encoded) return
-        if (streamKey && encoded) this.lastStreamBodies.set(streamKey, encoded)
+        if (streamKey && encoded) {
+            const live = typeof body === 'object' && body !== null && 'live' in body && body.live === true
+            if (live) this.lastStreamBodies.set(streamKey, encoded)
+            else this.lastStreamBodies.delete(streamKey)
+        }
         const content = {
             role: 'agent',
             content: {
@@ -1537,6 +1547,7 @@ export class ApiSessionClient extends EventEmitter {
         this.materializationRetryAbortController = null
         this.awaitingMaterializedConnection = false
         this.pendingOutboundEvents.length = 0
+        this.lastStreamBodies.clear()
         this.rpcHandlerManager.onSocketDisconnect()
         this.terminalManager.closeAll()
         this.socket.disconnect()
