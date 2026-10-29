@@ -629,6 +629,42 @@ describe('message stream snapshots', () => {
         } finally { store.close() }
     })
 
+    it('keeps Pi text snapshots live so intermediates do not bump the epoch', () => {
+        const store = makeStore()
+        try {
+            const session = makeSession(store, 'pi-text-stream')
+            const pi = (text: string, live: boolean) => ({
+                role: 'agent',
+                content: {
+                    type: AGENT_MESSAGE_PAYLOAD_TYPE,
+                    data: {
+                        type: 'message',
+                        id: 'pi-nonce-turn-1-message-1-text-0',
+                        streamSnapshot: true,
+                        ...(live ? { live: true } : {}),
+                        message: text
+                    }
+                },
+                meta: { sentFrom: 'cli' }
+            })
+            store.messages.addMessage(session.id, pi('hel', true))
+            const grown = store.messages.addMessage(session.id, pi('hello', true))
+            expect(store.messages.getMessageEpoch(session.id)).toBe(0)
+            expect(store.messages.getAllMessages(session.id)).toEqual([grown])
+            const replay = store.messages.addMessage(session.id, pi('hello', true))
+            expect(replay.id).toBe(grown.id)
+            expect(store.messages.getAllMessages(session.id)).toHaveLength(1)
+            expect(store.messages.getMessageEpoch(session.id)).toBe(0)
+            const settled = store.messages.addMessage(session.id, pi('hello!', false))
+            expect(store.messages.getMessageEpoch(session.id)).toBe(0)
+            expect(store.messages.getAllMessages(session.id)).toEqual([settled])
+            expect(settled.content).toEqual(pi('hello!', false))
+            const sameFinal = store.messages.addMessage(session.id, pi('hello!', false))
+            expect(sameFinal.id).toBe(settled.id)
+            expect(store.messages.getMessageEpoch(session.id)).toBe(0)
+        } finally { store.close() }
+    })
+
     it('keeps mixed kinds distinct and leaves ordinary messages independent', () => {
         const store = makeStore()
         try {

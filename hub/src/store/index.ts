@@ -375,6 +375,7 @@ export class Store {
             return
         }
 
+        if (currentVersion === 25) this.backupV25Database()
         const stepMigrations = buildStepMigrations(false)
         if (currentVersion < SCHEMA_VERSION && stepMigrations[currentVersion]) {
             this.db.transaction(() => {
@@ -1051,6 +1052,20 @@ export class Store {
         this.db.exec(`CREATE INDEX IF NOT EXISTS idx_messages_stream
             ON messages(session_id, stream_id, stream_live, seq DESC)`)
         backfillMessageStreams(this.db)
+    }
+
+    /** Standalone copy, not a WAL sidecar. Downgrade by replacing the live db
+     * with this file and deleting its -wal/-shm siblings. */
+    private backupV25Database(): void {
+        if (this._dbPath === ':memory:' || this._dbPath.startsWith('file::memory:')) return
+        const stamp = new Date().toISOString().replace(/[:.]/g, '-')
+        const dest = `${this._dbPath}.bak-v25-${stamp}`
+        this.db.exec(`VACUUM INTO '${dest.replaceAll("'", "''")}'`)
+        try {
+            chmodSync(dest, 0o600)
+        } catch {
+            // The copy is the recovery artifact; permissions are best-effort.
+        }
     }
 
     private getSessionColumnNames(): Set<string> {

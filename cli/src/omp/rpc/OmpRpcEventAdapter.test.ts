@@ -826,6 +826,20 @@ describe('OmpRpcEventAdapter', () => {
             harness.adapter.dispose();
         });
 
+        it('does not emit another snapshot when the cumulative message is unchanged', () => {
+            const harness = createHarness();
+            harness.adapter.handle(rpcEvent({ type: 'message_start', message: assistantMessage('same') }));
+            update(harness.adapter, assistantMessage('same'));
+            vi.advanceTimersByTime(75);
+            update(harness.adapter, assistantMessage('same'));
+            vi.advanceTimersByTime(75);
+            expect(harness.canonicalMessages).toHaveLength(1);
+            harness.adapter.handle(rpcEvent({ type: 'message_end', message: assistantMessage('same') }));
+            expect(harness.canonicalMessages).toHaveLength(2);
+            expect(harness.canonicalMessages[1]).not.toHaveProperty('live');
+            expect(harness.canonicalMessages[1]).toMatchObject({ uuid: harness.canonicalMessages[0]?.uuid });
+        });
+
         it.each(['short', ''])('replaces live content with authoritative final %j and cancels pending output', (text) => {
             const harness = createHarness();
             harness.adapter.handle(rpcEvent({ type: 'message_start', message: assistantMessage('') }));

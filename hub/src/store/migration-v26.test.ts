@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test'
 import { Database } from 'bun:sqlite'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, readdirSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { getMessageStreamId } from '@hapi/protocol/messages'
@@ -45,6 +45,16 @@ describe('schema v26 stream metadata', () => {
             } finally { legacy.close() }
 
             store = new Store(path)
+            const backups = readdirSync(directory).filter((name) => name.startsWith('hapi.db.bak-v25-'))
+            expect(backups).toHaveLength(1)
+            const backupPath = join(directory, backups[0] ?? '')
+            const backup = new Database(backupPath, { readonly: true })
+            try {
+                const version = backup.prepare('PRAGMA user_version').get() as { user_version: number }
+                const count = backup.prepare('SELECT COUNT(*) AS count FROM messages WHERE id = ?').get('late-live') as { count: number }
+                expect(version.user_version).toBe(25)
+                expect(count.count).toBe(1)
+            } finally { backup.close() }
             const messages = store.messages.getAllMessages(session.id)
             expect(messages).toHaveLength(451)
             expect(messages.filter(message => getMessageStreamId(message.content) !== null))

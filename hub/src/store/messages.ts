@@ -58,6 +58,21 @@ function indexMessageStream(db: Database, sessionId: string, id: string, content
     return winner.id
 }
 
+/** A byte-identical snapshot is not a new revision. Replays must not insert,
+ * replace, or bump the epoch. Live versus final is part of the content. */
+function identicalStreamMessage(db: Database, sessionId: string, content: unknown): StoredMessage | null {
+    const streamId = getMessageStreamId(content)
+    if (streamId === null) return null
+    const row = db.prepare(`
+        SELECT * FROM messages WHERE session_id = ? AND stream_id = ?
+        ORDER BY stream_live ASC, seq DESC LIMIT 1
+    `).get(sessionId, streamId) as DbMessageRow | undefined
+    if (!row) return null
+    const stored = truncateOversizedMessageContent(content)
+    if (!isDeepStrictEqual(decodeMessageContent(row.content), stored)) return null
+    return toStoredMessage(row)
+}
+
 /** Used only by migration/merge, never by the snapshot hot path. */
 export function compactMessageStreams(db: Database, sessionId?: string): void {
     db.prepare(`
@@ -207,6 +222,8 @@ export function addMessage(
     const invokedAt = localId ? null : stampedAt
 
     return db.transaction(() => {
+        const identical = identicalStreamMessage(db, sessionId, content)
+        if (identical) return identical
         const previousHead = getNewestMessagePosition(db, sessionId)
         db.prepare(`
             INSERT INTO messages (

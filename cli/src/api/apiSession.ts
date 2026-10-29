@@ -230,6 +230,17 @@ function hasSameJsonValue(left: unknown, right: unknown): boolean {
     return JSON.stringify(left) === JSON.stringify(right)
 }
 
+function streamSnapshotKey(body: unknown): string | null {
+    if (!body || typeof body !== 'object') return null
+    if (!('id' in body) || !('type' in body)) return null
+    const id = body.id
+    const type = body.type
+    if (typeof id !== 'string' || id.length === 0 || typeof type !== 'string') return null
+    if (type === 'reasoning') return `reasoning:${id}`
+    if (type === 'message' && 'streamSnapshot' in body && body.streamSnapshot === true) return `message:${id}`
+    return null
+}
+
 export class ApiSessionClient extends EventEmitter {
     private readonly token: string
     readonly sessionId: string
@@ -244,6 +255,7 @@ export class ApiSessionClient extends EventEmitter {
     private cancelQueuedMessageCallback: ((localId: string) => boolean | 'in-flight' | 'indeterminate' | 'consumed') | null = null
     private retryQueuedMessageCallback: ((localId: string) => boolean) | null = null
     private readonly incomingFilter = new IncomingMessageFilter()
+    private readonly lastStreamBodies = new Map<string, string>()
     private backfillInFlight: Promise<void> | null = null
     private needsBackfill = false
     private hasConnectedOnce = false
@@ -1044,6 +1056,10 @@ export class ApiSessionClient extends EventEmitter {
     }
 
     sendAgentMessage(body: unknown): void {
+        const streamKey = streamSnapshotKey(body)
+        const encoded = streamKey ? JSON.stringify(body) : null
+        if (streamKey && encoded && this.lastStreamBodies.get(streamKey) === encoded) return
+        if (streamKey && encoded) this.lastStreamBodies.set(streamKey, encoded)
         const content = {
             role: 'agent',
             content: {

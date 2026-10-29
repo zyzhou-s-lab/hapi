@@ -34,7 +34,7 @@ function convertAgentUsage(message: AgentUsage): CodexUsageInfo {
 }
 
 export type CodexMessage =
-    | { type: 'message'; message: string; id?: string; streamSnapshot?: boolean; model?: string; usage?: CodexUsageInfo }
+    | { type: 'message'; message: string; id?: string; streamSnapshot?: boolean; live?: boolean; model?: string; usage?: CodexUsageInfo }
     | { type: 'reasoning'; message: string; id: string; live?: boolean; model?: string; usage?: CodexUsageInfo }
     | {
         type: 'token_count';
@@ -81,7 +81,8 @@ export function convertAgentMessage(message: AgentMessage, model?: string | null
                 model: message.model,
                 usage: message.usage ? convertAgentUsage(message.usage) : undefined,
                 ...(message.id !== undefined ? { id: message.id } : {}),
-                ...(message.streamSnapshot === true ? { streamSnapshot: true } : {})
+                ...(message.streamSnapshot === true ? { streamSnapshot: true } : {}),
+                ...(message.live === true ? { live: true } : {})
             };
         case 'reasoning':
             // AgentMessage uses `text` (consistent with the `text` variant);

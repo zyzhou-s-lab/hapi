@@ -418,6 +418,7 @@ export class OmpRpcEventAdapter {
 
     private snapshotTimer: NodeJS.Timeout | null = null;
     private liveSuppressed = false;
+    private lastCanonicalJson: string | null = null;
     private disposed = false;
     constructor(
         private readonly callbacks: OmpRpcEventAdapterCallbacks,
@@ -838,8 +839,8 @@ export class OmpRpcEventAdapter {
         const generationDurationMs = typeof duration === 'number' && Number.isFinite(duration) && duration > 0
             ? duration
             : undefined;
-        output.onCanonicalMessage({
-            type: 'assistant',
+        const canonical = {
+            type: 'assistant' as const,
             uuid: displayId,
             streamSnapshot: true,
             ...(live ? { live: true } : {}),
@@ -848,7 +849,7 @@ export class OmpRpcEventAdapter {
             providerMessageId: assistant.responseId,
             timestamp,
             message: {
-                role: 'assistant',
+                role: 'assistant' as const,
                 content,
                 model: modelLabel,
                 usage: {
@@ -861,7 +862,11 @@ export class OmpRpcEventAdapter {
                     ...(generationDurationMs !== undefined ? { generation_duration_ms: generationDurationMs } : {})
                 }
             }
-        });
+        };
+        const encoded = JSON.stringify(canonical);
+        if (encoded === this.lastCanonicalJson) return;
+        this.lastCanonicalJson = encoded;
+        output.onCanonicalMessage(canonical);
         if (live) return;
         if (output.enabled) this.lastDisplayId = displayId;
         output.onAgentMessage({ type: 'usage', ...this.toAgentUsage(assistant.usage) });
