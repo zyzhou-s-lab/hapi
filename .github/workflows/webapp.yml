@@ -6,6 +6,7 @@ on:
             - main
         paths:
             - 'web/**'
+            - 'shared/**'
             - '.github/workflows/webapp.yml'
     workflow_dispatch:
 
@@ -28,9 +29,10 @@ jobs:
             - name: Build web app
               env:
                   VITE_REQUIRE_HUB_URL: '1'
+                  VITE_BASE_URL: /hapi/
               run: bun run --cwd web build
-            - name: Add CNAME for custom domain
-              run: echo "app.hapi.run" > web/dist/CNAME
+            - name: SPA fallback for GitHub Pages deep links
+              run: cp web/dist/index.html web/dist/404.html
             - name: Setup Pages
               uses: actions/configure-pages@v5
             - name: Upload artifact
