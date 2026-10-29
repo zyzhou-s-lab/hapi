@@ -369,7 +369,7 @@ html:has(.chat-scroll-y) #root {
 }
 
 .composer-floating-frame,
-.composer-floating-chrome {
+.composer-floating-stack {
     border: 1px solid var(--app-composer-border);
     background-color: var(--app-secondary-bg);
     background-color: var(--app-composer-surface);
@@ -382,13 +382,16 @@ html:has(.chat-scroll-y) #root {
     border-radius: 26px;
 }
 
-.composer-floating-chrome {
+/* One surface behind bars, status, and the input so scrolled messages
+   cannot show through the seams. Side inset stays transparent. */
+.composer-floating-stack {
     margin-inline: 0.75rem;
-    border-radius: 20px;
+    border-radius: 26px;
 }
 
-.composer-floating-chrome:not(:has(*)) {
-    display: none;
+.composer-floating-stack .composer-floating-shell {
+    padding-top: 0;
+    padding-inline: 0;
 }
 
 @media (hover: hover) and (pointer: fine) {
