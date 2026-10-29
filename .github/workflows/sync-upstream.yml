@@ -40,7 +40,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  UPSTREAM: https://github.com/tiann/hapi.git
+  UPSTREAM: https://github.com/mouriya-s-lab/hapi.git
   UPSTREAM_BRANCH: main
   BASE_BRANCH: main
   MERGE_BRANCH: sync/merge      # clean prefix → auto-merge
