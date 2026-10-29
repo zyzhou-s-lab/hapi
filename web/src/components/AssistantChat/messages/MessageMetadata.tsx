@@ -104,6 +104,11 @@ export function buildMessageMetadataLabels({ durationMs, usage, model, turnCount
         const total = usage.input_tokens + usage.output_tokens
         const formatToken = (n: number) => n.toLocaleString()
         parts.push(`Tokens: ${formatToken(total)} total (${formatToken(usage.input_tokens)} in / ${formatToken(usage.output_tokens)} out)`)
+        const generationMs = usage.generation_duration_ms
+        if (typeof generationMs === 'number' && generationMs > 0) {
+            const tokensPerSecond = usage.output_tokens / (generationMs / 1000)
+            parts.push(`tok/s: ${tokensPerSecond.toFixed(1)}`)
+        }
         if (typeof usage.reasoning_output_tokens === 'number' && usage.reasoning_output_tokens > 0) {
             parts.push(`Reasoning: ${formatToken(usage.reasoning_output_tokens)} tokens`)
         }

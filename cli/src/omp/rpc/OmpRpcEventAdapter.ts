@@ -50,9 +50,7 @@ const AssistantMessageSchema = z.object({
     stopReason: z.enum(['stop', 'length', 'toolUse', 'error', 'aborted']),
     errorMessage: z.string().optional(),
     timestamp: z.number().optional(),
-    duration: z.number().nullish(),
-    ttft: z.number().nullish(),
-    completedAt: z.number().nullish()
+    duration: z.number().nullish()
 });
 
 const ToolResultMessageSchema = z.object({
@@ -67,14 +65,9 @@ const ToolResultMessageSchema = z.object({
 
 const UserMessageSchema = z.object({
     role: z.literal('user'),
-    steering: z.boolean().optional(),
-    timestamp: z.number().optional(),
-    attribution: z.string().optional()
+    steering: z.boolean().optional()
 });
 
-function positiveMs(value: number | null | undefined): number | undefined {
-    return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : undefined;
-}
 
 const MessageStartSchema = z.object({
     type: z.literal('message_start'),
@@ -421,12 +414,6 @@ export class OmpRpcEventAdapter {
     private lastDisplayId: string | null = null;
     private readonly tools = new Map<string, ToolLifecycle>();
     private readonly subagents = new Map<string, SubagentState>();
-    /** User-message timestamp that opened the current Tern turn (`this.#o`). */
-    private turnStartedAtMs: number | undefined;
-    /** Sum of `input + cacheWrite` since the last user message or terminal assistant message. */
-    private turnInputTokens = 0;
-    private turnOutputTokens = 0;
-    private turnCostUsd = 0;
 
     constructor(
         private readonly callbacks: OmpRpcEventAdapterCallbacks,
@@ -739,7 +726,6 @@ export class OmpRpcEventAdapter {
 
         const user = UserMessageSchema.safeParse(event.data.message);
         if (user.success) {
-            this.noteUserTurn(user.data);
             this.callbacks.onUserMessageCommitted(user.data.steering === true);
             return;
         }
@@ -792,7 +778,10 @@ export class OmpRpcEventAdapter {
         // assistant message of every turn sort ABOVE the request in the web chat.
         // Commit time keeps the display order causal regardless of clock skew.
         const timestamp = new Date().toISOString();
-        const ompTurnFooter = this.finishTurnFooter(assistant);
+        const duration = assistant.duration;
+        const generationDurationMs = typeof duration === 'number' && Number.isFinite(duration) && duration > 0
+            ? duration
+            : undefined;
         output.onCanonicalMessage({
             type: 'assistant',
             uuid: displayId,
@@ -810,9 +799,9 @@ export class OmpRpcEventAdapter {
                     cache_creation_input_tokens: assistant.usage.cacheWrite,
                     cache_read_input_tokens: assistant.usage.cacheRead,
                     reasoning_output_tokens: assistant.usage.reasoningTokens,
-                    cost_usd: assistant.usage.cost.total
-                },
-                ...(ompTurnFooter ? { ompTurnFooter } : {})
+                    cost_usd: assistant.usage.cost.total,
+                    ...(generationDurationMs !== undefined ? { generation_duration_ms: generationDurationMs } : {})
+                }
             }
         });
         if (output.enabled) this.lastDisplayId = displayId;
@@ -1405,74 +1394,6 @@ export class OmpRpcEventAdapter {
         this.activeMessage = null;
     }
 
-    private noteUserTurn(message: { timestamp?: number; attribution?: string }): void {
-        // Tern resets the turn on every non-agent user message, including steering.
-        if (message.attribution === 'agent') return;
-        const timestamp = message.timestamp;
-        this.turnStartedAtMs = typeof timestamp === 'number' && Number.isFinite(timestamp) && timestamp > 0
-            ? timestamp
-            : undefined;
-        this.turnInputTokens = 0;
-        this.turnOutputTokens = 0;
-        this.turnCostUsd = 0;
-    }
-
-    /**
-     * Fold this model call into the Tern turn accumulator. Tool-use calls stay
-     * open; any other stop reason emits the footer Tern draws under the answer
-     * and clears the token counters (the user-message clock stays until the
-     * next user message).
-     */
-    private finishTurnFooter(
-        assistant: z.infer<typeof AssistantMessageSchema>
-    ): Record<string, number> | undefined {
-        const usage = assistant.usage;
-        this.turnInputTokens += usage.input + usage.cacheWrite;
-        this.turnOutputTokens += usage.output;
-        if (Number.isFinite(usage.cost.total) && usage.cost.total > 0) {
-            this.turnCostUsd += usage.cost.total;
-        }
-        if (assistant.stopReason === 'toolUse') return undefined;
-
-        const footer = this.turnFooterFor(assistant);
-        this.turnInputTokens = 0;
-        this.turnOutputTokens = 0;
-        this.turnCostUsd = 0;
-        return footer;
-    }
-
-    private turnFooterFor(
-        assistant: z.infer<typeof AssistantMessageSchema>
-    ): Record<string, number> | undefined {
-        const usage = assistant.usage;
-        const showDetail = usage.input > 0 || usage.output > 0 || usage.cacheRead > 0 || usage.cacheWrite > 0;
-        const turnTokens = this.turnInputTokens + this.turnOutputTokens;
-        const showTurn = turnTokens > 0 || this.turnCostUsd > 0;
-        if (!showDetail && !showTurn) return undefined;
-
-        const footer: Record<string, number> = {};
-        const requestStartedAtMs = positiveMs(assistant.timestamp);
-        const completedAtMs = positiveMs(assistant.completedAt);
-        if (requestStartedAtMs !== undefined) footer.requestStartedAtMs = requestStartedAtMs;
-        if (completedAtMs !== undefined && this.turnStartedAtMs !== undefined) {
-            const elapsed = completedAtMs - this.turnStartedAtMs;
-            if (elapsed > 0) footer.elapsedMs = Math.round(elapsed);
-        }
-        if (showDetail) {
-            footer.inputTokens = usage.input + usage.cacheWrite;
-            footer.outputTokens = usage.output;
-            if (usage.cacheRead > 0) footer.cacheReadTokens = usage.cacheRead;
-            const ttftMs = positiveMs(assistant.ttft);
-            const durationMs = positiveMs(assistant.duration);
-            if (ttftMs !== undefined) footer.ttftMs = ttftMs;
-            if (durationMs !== undefined) footer.durationMs = durationMs;
-        }
-        if (showTurn) {
-            if (turnTokens > 0) footer.turnTokens = turnTokens;
-            if (this.turnCostUsd > 0) footer.turnCostUsd = this.turnCostUsd;
-        }
-        return footer;
-    }
 
     private toAgentUsage(usage: z.infer<typeof UsageSchema>): AgentUsage {
         return {
