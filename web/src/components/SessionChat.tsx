@@ -570,6 +570,38 @@ type SessionChatProps = {
 }
 
 /**
+ * Floating chat stage. One explicit column: without `grid-cols-1`, the dock is
+ * an auto-placed second item and lands in an implicit column beside the thread.
+ * Both children share `col-start-1`; the dock only changes row.
+ */
+export function chatComposerGridPlacement(input: {
+    terminalShown: boolean
+    composerExpanded: boolean
+    outlineOpen: boolean
+}): { stage: string | undefined; thread: string; dock: string | undefined } {
+    const outlineHide = input.outlineOpen ? ' max-sm:hidden' : ''
+    if (input.terminalShown) {
+        return {
+            stage: input.composerExpanded ? undefined : 'relative',
+            thread: 'hidden',
+            dock: input.composerExpanded
+                ? `absolute inset-0 z-[60] flex min-h-0 flex-col${outlineHide}`
+                : (input.outlineOpen ? 'max-sm:hidden' : undefined),
+        }
+    }
+    const stage = input.composerExpanded
+        ? 'grid min-h-0 flex-1 grid-cols-1 grid-rows-[minmax(0,1fr)_auto]'
+        : 'relative grid min-h-0 flex-1 grid-cols-1 grid-rows-[minmax(0,1fr)_auto]'
+    return {
+        stage,
+        thread: 'col-start-1 row-start-1 row-span-2 flex min-h-0 flex-col',
+        dock: input.composerExpanded
+            ? `absolute inset-0 z-[60] col-start-1 flex min-h-0 flex-col${outlineHide}`
+            : `pointer-events-none z-20 col-start-1 row-start-2 overflow-visible${outlineHide}`,
+    }
+}
+
+/**
  * Public entry point. Thin wrapper around `SessionChatInner` keyed by
  * the session id so that ALL inner state - including the scratchlist
  * (entries + mode) and the assistant-ui runtime - resets atomically
@@ -1909,16 +1941,11 @@ function SessionChatInner(props: SessionChatProps) {
         }
     }, [])
     const terminalShown = terminalVisible && canViewAgentTerminal
-    const chatStageClassName = terminalShown
-        ? (composerExpanded ? undefined : 'relative')
-        : composerExpanded
-            ? 'grid min-h-0 flex-1 grid-rows-[minmax(0,1fr)_auto]'
-            : 'relative grid min-h-0 flex-1 grid-rows-[minmax(0,1fr)_auto]'
-    const composerDockClassName = composerExpanded
-        ? `absolute inset-0 z-[60] flex min-h-0 flex-col${outlineOpen ? ' max-sm:hidden' : ''}`
-        : terminalShown
-            ? (outlineOpen ? 'max-sm:hidden' : undefined)
-            : `pointer-events-none z-20 row-start-2 overflow-visible${outlineOpen ? ' max-sm:hidden' : ''}`
+    const composerGrid = chatComposerGridPlacement({
+        terminalShown,
+        composerExpanded,
+        outlineOpen,
+    })
     const threadBottomInsetPx = measureComposerDockInset(composerDockHeight, {
         expanded: composerExpanded,
         hidden: terminalShown,
@@ -1995,8 +2022,8 @@ function SessionChatInner(props: SessionChatProps) {
                                 className={terminalVisible ? 'flex-1 min-h-0' : 'hidden'}
                             />
                         )}
-                        <div className={chatStageClassName}>
-                        <div className={terminalShown ? 'hidden' : 'row-start-1 row-span-2 flex min-h-0 flex-col'}>
+                        <div className={composerGrid.stage}>
+                        <div className={composerGrid.thread}>
 
                     <HappyThread
                         // Key with prefix: different components under the same session
@@ -2039,7 +2066,7 @@ function SessionChatInner(props: SessionChatProps) {
                     <div
                         ref={composerDockRef}
                         data-testid="composer-dock"
-                        className={composerDockClassName}
+                        className={composerGrid.dock}
                     >
                     <div className="pointer-events-auto">
                     {codexCollaborationModeSupported && codexModelsState.error ? (

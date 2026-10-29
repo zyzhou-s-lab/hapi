@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
     applyGlobalSelectAll,
     applyModelChangeWithReasoningRollback,
+    chatComposerGridPlacement,
     buildGoalStateMessages,
     isScratchlistHotkeyBlockedTarget,
     isScratchlistToggleHotkey,
@@ -48,6 +49,35 @@ describe('applyModelChangeWithReasoningRollback', () => {
         expect(setModelReasoningEffort).toHaveBeenCalledOnce()
         expect(setModelReasoningEffort).toHaveBeenCalledWith(null)
         expect(setModel).toHaveBeenCalledWith('gpt-next')
+    })
+})
+
+describe('chatComposerGridPlacement', () => {
+    it('stacks the floating dock under the thread in one column', () => {
+        const placement = chatComposerGridPlacement({
+            terminalShown: false,
+            composerExpanded: false,
+            outlineOpen: false,
+        })
+        expect(placement.stage).toContain('grid-cols-1')
+        expect(placement.stage).not.toContain('grid-cols-2')
+        expect(placement.thread).toContain('col-start-1')
+        expect(placement.dock).toContain('col-start-1')
+        expect(placement.thread).not.toContain('col-start-2')
+        expect(placement.dock).not.toContain('col-start-2')
+        expect(placement.thread).toContain('row-start-1')
+        expect(placement.dock).toContain('row-start-2')
+    })
+
+    it('keeps the expanded stage on the same single column', () => {
+        const placement = chatComposerGridPlacement({
+            terminalShown: false,
+            composerExpanded: true,
+            outlineOpen: false,
+        })
+        expect(placement.stage).toContain('grid-cols-1')
+        expect(placement.thread).toContain('col-start-1')
+        expect(placement.dock).toContain('col-start-1')
     })
 })
 
