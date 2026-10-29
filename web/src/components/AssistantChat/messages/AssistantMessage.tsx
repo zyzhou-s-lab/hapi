@@ -11,6 +11,7 @@ import { useHappyChatContext } from '@/components/AssistantChat/context'
 import { NotifySummaryText } from '@/components/AssistantChat/messages/NotifySummaryText'
 import { useSessionSummaryInChat } from '@/hooks/useSessionSummaryInChat'
 import { SpeakSummaryButton } from '@/components/AssistantChat/messages/SpeakSummaryButton'
+import { OmpTurnStatsLine } from '@/components/AssistantChat/messages/OmpTurnStatsLine'
 
 const TOOL_COMPONENTS = {
     Fallback: HappyToolMessage
@@ -58,6 +59,7 @@ export function HappyAssistantMessage() {
     const messageModel = useAuiState(({ message }) => (message.metadata.custom as Partial<HappyChatMessageMetadata> | undefined)?.model)
     const turnCount = useAuiState(({ message }) => (message.metadata.custom as Partial<HappyChatMessageMetadata> | undefined)?.turnCount)
     const roundSummary = useAuiState(({ message }) => (message.metadata.custom as Partial<HappyChatMessageMetadata> | undefined)?.roundSummary)
+    const ompTurnFooter = useAuiState(({ message }) => (message.metadata.custom as Partial<HappyChatMessageMetadata> | undefined)?.ompTurnFooter)
 
     const metadata = { durationMs, usage, model: messageModel ?? null, turnCount, roundSummary }
 
@@ -98,6 +100,7 @@ export function HappyAssistantMessage() {
                     <SpeakSummaryButton messageId={messageId} text={copyText} />
                 ) : null}
             </div>
+            {ompTurnFooter ? <OmpTurnStatsLine footer={ompTurnFooter} /> : null}
         </MessagePrimitive.Root>
     )
 }

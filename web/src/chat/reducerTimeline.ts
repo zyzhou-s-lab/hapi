@@ -427,6 +427,7 @@ export function reduceTimeline(
         }
         toBlock.durationMs = toBlock.durationMs ?? fromBlock.durationMs
         toBlock.usage = toBlock.usage ?? fromBlock.usage
+        toBlock.ompTurnFooter = toBlock.ompTurnFooter ?? fromBlock.ompTurnFooter
         toBlock.model = toBlock.model ?? fromBlock.model
 
         if (!isTerminalAgentRunState(toBlock.tool.state) && isTerminalAgentRunState(fromBlock.tool.state)) {
@@ -1078,6 +1079,27 @@ export function reduceTimeline(
                     }
                     // Skip rendering prompt text (already in parent Task tool card or not user-visible)
                     continue
+                }
+            }
+            if (msg.ompTurnFooter) {
+                const footer = msg.ompTurnFooter
+                for (let idx = 0; idx < msg.content.length; idx += 1) {
+                    const block = blocks.find((candidate) => candidate.id === `${msg.id}:${idx}`)
+                    if (
+                        block
+                        && (block.kind === 'agent-text'
+                            || block.kind === 'agent-reasoning'
+                            || block.kind === 'cli-output'
+                            || block.kind === 'codex-review'
+                            || block.kind === 'tool-call')
+                    ) {
+                        block.ompTurnFooter = footer
+                    }
+                    const contentBlock = msg.content[idx]
+                    if (contentBlock?.type === 'tool-call') {
+                        const tool = toolBlocksById.get(contentBlock.id)
+                        if (tool) tool.ompTurnFooter = footer
+                    }
                 }
             }
         }

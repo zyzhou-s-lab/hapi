@@ -12,6 +12,7 @@ import { safeStringify } from '@hapi/protocol'
 import { renderEventLabel } from '@/chat/presentation'
 import { filterVisibleBlocksForFlavor } from '@/fork-features/omp-product/eventVisibility'
 import type { ChatBlock, CliOutputBlock, CodexReview, RoundSummary, UsageData } from '@/chat/types'
+import type { OmpTurnFooter } from '@/chat/ompTurnFooter'
 import type { AgentEvent, ToolCallBlock } from '@/chat/types'
 import type { ToolGroupBlock, VisibleChatBlock } from '@/chat/toolGroups'
 import { visibleBlockRole } from '@/chat/toolGroups'
@@ -64,6 +65,7 @@ export type HappyChatMessageMetadata = {
      * per-message footer is rendered unchanged.
      */
     turnCount?: number
+    ompTurnFooter?: OmpTurnFooter
 }
 
 export type HappyRuntimeExtras = Readonly<{
@@ -351,6 +353,57 @@ export function aggregateResponseGroups(
 
     flush()
     return aggregates
+}
+
+function readOmpTurnFooter(block: VisibleChatBlock): OmpTurnFooter | undefined {
+    if (block.kind === 'tool-group') {
+        for (let index = block.tools.length - 1; index >= 0; index -= 1) {
+            const footer = block.tools[index]?.ompTurnFooter
+            if (footer) return footer
+        }
+        return undefined
+    }
+    if (
+        block.kind === 'agent-text'
+        || block.kind === 'agent-reasoning'
+        || block.kind === 'tool-call'
+        || block.kind === 'cli-output'
+        || block.kind === 'codex-review'
+    ) {
+        return block.ompTurnFooter
+    }
+    return undefined
+}
+
+/**
+ * assistant-ui joins a contiguous assistant-role run into one card and keeps
+ * only the first block's metadata. Put the turn footer on that first block
+ * so the line renders under the card that contains the terminal message.
+ * A system or user block splits the run, so a footer after that split stays
+ * on the later card.
+ */
+export function ompTurnFooterAnchors(
+    blocks: readonly VisibleChatBlock[]
+): Map<string, OmpTurnFooter> {
+    const anchors = new Map<string, OmpTurnFooter>()
+    let anchorId: string | null = null
+    let footer: OmpTurnFooter | undefined
+    const flush = () => {
+        if (anchorId !== null && footer) anchors.set(anchorId, footer)
+        anchorId = null
+        footer = undefined
+    }
+    for (const block of blocks) {
+        if (visibleBlockRole(block) !== 'assistant') {
+            flush()
+            continue
+        }
+        if (anchorId === null) anchorId = block.id
+        const found = readOmpTurnFooter(block)
+        if (found) footer = found
+    }
+    flush()
+    return anchors
 }
 
 export type BlockWithThreadMessageId = {
@@ -925,6 +978,10 @@ export function useHappyRuntime(props: {
         () => aggregateResponseGroups(visibleBlocks),
         [visibleBlocks]
     )
+    const ompFooters = useMemo(
+        () => ompTurnFooterAnchors(visibleBlocks),
+        [visibleBlocks]
+    )
     const responseGroupTimestamps = useMemo(
         () => getResponseGroupTimestamps(props.blocks),
         [props.blocks]
@@ -938,7 +995,8 @@ export function useHappyRuntime(props: {
                 responseGroupTimestamps.get(block) ?? getBlockPresentationTimestamp(block)
             )
             const aggregate = aggregates.get(block.id)
-            if (!aggregate) return message
+            const ompTurnFooter = ompFooters.get(block.id)
+            if (!aggregate && !ompTurnFooter) return message
             const existing = message.metadata?.custom as HappyChatMessageMetadata | undefined
             return {
                 ...message,
@@ -946,17 +1004,20 @@ export function useHappyRuntime(props: {
                     ...message.metadata,
                     custom: {
                         ...(existing ?? { kind: 'assistant' }),
-                        usage: aggregate.usage,
-                        model: aggregate.model,
-                        invokedAt: aggregate.invokedAt,
-                        durationMs: aggregate.durationMs,
-                        turnCount: aggregate.turnCount,
-                        roundSummary: aggregate.roundSummary
+                        ...(aggregate ? {
+                            usage: aggregate.usage,
+                            model: aggregate.model,
+                            invokedAt: aggregate.invokedAt,
+                            durationMs: aggregate.durationMs,
+                            turnCount: aggregate.turnCount,
+                            roundSummary: aggregate.roundSummary
+                        } : {}),
+                        ...(ompTurnFooter ? { ompTurnFooter } : {})
                     } satisfies HappyChatMessageMetadata
                 }
             }
         },
-        [aggregates, responseGroupTimestamps]
+        [aggregates, ompFooters, responseGroupTimestamps]
     )
 
     // Use cached message converter for performance optimization

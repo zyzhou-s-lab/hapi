@@ -1463,6 +1463,42 @@ describe('normalizeDecryptedMessage', () => {
         expect(JSON.stringify(normalized)).not.toContain('provider-response-id')
     })
 
+    it('keeps an omp turn footer on the canonical assistant message', () => {
+        const message = makeMessage({
+            role: 'agent',
+            content: {
+                type: 'output',
+                data: {
+                    type: 'assistant',
+                    uuid: 'display-uuid',
+                    message: {
+                        role: 'assistant',
+                        model: 'magpie/group',
+                        content: [{ type: 'text', text: 'done' }],
+                        usage: { input_tokens: 3_800, output_tokens: 2_100, cost_usd: 0.85 },
+                        ompTurnFooter: {
+                            elapsedMs: 47_900,
+                            inputTokens: 3_800,
+                            outputTokens: 2_100,
+                            turnTokens: 203_000,
+                            turnCostUsd: 0.85,
+                            ignored: true
+                        }
+                    }
+                }
+            }
+        })
+        expect(normalizeDecryptedMessage(message)).toMatchObject({
+            ompTurnFooter: {
+                elapsedMs: 47_900,
+                inputTokens: 3_800,
+                outputTokens: 2_100,
+                turnTokens: 203_000,
+                turnCostUsd: 0.85
+            }
+        })
+    })
+
     it('routes unknown OMP warning frames through the generic event fallback without field loss', () => {
         const frame = {
             type: 'future_event',
