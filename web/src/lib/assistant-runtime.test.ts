@@ -8,6 +8,7 @@ import {
     findLatestCompletedBoundaryId,
     getBlockPresentationTimestamp,
     getResponseGroupTimestamps,
+    ompTurnFooterAnchors,
     useHappyRuntime
 } from './assistant-runtime'
 import type { AgentEventBlock, AgentTextBlock, CliOutputBlock, ToolCallBlock, UserTextBlock } from '@/chat/types'
@@ -213,6 +214,31 @@ describe('assignThreadMessageIds', () => {
         expect(second[0]).toBe(first[0])
         expect(second[0].threadMessageId).toBe('agent-text:a')
         expect(second[1].threadMessageId).toBe('user-text:u')
+    })
+})
+
+describe('ompTurnFooterAnchors', () => {
+    const footer = { elapsedMs: 47_900, inputTokens: 10, outputTokens: 2, turnTokens: 12 }
+
+    it('puts the footer on the first block of the card that contains it', () => {
+        const anchors = ompTurnFooterAnchors([
+            userText('u1'),
+            toolCall('tool'),
+            agentText('draft'),
+            agentEvent('notice', { type: 'message', message: 'note' }),
+            agentText('answer', { ompTurnFooter: footer })
+        ])
+        expect(anchors.size).toBe(1)
+        expect(anchors.get('answer')).toEqual(footer)
+    })
+
+    it('keeps one footer for a joined tool-then-answer card', () => {
+        const anchors = ompTurnFooterAnchors([
+            toolGroup('tools', [toolCall('read')]),
+            agentText('answer', { ompTurnFooter: footer })
+        ])
+        expect([...anchors.keys()]).toEqual(['tools'])
+        expect(anchors.get('tools')).toEqual(footer)
     })
 })
 

@@ -3,6 +3,7 @@ import { inlineMediaSourceFromWire } from '@/chat/inlineMediaSource'
 import { AGENT_MESSAGE_PAYLOAD_TYPE, asNumber, asString, isObject } from '@hapi/protocol'
 import { isClaudeChatVisibleMessage } from '@hapi/protocol/messages'
 import { parseAgentTimestampMs } from '@/chat/agentTimestamp'
+import { parseOmpTurnFooter } from '@/chat/ompTurnFooter'
 
 function normalizeToolResultPermissions(value: unknown): ToolResultPermission | undefined {
     if (!isObject(value)) return undefined
@@ -352,7 +353,8 @@ function normalizeAssistantOutput(
             service_tier: asString(usage?.service_tier) ?? undefined,
             context_window: asNumber(usage?.context_window) ?? undefined,
             cost_usd: asNumber(usage?.cost_usd) ?? undefined
-        } : undefined
+        } : undefined,
+        ompTurnFooter: parseOmpTurnFooter(message.ompTurnFooter)
     }
 }
 
