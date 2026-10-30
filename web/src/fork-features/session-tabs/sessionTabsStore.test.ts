@@ -1,0 +1,117 @@
+import { beforeEach, describe, expect, it } from 'vitest'
+import {
+    MAX_SESSION_TABS,
+    __resetSessionTabsForTests,
+    closeOtherTabs,
+    closeTab,
+    closeTabsToRight,
+    moveTab,
+    openTab,
+    pruneDeletedTabs,
+    confirmedDeletedIds,
+    togglePinTab,
+    getSessionTabsSnapshot,
+    updateSessionTabs,
+    type SessionTabsState
+} from './sessionTabsStore'
+
+const ids = (state: SessionTabsState) => state.tabs.map(tab => tab.id)
+const open = (...list: string[]) => list.reduce<SessionTabsState>((state, id, index) => openTab(state, id, index + 1), { tabs: [] })
+
+describe('session tabs', () => {
+    beforeEach(() => {
+        localStorage.clear()
+        __resetSessionTabsForTests()
+    })
+
+    it('appends new sessions and keeps the order when an existing tab is re-opened', () => {
+        let state = open('a', 'b', 'c')
+        state = openTab(state, 'a', 99)
+        expect(ids(state)).toEqual(['a', 'b', 'c'])
+        expect(state.tabs[0]!.activatedAt).toBe(99)
+    })
+
+    it('evicts the least recently activated unpinned tab beyond the limit, never the one being opened', () => {
+        let state = open(...Array.from({ length: MAX_SESSION_TABS }, (_, i) => `s${i}`))
+        state = togglePinTab(state, 's0')
+        state = openTab(state, 's1', 1000)
+        state = openTab(state, 'new', 1001)
+        expect(state.tabs).toHaveLength(MAX_SESSION_TABS)
+        expect(ids(state)).toContain('s0')
+        expect(ids(state)).toContain('s1')
+        expect(ids(state)).not.toContain('s2')
+        expect(ids(state).at(-1)).toBe('new')
+    })
+
+    it('counts pinned tabs toward the cap and will not open a 13th when all are pinned', () => {
+        let state = open(...Array.from({ length: MAX_SESSION_TABS }, (_, i) => `s${i}`))
+        for (let i = 0; i < MAX_SESSION_TABS; i++) state = togglePinTab(state, `s${i}`)
+        expect(openTab(state, 'extra', 50)).toBe(state)
+        expect(state.tabs).toHaveLength(MAX_SESSION_TABS)
+    })
+
+    it('restores at most the same cap, keeping pinned tabs first', () => {
+        const tabs = [
+            ...Array.from({ length: 3 }, (_, i) => ({ id: `p${i}`, pinned: true, activatedAt: i })),
+            ...Array.from({ length: MAX_SESSION_TABS }, (_, i) => ({ id: `u${i}`, pinned: false, activatedAt: 10 + i })),
+        ]
+        localStorage.setItem('hapi-session-tabs:cap', JSON.stringify({ tabs }))
+        const loaded = getSessionTabsSnapshot('cap')
+        expect(loaded.tabs).toHaveLength(MAX_SESSION_TABS)
+        expect(loaded.tabs.filter(tab => tab.pinned).map(tab => tab.id)).toEqual(['p0', 'p1', 'p2'])
+    })
+
+    it('closing picks the right neighbour, then the left one', () => {
+        const state = open('a', 'b', 'c')
+        expect(closeTab(state, 'b')).toMatchObject({ neighbor: 'c' })
+        expect(closeTab(state, 'c')).toMatchObject({ neighbor: 'b' })
+        expect(closeTab(open('a'), 'a')).toMatchObject({ neighbor: null })
+        expect(ids(closeTab(state, 'missing').state)).toEqual(['a', 'b', 'c'])
+    })
+
+    it('pins move to the front, close-others and close-to-right keep pinned tabs', () => {
+        let state = open('a', 'b', 'c', 'd')
+        state = togglePinTab(state, 'c')
+        expect(ids(state)).toEqual(['c', 'a', 'b', 'd'])
+        expect(ids(closeOtherTabs(state, 'b'))).toEqual(['c', 'b'])
+        expect(ids(closeTabsToRight(state, 'a'))).toEqual(['c', 'a'])
+        // 取消固定后留在非固定区的最前面（与浏览器一致），而不是跳回固定前的位置。
+        state = togglePinTab(state, 'c')
+        expect(ids(state)).toEqual(['c', 'a', 'b', 'd'])
+        expect(state.tabs.every(tab => !tab.pinned)).toBe(true)
+    })
+
+    it('drag reorders within the same pin group only', () => {
+        let state = open('a', 'b', 'c')
+        expect(ids(moveTab(state, 'c', 'a'))).toEqual(['c', 'a', 'b'])
+        state = togglePinTab(state, 'b')
+        expect(ids(moveTab(state, 'c', 'b'))).toEqual(['b', 'a', 'c'])
+    })
+
+    it('drops a tab only after the session disappears from a list already seen', () => {
+        const state = open('a', 'b')
+        expect(confirmedDeletedIds(null, new Set(['b'])).size).toBe(0)
+        expect(ids(pruneDeletedTabs(state, confirmedDeletedIds(null, new Set(['b']))))).toEqual(['a', 'b'])
+        expect([...confirmedDeletedIds(new Set(['a', 'b']), new Set(['b']))]).toEqual(['a'])
+        expect(ids(pruneDeletedTabs(state, confirmedDeletedIds(new Set(['a', 'b']), new Set(['b']))))).toEqual(['b'])
+        expect(pruneDeletedTabs(state, new Set())).toBe(state)
+    })
+
+    it('persists per scope in localStorage', () => {
+        updateSessionTabs('hub|1', state => openTab(state, 'x', 1))
+        updateSessionTabs('hub|2', state => openTab(state, 'y', 1))
+        expect(JSON.parse(localStorage.getItem('hapi-session-tabs:hub|1')!).tabs.map((tab: { id: string }) => tab.id)).toEqual(['x'])
+        expect(JSON.parse(localStorage.getItem('hapi-session-tabs:hub|2')!).tabs.map((tab: { id: string }) => tab.id)).toEqual(['y'])
+    })
+
+    it('replaces in-memory tabs when another window writes the same key', () => {
+        updateSessionTabs('hub|1', state => openTab(state, 'x', 1))
+        const raw = JSON.stringify({ tabs: [{ id: 'y', pinned: false, activatedAt: 4 }] })
+        localStorage.setItem('hapi-session-tabs:hub|1', raw)
+        window.dispatchEvent(new StorageEvent('storage', { key: 'hapi-session-tabs:hub|1', newValue: raw }))
+        expect(getSessionTabsSnapshot('hub|1').tabs.map(tab => tab.id)).toEqual(['y'])
+
+        window.dispatchEvent(new StorageEvent('storage', { key: 'hapi-session-tabs:hub|2', newValue: raw }))
+        expect(getSessionTabsSnapshot('hub|1').tabs.map(tab => tab.id)).toEqual(['y'])
+    })
+})

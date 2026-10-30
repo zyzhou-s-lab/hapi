@@ -39,6 +39,8 @@ import { useSessions } from '@/hooks/queries/useSessions'
 import { useSlashCommands } from '@/hooks/queries/useSlashCommands'
 import { useSkills } from '@/hooks/queries/useSkills'
 import { getSessionTitle } from '@/lib/sessionTitle'
+import { SessionTabsBar, useHasSessionTabs, useSessionTabsSync } from '@/fork-features/session-tabs/SessionTabsBar'
+import type { SessionSummary } from '@/types/api'
 import { buildSessionReferenceText, matchSessionsForMention } from '@/lib/sessionReference'
 import type { Suggestion } from '@/hooks/useActiveSuggestions'
 import { useSendMessage, type SendErrorInfo } from '@/hooks/mutations/useSendMessage'
@@ -170,7 +172,7 @@ function SessionsPage() {
     const matchRoute = useMatchRoute()
     const { t } = useTranslation()
     const { addToast } = useToast()
-    const { sessions, isLoading, error, refetch } = useSessions(api)
+    const { sessions, isLoading, isSuccess, error, refetch } = useSessions(api)
     const { hideArchivedSessions } = useHideArchivedSessions()
     // Hide user-archived sessions from the list when the preference is on.
     // `sessions` (unfiltered) is still used for selected-session resolution so an
@@ -230,6 +232,18 @@ function SessionsPage() {
         markSessionSeen(selectedSessionId, selectedSession.updatedAt)
     }, [selectedSessionId, selectedSession?.updatedAt])
     const isSessionsIndex = pathname === '/sessions' || pathname === '/sessions/'
+    // fork-features/session-tabs：打开过的会话固定在右侧顶部。没有工作总览，首页标签回到会话列表。
+    const tabsHome = useMemo(() => ({
+        active: isSessionsIndex,
+        onOpen: () => navigate({ to: '/sessions', ...PRESERVE_SESSION_SIDEBAR_SCROLL }),
+    }), [isSessionsIndex, navigate])
+    // Full list, including archived. Sidebar filtering must not be passed in or it would look like deletion.
+    useSessionTabsSync(selectedSessionId, sessions, isSuccess && !error)
+    const hasSessionTabs = useHasSessionTabs()
+    const tabMachineLabel = useCallback((session: SessionSummary) => {
+        const machineId = session.metadata?.machineId
+        return (machineId && machineLabelsById[machineId]) || session.metadata?.host || ''
+    }, [machineLabelsById])
     const sidebar = useSidebarResize()
     const handleNewSessionInDirectory = useCallback((args: { machineId: string | null; directory: string }) => {
         navigate({
@@ -317,7 +331,8 @@ function SessionsPage() {
                 onPointerDown={sidebar.onPointerDown}
             />
 
-            <div className={`${isSessionsIndex ? 'hidden split:flex' : 'flex'} min-w-0 flex-1 flex-col bg-[var(--app-bg)]`}>
+            <div data-session-tabs={hasSessionTabs || undefined} className={`${isSessionsIndex ? 'hidden split:flex' : 'flex'} min-w-0 flex-1 flex-col bg-[var(--app-bg)]`}>
+                <SessionTabsBar sessions={sessions} selectedSessionId={selectedSessionId} machineLabel={tabMachineLabel} home={tabsHome} />
                 <div className="flex-1 min-h-0">
                     <Outlet />
                 </div>
@@ -967,7 +982,7 @@ function NewSessionPage() {
 
     return (
         <div className="flex h-full min-h-0 flex-col">
-            <div className="flex items-center gap-2 border-b border-[var(--app-border)] bg-[var(--app-bg)] p-3 pt-[calc(0.75rem+env(safe-area-inset-top))]">
+            <div data-safe-top="calc" className="flex items-center gap-2 border-b border-[var(--app-border)] bg-[var(--app-bg)] p-3 pt-[calc(0.75rem+env(safe-area-inset-top))]">
                 {!isTelegramApp() && (
                     <button
                         type="button"
