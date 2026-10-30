@@ -9,6 +9,7 @@ import { ExecutionDispatcher } from './executionDispatcher'
 import type { Capability, ResourceType } from './domain'
 import { streamSSE } from 'hono/streaming'
 import { randomUUID } from 'node:crypto'
+import { mountWorkLineRoutes } from '../work-lines/routes'
 
 export async function gatewayAccountId(request: Request, secret: Uint8Array): Promise<number | null> {
     const authorization = request.headers.get('authorization')
@@ -160,4 +161,6 @@ export function mountExecutionRoutes(app: Hono<WebAppEnv>, deps: {
             .filter(machine => machine !== null)
         return c.json({ machines })
     })
+
+    mountWorkLineRoutes(app, deps)
 }

@@ -81,6 +81,7 @@ export function mountMultiUserGateway(app: Hono<WebAppEnv>, deps: {
         store: deps.store,
         jwtSecret: deps.jwtSecret,
         coreUserId: deps.coreUserId,
+        onAccountDeleted: (accountId) => deps.coreStore.workLines.purgeAccount(accountId),
         telegram: createTelegramGatewayAdapter(
             deps.coreStore,
             configuration.telegramEnabled ? configuration.telegramBotToken : null
@@ -146,7 +147,40 @@ export function bootstrapForkMultiUser(config: {
 
     const store = new Store(config.dbPath)
     const multiUserGatewayStore = createMultiUserGatewayStore(config.dataDir, config.cliApiToken)
+    const bound = bindUnownedNamespaceResources(store, multiUserGatewayStore)
+    if (bound > 0) console.log(`[Hub] Bound ${bound} unowned session/machine rows to their namespace account`)
     assertNoLegacyForkArtifactsRemaining(config.dbPath)
 
     return { store, multiUserGatewayStore }
+}
+
+/**
+ * A single-user or pre-gateway database has sessions and machines, but no
+ * gateway_resources row. Work routes only accept a binding, so bind each
+ * unbound row to the one live account whose default namespace matches.
+ * Two accounts in that namespace are left alone.
+ */
+export function bindUnownedNamespaceResources(core: Store, gateway: MultiUserGatewayStore): number {
+    const ownersByNamespace = new Map<string, number>()
+    const shared = new Set<string>()
+    for (const account of gateway.listAccounts()) {
+        if (account.disabledAt !== null) continue
+        if (ownersByNamespace.has(account.defaultNamespace) || shared.has(account.defaultNamespace)) {
+            ownersByNamespace.delete(account.defaultNamespace)
+            shared.add(account.defaultNamespace)
+            continue
+        }
+        ownersByNamespace.set(account.defaultNamespace, account.id)
+    }
+    let bound = 0
+    const claim = (resourceType: 'session' | 'machine', resourceId: string, namespace: string) => {
+        if (gateway.getResource(resourceType, resourceId)) return
+        const ownerAccountId = ownersByNamespace.get(namespace)
+        if (ownerAccountId === undefined) return
+        gateway.bindResource({ resourceType, resourceId, ownerAccountId, coreNamespace: namespace })
+        bound += 1
+    }
+    for (const session of core.sessions.getSessions()) claim('session', session.id, session.namespace)
+    for (const machine of core.machines.getMachines()) claim('machine', machine.id, machine.namespace)
+    return bound
 }

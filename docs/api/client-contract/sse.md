@@ -130,7 +130,7 @@ The two connections have **no ordering relationship with each other** — the sa
 
 ---
 
-## SyncEvent union (15 types)
+## SyncEvent union (16 types)
 
 Schema: `SyncEventSchema` in `shared/src/schemas.ts` (discriminated on `type`). All events except `connection-changed` carry `namespace?: string`. Ignore unknown event types.
 
@@ -151,6 +151,7 @@ Schema: `SyncEventSchema` in `shared/src/schemas.ts` (discriminated on `type`). 
 | `message-cancelled` | `sessionId`, `messageId`, `localId?` | A queued message was cancelled: remove the row (match by `messageId` **or** `localId`). |
 | `heartbeat` | `data?: {timestamp}` | Feed the staleness watchdog. No other action. **Carries no `id`.** |
 | `connection-changed` | `data?: {status, subscriptionId?, resume?: 'ok'\|'gap'}` | Handshake; see [Handshake and resume](#handshake-and-resume). Store `subscriptionId` for visibility reporting. **Carries no `id`.** |
+| `card-invalidated` | `accountId: number`, `topic: 'work-map'\|'work-layout'` | A work-line map or layout changed. No curve points. Clients that do not own `accountId` ignore it. Older clients drop the frame. |
 
 ---
 

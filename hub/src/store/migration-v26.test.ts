@@ -71,7 +71,7 @@ describe('schema v26 stream metadata', () => {
                 expect(row.encoding).toBe('blob')
                 expect(Buffer.from(row.content)).toEqual(Buffer.from(finalBytes))
                 const version = inspect.prepare('PRAGMA user_version').get() as { user_version: number }
-                expect(version.user_version).toBe(26)
+                expect(version.user_version).toBe(27)
             } finally { inspect.close() }
 
             store = new Store(path)
