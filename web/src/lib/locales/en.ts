@@ -243,6 +243,7 @@ export default {
   'session.config.unavailable': 'Unavailable',
   'session.config.runnerOffline': 'Runner is offline and the config could not be read.',
   'session.config.errorWithDetail': 'Could not read session config: {error}',
+  'session.config.invalid': 'Could not parse session config.',
   'session.config.effect': 'Changes apply the next time you start a session or restart the agent.',
   'session.config.locked': 'Injected, system, tool, and plugin items cannot be changed here.',
   'session.config.unsupported': 'This agent does not honor a per-item switch, so turning it off here would not stop it.',

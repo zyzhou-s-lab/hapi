@@ -17,6 +17,7 @@ export function formatSessionConfigError(error: string | null | undefined, t: Tr
     if (!detail || detail === 'Failed to read session config' || detail === 'Session config unavailable') {
         return t('session.config.unavailable')
     }
+    if (detail === 'Invalid session config') return t('session.config.invalid')
     if (
         detail === 'handler-not-registered'
         || detail === 'socket-disconnected'

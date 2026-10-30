@@ -177,6 +177,9 @@ describe('SessionConfigPage', () => {
         expect(await screen.findByRole('switch', { name: 'Enable hapi' })).toBeDisabled()
         fireEvent.click(screen.getByRole('button', { name: /^docs/ }))
         expect(await screen.findByText(/# Docs/)).toBeTruthy()
+        expect(screen.getAllByText('This agent does not honor a per-item switch, so turning it off here would not stop it.')).toHaveLength(1)
+        expect(screen.queryByText('Changes apply the next time you start a session or restart the agent.')).toBeNull()
+        expect(screen.queryByText('Injected, system, tool, and plugin items cannot be changed here.')).toBeNull()
         fireEvent.click(screen.getByRole('button', { name: 'Back to list' }))
         expect(await screen.findByRole('heading', { name: 'MCP' })).toBeTruthy()
     })
@@ -203,7 +206,32 @@ describe('SessionConfigPage', () => {
         renderPage()
         fireEvent.click(await screen.findByRole('button', { name: /PreToolUse/ }))
         expect(await screen.findByText('run --token=***')).toBeTruthy()
+        expect(screen.getAllByText('This agent does not honor a per-item switch, so turning it off here would not stop it.')).toHaveLength(1)
+        expect(screen.queryByText('Changes apply the next time you start a session or restart the agent.')).toBeNull()
+        expect(screen.queryByText('Injected, system, tool, and plugin items cannot be changed here.')).toBeNull()
         expect(screen.queryByText(/127\.0\.0\.1/)).toBeNull()
+    })
+
+    it('shows the injected lock reason once', async () => {
+        mocks.getSessionConfig.mockResolvedValue({
+            success: true,
+            mcp: { kind: 'servers', servers: [{ name: 'hapi', source: 'injected' }] },
+            skills: { items: [] },
+            hooks: { availability: 'listed', items: [] },
+        })
+        mocks.getSessionConfigItem.mockResolvedValue({
+            success: true,
+            kind: 'mcp',
+            name: 'hapi',
+            source: 'injected',
+            enabled: true,
+            mutable: false,
+            tools: [],
+        })
+        renderPage()
+        fireEvent.click(await screen.findByRole('button', { name: /hapi/ }))
+        expect(await screen.findAllByText('Injected, system, tool, and plugin items cannot be changed here.')).toHaveLength(1)
+        expect(screen.queryByText('Changes apply the next time you start a session or restart the agent.')).toBeNull()
     })
 
     it('disables retry while a refetch is in flight', async () => {

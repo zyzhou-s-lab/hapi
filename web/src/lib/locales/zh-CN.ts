@@ -247,6 +247,7 @@ export default {
   'session.config.unavailable': '不可用',
   'session.config.runnerOffline': 'Runner 离线，无法读取配置',
   'session.config.errorWithDetail': '无法读取会话配置：{error}',
+  'session.config.invalid': '会话配置无法解析。',
   'session.config.effect': '一般下次新开会话或重启 agent 后生效。',
   'session.config.locked': '注入、系统、工具和插件项不能在这里改。',
   'session.config.unsupported': '此 agent 不认这项的开关，改了也不会停用。',

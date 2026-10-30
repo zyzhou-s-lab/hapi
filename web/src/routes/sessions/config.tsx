@@ -117,8 +117,6 @@ function ConfigDetail(props: { detail: Extract<SessionConfigDetailResult, { succ
     const detail = props.detail
     return (
         <div className="flex flex-col gap-4">
-            <p className="text-xs text-[var(--app-hint)]">{t('session.config.effect')}</p>
-            {!detail.mutable ? <p className="text-xs text-[var(--app-hint)]">{t('session.config.locked')}</p> : null}
             {detail.kind === 'skill' ? (
                 <>
                     {detail.truncated ? <p className="text-xs text-[var(--app-hint)]">{t('session.config.truncated')}</p> : null}
@@ -276,7 +274,9 @@ export default function SessionConfigPage() {
                             <p className="text-sm text-[var(--app-hint)]">
                                 {selected.lock === 'unsupported' ? t('session.config.unsupported') : t('session.config.locked')}
                             </p>
-                        ) : null}
+                        ) : (
+                            <p className="text-xs text-[var(--app-hint)]">{t('session.config.effect')}</p>
+                        )}
                         {detailError ? (
                             <SessionReadBanner
                                 message={formatSessionConfigError(detailError, t)}

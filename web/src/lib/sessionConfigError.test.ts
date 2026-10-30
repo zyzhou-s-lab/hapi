@@ -5,6 +5,7 @@ const t = (key: string, params?: Record<string, string | number>) => {
     if (key === 'session.config.runnerOffline') return 'Runner is offline and the config could not be read.'
     if (key === 'session.config.unavailable') return 'Unavailable'
     if (key === 'session.config.errorWithDetail') return `Could not read session config: ${params?.error}`
+    if (key === 'session.config.invalid') return 'Could not parse session config.'
     return key
 }
 
@@ -22,6 +23,7 @@ describe('formatSessionConfigError', () => {
         expect(formatSessionConfigError('', t)).toBe('Unavailable')
         expect(formatSessionConfigError('   ', t)).toBe('Unavailable')
         expect(formatSessionConfigError(undefined, t)).toBe('Unavailable')
+        expect(formatSessionConfigError('Invalid session config', t)).toBe('Could not parse session config.')
     })
 
     it('masks secrets, keeps ordinary text, and drops absolute paths', () => {
