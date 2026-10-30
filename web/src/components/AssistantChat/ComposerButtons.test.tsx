@@ -249,8 +249,13 @@ describe('ComposerButtons responsive toolbar', () => {
         expect(toolbar.className).not.toContain('overflow-x-auto')
         expect(within(toolbar).queryByRole('button', { name: 'Terminal' })).toBeNull()
         fireEvent.click(screen.getByTestId('composer-more'))
+        const menu = screen.getByRole('menu')
+        expect(menu.className).toContain('z-[80]')
+        expect(toolbar.contains(menu)).toBe(false)
         expect(screen.getByRole('button', { name: 'Terminal' })).toBeInTheDocument()
         expect(screen.getByRole('button', { name: 'Attach file' })).toBeInTheDocument()
+        fireEvent.click(screen.getByRole('button', { name: 'Terminal' }))
+        expect(screen.queryByRole('menu')).toBeNull()
         for (const button of within(toolbar).getAllByRole('button')) {
             expect(button.closest('.shrink-0')).not.toBeNull()
         }

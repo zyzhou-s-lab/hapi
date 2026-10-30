@@ -6,7 +6,8 @@ import { ScheduleTimePicker } from './ScheduleTimePicker'
 import type { PendingSchedule } from './ScheduleTimePicker'
 import { useFue } from '@/lib/use-fue'
 import { FueCallout, FueDot } from '@/components/Fue'
-import { Children, isValidElement, useEffect, useRef, useState, type ReactElement, type ReactNode, type Ref } from 'react'
+import { Children, isValidElement, useEffect, useLayoutEffect, useRef, useState, type ReactElement, type ReactNode, type Ref } from 'react'
+import { createPortal } from 'react-dom'
 import { useComposerToolbarLayout, type ComposerToolbarItemId, type ComposerToolbarLayout } from '@/hooks/useComposerToolbarLayout'
 import { useNarrowViewport } from '@/hooks/useNarrowViewport'
 import type { ComposerSendIntent } from '@/lib/messageDelivery'
@@ -45,21 +46,57 @@ function MoreIcon() {
     )
 }
 
+function placeComposerMoreMenu(anchor: DOMRect, menu: DOMRect): { top: number; left: number } {
+    const margin = 8
+    const gap = 8
+    let top = anchor.top - menu.height - gap
+    if (top < margin) top = Math.min(anchor.bottom + gap, window.innerHeight - menu.height - margin)
+    let left = anchor.left
+    if (left + menu.width > window.innerWidth - margin) left = window.innerWidth - margin - menu.width
+    if (left < margin) left = margin
+    return { top, left }
+}
+
 function ComposerMoreMenu(props: { children: ReactNode }) {
     const { t } = useTranslation()
     const [open, setOpen] = useState(false)
-    const rootRef = useRef<HTMLDivElement>(null)
+    const [pos, setPos] = useState<{ top: number; left: number } | null>(null)
+    const buttonRef = useRef<HTMLButtonElement>(null)
+    const menuRef = useRef<HTMLDivElement>(null)
     useEffect(() => {
         if (!open) return
         const close = (event: PointerEvent) => {
-            if (!rootRef.current?.contains(event.target as Node)) setOpen(false)
+            const target = event.target
+            if (!(target instanceof Node)) return
+            if (buttonRef.current?.contains(target) || menuRef.current?.contains(target)) return
+            setOpen(false)
         }
         document.addEventListener('pointerdown', close)
         return () => document.removeEventListener('pointerdown', close)
     }, [open])
+    useLayoutEffect(() => {
+        if (!open) {
+            setPos(null)
+            return
+        }
+        const place = () => {
+            const anchor = buttonRef.current?.getBoundingClientRect()
+            const menu = menuRef.current?.getBoundingClientRect()
+            if (!anchor || !menu) return
+            setPos(placeComposerMoreMenu(anchor, menu))
+        }
+        place()
+        window.addEventListener('resize', place)
+        window.addEventListener('scroll', place, true)
+        return () => {
+            window.removeEventListener('resize', place)
+            window.removeEventListener('scroll', place, true)
+        }
+    }, [open])
     return (
-        <div ref={rootRef} className="relative shrink-0">
+        <div className="relative shrink-0">
             <button
+                ref={buttonRef}
                 type="button"
                 data-testid="composer-more"
                 aria-expanded={open}
@@ -70,10 +107,21 @@ function ComposerMoreMenu(props: { children: ReactNode }) {
             >
                 <MoreIcon />
             </button>
-            {open ? (
-                <div role="menu" className="composer-more-menu absolute bottom-10 left-0 z-30 flex min-w-48 flex-col gap-1 rounded-xl border border-[var(--app-border)] bg-[var(--app-bg)] p-1 shadow-lg">
+            {open && typeof document !== 'undefined' ? createPortal(
+                <div
+                    ref={menuRef}
+                    role="menu"
+                    data-testid="composer-more-menu"
+                    className="composer-more-menu fixed z-[80] flex min-w-48 flex-col gap-1 rounded-xl border border-[var(--app-border)] bg-[var(--app-bg)] p-1 shadow-lg"
+                    style={pos ? { top: pos.top, left: pos.left } : { visibility: 'hidden' }}
+                    onClick={(event) => {
+                        const target = event.target
+                        if (target instanceof Element && target.closest('button')) setOpen(false)
+                    }}
+                >
                     {props.children}
-                </div>
+                </div>,
+                document.body,
             ) : null}
         </div>
     )
