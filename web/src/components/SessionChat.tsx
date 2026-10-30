@@ -2077,12 +2077,20 @@ function SessionChatInner(props: SessionChatProps) {
                     >
                     <div className="pointer-events-auto">
                     {codexCollaborationModeSupported && codexModelsState.error ? (
-                        <div className={composerFloating ? 'composer-floating-chrome px-3 pb-2' : 'px-3 pb-2'}>
-                            <div className="mx-auto w-full max-w-content rounded-md bg-[var(--app-subtle-bg)] p-3 text-sm text-red-600">
-                                {t('session.codexModelsLoadFailed')}: {codexModelsState.error}
+                        composerFloating ? (
+                            <div className="composer-floating-chrome">
+                                <div className="mx-auto w-full max-w-content rounded-md bg-[var(--app-secondary-bg)] p-3 text-sm text-red-600">
+                                    {t('session.codexModelsLoadFailed')}: {codexModelsState.error}
+                                </div>
                             </div>
-                        </div>
-                        ) : null}
+                        ) : (
+                            <div className="px-3 pb-2">
+                                <div className="mx-auto w-full max-w-content rounded-md bg-[var(--app-subtle-bg)] p-3 text-sm text-red-600">
+                                    {t('session.codexModelsLoadFailed')}: {codexModelsState.error}
+                                </div>
+                            </div>
+                        )
+                    ) : null}
 
                     {/*
                      * One-time banner shown after local scratchlist entries
@@ -2093,7 +2101,7 @@ function SessionChatInner(props: SessionChatProps) {
                         onDismiss={scratchlist.dismissMigrationBanner}
                     />
 
-                    <div className={composerFloating ? 'composer-floating-chrome px-3' : 'px-3'}>
+                    <div className="px-3">
                         <TodoPanel sessionId={props.session.id} todos={props.session.todos} />
                         {/*
                          * Scratchlist drawer - composer-controlled. Only

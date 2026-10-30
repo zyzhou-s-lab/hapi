@@ -2392,7 +2392,6 @@ export function HappyComposer(props: {
                     {overlays}
 
                     {shouldShowComposerStatusBar(agentFlavor) ? (
-                        <div className={isExpanded ? undefined : 'composer-floating-chrome'}>
                         <StatusBar
                             active={active}
                             thinking={thinking}
@@ -2414,7 +2413,6 @@ export function HappyComposer(props: {
                             agentFlavor={agentFlavor}
                             voiceStatus={effectiveVoiceStatus}
                         />
-                        </div>
                     ) : null}
 
                     {dictationActive && dictation.partialTranscript ? (

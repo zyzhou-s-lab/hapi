@@ -110,7 +110,7 @@ describe('chatComposerGridPlacement', () => {
 })
 
 describe('floating dock surface', () => {
-    it('frosts each dock bar on its own chrome, not one shared stack', () => {
+    it('frosts the error bar on its own chrome, not a shared wrap around tasks or queued', () => {
         const css = readFileSync('src/index.css', 'utf8')
         const surface = css.match(/\.composer-floating-frame,\s*\.composer-floating-chrome \{[^}]+\}/)?.[0] ?? ''
         const chrome = css.match(/\.composer-floating-chrome \{\s*margin-inline:[^}]+\}/)?.[0] ?? ''
@@ -122,9 +122,12 @@ describe('floating dock surface', () => {
         expect(chrome).toContain('border-radius: 20px')
         expect(css).toContain('.composer-floating-chrome:not(:has(*))')
         expect(css).not.toContain('.composer-floating-stack')
-        expect(source).toContain("composerFloating ? 'composer-floating-chrome px-3 pb-2'")
-        expect(source).toContain("composerFloating ? 'composer-floating-chrome px-3'")
-        expect(composer).toContain("isExpanded ? undefined : 'composer-floating-chrome'")
+        expect(css).not.toContain('.composer-floating-shell .composer-floating-chrome')
+        expect(source).toContain('className="composer-floating-chrome"')
+        expect(source).not.toContain('composer-floating-chrome px-3')
+        expect(source).toContain('bg-[var(--app-secondary-bg)] p-3 text-sm text-red-600')
+        expect(source).toContain('<div className="px-3">')
+        expect(composer).not.toContain('composer-floating-chrome')
     })
 })
 
