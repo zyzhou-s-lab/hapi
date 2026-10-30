@@ -82,7 +82,7 @@ const components: Components = {
         // eslint-disable-next-line jsx-a11y/alt-text -- alt comes from markdown
         <img {...rest} className={cn('aui-md-img my-3 max-w-full rounded-xl', className)} />
     ),
-    p: ({ className, ...rest }) => <p {...rest} className={cn('aui-md-p my-2.5 leading-7 first:mt-0 last:mb-0', className)} />,
+    p: ({ className, ...rest }) => <p {...rest} className={cn('aui-md-p my-2.5 first:mt-0 last:mb-0', className)} />,
     h1: ({ className, ...rest }) => <h1 {...rest} className={cn('aui-md-h1 mt-4 tracking-[-0.01em] first:mt-0', className)} />,
     h2: ({ className, ...rest }) => <h2 {...rest} className={cn('aui-md-h2 mt-4 text-base font-semibold tracking-[-0.01em] first:mt-0', className)} />,
     h3: ({ className, ...rest }) => <h3 {...rest} className={cn('aui-md-h3 mt-3 text-[0.95rem] font-semibold first:mt-0', className)} />,
@@ -99,7 +99,7 @@ const components: Components = {
     ),
     ul: ({ className, ...rest }) => <ul {...rest} className={cn('aui-md-ul my-2.5 list-disc pl-6 marker:text-[var(--app-hint)] [&>li]:mt-1.5', className)} />,
     ol: ({ className, ...rest }) => <ol {...rest} className={cn('aui-md-ol my-2.5 list-decimal pl-6 marker:text-[var(--app-hint)] [&>li]:mt-1.5', className)} />,
-    li: ({ className, ...rest }) => <li {...rest} className={cn('aui-md-li leading-7', className)} />,
+    li: ({ className, ...rest }) => <li {...rest} className={cn('aui-md-li', className)} />,
     hr: ({ className, ...rest }) => <hr {...rest} className={cn('aui-md-hr my-4 border-[var(--app-divider)]', className)} />,
     table: ({ className, ...rest }) => (
         <div className="aui-md-table-wrapper my-3 max-w-full overflow-x-auto rounded-xl bg-[var(--app-md-table-bg)]">

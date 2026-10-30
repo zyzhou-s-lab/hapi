@@ -31,7 +31,7 @@ export function SyntaxHighlighter(props: SyntaxHighlighterProps) {
         <div data-hapi-code-body="true" className={`aui-md-codeblock min-w-0 w-full max-w-full overflow-y-hidden rounded-b-xl bg-[var(--app-code-bg)] ${codeWrap ? '' : 'overflow-x-auto'}`}>
             <pre
                 data-hapi-code-grid="true"
-                className={`shiki m-0 grid ${codeWrap ? 'w-full' : 'w-max min-w-full'} text-sm font-mono`}
+                className={`shiki app-code-text m-0 grid ${codeWrap ? 'w-full' : 'w-max min-w-full'} font-mono`}
                 style={codeGridStyle}
             >
                 {codeLines.map((line, index) => {
