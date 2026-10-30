@@ -6,6 +6,95 @@ import type { TodoItem } from '@hapi/protocol/types'
 export { TodoItemSchema, TodosSchema }
 export type { TodoItem }
 
+const OMP_TODO_OPS: Record<string, true> = {
+    init: true,
+    start: true,
+    done: true,
+    rm: true,
+    drop: true,
+    block: true,
+    unblock: true,
+    append: true,
+    view: true
+}
+
+function isOmpTodoToolName(name: string | null): boolean {
+    if (!name) return false
+    const normalized = name.toLowerCase()
+    return normalized === 'todo' || normalized === 'todowrite'
+}
+
+// Abandoned omp tasks are omitted. Blocked stays a flag beside `pending`:
+// shipped iOS builds reject a `blocked` status enum value. Unknown statuses
+// fall back to pending, matching checklist.tsx.
+function visibleOmpTask(value: unknown): { status: 'pending' | 'in_progress' | 'completed'; blocked?: true } | null {
+    if (value === 'abandoned') return null
+    if (value === 'blocked') return { status: 'pending', blocked: true }
+    if (value === 'completed' || value === 'in_progress') return { status: value }
+    return { status: 'pending' }
+}
+
+function todosFromClaudeArray(todos: unknown): TodoItem[] | null {
+    const parsed = TodosSchema.safeParse(todos)
+    return parsed.success ? parsed.data : null
+}
+
+function ompTodoId(phaseName: string, index: number, id: unknown): string {
+    if (typeof id === 'string' && id !== '') return id
+    return `${phaseName}:${index}`
+}
+
+function ompTodoDetails(value: Record<string, unknown>): { op: string; phases: unknown[] } | null {
+    if (typeof value.op !== 'string' || OMP_TODO_OPS[value.op] !== true || !Array.isArray(value.phases)) return null
+    return { op: value.op, phases: value.phases }
+}
+
+// Result details only: `{ op, phases }` or `{ content, details: { op, phases } }`.
+// Input objects that merely contain `phases` are not snapshots.
+function extractOmpTodoSnapshot(value: unknown): TodoItem[] | null {
+    if (!isObject(value)) return null
+    const details = ompTodoDetails(value)
+        ?? (isObject(value.details) ? ompTodoDetails(value.details) : null)
+    if (!details) return null
+
+    const todos: Array<Pick<TodoItem, 'content' | 'status' | 'priority' | 'id' | 'blocked'>> = []
+    let opaque = false
+    for (const phase of details.phases) {
+        if (!isObject(phase) || !Array.isArray(phase.tasks)) {
+            opaque = true
+            continue
+        }
+        const phaseName = typeof phase.name === 'string' && phase.name !== '' ? phase.name : 'phase'
+        phase.tasks.forEach((task, index) => {
+            if (!isObject(task) || typeof task.content !== 'string') {
+                opaque = true
+                return
+            }
+            const mapped = visibleOmpTask(task.status)
+            if (!mapped) return
+            todos.push({
+                content: task.content,
+                status: mapped.status,
+                priority: 'medium',
+                id: ompTodoId(phaseName, index, task.id),
+                ...(mapped.blocked ? { blocked: true } : {})
+            })
+        })
+    }
+
+    if (todos.length > 0) return todosFromClaudeArray(todos)
+    if (opaque) return null
+    // phases: [] is a whole-list publish only for init (replace), view (read of
+    // an empty list), and rm. Other ops do not emit an empty phase array on
+    // success; an errored rm keeps the previous phases and is skipped earlier.
+    // A non-empty phase list with no remaining tasks is a real clear (rm emptied
+    // every task, or every task was abandoned and is hidden).
+    if (details.phases.length === 0 && details.op !== 'init' && details.op !== 'view' && details.op !== 'rm') {
+        return null
+    }
+    return []
+}
+
 function extractTodosFromClaudeOutput(content: Record<string, unknown>): TodoItem[] | null {
     if (content.type !== 'output') return null
 
@@ -25,11 +114,33 @@ function extractTodosFromClaudeOutput(content: Record<string, unknown>): TodoIte
         const input = 'input' in block ? (block as Record<string, unknown>).input : null
         if (!isObject(input)) continue
 
-        const todosCandidate = input.todos
-        const parsed = TodosSchema.safeParse(todosCandidate)
-        if (parsed.success) {
-            return parsed.data
-        }
+        const parsed = todosFromClaudeArray(input.todos)
+        if (parsed) return parsed
+    }
+
+    return null
+}
+
+function extractTodosFromOmpOutput(content: Record<string, unknown>): TodoItem[] | null {
+    if (content.type !== 'output') return null
+    const data = isObject(content.data) ? content.data : null
+    if (!data) return null
+
+    const message = isObject(data.message) ? data.message : null
+    if (!message || !Array.isArray(message.content)) return null
+
+    const blocks = message.content.filter((block) => isObject(block) && block.type === 'tool_result')
+    for (const block of blocks) {
+        const resultName = typeof block.name === 'string' ? block.name : typeof block.toolName === 'string' ? block.toolName : null
+        if (resultName !== null && !isOmpTodoToolName(resultName)) continue
+        if (block.is_error === true || block.isError === true) continue
+        const fromContent = extractOmpTodoSnapshot('content' in block ? (block as Record<string, unknown>).content : null)
+        if (fromContent) return fromContent
+        // toolUseResult is one envelope for the whole message. Only a single
+        // tool_result can own it; with several blocks it would stick to the wrong one.
+        if (blocks.length !== 1) continue
+        const fromEnvelope = extractOmpTodoSnapshot(data.toolUseResult)
+        if (fromEnvelope) return fromEnvelope
     }
 
     return null
@@ -39,17 +150,21 @@ function extractTodosFromCodexMessage(content: Record<string, unknown>): TodoIte
     if (content.type !== 'codex') return null
 
     const data = isObject(content.data) ? content.data : null
-    if (!data || data.type !== 'tool-call') return null
+    if (!data) return null
 
+    if (data.type === 'tool-call-result') {
+        if (data.is_error === true || data.isError === true) return null
+        const name = typeof data.name === 'string' ? data.name : null
+        if (name !== null && !isOmpTodoToolName(name)) return null
+        return extractOmpTodoSnapshot('output' in data ? data.output : null)
+    }
+
+    if (data.type !== 'tool-call') return null
     const name = typeof data.name === 'string' ? data.name : null
     if (name !== 'TodoWrite') return null
-
     const input = 'input' in data ? (data as Record<string, unknown>).input : null
-    if (!isObject(input)) return null
-
-    const todosCandidate = input.todos
-    const parsed = TodosSchema.safeParse(todosCandidate)
-    return parsed.success ? parsed.data : null
+    if (!isObject(input) || !Array.isArray(input.todos)) return null
+    return todosFromClaudeArray(input.todos)
 }
 
 function extractTodosFromAcpMessage(content: Record<string, unknown>): TodoItem[] | null {
@@ -94,6 +209,7 @@ export function extractTodoWriteTodosFromMessageContent(messageContent: unknown)
     if (!isObject(record.content) || typeof record.content.type !== 'string') return null
 
     return extractTodosFromClaudeOutput(record.content)
+        ?? extractTodosFromOmpOutput(record.content)
         ?? extractTodosFromCodexMessage(record.content)
         ?? extractTodosFromAcpMessage(record.content)
 }

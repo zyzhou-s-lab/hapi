@@ -225,6 +225,7 @@ describe('OmpRpcEventAdapter', () => {
                 content: [{
                     type: 'tool_result',
                     tool_use_id: 'tool-1',
+                    name: 'bash',
                     content: {
                         content: [{ type: 'text', text: 'canonical result' }],
                         details: { exitCode: 0 }

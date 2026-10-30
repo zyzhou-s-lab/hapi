@@ -97,6 +97,23 @@ describe('extractTodoChecklist', () => {
             { id: 'todo-1', text: 'Ship it', status: 'completed' }
         ])
     })
+
+    it('keeps a blocked flag distinct from pending and still reads a raw blocked status', () => {
+        expect(extractTodoChecklist({
+            todos: [
+                { content: 'wait', status: 'pending', blocked: true, id: 'b' },
+                { content: 'drop', status: 'abandoned' }
+            ]
+        }, null)).toEqual([
+            { id: 'b', text: 'wait', status: 'blocked' },
+            { id: undefined, text: 'drop', status: 'pending' }
+        ])
+        expect(extractTodoChecklist(null, {
+            phases: [{ name: 'Ship', tasks: [{ content: 'wait', status: 'blocked', id: 'b' }] }]
+        })).toEqual([
+            { id: 'b', text: 'wait', status: 'blocked' }
+        ])
+    })
 })
 
 describe('update_plan tool presentation', () => {
