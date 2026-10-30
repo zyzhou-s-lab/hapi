@@ -1392,6 +1392,7 @@ export default {
   'work.pickMachine': '机器',
   'work.primaryPath': '主工作目录',
   'work.createLine': '新建主线',
+  'work.createLineFailed': '没能新建主线。',
   'work.lineHeader': '主线',
   'work.deleteLine': '删除主线',
   'work.deleteLineConfirm': '删除{name}？它的目录和会话会回到待整理。',

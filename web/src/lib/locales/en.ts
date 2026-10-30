@@ -1393,6 +1393,7 @@ export default {
   'work.pickMachine': 'Machine',
   'work.primaryPath': 'Primary directory',
   'work.createLine': 'Create line',
+  'work.createLineFailed': 'Could not create the line.',
   'work.lineHeader': 'Line',
   'work.deleteLine': 'Delete line',
   'work.deleteLineConfirm': 'Delete {name}? Its directories and sessions go back to the inbox.',

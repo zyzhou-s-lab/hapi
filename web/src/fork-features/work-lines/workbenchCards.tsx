@@ -6,7 +6,7 @@ import { getSessionListSelectionNavigation } from '@/lib/sessionNavigation'
 import { useTranslation } from '@/lib/use-translation'
 import { useMachines } from '@/hooks/queries/useMachines'
 import { CardFrame, registerWorkCards, type WorkCardContext, type WorkCardDefinition } from './WorkCardHost'
-import { workMapKey } from './useWorkMap'
+import { workCardMapPrefix } from './useWorkMap'
 
 function useBench(ctx: WorkCardContext) {
     return ctx.bench
@@ -18,7 +18,7 @@ function lineIdOf(ctx: WorkCardContext): string {
 
 function useMapRefresh() {
     const queryClient = useQueryClient()
-    return async () => { await queryClient.invalidateQueries({ queryKey: workMapKey }) }
+    return async () => { await queryClient.invalidateQueries({ queryKey: workCardMapPrefix }) }
 }
 
 const onLine = (ctx: WorkCardContext) => ctx.view.kind === 'line' && ctx.view.lineId.length > 0
@@ -42,6 +42,7 @@ function LineList(props: { ctx: WorkCardContext }): ReactNode {
     const [goal, setGoal] = useState('')
     const [path, setPath] = useState('')
     const [machineId, setMachineId] = useState('')
+    const [createFailed, setCreateFailed] = useState(false)
     const create = useMutation({
         mutationFn: async () => {
             if (!api) throw new Error('API unavailable')
@@ -49,6 +50,7 @@ function LineList(props: { ctx: WorkCardContext }): ReactNode {
             return created.line.id
         },
         onSuccess: async (id) => {
+            setCreateFailed(false)
             setName('')
             setGoal('')
             setPath('')
@@ -56,6 +58,7 @@ function LineList(props: { ctx: WorkCardContext }): ReactNode {
             await refresh()
             await navigate({ to: '/work', search: { line: id } })
         },
+        onError: () => setCreateFailed(true),
     })
     const selected = lineIdOf(props.ctx)
     return (
@@ -82,6 +85,7 @@ function LineList(props: { ctx: WorkCardContext }): ReactNode {
                     </select>
                     <input className="rounded border border-[var(--app-divider)] bg-transparent px-2 py-1 text-sm" value={path} onChange={(event) => setPath(event.target.value)} placeholder={t('work.primaryPath')} />
                     <button type="submit" className="text-sm text-[var(--app-link)]" disabled={create.isPending || !name || !machineId || !path}>{t('work.createLine')}</button>
+                    {createFailed ? <p className="text-sm text-red-600">{t('work.createLineFailed')}</p> : null}
                 </form>
             )}
         </CardFrame>
