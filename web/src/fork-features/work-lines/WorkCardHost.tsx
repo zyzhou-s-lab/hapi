@@ -9,7 +9,7 @@ import { watchCardTopic } from './cardTopics'
 import { deriveWork, deriveWorkbench, type WorkbenchModel, type WorkMapData, type WorkModel } from './deriveWork'
 import { mergeLayout, slotsForRegion, visiblePollInterval, type WorkCardSize, type WorkLayout, type WorkLayoutSlot, type WorkSurface } from './layout'
 import { overviewLayout, workbenchLayout } from './defaultLayouts'
-import { loadWorkCardMap, workCardMapKey, workMapKey } from './useWorkMap'
+import { loadWorkCardMap, workCardMapKey, workMapQueryOptions } from './useWorkMap'
 
 export type WorkView = { kind: 'overview' } | { kind: 'line'; lineId: string } | { kind: 'inbox' }
 
@@ -58,15 +58,7 @@ export function WorkCardHost(props: {
 }): ReactNode {
     const { user } = useAppContext()
     const { t } = useTranslation()
-    const queryClient = useQueryClient()
-    const sharedMap = useQuery({
-        queryKey: workMapKey,
-        queryFn: () => {
-            if (!props.api) throw new Error('API unavailable')
-            return props.api.getWorkMap()
-        },
-        enabled: Boolean(props.api),
-    })
+    const sharedMap = useQuery(workMapQueryOptions(props.api))
     const model = useMemo(() => deriveWork(
         props.sessions,
         sharedMap.data ?? null,

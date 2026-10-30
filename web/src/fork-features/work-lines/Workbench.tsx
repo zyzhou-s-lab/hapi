@@ -6,7 +6,7 @@ import { useTranslation } from '@/lib/use-translation'
 import { useSessions } from '@/hooks/queries/useSessions'
 import { WorkCardHost } from './WorkCardHost'
 import './workbenchCards'
-import { workMapKey } from './useWorkMap'
+import { workMapQueryOptions } from './useWorkMap'
 import { defaultWorkSearch, type WorkSearch } from './workSearch'
 
 export function Workbench(props: { search: WorkSearch }): ReactNode {
@@ -14,14 +14,7 @@ export function Workbench(props: { search: WorkSearch }): ReactNode {
     const { sessions } = useSessions(api)
     const { t } = useTranslation()
     const navigate = useNavigate()
-    const mapQuery = useQuery({
-        queryKey: workMapKey,
-        queryFn: () => {
-            if (!api) throw new Error('API unavailable')
-            return api.getWorkMap()
-        },
-        enabled: Boolean(api),
-    })
+    const mapQuery = useQuery(workMapQueryOptions(api))
     const map = mapQuery.data ?? null
     useEffect(() => {
         if (!map) return
