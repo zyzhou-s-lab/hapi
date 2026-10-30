@@ -4,7 +4,7 @@ import type { SessionSummary } from '@/types/api'
 import { useAppContext } from '@/lib/app-context'
 import { useTranslation } from '@/lib/use-translation'
 import { getSessionTitle } from '@/lib/sessionTitle'
-import { getSessionLastSeenAt } from '@/lib/sessionLastSeen'
+import { getSessionLastSeenAt, useSessionLastSeenVersion } from '@/lib/sessionLastSeen'
 import { getSessionListSelectionNavigation, PRESERVE_SESSION_SIDEBAR_SCROLL } from '@/lib/sessionNavigation'
 import { cn } from '@/lib/utils'
 import { useLongPress } from '@/hooks/useLongPress'
@@ -120,6 +120,8 @@ export function SessionTabsBar(props: {
     const { haptic } = usePlatform()
     const { addToast } = useToast()
     const { tabs } = useSessionTabsState(scope)
+    // 已读水位存在 localStorage。不订阅的话，标已读/未读不会让蓝点刷新。
+    useSessionLastSeenVersion()
     const [menu, setMenu] = useState<Menu>(null)
     const [dialog, setDialog] = useState<OpenDialog>(null)
     const [dragging, setDragging] = useState<string | null>(null)
