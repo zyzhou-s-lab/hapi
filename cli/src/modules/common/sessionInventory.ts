@@ -36,11 +36,72 @@ export function isSafeInventoryName(value: string): boolean {
     return true;
 }
 
+const COMMAND_WRAPPERS: Record<string, true> = {
+    bash: true,
+    sh: true,
+    zsh: true,
+    node: true,
+    nodejs: true,
+    npx: true,
+    env: true,
+};
+
+function commandTokens(command: string): string[] {
+    const tokens: string[] = [];
+    const pattern = /"([^"]*)"|'([^']*)'|(\S+)/g;
+    for (const match of command.matchAll(pattern)) {
+        const token = match[1] ?? match[2] ?? match[3] ?? '';
+        if (token.length > 0) tokens.push(token);
+    }
+    return tokens;
+}
+
+function tokenBasename(token: string): string {
+    const stripped = token.replace(/^['"]|['"]$/g, '');
+    return stripped.split(/[/\\]/).pop() ?? stripped;
+}
+
 export function commandBasename(command: string): string | undefined {
     if (command.includes('hook-forwarder')) return 'hook-forwarder';
-    const first = command.trim().split(/\s+/)[0]?.replace(/^['"]|['"]$/g, '');
-    if (!first) return undefined;
-    const base = first.split(/[/\\]/).pop() ?? '';
+    let tokens = commandTokens(command.trim());
+    for (let pass = 0; pass < 4 && tokens.length > 0; pass++) {
+        const head = tokenBasename(tokens[0]).toLowerCase();
+        if (!COMMAND_WRAPPERS[head]) break;
+        if (head === 'env') {
+            let index = 1;
+            while (index < tokens.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(tokens[index])) index++;
+            tokens = tokens.slice(index);
+            continue;
+        }
+        if (head === 'npx') {
+            let index = 1;
+            while (index < tokens.length && tokens[index].startsWith('-')) index++;
+            tokens = tokens.slice(index);
+            continue;
+        }
+        if (head === 'node' || head === 'nodejs') {
+            let index = 1;
+            while (index < tokens.length && tokens[index].startsWith('-')) {
+                const flag = tokens[index];
+                if (flag === '-e' || flag === '--eval' || flag === '-p' || flag === '--print') {
+                    return undefined;
+                }
+                index++;
+                if (flag === '-r' || flag === '--require' || flag === '--import' || flag === '--loader') index++;
+            }
+            tokens = tokens.slice(index);
+            continue;
+        }
+        let index = 1;
+        let dashC = false;
+        while (index < tokens.length && tokens[index].startsWith('-')) {
+            const flag = tokens[index];
+            if (flag === '-c' || flag === '--command' || /^-[^-]*c/.test(flag)) dashC = true;
+            index++;
+        }
+        tokens = dashC && index < tokens.length ? commandTokens(tokens[index]) : tokens.slice(index);
+    }
+    const base = tokens[0] ? tokenBasename(tokens[0]) : '';
     if (!isSafeInventoryName(base) || base.length > 80) return undefined;
     return base;
 }
@@ -275,12 +336,13 @@ function readJsonFile(path: string, options?: { allowSymlink?: boolean }): unkno
     }
 }
 
-function projectMcpPaths(cwd: string): string[] {
+export function projectMcpPaths(cwd: string, home = homedir()): string[] {
     const paths: string[] = [];
     let current = resolve(cwd);
     const seen = new Set<string>();
     while (!seen.has(current)) {
         seen.add(current);
+        if (current === resolve(home)) break;
         paths.push(join(current, '.mcp.json'));
         if (existsSync(join(current, '.git'))) break;
         const parent = dirname(current);

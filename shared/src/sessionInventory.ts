@@ -52,3 +52,26 @@ export type SessionInventoryMcpServer = z.infer<typeof SessionInventoryMcpServer
 export type SessionInventoryHook = z.infer<typeof SessionInventoryHookSchema>
 export type SessionInventorySkill = z.infer<typeof SessionInventorySkillSchema>
 export type SessionInventory = z.infer<typeof SessionInventorySchema>
+
+export type SessionConfigRpcResult =
+    | ({ success: true } & SessionInventory)
+    | { success: false; error: string }
+
+/** Keep only schema fields. Commands, URLs, and tokens on a CLI payload are dropped. */
+export function parseSessionConfigRpc(raw: unknown): SessionConfigRpcResult {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+        return { success: false, error: 'Invalid session config' }
+    }
+    const record = raw as { success?: unknown; error?: unknown }
+    if (record.success !== true) {
+        const error = typeof record.error === 'string' && record.error.trim().length > 0
+            ? record.error
+            : 'Failed to read session config'
+        return { success: false, error }
+    }
+    const parsed = SessionInventorySchema.safeParse(raw)
+    if (!parsed.success) {
+        return { success: false, error: 'Invalid session config' }
+    }
+    return { success: true, ...parsed.data }
+}

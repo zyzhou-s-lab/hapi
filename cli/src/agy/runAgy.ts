@@ -57,6 +57,7 @@ export async function runAgy(opts: {
             effort: opts.effort ?? undefined
         });
     const { api, session } = bootstrap;
+
     const messageQueue = new MessageQueue2<AgyMode>((mode) => hashObject({
         permissionMode: mode.permissionMode,
         model: mode.model,

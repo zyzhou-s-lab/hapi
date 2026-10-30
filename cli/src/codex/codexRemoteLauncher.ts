@@ -3610,6 +3610,11 @@ class CodexRemoteLauncher extends RemoteLauncherBase {
                     ...(source ? { source } : {}),
                 };
             });
+            // registerHandler overwrites. The common session handler answers
+            // until the first native skills/list succeeds, using a filesystem
+            // scan. This registration then wins and reports the native enabled
+            // list. Later refreshes replace it again so the closure sees the
+            // latest reportedSkills.
             session.client.rpcHandlerManager.registerHandler(RPC_METHODS.ListSessionConfig, async () => {
                 try {
                     const config = await readLiveSessionConfig({

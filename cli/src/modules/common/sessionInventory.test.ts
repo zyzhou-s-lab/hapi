@@ -8,6 +8,7 @@ import {
     mcpServersFromConfig,
     ompInventoryFromTools,
     parseCodexConfigInventory,
+    projectMcpPaths,
 } from './sessionInventory'
 
 describe('session inventory collectors', () => {
@@ -56,6 +57,11 @@ describe('session inventory collectors', () => {
             { event: 'PreToolUse', matcher: 'Bash', source: 'user', commandName: 'my-hook' },
         ])
         expect(commandBasename('node /opt/hapi/hook-forwarder --token super-secret')).toBe('hook-forwarder')
+        expect(commandBasename('bash -lc "git status --short"')).toBe('git')
+        expect(commandBasename('node /opt/tools/x.js --flag')).toBe('x.js')
+        expect(commandBasename('npx --yes some-pkg')).toBe('some-pkg')
+        expect(commandBasename('env TOKEN=abc /usr/local/bin/my-hook')).toBe('my-hook')
+        expect(JSON.stringify(commandBasename('env TOKEN=abc my-hook'))).not.toContain('abc')
         expect(JSON.stringify(items)).not.toContain('super-secret')
         expect(JSON.stringify(items)).not.toContain('/usr/local')
     })
@@ -108,6 +114,13 @@ command = "my-hook --token abc"
             { name: 'docs', source: 'user' },
             { name: 'hapi-session-1', source: 'injected' },
             { name: 'hapi-user', source: 'user' },
+        ])
+    })
+
+    it('stops looking for project mcp.json at home', () => {
+        expect(projectMcpPaths('/home/dev/proj/app', '/home/dev')).toEqual([
+            '/home/dev/proj/app/.mcp.json',
+            '/home/dev/proj/.mcp.json',
         ])
     })
 })

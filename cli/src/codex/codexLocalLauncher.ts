@@ -383,6 +383,7 @@ export async function codexLocalLauncher(session: CodexSession): Promise<'switch
         }
     });
     logger.debug(`[codex-local]: Started Codex SessionStart hook server on port ${hookServer.port}`);
+
     if (session.client.isPending()) {
         const createdLocator = createCodexTranscriptLocator({
             cwd: effectiveCodexCwd,

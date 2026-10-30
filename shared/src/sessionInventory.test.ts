@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test'
-import { SessionInventorySchema } from './sessionInventory'
+import { parseSessionConfigRpc, SessionInventorySchema } from './sessionInventory'
 
 describe('SessionInventorySchema', () => {
     it('keeps names and sources and drops command, url, and token fields', () => {
@@ -36,5 +36,24 @@ describe('SessionInventorySchema', () => {
         expect(JSON.stringify(parsed)).not.toContain('token')
         expect(JSON.stringify(parsed)).not.toContain('http')
         expect(JSON.stringify(parsed)).not.toContain('npx')
+    })
+
+    it('drops commands and urls from a successful RPC payload and keeps failures', () => {
+        const parsed = parseSessionConfigRpc({
+            success: true,
+            mcp: {
+                kind: 'servers',
+                servers: [{ name: 'docs', source: 'user', command: 'npx', url: 'http://127.0.0.1/?token=abc' }],
+            },
+        })
+        expect(parsed).toEqual({
+            success: true,
+            mcp: { kind: 'servers', servers: [{ name: 'docs', source: 'user' }] },
+        })
+        expect(JSON.stringify(parsed)).not.toContain('token')
+        expect(parseSessionConfigRpc({ success: false, error: 'handler-not-registered' })).toEqual({
+            success: false,
+            error: 'handler-not-registered',
+        })
     })
 })

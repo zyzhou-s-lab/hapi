@@ -125,7 +125,7 @@ export class OmpSession extends AgentSessionBase<OmpMode, OmpInputQueue> {
         this.client.updateMetadata((metadata) => ({
             ...metadata,
             ...(capabilities.tools ? { tools: capabilities.tools } : {}),
-            ...(capabilities.slashCommands ? { slashCommands: capabilities.slashCommands } : {}),
+            ...(capabilities.slashCommands ? { slashCommands: capabilities.slashCommands } : {})
         }));
     };
 

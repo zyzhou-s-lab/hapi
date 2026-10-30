@@ -182,6 +182,7 @@ export async function opencodeLocalLauncher(
 
     const opencodeConfigDir = resolveOpencodeConfigDir(session);
     ensureOpencodeHookPlugin(opencodeConfigDir, hookUrl, opts.hookServer.token);
+
     // Start the hapi MCP server for change_title support (optional feature)
     let happyServer: { url: string; stop: () => void } | null = null;
     let opencodeConfigPath: string | null = null;

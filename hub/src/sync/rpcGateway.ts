@@ -1,6 +1,6 @@
 import type { AgentFlavor, ClaudeLaunch, CodexCollaborationMode, CopilotAgentMode, PermissionMode } from '@hapi/protocol/types'
 import { RPC_METHODS } from '@hapi/protocol/rpcMethods'
-import { PROBE_AGENT_SKILLS_RPC_METHOD, ProbeAgentSkillsResponseSchema, type ProbeAgentSkillsResponse } from '@hapi/protocol/schemas'
+import { PROBE_AGENT_SKILLS_RPC_METHOD, ProbeAgentSkillsResponseSchema, parseSessionConfigRpc, type ProbeAgentSkillsResponse } from '@hapi/protocol/schemas'
 import {
     ArchiveCodexSessionRpcResponseSchema,
     AgentAvailabilityResponseSchema,
@@ -445,20 +445,9 @@ export class RpcGateway {
         }
     }
 
-    async listSessionConfig(sessionId: string): Promise<{
-        success: boolean
-        error?: string
-        mcp?: unknown
-        hooks?: unknown
-        skills?: unknown
-    }> {
-        return await this.sessionRpc(sessionId, RPC_METHODS.ListSessionConfig, {}) as {
-            success: boolean
-            error?: string
-            mcp?: unknown
-            hooks?: unknown
-            skills?: unknown
-        }
+    async listSessionConfig(sessionId: string) {
+        const raw = await this.sessionRpc(sessionId, RPC_METHODS.ListSessionConfig, {})
+        return parseSessionConfigRpc(raw)
     }
     async listCodexModelsForMachine(machineId: string): Promise<RpcListCodexModelsResponse> {
         return await this.machineRpc(machineId, RPC_METHODS.ListCodexModels, {}, MODEL_LIST_RPC_TIMEOUT_MS) as RpcListCodexModelsResponse

@@ -303,6 +303,7 @@ export function installCursorMcpOverlay(
     let hadFile = false;
     let hadServer = false;
     let previousServer: McpServerEntry | undefined;
+
     withMcpJsonLock(lockPath, () => {
         hadFile = existsSync(mcpJsonPath);
         const previous = hadFile ? readMcpJson(mcpJsonPath) : { mcpServers: {} as Record<string, McpServerEntry> };
