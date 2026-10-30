@@ -183,7 +183,7 @@ function CardSlot(props: {
     if (failed) {
         return (
             <CardFrame title={t(props.card.titleKey)}>
-                <p className="text-sm text-red-600">{failed}</p>
+                <p className="text-sm text-red-600">{t('work.cardFailed')}</p>
                 <button type="button" className="text-sm text-[var(--app-link)]" onClick={() => { if (querySource) ctx.query.refetch(); else props.refetchMap() }}>{t('work.retry')}</button>
             </CardFrame>
         )

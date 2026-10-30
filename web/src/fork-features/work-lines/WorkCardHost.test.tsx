@@ -95,13 +95,13 @@ describe('WorkCardHost', () => {
         expect(screen.getByText('This card failed.')).toBeTruthy()
         expect(screen.queryByText(/boom/)).toBeNull()
         expect(screen.queryByText('test.boom')).toBeNull()
-        await waitFor(() => expect(screen.getByText('query broke')).toBeTruthy())
-        expect(screen.queryByText('query-body')).toBeNull()
+        await waitFor(() => expect(screen.getAllByText('This card failed.').length).toBeGreaterThan(0))
+        expect(screen.queryByText('query broke')).toBeNull()
 
         rerender(wrap([session(true)]))
         await waitFor(() => expect(screen.getByText('1')).toBeTruthy())
         expect(getWorkMap).toHaveBeenCalledTimes(1)
-        expect(screen.getByText('This card failed.')).toBeTruthy()
+        expect(screen.getAllByText('This card failed.').length).toBeGreaterThan(0)
         error.mockRestore()
     })
 
@@ -132,7 +132,8 @@ describe('WorkCardHost', () => {
                 </QueryClientProvider>
             </AppContextProvider>,
         )
-        await waitFor(() => expect(screen.getByText('map down')).toBeTruthy())
+        await waitFor(() => expect(screen.getByText('This card failed.')).toBeTruthy())
+        expect(screen.queryByText('map down')).toBeNull()
         fail = false
         screen.getByText('Retry').click()
         await waitFor(() => expect(screen.getByText('0')).toBeTruthy())
