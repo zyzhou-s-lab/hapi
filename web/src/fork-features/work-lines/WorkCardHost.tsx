@@ -1,4 +1,4 @@
-import { Component, useEffect, useMemo, type ReactNode } from 'react'
+import { Component, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import type { ApiClient } from '@/api/client'
 import type { SessionSummary } from '@/types/api'
@@ -6,10 +6,10 @@ import { useAppContext } from '@/lib/app-context'
 import { getSessionTitle } from '@/lib/sessionTitle'
 import { useTranslation } from '@/lib/use-translation'
 import { watchCardTopic } from './cardTopics'
-import { deriveWork, type WorkMapData, type WorkModel } from './deriveWork'
+import { deriveWork, type WorkModel } from './deriveWork'
 import { mergeLayout, slotsForRegion, visiblePollInterval, type WorkCardSize, type WorkLayout, type WorkLayoutSlot, type WorkSurface } from './layout'
 import { overviewLayout } from './defaultLayouts'
-import { useWorkMap, workMapKey } from './useWorkMap'
+import { loadWorkCardMap, workCardMapKey } from './useWorkMap'
 
 export type WorkView = { kind: 'overview' } | { kind: 'line'; lineId: string } | { kind: 'inbox' }
 
@@ -56,16 +56,6 @@ export function WorkCardHost(props: {
 }): ReactNode {
     const { user } = useAppContext()
     const { t } = useTranslation()
-    const mapQuery = useWorkMap(props.api)
-    const model = useMemo(() => deriveWork(
-        props.sessions,
-        mapQuery.map,
-        getSessionTitle,
-        (session) => session.metadata?.host ?? session.metadata?.machineId ?? '',
-    ), [mapQuery.map, props.sessions])
-    useEffect(() => {
-        return watchCardTopic('work-map', user.id, workMapKey)
-    }, [user.id])
     const saved = useQuery({
         queryKey: ['work', 'layout', props.surface],
         queryFn: async () => {
@@ -89,9 +79,6 @@ export function WorkCardHost(props: {
                     sessions={props.sessions}
                     api={props.api}
                     accountId={user.id}
-                    model={model}
-                    mapError={mapQuery.error}
-                    refetchMap={() => { void mapQuery.refetch() }}
                     retryLabel={t('work.retry')}
                     failedMessage={t('work.cardFailed')}
                 />
@@ -108,13 +95,9 @@ function WorkRegion(props: {
     sessions: SessionSummary[]
     api: ApiClient | null
     accountId: number
-    model: WorkModel
-    mapError: string | null
-    refetchMap: () => void
     retryLabel: string
     failedMessage: string
 }): ReactNode {
-    const { t } = useTranslation()
     if (props.slots.length === 0) return null
     const grid = props.region === 'stats'
     return (
@@ -123,9 +106,18 @@ function WorkRegion(props: {
                 const card = registry.get(slot.cardId)
                 if (!card) return null
                 return (
-                    <CardErrorBoundary key={slot.cardId} title={t(card.titleKey)} message={props.failedMessage} retryLabel={props.retryLabel}>
-                        <CardSlot card={card} slot={slot} surface={props.surface} view={props.view} sessions={props.sessions} api={props.api} accountId={props.accountId} model={props.model} mapError={props.mapError} refetchMap={props.refetchMap} />
-                    </CardErrorBoundary>
+                    <CardSlot
+                        key={slot.cardId}
+                        card={card}
+                        slot={slot}
+                        surface={props.surface}
+                        view={props.view}
+                        sessions={props.sessions}
+                        api={props.api}
+                        accountId={props.accountId}
+                        retryLabel={props.retryLabel}
+                        failedMessage={props.failedMessage}
+                    />
                 )
             })}
         </div>
@@ -140,16 +132,19 @@ function CardSlot(props: {
     sessions: SessionSummary[]
     api: ApiClient | null
     accountId: number
-    model: WorkModel
-    mapError: string | null
-    refetchMap: () => void
+    retryLabel: string
+    failedMessage: string
 }): ReactNode {
     const { t } = useTranslation()
+    const [renderAttempt, setRenderAttempt] = useState(0)
+    const workModel = props.card.source.kind === 'work-model'
     const querySource = props.card.source.kind === 'query' ? props.card.source : null
-    useEffect(() => {
-        if (!querySource?.topic) return
-        return watchCardTopic(querySource.topic, props.accountId, querySource.queryKey)
-    }, [props.accountId, querySource])
+    const mapKey = useMemo(() => workCardMapKey(props.card.id), [props.card.id])
+    const mapQuery = useQuery({
+        queryKey: mapKey,
+        queryFn: () => loadWorkCardMap(props.api!, props.card.id),
+        enabled: workModel && Boolean(props.api),
+    })
     const polled = useQuery({
         queryKey: querySource?.queryKey ?? ['work', 'card', 'idle', props.card.id],
         queryFn: ({ signal }) => querySource!.queryFn({ signal, accountId: props.accountId, view: props.view }),
@@ -157,6 +152,13 @@ function CardSlot(props: {
         refetchInterval: () => visiblePollInterval(querySource?.pollMs, document.visibilityState === 'visible'),
         refetchIntervalInBackground: false,
     })
+    const active = workModel ? mapQuery : polled
+    useEffect(() => {
+        const topic = querySource?.topic ?? (workModel ? 'work-map' : undefined)
+        const queryKey = querySource?.queryKey ?? (workModel ? mapKey : undefined)
+        if (!topic || !queryKey) return
+        return watchCardTopic(topic, props.accountId, queryKey)
+    }, [mapKey, props.accountId, querySource, workModel])
     useEffect(() => {
         if (!querySource?.pollMs) return
         const onShow = () => {
@@ -165,31 +167,49 @@ function CardSlot(props: {
         document.addEventListener('visibilitychange', onShow)
         return () => document.removeEventListener('visibilitychange', onShow)
     }, [polled.refetch, querySource?.pollMs])
+    const model = useMemo(() => workModel ? deriveWork(
+        props.sessions,
+        mapQuery.data ?? null,
+        getSessionTitle,
+        (session) => session.metadata?.host ?? session.metadata?.machineId ?? '',
+    ) : null, [mapQuery.data, props.sessions, workModel])
     const ctx: WorkCardContext = {
         sessions: props.sessions,
         surface: props.surface,
         view: props.view,
         slot: props.slot,
-        model: props.card.source.kind === 'work-model' ? props.model : null,
+        model,
         query: {
-            data: polled.data,
-            error: polled.error instanceof Error ? polled.error.message : null,
-            isLoading: polled.isLoading,
-            refetch: () => { void polled.refetch() },
+            data: active.data,
+            error: active.error instanceof Error ? active.error.message : null,
+            isLoading: active.isLoading,
+            refetch: () => { void active.refetch() },
         },
     }
     if (props.card.visible && !props.card.visible(ctx)) return null
-    const failed = querySource ? ctx.query.error : props.mapError
-    if (failed) {
+    if (active.isError) {
         return (
             <CardFrame title={t(props.card.titleKey)}>
                 <p className="text-sm text-red-600">{t('work.cardFailed')}</p>
-                <button type="button" className="text-sm text-[var(--app-link)]" onClick={() => { if (querySource) ctx.query.refetch(); else props.refetchMap() }}>{t('work.retry')}</button>
+                <button type="button" className="text-sm text-[var(--app-link)]" onClick={() => { void active.refetch() }}>{props.retryLabel}</button>
             </CardFrame>
         )
     }
     const Card = props.card.Component
-    return <Card card={props.card} ctx={ctx} />
+    return (
+        <CardErrorBoundary
+            key={renderAttempt}
+            title={t(props.card.titleKey)}
+            message={props.failedMessage}
+            retryLabel={props.retryLabel}
+            onRetry={async () => {
+                await active.refetch()
+                setRenderAttempt((attempt) => attempt + 1)
+            }}
+        >
+            <Card card={props.card} ctx={ctx} />
+        </CardErrorBoundary>
+    )
 }
 
 export function CardFrame(props: { title: string; children: ReactNode }): ReactNode {
@@ -201,7 +221,7 @@ export function CardFrame(props: { title: string; children: ReactNode }): ReactN
     )
 }
 
-class CardErrorBoundary extends Component<{ title: string; message: string; retryLabel: string; children: ReactNode }, { failed: boolean }> {
+class CardErrorBoundary extends Component<{ title: string; message: string; retryLabel: string; onRetry: () => Promise<unknown>; children: ReactNode }, { failed: boolean }> {
     state = { failed: false }
 
     static getDerivedStateFromError(): { failed: boolean } {
@@ -214,7 +234,7 @@ class CardErrorBoundary extends Component<{ title: string; message: string; retr
             <section className="rounded-lg border border-[var(--app-divider)] p-3 text-sm text-red-600">
                 <p>{this.props.title}</p>
                 <p>{this.props.message}</p>
-                <button type="button" className="text-sm text-[var(--app-link)]" onClick={() => this.setState({ failed: false })}>{this.props.retryLabel}</button>
+                <button type="button" className="text-sm text-[var(--app-link)]" onClick={() => { void this.props.onRetry().then(() => this.setState({ failed: false })) }}>{this.props.retryLabel}</button>
             </section>
         )
     }

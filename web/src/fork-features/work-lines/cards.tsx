@@ -5,7 +5,7 @@ import { useAppContext } from '@/lib/app-context'
 import { getSessionListSelectionNavigation } from '@/lib/sessionNavigation'
 import { useTranslation } from '@/lib/use-translation'
 import { CardFrame, registerWorkCards, type WorkCardContext, type WorkCardDefinition } from './WorkCardHost'
-import { workMapKey } from './useWorkMap'
+import { workCardMapPrefix } from './useWorkMap'
 
 function Stat(props: { label: string; value: number; detail?: string }): ReactNode {
     return (
@@ -44,7 +44,7 @@ function NeedsYouList(props: { ctx: WorkCardContext }): ReactNode {
             await api.putWorkDismissed(sessionId, true)
         },
         onSuccess: async () => {
-            await queryClient.invalidateQueries({ queryKey: workMapKey })
+            await queryClient.invalidateQueries({ queryKey: workCardMapPrefix })
         },
     })
     const rows = props.ctx.model?.needsYou ?? []

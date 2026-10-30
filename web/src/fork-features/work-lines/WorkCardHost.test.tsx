@@ -7,6 +7,21 @@ import { AppContextProvider } from '@/lib/app-context'
 import { I18nProvider } from '@/lib/i18n-context'
 import type { SessionSummary } from '@/types/api'
 import { registerWorkCards, WorkCardHost } from './WorkCardHost'
+import type { WorkMapData } from './deriveWork'
+
+const loader = vi.hoisted(() => ({
+    impl: null as null | ((api: { getWorkMap: () => Promise<WorkMapData> }, cardId: string) => Promise<WorkMapData>),
+}))
+
+vi.mock('./useWorkMap', async () => {
+    const actual = await vi.importActual<typeof import('./useWorkMap')>('./useWorkMap')
+    return {
+        ...actual,
+        loadWorkCardMap: (api: { getWorkMap: () => Promise<WorkMapData> }, cardId: string) =>
+            loader.impl ? loader.impl(api, cardId) : actual.loadWorkCardMap(api as ApiClient, cardId),
+    }
+})
+
 import './cards'
 
 const map = {
@@ -51,7 +66,10 @@ function host(sessions: SessionSummary[], api: ApiClient): ReactNode {
 }
 
 describe('WorkCardHost', () => {
-    afterEach(() => cleanup())
+    afterEach(() => {
+        loader.impl = null
+        cleanup()
+    })
 
     it('updates a stat from the session list without fetching the map again, and isolates a broken card', async () => {
         const getWorkMap = vi.fn(async () => map)
@@ -100,7 +118,7 @@ describe('WorkCardHost', () => {
 
         rerender(wrap([session(true)]))
         await waitFor(() => expect(screen.getByText('1')).toBeTruthy())
-        expect(getWorkMap).toHaveBeenCalledTimes(1)
+        expect(getWorkMap).toHaveBeenCalledTimes(2)
         expect(screen.getAllByText('This card failed.').length).toBeGreaterThan(0)
         error.mockRestore()
     })
@@ -138,6 +156,78 @@ describe('WorkCardHost', () => {
         screen.getByText('Retry').click()
         await waitFor(() => expect(screen.getByText('0')).toBeTruthy())
         expect(error.mock.calls.some((call) => String(call[0]).includes('Rendered more hooks'))).toBe(false)
+        error.mockRestore()
+    })
+
+    it('does not fail a sibling when one card map query fails', async () => {
+        const getWorkMap = vi.fn(async () => map)
+        const api = {
+            getWorkMap,
+            getWorkCardMap: async (cardId: string) => {
+                if (cardId === 'overview.line-count') throw new Error('secret map failure')
+                return map
+            },
+            getWorkLayout: async () => ({ source: 'default', layout: null }),
+        } as unknown as ApiClient
+        const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+        render(
+            <AppContextProvider value={{ api, token: 't', baseUrl: 'http://hub', user: { id: 7 } }}>
+                <QueryClientProvider client={client}>
+                    <I18nProvider>
+                        <WorkCardHost
+                            surface="overview"
+                            view={{ kind: 'overview' }}
+                            sessions={[session(true)]}
+                            api={api}
+                            layoutFor={() => ({ revision: 1, regions: { stats: [{ cardId: 'overview.running-count' }, { cardId: 'overview.line-count' }] } })}
+                        />
+                    </I18nProvider>
+                </QueryClientProvider>
+            </AppContextProvider>,
+        )
+        await waitFor(() => {
+            expect(screen.getByText('1')).toBeTruthy()
+            expect(screen.getByText('This card failed.')).toBeTruthy()
+        })
+        expect(screen.queryByText('secret map failure')).toBeNull()
+    })
+
+    it('refetches the card query before showing it again after bad data', async () => {
+        let explode = true
+        const getWorkMap = vi.fn(async () => ({ ...map, explode }))
+        const api = { getWorkMap, getWorkLayout: async () => ({ source: 'default', layout: null }) } as unknown as ApiClient
+        const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+        const error = vi.spyOn(console, 'error').mockImplementation(() => {})
+        registerWorkCards([{
+            id: 'test.bad-data',
+            titleKey: 'work.lineCount',
+            size: 'stat',
+            source: { kind: 'work-model' },
+            Component: ({ ctx }) => {
+                if ((ctx.query.data as { explode?: boolean } | undefined)?.explode) throw new Error('bad data')
+                return <span>recovered</span>
+            },
+        }])
+        render(
+            <AppContextProvider value={{ api, token: 't', baseUrl: 'http://hub', user: { id: 7 } }}>
+                <QueryClientProvider client={client}>
+                    <I18nProvider>
+                        <WorkCardHost
+                            surface="overview"
+                            view={{ kind: 'overview' }}
+                            sessions={[]}
+                            api={api}
+                            layoutFor={() => ({ revision: 1, regions: { stats: [{ cardId: 'test.bad-data' }] } })}
+                        />
+                    </I18nProvider>
+                </QueryClientProvider>
+            </AppContextProvider>,
+        )
+        await waitFor(() => expect(screen.getByText('This card failed.')).toBeTruthy())
+        explode = false
+        screen.getByText('Retry').click()
+        await waitFor(() => expect(screen.getByText('recovered')).toBeTruthy())
+        expect(getWorkMap.mock.calls.length).toBeGreaterThan(1)
         error.mockRestore()
     })
 })
