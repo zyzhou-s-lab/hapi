@@ -4,7 +4,7 @@ import { dirname } from 'node:path'
 
 import { MachineStore } from './machineStore'
 import { MessageStore } from './messageStore'
-import { addMessage } from './messages'
+import { addMessage, backfillMessageStreams } from './messages'
 import type { StoredMessage } from './types'
 import { PushStore } from './pushStore'
 import { FcmStore } from './fcmStore'
@@ -42,7 +42,7 @@ export {
     WorkGraphValidationError
 } from './workGraph'
 
-const SCHEMA_VERSION: number = 25
+const SCHEMA_VERSION: number = 26
 const REQUIRED_TABLES = [
     'sessions',
     'machines',
@@ -347,6 +347,7 @@ export class Store {
             22: () => this.migrateFromV22ToV23(),
             23: () => this.migrateFromV23ToV24(),
             24: () => this.migrateFromV24ToV25(),
+            25: () => this.migrateFromV25ToV26(),
         })
 
         if (currentVersion === 0) {
@@ -374,6 +375,7 @@ export class Store {
             return
         }
 
+        if (currentVersion === 25) this.backupV25Database()
         const stepMigrations = buildStepMigrations(false)
         if (currentVersion < SCHEMA_VERSION && stepMigrations[currentVersion]) {
             this.db.transaction(() => {
@@ -451,6 +453,8 @@ export class Store {
                 invoked_at INTEGER,
                 scheduled_at INTEGER,
                 delivery_state TEXT NOT NULL DEFAULT 'queued',
+                stream_id TEXT,
+                stream_live INTEGER NOT NULL DEFAULT 0,
                 FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
             );
             CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id, seq);
@@ -460,6 +464,8 @@ export class Store {
             CREATE INDEX IF NOT EXISTS idx_messages_scheduled_pending
                 ON messages(scheduled_at)
                 WHERE scheduled_at IS NOT NULL AND invoked_at IS NULL;
+            CREATE INDEX IF NOT EXISTS idx_messages_stream
+                ON messages(session_id, stream_id, stream_live, seq DESC);
 
             CREATE TABLE IF NOT EXISTS message_epochs (
                 session_id TEXT PRIMARY KEY,
@@ -1037,6 +1043,29 @@ export class Store {
             CREATE INDEX IF NOT EXISTS idx_event_links_namespace_to
                 ON event_links(namespace, to_event_id);
         `)
+    }
+
+    private migrateFromV25ToV26(): void {
+        const columns = this.getMessageColumnNames()
+        if (!columns.has('stream_id')) this.db.exec('ALTER TABLE messages ADD COLUMN stream_id TEXT')
+        if (!columns.has('stream_live')) this.db.exec('ALTER TABLE messages ADD COLUMN stream_live INTEGER NOT NULL DEFAULT 0')
+        this.db.exec(`CREATE INDEX IF NOT EXISTS idx_messages_stream
+            ON messages(session_id, stream_id, stream_live, seq DESC)`)
+        backfillMessageStreams(this.db)
+    }
+
+    /** Standalone copy, not a WAL sidecar. Downgrade by replacing the live db
+     * with this file and deleting its -wal/-shm siblings. */
+    private backupV25Database(): void {
+        if (this._dbPath === ':memory:' || this._dbPath.startsWith('file::memory:')) return
+        const stamp = new Date().toISOString().replace(/[:.]/g, '-')
+        const dest = `${this._dbPath}.bak-v25-${stamp}`
+        this.db.exec(`VACUUM INTO '${dest.replaceAll("'", "''")}'`)
+        try {
+            chmodSync(dest, 0o600)
+        } catch {
+            // The copy is the recovery artifact; permissions are best-effort.
+        }
     }
 
     private getSessionColumnNames(): Set<string> {

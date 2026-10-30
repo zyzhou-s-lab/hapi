@@ -108,6 +108,19 @@ function makeReasoningMessage(id: string, streamId: string, seq: number, at: num
     } as DecryptedMessage
 }
 
+function makeCanonicalSnapshot(id: string, uuid: string, seq: number, live: boolean, content: unknown[] = [
+    { type: 'thinking', thinking: `thinking ${seq}` },
+    { type: 'text', text: `answer ${seq}` }
+]): DecryptedMessage {
+    return {
+        id, seq, localId: null, createdAt: 1_000, invokedAt: 1_000,
+        content: { role: 'agent', content: { type: 'output', data: {
+            type: 'assistant', uuid, streamSnapshot: true, live,
+            message: { role: 'assistant', content, model: 'omp-model' }
+        } } }
+    } as DecryptedMessage
+}
+
 function makeAgentRunMessage(id: string, seq: number, at: number): DecryptedMessage {
     return {
         id,
@@ -1475,5 +1488,88 @@ describe('reasoning snapshot compaction', () => {
         const state = getMessageWindowState(id)
         expect(state.oldestSeq).toBe(2)
         expect(state.newestSeq).toBe(3)
+    })
+})
+
+describe('canonical assistant snapshot compaction', () => {
+    it('retains context through more than 400 whole-message updates with stable timestamps', () => {
+        const id = sessionId('canonical-flood')
+        const context = makeUserMessage({ id: 'prior-context', seq: 1, createdAt: 500, invokedAt: 500 })
+        ingestIncomingMessages(id, [context])
+        for (let seq = 2; seq < VISIBLE_WINDOW_SIZE + 30; seq++) {
+            ingestIncomingMessages(id, [makeCanonicalSnapshot(`live-${seq}`, 'assistant', seq, true)])
+        }
+        const final = makeCanonicalSnapshot('final', 'assistant', 500, false, [{ type: 'text', text: 'corrected' }])
+        ingestIncomingMessages(id, [final])
+        expect(getMessageWindowState(id).messages).toEqual([context, final])
+        ingestIncomingMessages(id, [makeCanonicalSnapshot('late-live', 'assistant', 501, true)])
+        expect(getMessageWindowState(id).messages).toEqual([context, final])
+    })
+
+    it('replaces provisional text and thinking with an authoritative empty final', () => {
+        const id = sessionId('canonical-empty')
+        const final = makeCanonicalSnapshot('empty-final', 'assistant', 3, false, [])
+        ingestIncomingMessages(id, [makeCanonicalSnapshot('live', 'assistant', 2, true)])
+        ingestIncomingMessages(id, [final])
+        ingestIncomingMessages(id, [makeCanonicalSnapshot('replay', 'assistant', 4, true)])
+        expect(getMessageWindowState(id).messages).toEqual([final])
+    })
+
+    it('keeps kind-safe mixed streams and ordinary untagged messages independent', () => {
+        const id = sessionId('canonical-mixed')
+        const reasoning = makeReasoningMessage('reasoning', 'same-id', 2, 1_000)
+        const text = makeAgentMessage({ id: 'text', seq: 3, at: 1_000 })
+        text.content = { role: 'agent', content: { type: 'codex', data: {
+            type: 'message', id: 'same-id', message: 'text', streamSnapshot: true, live: true
+        } } }
+        const ordinary = makeCanonicalSnapshot('ordinary', 'same-id', 4, true)
+        ordinary.content = { role: 'agent', content: { type: 'output', data: {
+            type: 'assistant', uuid: 'same-id', message: { role: 'assistant', content: [{ type: 'text', text: 'ordinary' }] }
+        } } }
+        const final = makeCanonicalSnapshot('final', 'same-id', 5, false)
+        ingestIncomingMessages(id, [makeCanonicalSnapshot('live', 'same-id', 1, true), reasoning, text, ordinary, final])
+        expect(getMessageWindowState(id).messages).toEqual([reasoning, text, ordinary, final])
+    })
+
+    it('does not revive a finalized stream after its row leaves the window', () => {
+        const id = sessionId('canonical-evicted-final')
+        ingestIncomingMessages(id, [makeCanonicalSnapshot('final', 'assistant', 1, false)])
+        const later = Array.from({ length: VISIBLE_WINDOW_SIZE }, (_, index) =>
+            makeAgentMessage({ id: `later-${index}`, seq: index + 2, at: index + 2_000 }))
+        ingestIncomingMessages(id, later)
+        ingestIncomingMessages(id, [makeCanonicalSnapshot('replayed-live', 'assistant', 500, true)])
+        expect(getMessageWindowState(id).messages).toEqual(later)
+    })
+
+    it('hydrates and persists final identities independently of retained message rows', async () => {
+        const id = sessionId('canonical-hydrated-final')
+        const context = makeUserMessage({ id: 'context', seq: 10, createdAt: 500, invokedAt: 500 })
+        sessionStorage.setItem(`hapi:message-window:v2:${id}`, JSON.stringify({
+            messages: [context], finalizedStreamIds: ['output:assistant:assistant'],
+            hasMore: false, epoch: 0
+        }))
+        ingestIncomingMessages(id, [makeCanonicalSnapshot('replayed-live', 'assistant', 11, true)])
+        expect(getMessageWindowState(id).messages).toEqual([context])
+        ingestIncomingMessages(id, [makeCanonicalSnapshot('another-final', 'another', 12, false)])
+        await vi.waitFor(() => {
+            const persisted = JSON.parse(sessionStorage.getItem(`hapi:message-window:v2:${id}`)!)
+            expect(persisted.finalizedStreamIds).toEqual(['output:assistant:assistant', 'output:assistant:another'])
+        })
+    })
+
+    it('keeps a refreshed final authoritative when older pagination and SSE replay bring live rows', async () => {
+        const id = sessionId('canonical-pagination')
+        const final = makeCanonicalSnapshot('final', 'assistant', 20, false, [{ type: 'text', text: 'final correction' }])
+        const oldLive = makeCanonicalSnapshot('old-live', 'assistant', 10, true)
+        const context = makeUserMessage({ id: 'context', seq: 1, createdAt: 500, invokedAt: 500 })
+        const getMessages = vi.fn()
+            .mockResolvedValueOnce(latestResponse([final], { hasMore: true, nextBeforeAt: 1_000, nextBeforeSeq: 20 }))
+            .mockResolvedValueOnce(beforeResponse([context, oldLive], { hasMore: false, nextBeforeAt: null, nextBeforeSeq: null }))
+        const api = createApi(getMessages)
+        await syncTailMessages(api, id)
+        setMessageViewMode(id, 'history')
+        await fetchOlderMessages(api, id)
+        ingestIncomingMessages(id, [makeCanonicalSnapshot('late-live', 'assistant', 21, true)])
+        expect(getMessageWindowState(id).messages).toEqual([context, final])
     })
 })

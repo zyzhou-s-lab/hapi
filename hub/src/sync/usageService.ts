@@ -1,4 +1,5 @@
 import type { UsageSummaryBucket, UsageSummaryResponse } from '@hapi/protocol/apiTypes'
+import { getLiveMessageStreamId } from '@hapi/protocol/messages'
 import type { StoredMessage, StoredSession } from '../store'
 import type { UsageEvent } from '../store/usage'
 import type { Store } from '../store'
@@ -56,6 +57,7 @@ function sessionModel(session: StoredSession): string | null {
 }
 
 function parseUsageEvent(session: StoredSession, message: StoredMessage): UsageEvent | null {
+    if (getLiveMessageStreamId(message.content) !== null) return null
     const envelope = asRecord(message.content)
     if (envelope?.role !== 'agent') return null
 

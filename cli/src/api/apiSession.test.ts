@@ -747,3 +747,46 @@ describe('IncomingMessageFilter (HAPI Bot R3 finding #1)', () => {
         expect(filter.accept({ id: 'b', seq: 9 })).toBe(true)
     })
 })
+
+describe('agent stream snapshot dedupe', () => {
+    function messageCount(socket: (typeof socketHarness.sockets)[number] | undefined): number {
+        return socket?.emitted.filter((entry) => entry.event === 'message').length ?? 0
+    }
+
+    function activeClient(): { client: ApiSessionClient; socket: (typeof socketHarness.sockets)[number] } {
+        socketHarness.sockets.length = 0
+        const client = new ApiSessionClient('token', createSession())
+        const socket = socketHarness.sockets[0]
+        if (!socket) throw new Error('missing socket')
+        return { client, socket }
+    }
+
+    const live = { type: 'message', id: 'pi-1', streamSnapshot: true, live: true, message: 'hel' }
+    const settled = { type: 'message', id: 'pi-1', streamSnapshot: true, message: 'hello' }
+
+    it('drops the dedupe entry after the settled snapshot so the key does not stick', () => {
+        const { client, socket } = activeClient()
+        client.sendAgentMessage(live)
+        client.sendAgentMessage(live)
+        expect(messageCount(socket)).toBe(1)
+        client.sendAgentMessage(settled)
+        client.sendAgentMessage(settled)
+        expect(messageCount(socket)).toBe(3)
+        client.sendAgentMessage(live)
+        expect(messageCount(socket)).toBe(4)
+        client.close()
+    })
+
+    it('sends the same snapshot again after a disconnect and after reconnect', () => {
+        const { client, socket } = activeClient()
+        client.sendAgentMessage(live)
+        expect(messageCount(socket)).toBe(1)
+        socket.trigger('disconnect', 'transport close')
+        client.sendAgentMessage(live)
+        expect(messageCount(socket)).toBe(2)
+        socket.triggerConnect()
+        client.sendAgentMessage(live)
+        expect(messageCount(socket)).toBe(3)
+        client.close()
+    })
+})

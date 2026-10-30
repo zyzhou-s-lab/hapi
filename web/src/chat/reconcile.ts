@@ -33,6 +33,8 @@ function areUsageDataEqual(left?: UsageData, right?: UsageData): boolean {
     if (!left || !right) return false
     return left.input_tokens === right.input_tokens
         && left.output_tokens === right.output_tokens
+        && left.reasoning_output_tokens === right.reasoning_output_tokens
+        && left.cost_usd === right.cost_usd
         && left.cache_creation_input_tokens === right.cache_creation_input_tokens
         && left.cache_read_input_tokens === right.cache_read_input_tokens
         && left.context_tokens === right.context_tokens
@@ -162,6 +164,10 @@ function areAgentTextBlocksEqual(left: AgentTextBlock, right: AgentTextBlock): b
         && left.localId === right.localId
         && left.createdAt === right.createdAt
         && left.meta === right.meta
+        && left.invokedAt === right.invokedAt
+        && left.durationMs === right.durationMs
+        && left.model === right.model
+        && areUsageDataEqual(left.usage, right.usage)
         && areRoundSummariesEqual(left.roundSummary, right.roundSummary)
 }
 
@@ -170,6 +176,10 @@ function areAgentReasoningBlocksEqual(left: AgentReasoningBlock, right: AgentRea
         && left.localId === right.localId
         && left.createdAt === right.createdAt
         && left.meta === right.meta
+        && left.invokedAt === right.invokedAt
+        && left.durationMs === right.durationMs
+        && left.model === right.model
+        && areUsageDataEqual(left.usage, right.usage)
         && areRoundSummariesEqual(left.roundSummary, right.roundSummary)
 }
 
@@ -222,6 +232,10 @@ function areToolCallsEqual(left: ToolCallBlock, right: ToolCallBlock, childrenSa
     return left.localId === right.localId
         && left.createdAt === right.createdAt
         && left.meta === right.meta
+        && left.invokedAt === right.invokedAt
+        && left.durationMs === right.durationMs
+        && left.model === right.model
+        && areUsageDataEqual(left.usage, right.usage)
         && left.tool.id === right.tool.id
         && left.tool.name === right.tool.name
         && left.tool.state === right.tool.state

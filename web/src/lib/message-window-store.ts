@@ -1,4 +1,4 @@
-import { getReasoningStreamId } from '@hapi/protocol/messages'
+import { getLiveMessageStreamId, getMessageStreamId } from '@hapi/protocol/messages'
 import type { ApiClient } from '@/api/client'
 import { normalizeDecryptedMessage } from '@/chat/normalize'
 import type { DecryptedMessage, MessageStatus, MessagesResponse } from '@/types/api'
@@ -50,6 +50,7 @@ type MessagePosition = {
 }
 
 type InternalState = MessageWindowState & {
+    finalizedStreamIds: Set<string>
     oldestPositionAt: number | null
     oldestPositionSeq: number | null
     newestPositionAt: number | null
@@ -61,6 +62,7 @@ type InternalState = MessageWindowState & {
 }
 
 type PersistedMessageWindowState = {
+    finalizedStreamIds?: string[]
     messages: DecryptedMessage[]
     hasMore: boolean
     oldestPositionAt: number | null
@@ -157,7 +159,8 @@ function readPosition(at: unknown, seq: unknown): MessagePosition | null {
 }
 
 function shouldPersistState(state: InternalState): boolean {
-    return state.messages.length > 0
+    return state.finalizedStreamIds.size > 0
+        || state.messages.length > 0
         || state.hasMore
         || state.epoch !== null
         || state.oldestPositionAt !== null
@@ -174,6 +177,7 @@ function persistState(sessionId: string, state: InternalState): void {
             return
         }
         const persisted: PersistedMessageWindowState = {
+            finalizedStreamIds: [...state.finalizedStreamIds],
             messages: state.messages,
             hasMore: state.hasMore,
             oldestPositionAt: state.oldestPositionAt,
@@ -224,6 +228,7 @@ function schedulePersist(sessionId: string): void {
 
 function createState(sessionId: string): InternalState {
     return {
+        finalizedStreamIds: new Set(),
         sessionId,
         messages: [],
         hasMore: false,
@@ -276,8 +281,14 @@ function hydrateState(sessionId: string): InternalState | null {
         const epoch = typeof parsed.epoch === 'number' && Number.isInteger(parsed.epoch) && parsed.epoch >= 0
             ? parsed.epoch
             : null
-        return buildState(createState(sessionId), {
-            messages: mergeMessages([], parsed.messages.map(restoreMessage)),
+        const previous = createState(sessionId)
+        previous.finalizedStreamIds = new Set(
+            Array.isArray(parsed.finalizedStreamIds)
+                ? parsed.finalizedStreamIds.filter((id): id is string => typeof id === 'string')
+                : []
+        )
+        return buildState(previous, {
+            messages: dropSupersededStreamSnapshots(mergeMessages([], parsed.messages.map(restoreMessage)), previous.finalizedStreamIds),
             hasMore: parsed.hasMore === true,
             oldestPositionAt: oldest?.at ?? null,
             oldestPositionSeq: oldest?.seq ?? null,
@@ -444,48 +455,49 @@ function isCodexAgentRunMessage(message: DecryptedMessage): boolean {
     return type === 'agent-run-start' || type === 'agent-run-update' || type === 'agent-run-trace'
 }
 
-/** Collapse a reasoning stream down to the one snapshot that still says
- *  something.
- *
- *  The CLI re-sends a growing reasoning buffer under a stable stream id every
- *  few hundred milliseconds, and the timeline already folds those snapshots
- *  into a single block by that id. Sessions recorded before the hub started
- *  retiring them still carry every intermediate, and spending window budget on
- *  rows that render as one block is what pushes the surrounding conversation
- *  out of reach. Messages with no stream id are left alone. */
-function dropSupersededReasoningSnapshots(messages: DecryptedMessage[]): DecryptedMessage[] {
+/** Compact whole snapshots before spending the visible-window budget. Finals
+ * are authoritative even if an older live event is replayed later. Remember
+ * final identities beyond the visible window so pagination cannot revive them. */
+function dropSupersededStreamSnapshots(
+    messages: DecryptedMessage[],
+    finalizedStreamIds: Set<string>
+): DecryptedMessage[] {
+    for (const message of messages) {
+        const streamId = getMessageStreamId(message.content)
+        if (streamId !== null && getLiveMessageStreamId(message.content) === null) {
+            finalizedStreamIds.add(streamId)
+        }
+    }
     const newestByStream = new Map<string, DecryptedMessage>()
     for (const message of messages) {
-        const streamId = getReasoningStreamId(message.content)
+        const streamId = getMessageStreamId(message.content)
         if (streamId === null) continue
+        if (finalizedStreamIds.has(streamId) && getLiveMessageStreamId(message.content) !== null) continue
         const incumbent = newestByStream.get(streamId)
         if (!incumbent) {
             newestByStream.set(streamId, message)
             continue
         }
-        // Fall back to arrival order when either row predates seq numbering:
-        // `messages` is kept in display order, so later still means newer.
-        const challengerAt = messagePosition(message)
-        const incumbentAt = messagePosition(incumbent)
-        const newer = challengerAt && incumbentAt
-            ? comparePosition(challengerAt, incumbentAt) >= 0
-            : true
+        // Sequence is transport authority; producer timestamps can be stable
+        // throughout a stream or corrected in its final provider payload.
+        const newer = typeof message.seq === 'number' && typeof incumbent.seq === 'number'
+            ? message.seq >= incumbent.seq
+            : message.createdAt >= incumbent.createdAt
         if (newer) newestByStream.set(streamId, message)
     }
-    if (newestByStream.size === 0) return messages
-
     const survivors = new Set<string>()
     for (const message of newestByStream.values()) survivors.add(message.id)
     return messages.filter((message) =>
-        getReasoningStreamId(message.content) === null || survivors.has(message.id))
+        getMessageStreamId(message.content) === null || survivors.has(message.id))
 }
 
 function trimPreservingQueued(
     incoming: DecryptedMessage[],
     regularLimit: number,
-    mode: 'append' | 'prepend'
+    mode: 'append' | 'prepend',
+    finalizedStreamIds: Set<string>
 ): { kept: DecryptedMessage[]; dropped: DecryptedMessage[] } {
-    const messages = dropSupersededReasoningSnapshots(incoming)
+    const messages = dropSupersededStreamSnapshots(incoming, finalizedStreamIds)
     const queued = messages.filter(isQueuedForInvocation)
     const queuedIds = new Set(queued.map((message) => message.id))
     const nonQueued = messages.filter((message) => !queuedIds.has(message.id))
@@ -504,7 +516,9 @@ function optimisticMessage(message: DecryptedMessage): boolean {
 }
 
 function shouldRetainWindowMessage(message: DecryptedMessage): boolean {
-    return isQueuedForInvocation(message) || normalizeDecryptedMessage(message) !== null
+    return getMessageStreamId(message.content) !== null
+        || isQueuedForInvocation(message)
+        || normalizeDecryptedMessage(message) !== null
 }
 
 function countNewRenderableMessages(
@@ -544,7 +558,7 @@ function mergeIntoWindow(
     const regularLimit = options.regularLimit
         ?? (previous.viewMode === 'history' ? HISTORY_WINDOW_SIZE : VISIBLE_WINDOW_SIZE)
     const merged = mergeMessages(previous.messages, retainedIncoming)
-    const { kept, dropped } = trimPreservingQueued(merged, regularLimit, mode)
+    const { kept, dropped } = trimPreservingQueued(merged, regularLimit, mode, previous.finalizedStreamIds)
     let next = buildState(previous, {
         messages: kept,
         ...(options.advanceTailRevision
@@ -596,7 +610,7 @@ function applyLatestResponse(
         : previous.messages
     const authoritative = mergeMessages(preserved, retainedResponseMessages)
     const incoming = mergeMessages(authoritative, concurrentServerRows)
-    const { kept, dropped } = trimPreservingQueued(incoming, VISIBLE_WINDOW_SIZE, 'append')
+    const { kept, dropped } = trimPreservingQueued(incoming, VISIBLE_WINDOW_SIZE, 'append', previous.finalizedStreamIds)
     const snapshotHead = pagePosition(response.page.snapshotHeadAt, response.page.snapshotHeadSeq)
         ?? derivePosition(response.messages, 'newest')
     const newestKept = derivePosition(kept, 'newest')
@@ -816,7 +830,7 @@ async function waitForTailSyncDrain(
 }
 
 function enterTailMode(previous: InternalState): InternalState {
-    const { kept, dropped } = trimPreservingQueued(previous.messages, VISIBLE_WINDOW_SIZE, 'append')
+    const { kept, dropped } = trimPreservingQueued(previous.messages, VISIBLE_WINDOW_SIZE, 'append', previous.finalizedStreamIds)
     const forceLatest = previous.requiresLatestReset
     const oldest = dropped.length > 0
         ? derivePosition(kept, 'oldest')
@@ -836,7 +850,7 @@ function enterTailMode(previous: InternalState): InternalState {
 export function activateMessageWindow(sessionId: string): void {
     let requestedLatest = false
     updateState(sessionId, (previous) => {
-        const { kept } = trimPreservingQueued(previous.messages, VISIBLE_WINDOW_SIZE, 'append')
+        const { kept } = trimPreservingQueued(previous.messages, VISIBLE_WINDOW_SIZE, 'append', previous.finalizedStreamIds)
         const forceLatest = previous.requiresLatestReset
         const hasUsableCursor = getNewestCursor(previous) !== null
             && previous.epoch !== null
@@ -1116,6 +1130,7 @@ export function seedMessageWindowFromSession(fromSessionId: string, toSessionId:
         syncGeneration: target.syncGeneration + 1,
         olderGeneration: target.olderGeneration + 1
     })
+    seeded.finalizedStreamIds = new Set(source.finalizedStreamIds)
     tailSyncControllers.delete(toSessionId)
     setState(toSessionId, seeded, true)
 }

@@ -15,8 +15,26 @@ describe('convertAgentMessage', () => {
             type: 'message',
             message: 'partial response',
             id: 'text-stream-1',
+            streamSnapshot: true,
+            live: true
+        });
+    });
+
+    it('omits live from a settled text snapshot', () => {
+        const converted = convertAgentMessage({
+            type: 'text',
+            text: 'done',
+            id: 'text-stream-1',
             streamSnapshot: true
         });
+
+        expect(converted).toEqual({
+            type: 'message',
+            message: 'done',
+            id: 'text-stream-1',
+            streamSnapshot: true
+        });
+        expect(converted).not.toHaveProperty('live');
     });
 
     it('keeps legacy text payloads free of a stream id', () => {

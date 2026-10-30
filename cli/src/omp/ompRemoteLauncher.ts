@@ -59,6 +59,7 @@ type PromptLifecycle = {
 class OmpRemoteLauncher extends RemoteLauncherBase {
     private readonly session: OmpSession;
     private client: OmpRpcClient | null = null;
+    private eventAdapter: OmpRpcEventAdapter | null = null;
     private currentPrompt: PromptLifecycle | null = null;
     private heldInput: OmpQueuedInput | null = null;
     private nativeFollowUpOutstanding = false;
@@ -233,6 +234,7 @@ class OmpRemoteLauncher extends RemoteLauncherBase {
             onDiagnostic: (message) => logger.warn(`[omp-remote] ${message}`),
             onHostEvent: (event) => hostIntegration.handle(event)
         }, eventAllowlist);
+        this.eventAdapter = eventAdapter;
         const bufferedEvents: OmpInboundEvent[] = [];
         let subagentSnapshotApplied = false;
         client.onEvent((event) => {
@@ -244,6 +246,7 @@ class OmpRemoteLauncher extends RemoteLauncherBase {
         });
         client.onDiagnostic((message) => logger.warn(`[omp-remote] ${message}`));
         client.onClosed((reason) => {
+            eventAdapter.dispose();
             if (this.shouldExit) {
                 return;
             }
@@ -345,6 +348,8 @@ class OmpRemoteLauncher extends RemoteLauncherBase {
     }
 
     protected async cleanup(): Promise<void> {
+        this.eventAdapter?.dispose();
+        this.eventAdapter = null;
         this.clearAbortHandlers(this.session.client.rpcHandlerManager);
         this.session.setRuntimeConfigApplier(null);
         this.removeQueueChangeListener?.();
@@ -513,6 +518,7 @@ class OmpRemoteLauncher extends RemoteLauncherBase {
                     await client.request({ type: 'follow_up', message, images: prepared.images });
                     break;
                 case 'abort_and_prompt':
+                    this.eventAdapter?.abortMessage();
                     startedPrompt = true;
                     this.nativeFollowUpOutstanding = false;
                     this.beginPrompt(input.modeHash, wasBusy ? 1 : 0);
@@ -1057,6 +1063,7 @@ class OmpRemoteLauncher extends RemoteLauncherBase {
     }
 
     private handleTransportFailure(error: unknown): void {
+        this.eventAdapter?.dispose();
         const failure = error instanceof Error ? error : new Error(String(error));
         this.transportFailure = failure;
         this.clearCurrentPrompt();
@@ -1091,6 +1098,7 @@ class OmpRemoteLauncher extends RemoteLauncherBase {
     }
 
     private async handleAbort(): Promise<void> {
+        this.eventAdapter?.abortMessage();
         const abortedTurnGeneration = this.nativeTurnGeneration;
         const client = this.client;
         if (client?.state === 'ready') {
@@ -1110,6 +1118,7 @@ class OmpRemoteLauncher extends RemoteLauncherBase {
     }
 
     private async handleExitFromUi(): Promise<void> {
+        this.eventAdapter?.dispose();
         await this.requestExit('exit', async () => {
             await this.handleAbort();
             this.signalChange();
@@ -1117,6 +1126,7 @@ class OmpRemoteLauncher extends RemoteLauncherBase {
     }
 
     private async handleSwitchFromUi(): Promise<void> {
+        this.eventAdapter?.dispose();
         await this.requestExit('switch', async () => {
             this.session.queue.requeueHeld();
             this.heldInput = null;

@@ -312,6 +312,7 @@ type MainMessageAccumulator = {
     displayId: string;
     role: JsonValue | undefined;
     snapshot: JsonObject;
+    timestamp?: string;
 };
 
 type ToolLifecycle = {
@@ -415,12 +416,17 @@ export class OmpRpcEventAdapter {
     private readonly tools = new Map<string, ToolLifecycle>();
     private readonly subagents = new Map<string, SubagentState>();
 
+    private snapshotTimer: NodeJS.Timeout | null = null;
+    private liveSuppressed = false;
+    private lastCanonicalJson: string | null = null;
+    private disposed = false;
     constructor(
         private readonly callbacks: OmpRpcEventAdapterCallbacks,
         private readonly eventAllowlist: ReadonlySet<OmpKnownEventType> = defaultOmpEventAllowlist
     ) {}
 
     handle(event: OmpInboundEvent): void {
+        if (this.disposed) return;
         if (event.kind === 'unknown') {
             // Unknown protocol extensions remain diagnostic, never chat warnings.
             this.callbacks.onDiagnostic(`OMP event: ${event.type}`);
@@ -489,11 +495,50 @@ export class OmpRpcEventAdapter {
         output.onStructuredEvent({ type: 'omp-session-event', eventType: event.type, frame: event.raw });
     }
 
+    /** Stop live rendering immediately, but retain identity for the aborted final. */
+    abortMessage(): void {
+        this.cancelSnapshot();
+        this.liveSuppressed = true;
+    }
+
+    /** No callbacks or trailing snapshots may escape transport teardown. */
+    dispose(): void {
+        this.disposed = true;
+        this.abortMessage();
+        this.activeMessage = null;
+    }
+
+    private cancelSnapshot(): void {
+        if (this.snapshotTimer === null) return;
+        clearTimeout(this.snapshotTimer);
+        this.snapshotTimer = null;
+    }
+
+    private scheduleSnapshot(): void {
+        // Streaming progressively renders message_end, not the opt-in raw
+        // message_update diagnostic row. Use a fixed window, not a debounce:
+        // continuous tokens cannot postpone rendering indefinitely.
+        if (this.liveSuppressed || !this.eventAllowlist.has('message_end')
+            || this.activeMessage?.role !== 'assistant' || this.snapshotTimer !== null) return;
+        this.snapshotTimer = setTimeout(() => {
+            this.snapshotTimer = null;
+            const active = this.activeMessage;
+            if (this.disposed || this.liveSuppressed || !active) return;
+            const assistant = AssistantMessageSchema.safeParse(active.snapshot);
+            if (!assistant.success) return;
+            active.timestamp ??= new Date().toISOString();
+            this.commitAssistant(this.projection('message_end'), active.displayId,
+                assistant.data, active.timestamp, true);
+        }, 75);
+        this.snapshotTimer.unref();
+    }
+
     private projection(type: OmpKnownEventType): OmpEventProjection {
         return new OmpEventProjection(this.eventAllowlist.has(type), this.callbacks);
     }
 
     seedSubagents(snapshots: OmpSubagentSnapshot[]): void {
+        if (this.disposed) return;
         for (const snapshot of snapshots) {
             const state = this.ensureSubagent({
                 id: snapshot.id,
@@ -515,6 +560,7 @@ export class OmpRpcEventAdapter {
     }
 
     seedSubagentMessages(subagentId: string, messages: JsonObject[]): void {
+        if (this.disposed) return;
         const state = this.subagents.get(subagentId);
         if (!state) {
             this.callbacks.onDiagnostic(`OMP subagent transcript has no registry entry: ${subagentId}`);
@@ -529,6 +575,8 @@ export class OmpRpcEventAdapter {
     private handleKnown(output: OmpEventProjection, event: OmpKnownEvent): void {
         switch (event.type) {
             case 'agent_start':
+                this.reconcileBoundary('agent_start');
+                this.liveSuppressed = false;
                 this.callbacks.onTurnStarted();
                 return;
             case 'agent_end':
@@ -536,6 +584,9 @@ export class OmpRpcEventAdapter {
                 this.callbacks.onTurnFinished();
                 return;
             case 'turn_start':
+                this.reconcileBoundary('turn_start');
+                this.liveSuppressed = false;
+                return;
             case 'tool_stream_update':
             case 'config_warnings_changed':
             case 'advisor_cost_changed':
@@ -662,6 +713,8 @@ export class OmpRpcEventAdapter {
                 `OMP message_start replaced unfinished ${String(this.activeMessage.role ?? 'unknown')} message`
             );
         }
+        this.cancelSnapshot();
+        this.liveSuppressed = false;
         this.activeMessage = {
             displayId: randomUUID(),
             role: parsed.data.message.role,
@@ -689,6 +742,7 @@ export class OmpRpcEventAdapter {
                 snapshot: parsed.data.message
             };
         }
+        this.scheduleSnapshot();
 
         const { type, delta } = parsed.data.assistantMessageEvent;
         if (!delta) return;
@@ -700,6 +754,7 @@ export class OmpRpcEventAdapter {
     }
 
     private handleMessageEnd(output: OmpEventProjection, raw: JsonObject): void {
+        this.cancelSnapshot();
         const event = MessageEndSchema.safeParse(raw);
         if (!event.success) {
             this.invalidEvent('message_end', event.error);
@@ -707,6 +762,7 @@ export class OmpRpcEventAdapter {
         }
 
         const displayId = this.activeMessage?.displayId ?? randomUUID();
+        const timestamp = this.activeMessage?.timestamp;
         if (!this.activeMessage) {
             this.callbacks.onDiagnostic('OMP message_end arrived without message_start; allocated a display UUID');
         }
@@ -714,7 +770,7 @@ export class OmpRpcEventAdapter {
 
         const assistant = AssistantMessageSchema.safeParse(event.data.message);
         if (assistant.success) {
-            this.commitAssistant(output, displayId, assistant.data);
+            this.commitAssistant(output, displayId, assistant.data, timestamp);
             return;
         }
 
@@ -738,11 +794,15 @@ export class OmpRpcEventAdapter {
 
     private commitAssistant(output: OmpEventProjection, 
         displayId: string,
-        assistant: z.infer<typeof AssistantMessageSchema>
+        assistant: z.infer<typeof AssistantMessageSchema>,
+        timestamp = new Date().toISOString(),
+        live = false
     ): void {
         const modelLabel = `${assistant.provider}/${assistant.model}`;
-        const usage = this.toAgentUsage(assistant.usage);
         const content = assistant.content.flatMap((block): JsonObject[] => {
+            // Tool arguments are incomplete while streaming. Only the final
+            // canonical message may introduce executable tool-use blocks.
+            if (live && block.type === 'toolCall') return [];
             if (block.type === 'text' && typeof block.text === 'string' && block.text.length > 0) {
                 return [{ type: 'text', text: block.text }];
             }
@@ -771,26 +831,25 @@ export class OmpRpcEventAdapter {
         });
 
         const parentUuid = this.lastDisplayId;
-        // Stamp at commit time, NOT with omp's message timestamp: omp sets it to
-        // the turn/model-request start, several seconds before the response exists.
-        // The hub compares this value against the hub-receive time of the user's
-        // prompt, so a runner clock even ~40ms behind the hub clock made the first
-        // assistant message of every turn sort ABOVE the request in the web chat.
-        // Commit time keeps the display order causal regardless of clock skew.
-        const timestamp = new Date().toISOString();
+        // First projection time, or commit time when nothing was shown live.
+        // Never OMP's model-request timestamp: it can precede the user's prompt
+        // and sort the assistant bubble above the request. Reuse it so replacement
+        // does not move the bubble.
         const duration = assistant.duration;
         const generationDurationMs = typeof duration === 'number' && Number.isFinite(duration) && duration > 0
             ? duration
             : undefined;
-        output.onCanonicalMessage({
-            type: 'assistant',
+        const canonical = {
+            type: 'assistant' as const,
             uuid: displayId,
+            streamSnapshot: true,
+            ...(live ? { live: true } : {}),
             parentUuid,
             isSidechain: false,
             providerMessageId: assistant.responseId,
             timestamp,
             message: {
-                role: 'assistant',
+                role: 'assistant' as const,
                 content,
                 model: modelLabel,
                 usage: {
@@ -803,9 +862,14 @@ export class OmpRpcEventAdapter {
                     ...(generationDurationMs !== undefined ? { generation_duration_ms: generationDurationMs } : {})
                 }
             }
-        });
+        };
+        const encoded = JSON.stringify(canonical);
+        if (encoded === this.lastCanonicalJson) return;
+        this.lastCanonicalJson = encoded;
+        output.onCanonicalMessage(canonical);
+        if (live) return;
         if (output.enabled) this.lastDisplayId = displayId;
-        output.onAgentMessage({ type: 'usage', ...usage });
+        output.onAgentMessage({ type: 'usage', ...this.toAgentUsage(assistant.usage) });
         if (assistant.errorMessage) {
             output.onAgentMessage({ type: 'error', message: assistant.errorMessage });
         }
@@ -1386,7 +1450,8 @@ export class OmpRpcEventAdapter {
         return JSON.stringify(message);
     }
 
-    private reconcileBoundary(boundary: 'turn_end' | 'agent_end'): void {
+    private reconcileBoundary(boundary: 'turn_start' | 'turn_end' | 'agent_start' | 'agent_end'): void {
+        this.abortMessage();
         if (!this.activeMessage) return;
         this.callbacks.onDiagnostic(
             `OMP ${boundary} reconciled an unfinished ${String(this.activeMessage.role ?? 'unknown')} message without appending it`

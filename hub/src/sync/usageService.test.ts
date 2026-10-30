@@ -17,6 +17,30 @@ function addAgentMessage(store: Store, sessionId: string, content: unknown, crea
 }
 
 describe('usage service', () => {
+    it('ignores provisional usage and replaces final corrections including empty usage', () => {
+        const store = new Store(':memory:')
+        try {
+            const session = store.sessions.getOrCreateSession('snapshot-usage', { flavor: 'omp' }, null, 'default')
+            const send = (live: boolean, outputTokens: number) => addAgentMessage(store, session.id, {
+                type: 'output',
+                data: {
+                    type: 'assistant', uuid: 'usage-stream', streamSnapshot: true, live,
+                    message: { content: [], usage: { output_tokens: outputTokens } }
+                }
+            })
+            send(true, 100)
+            expect(getUsageSummary(store, 'default', 'all').totals.outputTokens).toBe(0)
+            send(false, 10)
+            expect(getUsageSummary(store, 'default', 'all').totals.outputTokens).toBe(10)
+            send(false, 3)
+            expect(getUsageSummary(store, 'default', 'all').totals.outputTokens).toBe(3)
+            send(true, 900)
+            expect(getUsageSummary(store, 'default', 'all').totals.outputTokens).toBe(3)
+            send(false, 0)
+            expect(getUsageSummary(store, 'default', 'all').totals.outputTokens).toBe(0)
+        } finally { store.close() }
+    })
+
     it('normalizes historical Claude input that excludes cached tokens', () => {
         const store = new Store(':memory:')
         const session = store.sessions.getOrCreateSession(

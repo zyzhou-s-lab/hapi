@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { convertAgentMessage } from '@/agent/messageConverter';
 import { PiMessageAccumulator } from './piMessageAccumulator';
 
 const event = (type: string, extra: Record<string, unknown> = {}) => ({ type, ...extra });
@@ -28,6 +29,28 @@ describe('PiMessageAccumulator', () => {
         }))).toEqual([{
             type: 'text', text: 'answer!', id: 'pi-nonce-turn-1-message-1-text-0', streamSnapshot: true, live: true,
         }]);
+    });
+
+    it('converts intermediate text as live and the message_end snapshot as final', () => {
+        let now = 0;
+        const accumulator = new PiMessageAccumulator({ now: () => now, streamNonceFactory: () => 'nonce' });
+        accumulator.handleEvent(event('turn_start'));
+        accumulator.handleEvent(event('message_start'));
+        const partial = convertAgentMessage(accumulator.handleEvent(event('message_update', {
+            assistantMessageEvent: { type: 'text_delta', delta: 'hel' },
+        }))[0]!);
+        now = 100;
+        expect(accumulator.handleEvent(event('message_update', {
+            assistantMessageEvent: { type: 'text_delta', delta: 'lo' },
+        }))).toEqual([]);
+        const settled = convertAgentMessage(accumulator.handleEvent(event('message_end'))[0]!);
+        if (partial?.type !== 'message' || settled?.type !== 'message') {
+            throw new Error('expected text snapshots');
+        }
+
+        expect(partial).toMatchObject({ message: 'hel', streamSnapshot: true, live: true });
+        expect(settled).toMatchObject({ message: 'hello', streamSnapshot: true, id: partial.id });
+        expect(settled).not.toHaveProperty('live');
     });
 
     it('flushes the final changed snapshot once at message_end and close/error boundaries', () => {

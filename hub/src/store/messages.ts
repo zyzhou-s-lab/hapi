@@ -2,7 +2,7 @@ import type { Database } from 'bun:sqlite'
 import { randomUUID } from 'node:crypto'
 import { isDeepStrictEqual } from 'node:util'
 
-import { getLiveReasoningStreamId } from '@hapi/protocol/messages'
+import { getLiveMessageStreamId, getMessageStreamId } from '@hapi/protocol/messages'
 
 import type { StoredMessage } from './types'
 import { decodeMessageContent, encodeMessageContent, truncateOversizedMessageContent } from './contentCodec'
@@ -32,6 +32,76 @@ export class ImportedMessageConflictError extends Error {
         super(`Imported message content changed for localId: ${localId}`)
         this.name = 'ImportedMessageConflictError'
     }
+}
+
+/** Indexed metadata is separate from the compressed payload. Canonicalization
+ * runs in the writer's transaction: final beats live, then arrival seq wins. */
+function indexMessageStream(db: Database, sessionId: string, id: string, content: unknown): string {
+    const streamId = getMessageStreamId(content)
+    if (streamId === null) return id
+    const live = getLiveMessageStreamId(content) !== null
+    db.prepare('UPDATE messages SET stream_id = ?, stream_live = ? WHERE id = ?')
+        .run(streamId, live ? 1 : 0, id)
+    const winner = db.prepare(`
+        SELECT id FROM messages WHERE session_id = ? AND stream_id = ?
+        ORDER BY stream_live ASC, seq DESC LIMIT 1
+    `).get(sessionId, streamId) as { id: string }
+    const replacesFinal = !live && db.prepare(`
+        SELECT 1 FROM messages
+        WHERE session_id = ? AND stream_id = ? AND stream_live = 0 AND id <> ? LIMIT 1
+    `).get(sessionId, streamId, id)
+    db.prepare('DELETE FROM messages WHERE session_id = ? AND stream_id = ? AND id <> ?')
+        .run(sessionId, streamId, winner.id)
+    // Only prior finals can contribute usage. Normal provisional replacement
+    // must not repeatedly invalidate the whole session's usage scan.
+    if (replacesFinal) bumpMessageEpoch(db, sessionId)
+    return winner.id
+}
+
+/** A byte-identical snapshot is not a new revision. Replays must not insert,
+ * replace, or bump the epoch. Live versus final is part of the content. */
+function identicalStreamMessage(db: Database, sessionId: string, content: unknown): StoredMessage | null {
+    const streamId = getMessageStreamId(content)
+    if (streamId === null) return null
+    const row = db.prepare(`
+        SELECT * FROM messages WHERE session_id = ? AND stream_id = ?
+        ORDER BY stream_live ASC, seq DESC LIMIT 1
+    `).get(sessionId, streamId) as DbMessageRow | undefined
+    if (!row) return null
+    const stored = truncateOversizedMessageContent(content)
+    if (!isDeepStrictEqual(decodeMessageContent(row.content), stored)) return null
+    return toStoredMessage(row)
+}
+
+/** Used only by migration/merge, never by the snapshot hot path. */
+export function compactMessageStreams(db: Database, sessionId?: string): void {
+    db.prepare(`
+        DELETE FROM messages WHERE id IN (
+            SELECT id FROM (
+                SELECT id, ROW_NUMBER() OVER (
+                    PARTITION BY session_id, stream_id ORDER BY stream_live ASC, seq DESC
+                ) AS rank FROM messages
+                WHERE stream_id IS NOT NULL ${sessionId ? 'AND session_id = ?' : ''}
+            ) WHERE rank > 1
+        )
+    `).run(...(sessionId ? [sessionId] : []))
+}
+
+/** One-time v26 backfill reads legacy TEXT and compressed BLOB content alike. */
+export function backfillMessageStreams(db: Database): void {
+    const update = db.prepare('UPDATE messages SET stream_id = ?, stream_live = ? WHERE id = ?')
+    const rows = db.prepare('SELECT id, content FROM messages')
+    for (const row of rows.iterate() as Iterable<Pick<DbMessageRow, 'id' | 'content'>>) {
+        const content = decodeMessageContent(row.content)
+        const streamId = getMessageStreamId(content)
+        if (streamId !== null) update.run(streamId, getLiveMessageStreamId(content) === null ? 0 : 1, row.id)
+    }
+    compactMessageStreams(db)
+    db.exec(`
+        INSERT INTO message_epochs (session_id, epoch)
+        SELECT DISTINCT session_id, 1 FROM messages WHERE stream_id IS NOT NULL
+        ON CONFLICT(session_id) DO UPDATE SET epoch = epoch + 1
+    `)
 }
 
 export function addImportedMessage(
@@ -74,10 +144,11 @@ export function addImportedMessage(
             local_id: localId,
             invoked_at: stampedAt
         })
-        if (previousHead && stampedAt < previousHead.at) bumpMessageEpoch(db, sessionId)
-        const row = db.prepare('SELECT * FROM messages WHERE id = ?').get(id) as DbMessageRow | undefined
+        const canonicalId = indexMessageStream(db, sessionId, id, content)
+        if (canonicalId === id && previousHead && stampedAt < previousHead.at) bumpMessageEpoch(db, sessionId)
+        const row = db.prepare('SELECT * FROM messages WHERE id = ?').get(canonicalId) as DbMessageRow | undefined
         if (!row) throw new Error('Failed to create imported message')
-        return { message: toStoredMessage(row), inserted: true }
+        return { message: toStoredMessage(row), inserted: canonicalId === id }
     })()
 }
 
@@ -151,6 +222,8 @@ export function addMessage(
     const invokedAt = localId ? null : stampedAt
 
     return db.transaction(() => {
+        const identical = identicalStreamMessage(db, sessionId, content)
+        if (identical) return identical
         const previousHead = getNewestMessagePosition(db, sessionId)
         db.prepare(`
             INSERT INTO messages (
@@ -168,10 +241,11 @@ export function addMessage(
             invoked_at: invokedAt,
             scheduled_at: scheduledAt ?? null
         })
+        const canonicalId = indexMessageStream(db, sessionId, id, content)
 
         const positionAt = invokedAt ?? stampedAt
-        if (previousHead && positionAt < previousHead.at) bumpMessageEpoch(db, sessionId)
-        const row = db.prepare('SELECT * FROM messages WHERE id = ?').get(id) as DbMessageRow | undefined
+        if (canonicalId === id && previousHead && positionAt < previousHead.at) bumpMessageEpoch(db, sessionId)
+        const row = db.prepare('SELECT * FROM messages WHERE id = ?').get(canonicalId) as DbMessageRow | undefined
         if (!row) throw new Error('Failed to create message')
         return toStoredMessage(row)
     })()
@@ -222,8 +296,9 @@ export function copyMessageToSession(
         scheduled_at: message.scheduledAt ?? null,
         delivery_state: message.deliveryState ?? 'queued'
     })
+    const canonicalId = indexMessageStream(db, sessionId, id, message.content)
 
-    const row = db.prepare('SELECT * FROM messages WHERE id = ?').get(id) as DbMessageRow | undefined
+    const row = db.prepare('SELECT * FROM messages WHERE id = ?').get(canonicalId) as DbMessageRow | undefined
     if (!row) {
         throw new Error('Failed to copy message into target session')
     }
@@ -272,8 +347,9 @@ export function copyMessagesToSession(
                 localId = `merged-scheduled:${randomUUID()}`
             }
             const invokedAt = localId ? message.invokedAt : (message.invokedAt ?? createdAt)
+            const id = randomUUID()
             insert.run({
-                id: randomUUID(),
+                id,
                 session_id: sessionId,
                 content: encodeMessageContent(message.content),
                 created_at: createdAt,
@@ -283,6 +359,7 @@ export function copyMessagesToSession(
                 scheduled_at: message.scheduledAt ?? null,
                 delivery_state: message.deliveryState ?? 'queued'
             })
+            indexMessageStream(db, sessionId, id, message.content)
             nextSeq += 1
         }
 
@@ -385,46 +462,17 @@ export function getDeliverableMessagesAfter(
     return rows.map(toStoredMessage)
 }
 
-/** How far back to look for a stream's replaceable snapshots.
- *
- *  The CLI re-sends a growing reasoning buffer every few hundred milliseconds,
- *  so the previous snapshot of a stream is always among the newest rows of its
- *  session. Scanning a bounded tail keeps this off the hot path on sessions
- *  with tens of thousands of messages; anything older than the window is left
- *  alone, which errs toward keeping data. */
-const REASONING_SNAPSHOT_LOOKBACK = 50
-
-/** Drop the replaceable snapshots of one reasoning stream.
- *
- *  Only messages explicitly marked live are eligible, and `keepMessageId` is
- *  always spared. Callers run this *after* storing the message that supersedes
- *  them, so the stream never passes through a moment with no row at all — the
- *  two statements are separate transactions, and a crash between them must not
- *  be able to take the whole stream with it. Returns how many rows were
- *  removed. */
-export function deleteLiveReasoningSnapshots(
+/** Exact indexed pruning, including snapshots separated by arbitrary context. */
+export function deleteLiveMessageSnapshots(
     db: Database,
     sessionId: string,
     streamId: string,
     keepMessageId?: string
 ): number {
-    const rows = db.prepare(`
-        SELECT id, content FROM messages
-        WHERE session_id = ?
-        ORDER BY seq DESC
-        LIMIT ?
-    `).all(sessionId, REASONING_SNAPSHOT_LOOKBACK) as Array<Pick<DbMessageRow, 'id' | 'content'>>
-
-    const staleIds = rows
-        .filter((row) => row.id !== keepMessageId
-            && getLiveReasoningStreamId(decodeMessageContent(row.content)) === streamId)
-        .map((row) => row.id)
-    if (staleIds.length === 0) return 0
-
-    const placeholders = staleIds.map(() => '?').join(', ')
-    const result = db.prepare(
-        `DELETE FROM messages WHERE session_id = ? AND id IN (${placeholders})`
-    ).run(sessionId, ...staleIds)
+    const result = db.prepare(`
+        DELETE FROM messages WHERE session_id = ? AND stream_id = ?
+            AND stream_live = 1 AND (? IS NULL OR id <> ?)
+    `).run(sessionId, streamId, keepMessageId ?? null, keepMessageId ?? null)
     return Number(result.changes)
 }
 
@@ -1085,6 +1133,7 @@ export function mergeSessionMessages(
         const result = db.prepare(
             'UPDATE messages SET session_id = ? WHERE session_id = ?'
         ).run(toSessionId, fromSessionId)
+        compactMessageStreams(db, toSessionId)
 
         if (result.changes > 0) {
             bumpMessageEpoch(db, fromSessionId)
@@ -1158,6 +1207,7 @@ export function truncateMessagesFromLocalId(
                 rowLocalId,
                 invokedAt
             )
+            indexMessageStream(db, sessionId, id, message.content)
             inserted += 1
         }
 

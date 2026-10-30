@@ -1,6 +1,6 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AgentMessage } from '@/agent/types';
-import type { RawJSONLines } from '@/claude/types';
+import { RawJSONLinesSchema, type RawJSONLines } from '@/claude/types';
 import type { JsonObject, OmpKnownEventType } from './types';
 import type { OmpAgentRunEvent, OmpRpcEventAdapterCallbacks, OmpStructuredEvent } from './OmpRpcEventAdapter';
 import { OmpRpcEventAdapter } from './OmpRpcEventAdapter';
@@ -743,7 +743,7 @@ describe('OmpRpcEventAdapter', () => {
         expect(hidden.agentRunEvents).toEqual([]);
     });
 
-    it('keeps native streaming visible locally when default policy excludes hub stream events', () => {
+    it('keeps native streaming visible locally without raw hub stream event rows', () => {
         const harness = createHarness();
         harness.adapter.handle(rpcEvent({ type: 'message_start', message: assistantMessage('initial') }));
         harness.adapter.handle(rpcEvent({
@@ -769,6 +769,194 @@ describe('OmpRpcEventAdapter', () => {
             })
         })]);
         expect(harness.structuredEvents).toEqual([]);
+    });
+
+    describe('canonical streaming snapshots', () => {
+        beforeEach(() => {
+            vi.useFakeTimers();
+            vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'));
+        });
+        afterEach(() => {
+            vi.clearAllTimers();
+            vi.useRealTimers();
+        });
+
+        function update(adapter: OmpRpcEventAdapter, message: JsonObject) {
+            adapter.handle(rpcEvent({
+                type: 'message_update', message,
+                assistantMessageEvent: { type: 'text_delta', delta: 'not the cumulative content' }
+            }));
+        }
+
+        it('coalesces continuous updates and flushes the trailing token without another event', () => {
+            const harness = createHarness();
+            harness.adapter.handle(rpcEvent({ type: 'message_start', message: assistantMessage('') }));
+            update(harness.adapter, assistantMessage('one'));
+            vi.advanceTimersByTime(30);
+            update(harness.adapter, assistantMessage('one two'));
+            vi.advanceTimersByTime(30);
+            update(harness.adapter, assistantMessage('one two three'));
+            vi.advanceTimersByTime(14);
+            expect(harness.canonicalMessages).toEqual([]);
+            vi.advanceTimersByTime(1);
+            expect(harness.canonicalMessages).toHaveLength(1);
+            expect(harness.canonicalMessages[0]).toMatchObject({
+                type: 'assistant', streamSnapshot: true, live: true,
+                message: { content: [
+                    { type: 'thinking', thinking: 'reasoning:one two three' },
+                    { type: 'text', text: 'one two three' }
+                ] }
+            });
+            update(harness.adapter, assistantMessage('last token'));
+            vi.advanceTimersByTime(75);
+            expect(harness.canonicalMessages).toHaveLength(2);
+            expect(harness.canonicalMessages[1]).toMatchObject({
+                uuid: harness.canonicalMessages[0].uuid,
+                timestamp: harness.canonicalMessages[0].timestamp,
+                message: { content: [
+                    { type: 'thinking', thinking: 'reasoning:last token' },
+                    { type: 'text', text: 'last token' }
+                ] }
+            });
+            vi.advanceTimersByTime(1000);
+            expect(harness.canonicalMessages).toHaveLength(2);
+            expect(harness.structuredEvents).toEqual([]);
+            expect(harness.agentMessages).toEqual([]);
+            expect(vi.getTimerCount()).toBe(0);
+            harness.adapter.dispose();
+        });
+
+        it('does not emit another snapshot when the cumulative message is unchanged', () => {
+            const harness = createHarness();
+            harness.adapter.handle(rpcEvent({ type: 'message_start', message: assistantMessage('same') }));
+            update(harness.adapter, assistantMessage('same'));
+            vi.advanceTimersByTime(75);
+            update(harness.adapter, assistantMessage('same'));
+            vi.advanceTimersByTime(75);
+            expect(harness.canonicalMessages).toHaveLength(1);
+            harness.adapter.handle(rpcEvent({ type: 'message_end', message: assistantMessage('same') }));
+            expect(harness.canonicalMessages).toHaveLength(2);
+            expect(harness.canonicalMessages[1]).not.toHaveProperty('live');
+            expect(harness.canonicalMessages[1]).toMatchObject({ uuid: harness.canonicalMessages[0]?.uuid });
+        });
+
+        it.each(['short', ''])('replaces live content with authoritative final %j and cancels pending output', (text) => {
+            const harness = createHarness();
+            harness.adapter.handle(rpcEvent({ type: 'message_start', message: assistantMessage('') }));
+            update(harness.adapter, assistantMessage('a longer provisional answer'));
+            vi.advanceTimersByTime(75);
+            update(harness.adapter, assistantMessage('must never escape after final'));
+            const final = {
+                ...assistantMessage(text, 'final-provider-id'),
+                content: text ? [{ type: 'text', text }] : [],
+                model: 'final-model'
+            };
+            harness.adapter.handle(rpcEvent({ type: 'message_end', message: final }));
+            expect(vi.getTimerCount()).toBe(0);
+            harness.adapter.handle(rpcEvent({ type: 'turn_end' }));
+            harness.adapter.handle(rpcEvent({ type: 'agent_end' }));
+            vi.advanceTimersByTime(1000);
+            expect(harness.canonicalMessages).toHaveLength(2);
+            const committed = harness.canonicalMessages[1];
+            expect(committed).toMatchObject({
+                uuid: harness.canonicalMessages[0].uuid,
+                timestamp: harness.canonicalMessages[0].timestamp,
+                streamSnapshot: true, providerMessageId: 'final-provider-id',
+                message: { content: final.content, model: 'test-provider/final-model',
+                    usage: { input_tokens: 11, output_tokens: 7, cost_usd: 0.035 } }
+            });
+            expect(committed).not.toHaveProperty('live');
+            expect(RawJSONLinesSchema.parse(committed)).toEqual(committed);
+            expect(RawJSONLinesSchema.parse(harness.canonicalMessages[0])).toEqual(harness.canonicalMessages[0]);
+            expect(harness.agentMessages.filter((message) => message.type === 'usage')).toHaveLength(1);
+        });
+
+        it('tags fast final-only messages and preserves ordered blocks without exposing incomplete tools', () => {
+            const harness = createHarness(new Set(['message_end']));
+            const content: JsonObject[] = [
+                { type: 'text', text: 'before' },
+                { type: 'thinking', thinking: 'middle thought' },
+                { type: 'toolCall', id: 'tool-1', name: 'read', arguments: { path: 'file.ts' } },
+                { type: 'text', text: 'after' },
+                { type: 'thinking', thinking: 'last thought' }
+            ];
+            const message = { ...assistantMessage(''), content };
+            harness.adapter.handle(rpcEvent({ type: 'message_start', message }));
+            update(harness.adapter, message);
+            vi.advanceTimersByTime(75);
+            expect(harness.canonicalMessages[0]).toMatchObject({
+                message: { content: [content[0], content[1], content[3], content[4]] }
+            });
+            harness.adapter.handle(rpcEvent({ type: 'message_end', message }));
+            expect(harness.canonicalMessages[1]).toMatchObject({
+                message: { content: [content[0], content[1],
+                    { type: 'tool_use', id: 'tool-1', name: 'read', input: { path: 'file.ts' } },
+                    content[3], content[4]] }
+            });
+            harness.adapter.handle(rpcEvent({ type: 'message_start', message: assistantMessage('second') }));
+            update(harness.adapter, assistantMessage('second'));
+            harness.adapter.handle(rpcEvent({ type: 'message_end', message: assistantMessage('second') }));
+            vi.advanceTimersByTime(75);
+            expect(harness.canonicalMessages).toHaveLength(3);
+            expect(harness.canonicalMessages[2]).toMatchObject({
+                streamSnapshot: true, parentUuid: harness.canonicalMessages[1].uuid
+            });
+            expect(harness.canonicalMessages[2].uuid).not.toBe(harness.canonicalMessages[1].uuid);
+            expect(harness.canonicalMessages[2]).not.toHaveProperty('live');
+        });
+
+        it.each([false, true])(
+            'does not schedule live snapshots with message_end disabled (raw updates: %s)', (rawUpdates) => {
+                const events: OmpKnownEventType[] = rawUpdates ? ['message_update'] : [];
+                const harness = createHarness(new Set(events));
+                update(harness.adapter, assistantMessage('hidden'));
+                expect(vi.getTimerCount()).toBe(0);
+                vi.advanceTimersByTime(1000);
+                harness.adapter.handle(rpcEvent({ type: 'message_end', message: assistantMessage('hidden') }));
+                expect(harness.canonicalMessages).toEqual([]);
+                expect(harness.structuredEvents).toHaveLength(events.includes('message_update') ? 1 : 0);
+                expect(harness.callbacks.onInkMessage).toHaveBeenCalled();
+            }
+        );
+
+        it.each(['turn_end', 'agent_end', 'turn_start', 'agent_start', 'message_start', 'abort', 'dispose'])(
+            'cancels pending snapshots at %s', (boundary) => {
+                const harness = createHarness();
+                update(harness.adapter, assistantMessage('old turn'));
+                expect(vi.getTimerCount()).toBe(1);
+                if (boundary === 'abort') harness.adapter.abortMessage();
+                else if (boundary === 'dispose') harness.adapter.dispose();
+                else harness.adapter.handle(rpcEvent({ type: boundary, message: assistantMessage('new turn') }));
+                expect(vi.getTimerCount()).toBe(0);
+                vi.advanceTimersByTime(1000);
+                expect(harness.canonicalMessages).toEqual([]);
+                if (boundary === 'abort' || boundary === 'dispose') {
+                    update(harness.adapter, assistantMessage('late old turn'));
+                    vi.advanceTimersByTime(1000);
+                    expect(harness.canonicalMessages).toEqual([]);
+                }
+                harness.adapter.handle(rpcEvent({ type: 'message_start', message: assistantMessage('new turn') }));
+                update(harness.adapter, assistantMessage('new turn'));
+                vi.advanceTimersByTime(75);
+                expect(harness.canonicalMessages).toHaveLength(boundary === 'dispose' ? 0 : 1);
+                harness.adapter.dispose();
+            }
+        );
+
+        it('retains the aborted stream identity for its authoritative final', () => {
+            const harness = createHarness();
+            update(harness.adapter, assistantMessage('partial'));
+            vi.advanceTimersByTime(75);
+            update(harness.adapter, assistantMessage('pending'));
+            harness.adapter.abortMessage();
+            harness.adapter.handle(rpcEvent({ type: 'message_end', message: {
+                ...assistantMessage('aborted'), stopReason: 'aborted'
+            } }));
+            vi.advanceTimersByTime(1000);
+            expect(harness.canonicalMessages).toHaveLength(2);
+            expect(harness.canonicalMessages[1]).toMatchObject({ uuid: harness.canonicalMessages[0].uuid });
+            expect(harness.canonicalMessages[1]).not.toHaveProperty('live');
+        });
     });
 });
 

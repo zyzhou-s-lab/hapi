@@ -788,7 +788,7 @@ export function reduceTimeline(
 
                     if (isCliOutputText(c.text, msg.meta)) {
                         blocks.push(createCliOutputBlock({
-                            id: `${msg.id}:${idx}`,
+                            id: `${msg.streamSnapshot?.id ?? msg.id}:${idx}`,
                             localId: msg.localId,
                             createdAt: msg.createdAt,
                             invokedAt: msg.invokedAt,
@@ -815,7 +815,7 @@ export function reduceTimeline(
 
                     const block: AgentTextBlock = {
                         kind: 'agent-text',
-                        id: `${msg.id}:${idx}`,
+                        id: `${msg.streamSnapshot?.id ?? msg.id}:${idx}`,
                         localId: msg.localId,
                         createdAt: msg.createdAt,
                         invokedAt: msg.invokedAt,
@@ -879,7 +879,7 @@ export function reduceTimeline(
 
                     const block: AgentReasoningBlock = {
                         kind: 'agent-reasoning',
-                        id: `${msg.id}:${idx}`,
+                        id: `${msg.streamSnapshot?.id ?? msg.id}:${idx}`,
                         localId: msg.localId,
                         createdAt: msg.createdAt,
                         invokedAt: msg.invokedAt,
