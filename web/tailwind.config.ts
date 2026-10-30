@@ -13,6 +13,20 @@ export default {
                 // landscape widths.
                 split: '920px'
             },
+            fontFamily: {
+                sans: ['var(--app-font-sans)'],
+                mono: ['var(--app-font-mono)']
+            },
+            fontWeight: {
+                normal: 'var(--app-font-weight-regular)',
+                medium: 'var(--app-font-weight-medium)',
+                semibold: 'var(--app-font-weight-semibold)',
+                bold: 'var(--app-font-weight-bold)'
+            },
+            fontSize: {
+                xs: ['var(--app-font-size-meta)', { lineHeight: 'var(--app-line-meta)' }],
+                sm: ['var(--app-font-size-nav)', { lineHeight: 'var(--app-line-nav)' }]
+            },
             maxWidth: {
                 content: 'var(--content-max-w, 960px)'
             }

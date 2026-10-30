@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent } from 'react'
+import { createPortal } from 'react-dom'
 import { useTranslation } from '@/lib/use-translation'
 
 // ---------------------------------------------------------------------------
@@ -154,11 +155,13 @@ interface ScheduleTimePickerProps {
      * `position: fixed` so it escapes any `overflow: hidden` ancestor.
      */
     anchorRef: React.RefObject<HTMLButtonElement | null>
+    /** Last visible anchor box, used after the overflow menu hides the button. */
+    fallbackAnchor?: { top: number; left: number; right: number; bottom: number; width: number; height: number } | null
     /** Currently active pending schedule, used to highlight the selected preset. */
     pendingSchedule?: PendingSchedule | null
 }
 
-export function ScheduleTimePicker({ onSchedule, onClose, anchorRef, pendingSchedule }: ScheduleTimePickerProps) {
+export function ScheduleTimePicker({ onSchedule, onClose, anchorRef, fallbackAnchor = null, pendingSchedule }: ScheduleTimePickerProps) {
     const { t } = useTranslation()
     const [tab, setTab] = useState<'relative' | 'specific'>('relative')
     const [specificValue, setSpecificValue] = useState('')
@@ -184,7 +187,8 @@ export function ScheduleTimePicker({ onSchedule, onClose, anchorRef, pendingSche
                 setPos(null)
                 return
             }
-            const rect = anchor.getBoundingClientRect()
+            const live = anchor.getBoundingClientRect()
+            const rect = live.width > 0 || live.height > 0 ? live : (fallbackAnchor ?? live)
             const viewport = window.visualViewport
             const placement = computeSchedulePickerPlacement({
                 anchor: rect,
@@ -211,8 +215,7 @@ export function ScheduleTimePicker({ onSchedule, onClose, anchorRef, pendingSche
             window.visualViewport?.removeEventListener('resize', measure)
             window.visualViewport?.removeEventListener('scroll', measure)
         }
-    // anchorRef is a useRef object — stable identity, so this effect runs once on mount.
-    }, [anchorRef, tab])
+    }, [anchorRef, fallbackAnchor, tab])
 
     // Click-outside closes the panel.
     //
@@ -232,6 +235,17 @@ export function ScheduleTimePicker({ onSchedule, onClose, anchorRef, pendingSche
         document.addEventListener('pointerdown', handlePointerDown)
         return () => document.removeEventListener('pointerdown', handlePointerDown)
     }, [onClose, anchorRef])
+
+    useEffect(() => {
+        function handleKeyDown(event: globalThis.KeyboardEvent) {
+            if (event.key !== 'Escape') return
+            event.preventDefault()
+            event.stopPropagation()
+            onClose()
+        }
+        document.addEventListener('keydown', handleKeyDown, true)
+        return () => document.removeEventListener('keydown', handleKeyDown, true)
+    }, [onClose])
 
     // Compute max value for datetime-local input (7 days from now)
     const maxDatetimeLocal = (() => {
@@ -284,7 +298,7 @@ export function ScheduleTimePicker({ onSchedule, onClose, anchorRef, pendingSche
         handleSpecificSubmit()
     }
 
-    return (
+    const panel = (
         <div
             ref={panelRef}
             role="dialog"
@@ -298,8 +312,8 @@ export function ScheduleTimePicker({ onSchedule, onClose, anchorRef, pendingSche
             }
             className={
                 isMobilePanel
-                    ? `z-50 box-border max-h-[min(85dvh,calc(var(--app-viewport-height,100dvh)-24px))] ${isContentConstrained ? 'overflow-y-auto' : 'overflow-y-visible'} rounded-xl border border-[var(--app-border)] bg-[var(--app-bg)] shadow-lg fixed inset-x-3 bottom-[calc(env(safe-area-inset-bottom)+12px)] sm:left-1/2 sm:right-auto sm:w-80 sm:-translate-x-1/2`
-                    : `z-50 box-border w-80 max-w-[calc(100vw-16px)] ${isContentConstrained ? 'overflow-y-auto' : 'overflow-y-visible'} rounded-xl border border-[var(--app-border)] bg-[var(--app-bg)] shadow-lg`
+                    ? `z-[90] box-border max-h-[min(85dvh,calc(var(--app-viewport-height,100dvh)-24px))] ${isContentConstrained ? 'overflow-y-auto' : 'overflow-y-visible'} rounded-xl border border-[var(--app-border)] bg-[var(--app-bg)] shadow-lg fixed inset-x-3 bottom-[calc(env(safe-area-inset-bottom)+12px)] sm:left-1/2 sm:right-auto sm:w-80 sm:-translate-x-1/2`
+                    : `z-[90] box-border w-80 max-w-[calc(100vw-16px)] ${isContentConstrained ? 'overflow-y-auto' : 'overflow-y-visible'} rounded-xl border border-[var(--app-border)] bg-[var(--app-bg)] shadow-lg`
             }
             onPointerDown={(e) => e.stopPropagation()}
         >
@@ -349,7 +363,7 @@ export function ScheduleTimePicker({ onSchedule, onClose, anchorRef, pendingSche
                                     onClick={() => handlePresetClick(preset)}
                                     className={`rounded-lg border px-3 py-2 text-sm font-medium transition-colors ${
                                         isSelected
-                                            ? 'border-blue-500 bg-blue-500 text-white'
+                                            ? 'border-[var(--app-button)] bg-[var(--app-button)] text-[var(--app-button-text)]'
                                             : 'border-[var(--app-border)] text-[var(--app-fg)] hover:bg-[var(--app-secondary-bg)] hover:border-[var(--app-link)]'
                                     }`}
                                 >
@@ -370,7 +384,7 @@ export function ScheduleTimePicker({ onSchedule, onClose, anchorRef, pendingSche
                             className="w-full rounded-lg border border-[var(--app-border)] bg-[var(--app-bg)] px-3 py-2 text-sm text-[var(--app-fg)] focus:outline-none focus:ring-1 focus:ring-[var(--app-link)]"
                         />
                         {specificError ? (
-                            <p className="text-xs text-red-500">{specificError}</p>
+                            <p className="text-xs text-[var(--app-badge-error-text)]">{specificError}</p>
                         ) : (
                             <p className="break-words text-xs text-[var(--app-hint)]">
                                 {t('composer.scheduleSpecificHint')}
@@ -380,7 +394,7 @@ export function ScheduleTimePicker({ onSchedule, onClose, anchorRef, pendingSche
                             type="button"
                             disabled={!specificValue}
                             onClick={handleSpecificSubmit}
-                            className="w-full rounded-lg bg-blue-500 px-3 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-600 disabled:cursor-not-allowed disabled:opacity-40"
+                            className="w-full rounded-lg bg-[var(--app-button)] px-3 py-2 text-sm font-medium text-[var(--app-button-text)] transition-colors hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
                         >
                             {t('composer.scheduleSend')}
                         </button>
@@ -389,4 +403,7 @@ export function ScheduleTimePicker({ onSchedule, onClose, anchorRef, pendingSche
             </div>
         </div>
     )
+
+    if (typeof document === 'undefined') return null
+    return createPortal(panel, document.body)
 }

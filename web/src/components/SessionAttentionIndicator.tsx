@@ -5,10 +5,10 @@ import { useTranslation } from '@/lib/use-translation'
 import { HoverTooltip, SESSION_ROW_TOOLTIP_FOCUS_CLASS } from '@/components/HoverTooltip'
 
 const ATTENTION_DOT_CLASS: Record<SessionAttention['kind'], string> = {
-    permission: 'bg-amber-500 animate-pulse',
-    input: 'bg-blue-500',
-    background: 'bg-blue-400',
-    ready: 'bg-blue-500',
+    permission: 'bg-[var(--app-badge-warning-text)] animate-pulse',
+    input: 'bg-[var(--app-link)]',
+    background: 'bg-[var(--app-link)]/70',
+    ready: 'bg-[var(--app-link)]',
     unread: 'bg-[var(--app-link)]'
 }
 

@@ -109,7 +109,7 @@ export function RenameSessionDialog(props: RenameSessionDialogProps) {
         <Dialog open={isOpen} onOpenChange={(open) => !open && handleClose()}>
             <DialogContent className="max-w-sm">
                 <DialogHeader className="pr-0">
-                    <DialogTitle className="min-h-6 px-10 text-center leading-6">
+                    <DialogTitle className="min-h-7 px-10 text-center">
                         {t('dialog.rename.title')}
                     </DialogTitle>
                 </DialogHeader>

@@ -7,7 +7,7 @@ import {
 } from '@hapi/protocol'
 import type { PermissionModeTone } from '@hapi/protocol'
 import * as Popover from '@radix-ui/react-popover'
-import { useMemo } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import type { AgentState, CodexCollaborationMode, OmpThinkingState, PermissionMode, ThreadGoal } from '@/types/api'
 import type { ConversationStatus } from '@/realtime/types'
 import { getContextBudgetTokens } from '@/chat/modelConfig'
@@ -20,6 +20,7 @@ import {
 import { isFastServiceTier } from './codexFastMode'
 import { useTranslation } from '@/lib/use-translation'
 import { useSessionHeaderMetadata } from '@/hooks/useSessionHeaderMetadata'
+import { useStatusVibing } from '@/hooks/useStatusVibing'
 
 // Vibing messages for thinking state
 const VIBING_MESSAGES = [
@@ -42,17 +43,38 @@ const VIBING_MESSAGES = [
 
 const PERMISSION_TONE_CLASSES: Record<PermissionModeTone, string> = {
     neutral: 'text-[var(--app-hint)]',
-    info: 'text-blue-500',
-    warning: 'text-amber-500',
-    danger: 'text-red-500'
+    info: 'text-[var(--app-link)]',
+    warning: 'text-[var(--app-badge-warning-text)]',
+    danger: 'text-[var(--app-badge-error-text)]'
 }
 
 const CONTEXT_WARNING_THRESHOLD_PERCENT = 70
 const CONTEXT_DANGER_THRESHOLD_PERCENT = 90
 
+export function formatThinkingStatus(phase: string, elapsedSeconds: number): string {
+    return `${phase} · ${Math.max(0, elapsedSeconds)}s`
+}
+
+function ThinkingClock(props: { phase: string; vibing: boolean }) {
+    const [elapsedSeconds, setElapsedSeconds] = useState(0)
+    const [vibingText, setVibingText] = useState<string | null>(null)
+    useEffect(() => {
+        const started = Date.now()
+        setElapsedSeconds(0)
+        setVibingText(props.vibing
+            ? VIBING_MESSAGES[Math.floor(Math.random() * VIBING_MESSAGES.length)]!.toLowerCase() + '…'
+            : null)
+        const tick = () => setElapsedSeconds(Math.floor((Date.now() - started) / 1000))
+        const id = window.setInterval(tick, 1000)
+        return () => window.clearInterval(id)
+    }, [props.vibing])
+    return <>{vibingText ?? formatThinkingStatus(props.phase, elapsedSeconds)}</>
+}
+
 function getConnectionStatus(
     active: boolean,
     thinking: boolean,
+    thinkingLabel: string,
     agentState: AgentState | null | undefined,
     voiceStatus: ConversationStatus | undefined,
     backgroundTaskCount: number,
@@ -64,8 +86,8 @@ function getConnectionStatus(
     if (voiceStatus === 'connecting') {
         return {
             text: t('voice.connecting'),
-            color: 'text-[#007AFF]',
-            dotColor: 'bg-[#007AFF]',
+            color: 'text-[var(--app-link)]',
+            dotColor: 'bg-[var(--app-link)]',
             isPulsing: true
         }
     }
@@ -73,8 +95,8 @@ function getConnectionStatus(
     if (!active) {
         return {
             text: 'offline',
-            color: 'text-[#999]',
-            dotColor: 'bg-[#999]',
+            color: 'text-[var(--app-hint)]',
+            dotColor: 'bg-[var(--app-hint)]',
             isPulsing: false
         }
     }
@@ -82,18 +104,17 @@ function getConnectionStatus(
     if (hasPermissions) {
         return {
             text: t('misc.permissionRequired'),
-            color: 'text-[#FF9500]',
-            dotColor: 'bg-[#FF9500]',
+            color: 'text-[var(--app-badge-warning-text)]',
+            dotColor: 'bg-[var(--app-badge-warning-text)]',
             isPulsing: true
         }
     }
 
     if (thinking) {
-        const vibingMessage = VIBING_MESSAGES[Math.floor(Math.random() * VIBING_MESSAGES.length)].toLowerCase() + '…'
         return {
-            text: vibingMessage,
-            color: 'text-[#007AFF]',
-            dotColor: 'bg-[#007AFF]',
+            text: thinkingLabel,
+            color: 'text-[var(--app-link)]',
+            dotColor: 'bg-[var(--app-link)]',
             isPulsing: true
         }
     }
@@ -101,16 +122,16 @@ function getConnectionStatus(
     if (backgroundTaskCount > 0) {
         return {
             text: `${backgroundTaskCount} background task${backgroundTaskCount > 1 ? 's' : ''} running`,
-            color: 'text-[#007AFF]',
-            dotColor: 'bg-[#007AFF]',
+            color: 'text-[var(--app-link)]',
+            dotColor: 'bg-[var(--app-link)]',
             isPulsing: true
         }
     }
 
     return {
             text: 'online',
-        color: 'text-[#34C759]',
-        dotColor: 'bg-[#34C759]',
+        color: 'text-[var(--app-badge-success-text)]',
+        dotColor: 'bg-[var(--app-badge-success-text)]',
         isPulsing: false
     }
 }
@@ -119,9 +140,9 @@ export function getContextWarning(contextSize: number, maxContextSize: number): 
     const percentageUsed = (contextSize / maxContextSize) * 100
 
     if (percentageUsed >= CONTEXT_DANGER_THRESHOLD_PERCENT) {
-        return { color: 'text-red-500' }
+        return { color: 'text-[var(--app-badge-error-text)]' }
     } else if (percentageUsed >= CONTEXT_WARNING_THRESHOLD_PERCENT) {
-        return { color: 'text-amber-500' }
+        return { color: 'text-[var(--app-badge-warning-text)]' }
     } else {
         return { color: 'text-[var(--app-hint)]' }
     }
@@ -199,6 +220,7 @@ export function StatusBar(props: {
     active: boolean
     thinking: boolean
     agentState: AgentState | null | undefined
+    activityLabel?: string | null
     backgroundTaskCount?: number
     contextSize?: number
     contextCacheRead?: number
@@ -224,8 +246,10 @@ export function StatusBar(props: {
 }) {
     const { t } = useTranslation()
     const { preferences: headerMetadata } = useSessionHeaderMetadata()
+    const vibing = useStatusVibing()
+    const thinkingPhase = props.activityLabel?.trim() ? props.activityLabel.trim() : t('status.responding')
     const connectionStatus = useMemo(
-        () => getConnectionStatus(props.active, props.thinking, props.agentState, props.voiceStatus, props.backgroundTaskCount ?? 0, t),
+        () => getConnectionStatus(props.active, props.thinking, '', props.agentState, props.voiceStatus, props.backgroundTaskCount ?? 0, t),
         [props.active, props.thinking, props.agentState, props.voiceStatus, props.backgroundTaskCount, t]
     )
 
@@ -315,7 +339,9 @@ export function StatusBar(props: {
                         className={`h-2 w-2 rounded-full ${connectionStatus.dotColor} ${connectionStatus.isPulsing ? 'animate-pulse' : ''}`}
                     />
                     <span className={`whitespace-nowrap text-xs ${connectionStatus.color}`}>
-                        {connectionStatus.text}
+                        {props.thinking
+                            ? <ThinkingClock phase={thinkingPhase} vibing={vibing.enabled} />
+                            : connectionStatus.text}
                     </span>
                 </div>
                 {contextUsageLabel ? (
@@ -398,17 +424,17 @@ export function StatusBar(props: {
                     </span>
                 ) : null}
                 {codexFastMode ? (
-                    <span className="whitespace-nowrap text-xs text-[#34C759]">
+                    <span className="whitespace-nowrap text-xs text-[var(--app-badge-success-text)]">
                         fast
                     </span>
                 ) : null}
                 {collaborationModeLabel ? (
-                    <span className="whitespace-nowrap text-xs text-blue-500">
+                    <span className="whitespace-nowrap text-xs text-[var(--app-link)]">
                         {collaborationModeLabel}
                     </span>
                 ) : null}
                 {copilotAgentModeLabel ? (
-                    <span className="whitespace-nowrap text-xs text-blue-500">
+                    <span className="whitespace-nowrap text-xs text-[var(--app-link)]">
                         {copilotAgentModeLabel}
                     </span>
                 ) : null}

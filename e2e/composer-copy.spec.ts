@@ -52,10 +52,26 @@ test.describe('composer Ctrl+A + Ctrl+C copy', () => {
 
     test('mouse-drag selection still copies via plain Ctrl+C', async ({ page }) => {
         const msg = page.locator('[data-testid="assistant-message-2"]')
-        await msg.dragTo(page.locator('[data-testid="user-message-1"]'), {
-            sourcePosition: { x: 5, y: 2 },
-            targetPosition: { x: 300, y: 2 },
-        })
+        const user = page.locator('[data-testid="user-message-1"]')
+        // A fixed x:5 sat past the midpoint of "A" once chat text became 14px
+        // (glyph ~9px wide), so the drag started at "nother".
+        const pointInText = (locator, start, end, edge) => locator.evaluate((el, arg) => {
+            const node = el.firstChild
+            if (!node || node.nodeType !== Node.TEXT_NODE) throw new Error('expected a text node')
+            const range = document.createRange()
+            range.setStart(node, arg.start)
+            range.setEnd(node, arg.end)
+            const rect = range.getBoundingClientRect()
+            const host = el.getBoundingClientRect()
+            const x = arg.edge === 'start'
+                ? rect.left - host.left + rect.width / 4
+                : rect.right - host.left - 1
+            return { x, y: rect.top - host.top + rect.height / 2 }
+        }, { start, end, edge })
+        const sourcePosition = await pointInText(msg, 0, 1, 'start')
+        const userLength = await user.evaluate((el) => el.textContent?.length ?? 1)
+        const targetPosition = await pointInText(user, Math.max(0, userLength - 1), userLength, 'end')
+        await msg.dragTo(user, { sourcePosition, targetPosition })
         await page.keyboard.press('Control+c')
         const copied = await page.evaluate(() => navigator.clipboard.readText())
         expect(copied).toContain('Another assistant message')

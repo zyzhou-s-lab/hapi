@@ -38,4 +38,27 @@ describe('ScheduleTimePicker interactions', () => {
         expect(onSchedule).toHaveBeenCalledWith({ type: 'absolute', ms: new Date(value).getTime() })
         expect(onClose).toHaveBeenCalledTimes(1)
     })
+
+    it('closes on Escape before the event reaches a parent', () => {
+        const anchorRef = { current: document.createElement('button') }
+        const onClose = vi.fn()
+        const onParentKeyDown = vi.fn()
+        render(
+            <I18nProvider>
+                <div onKeyDown={onParentKeyDown}>
+                    <ScheduleTimePicker
+                        anchorRef={anchorRef}
+                        onSchedule={vi.fn()}
+                        onClose={onClose}
+                        pendingSchedule={null}
+                    />
+                </div>
+            </I18nProvider>
+        )
+
+        fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape' })
+
+        expect(onClose).toHaveBeenCalledTimes(1)
+        expect(onParentKeyDown).not.toHaveBeenCalled()
+    })
 })

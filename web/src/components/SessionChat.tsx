@@ -1432,6 +1432,15 @@ function SessionChatInner(props: SessionChatProps) {
         () => hasAbortableAgentRun(reduced.blocks),
         [reduced.blocks]
     )
+    const activityLabel = useMemo(() => {
+        for (let index = reconciled.blocks.length - 1; index >= 0; index -= 1) {
+            const block = reconciled.blocks[index]
+            if (block?.kind === 'tool-call' && (block.tool.state === 'running' || block.tool.state === 'pending')) {
+                return block.tool.name
+            }
+        }
+        return null
+    }, [reconciled.blocks])
 
     useEffect(() => {
         blocksByIdRef.current = reconciled.byId
@@ -2079,13 +2088,13 @@ function SessionChatInner(props: SessionChatProps) {
                     {codexCollaborationModeSupported && codexModelsState.error ? (
                         composerFloating ? (
                             <div className="composer-floating-chrome">
-                                <div className="mx-auto w-full max-w-content rounded-md bg-[var(--app-secondary-bg)] p-3 text-sm text-red-600">
+                                <div className="mx-auto w-full max-w-content rounded-md bg-[var(--app-secondary-bg)] p-3 text-sm text-[var(--app-badge-error-text)]">
                                     {t('session.codexModelsLoadFailed')}: {codexModelsState.error}
                                 </div>
                             </div>
                         ) : (
                             <div className="px-3 pb-2">
-                                <div className="mx-auto w-full max-w-content rounded-md bg-[var(--app-subtle-bg)] p-3 text-sm text-red-600">
+                                <div className="mx-auto w-full max-w-content rounded-md bg-[var(--app-subtle-bg)] p-3 text-sm text-[var(--app-badge-error-text)]">
                                     {t('session.codexModelsLoadFailed')}: {codexModelsState.error}
                                 </div>
                             </div>
@@ -2224,6 +2233,7 @@ function SessionChatInner(props: SessionChatProps) {
                         onResumeStoredDraft={() => handleSend('', undefined, null)}
                         thinking={props.session.thinking}
                         agentState={props.session.agentState}
+                        activityLabel={activityLabel}
                         backgroundTaskCount={props.session.backgroundTaskCount}
                         contextSize={reduced.latestUsage?.contextSize}
                         contextCacheRead={reduced.latestUsage?.cacheRead}

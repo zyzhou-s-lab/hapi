@@ -29,9 +29,9 @@ describe('StatusBar context details popover', () => {
         )
 
         const offlineLabel = screen.getByText('offline')
-        expect(offlineLabel.className.split(' ')).toContain('text-[#999]')
+        expect(offlineLabel.className.split(' ')).toContain('text-[var(--app-hint)]')
         expect(offlineLabel.className.split(' ')).not.toContain('top-px')
-        expect(offlineLabel.previousElementSibling?.className.split(' ')).toContain('bg-[#999]')
+        expect(offlineLabel.previousElementSibling?.className.split(' ')).toContain('bg-[var(--app-hint)]')
         expect(offlineLabel.previousElementSibling?.className.split(' ')).not.toContain('top-px')
         expect(offlineLabel.parentElement?.className.split(' ')).toContain('top-px')
         expect(offlineLabel.parentElement?.className.split(' ')).toContain('sm:top-0.5')
@@ -42,7 +42,7 @@ describe('StatusBar context details popover', () => {
             </I18nProvider>
         )
 
-        const thinkingLabel = screen.getByText(/…$/)
+        const thinkingLabel = screen.getByText(/· 0s$/)
         expect(thinkingLabel.className.split(' ')).not.toContain('top-px')
         expect(thinkingLabel.previousElementSibling?.className.split(' ')).not.toContain('top-px')
         expect(thinkingLabel.parentElement?.className.split(' ')).toContain('top-px')

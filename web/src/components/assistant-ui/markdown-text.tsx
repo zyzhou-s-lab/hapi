@@ -466,7 +466,7 @@ function Pre(props: ComponentPropsWithoutRef<'pre'>) {
                 data-hapi-code-grid="true"
                 {...rest}
                 className={cn(
-                    'aui-md-pre m-0 rounded-b-xl bg-[var(--app-code-bg)] px-4 py-3 text-sm',
+                    'aui-md-pre m-0 rounded-b-xl bg-[var(--app-code-bg)] px-4 py-3',
                     codeWrap ? '' : 'w-max min-w-full',
                     className
                 )}
@@ -498,7 +498,7 @@ function Code(props: ComponentPropsWithoutRef<'code'>) {
         <code
             {...props}
             className={cn(
-                'aui-md-code break-words rounded-md border border-[var(--app-inline-code-border)] bg-[var(--app-inline-code-bg)] px-[0.38em] py-[0.14em] font-mono text-[0.88em] text-[var(--app-inline-code-fg)]',
+                'aui-md-code break-words rounded-md border border-[var(--app-inline-code-border)] bg-[var(--app-inline-code-bg)] px-[0.38em] py-[0.14em] font-mono text-[var(--app-inline-code-fg)]',
                 props.className
             )}
         />
@@ -738,7 +738,7 @@ function A(props: ComponentPropsWithoutRef<'a'>) {
 }
 
 function Paragraph(props: ComponentPropsWithoutRef<'p'>) {
-    return <p {...props} className={cn('aui-md-p my-2.5 leading-7 first:mt-0 last:mb-0', props.className)} />
+    return <p {...props} className={cn('aui-md-p my-2.5 first:mt-0 last:mb-0', props.className)} />
 }
 
 function Blockquote(props: ComponentPropsWithoutRef<'blockquote'>) {
@@ -762,7 +762,7 @@ function OrderedList(props: ComponentPropsWithoutRef<'ol'>) {
 }
 
 function ListItem(props: ComponentPropsWithoutRef<'li'>) {
-    return <li {...props} className={cn('aui-md-li leading-7', props.className)} />
+    return <li {...props} className={cn('aui-md-li', props.className)} />
 }
 
 function Hr(props: ComponentPropsWithoutRef<'hr'>) {
@@ -808,7 +808,7 @@ function Td(props: ComponentPropsWithoutRef<'td'>) {
 }
 
 function H1(props: ComponentPropsWithoutRef<'h1'>) {
-    return <h1 {...props} className={cn('aui-md-h1 mt-4 text-[1.05rem] font-semibold tracking-[-0.01em] first:mt-0', props.className)} />
+    return <h1 {...props} className={cn('aui-md-h1 mt-4 tracking-[-0.01em] first:mt-0', props.className)} />
 }
 
 function H2(props: ComponentPropsWithoutRef<'h2'>) {

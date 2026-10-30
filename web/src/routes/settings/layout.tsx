@@ -36,8 +36,8 @@ export default function SettingsLayout() {
                         <BackIcon />
                     </button>
                     <div className="min-w-0 flex-1 font-semibold">
-                        <h1 className="truncate text-lg lg:hidden">{mobileTitle}</h1>
-                        <h1 className="hidden text-lg lg:block">{t('settings.title')}</h1>
+                        <h1 className="truncate text-sm font-semibold lg:hidden">{mobileTitle}</h1>
+                        <h1 className="hidden text-sm font-semibold lg:block">{t('settings.title')}</h1>
                     </div>
                 </div>
             </header>

@@ -127,7 +127,7 @@ describe('floating dock surface', () => {
         expect(css).not.toContain('.composer-floating-shell .composer-floating-chrome')
         expect(source).toContain('className="composer-floating-chrome"')
         expect(source).not.toContain('composer-floating-chrome px-3')
-        expect(source).toContain('bg-[var(--app-secondary-bg)] p-3 text-sm text-red-600')
+
         expect(source).toContain('<div className="px-3">')
         expect(tasks).toContain('composer-dock-card')
         expect(tasks).not.toContain('bg-[var(--app-subtle-bg)]')

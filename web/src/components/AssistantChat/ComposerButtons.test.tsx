@@ -56,7 +56,7 @@ describe('UnifiedButton — routesToScratchlist visual state', () => {
         cleanup()
     })
 
-    it('paints amber + announces "Send to scratchlist" when routesToScratchlist=true', () => {
+    it('paints the warning token and announces "Send to scratchlist" when routesToScratchlist=true', () => {
         renderInProviders(
             <UnifiedButton
                 canSend
@@ -69,10 +69,10 @@ describe('UnifiedButton — routesToScratchlist visual state', () => {
             />,
         )
         const btn = getButton(/scratchlist/i)
-        expect(btn.className).toContain('bg-amber-500')
+        expect(btn.className).toContain('bg-[var(--app-badge-warning-text)]')
     })
 
-    it('paints chat black + announces "Send" when routesToScratchlist=false (e.g. pending schedule)', () => {
+    it('paints the theme button and announces "Send" when routesToScratchlist=false (e.g. pending schedule)', () => {
         // Caller computed routesToScratchlist=false because a pending schedule
         // forces chat fallback. The button must look like a normal chat send.
         renderInProviders(
@@ -87,8 +87,8 @@ describe('UnifiedButton — routesToScratchlist visual state', () => {
             />,
         )
         const btn = getButton('Send')
-        expect(btn.className).not.toContain('bg-amber-500')
-        expect(btn.className).toContain('bg-black')
+        expect(btn.className).not.toContain('bg-[var(--app-badge-warning-text)]')
+        expect(btn.className).toContain('bg-[var(--app-button)]')
     })
 
     it('defaults routesToScratchlist to false when omitted', () => {
@@ -103,7 +103,7 @@ describe('UnifiedButton — routesToScratchlist visual state', () => {
             />,
         )
         const btn = getButton('Send')
-        expect(btn.className).not.toContain('bg-amber-500')
+        expect(btn.className).not.toContain('bg-[var(--app-badge-warning-text)]')
     })
 })
 
@@ -209,7 +209,7 @@ describe('ComposerExpandButton', () => {
 describe('ComposerButtons responsive toolbar', () => {
     afterEach(cleanup)
 
-    it('keeps toolbar actions non-shrinking inside a horizontal scroll area', () => {
+    it('keeps secondary actions in a menu instead of a hidden scroller', () => {
         const noop = () => {}
         render(
             <RuntimeProviders>
@@ -246,10 +246,24 @@ describe('ComposerButtons responsive toolbar', () => {
         )
 
         const toolbar = screen.getByTestId('composer-toolbar-items')
-        expect(toolbar.className).toContain('overflow-x-auto')
-        const toolbarButtons = within(toolbar).getAllByRole('button')
-        expect(toolbarButtons.length).toBeGreaterThanOrEqual(8)
-        for (const button of toolbarButtons) {
+        expect(toolbar.className).not.toContain('overflow-x-auto')
+        expect(within(toolbar).queryByRole('button', { name: 'Terminal' })).toBeNull()
+        fireEvent.click(screen.getByTestId('composer-more'))
+        const menu = screen.getByRole('menu')
+        expect(menu.className).toContain('z-[80]')
+        expect(toolbar.contains(menu)).toBe(false)
+        expect(screen.getByRole('button', { name: 'Terminal' })).toBeInTheDocument()
+        expect(screen.getByRole('button', { name: 'Attach file' })).toBeInTheDocument()
+        fireEvent.click(screen.getByRole('button', { name: 'Terminal' }))
+        expect(screen.queryByRole('menu')).toBeNull()
+        fireEvent.click(screen.getByTestId('composer-more'))
+        fireEvent.click(screen.getByRole('button', { name: /schedule/i }))
+        expect(screen.getByTestId('composer-more')).toHaveAttribute('aria-expanded', 'false')
+        const dialog = screen.getByRole('dialog', { name: /schedule/i })
+        fireEvent.click(screen.getByRole('button', { name: 'Specific' }))
+        expect(dialog).toBeInTheDocument()
+        expect(screen.getByRole('button', { name: 'Specific' })).toBeVisible()
+        for (const button of within(toolbar).getAllByRole('button')) {
             expect(button.closest('.shrink-0')).not.toBeNull()
         }
     })

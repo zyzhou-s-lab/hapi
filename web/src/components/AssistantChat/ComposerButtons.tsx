@@ -6,13 +6,124 @@ import { ScheduleTimePicker } from './ScheduleTimePicker'
 import type { PendingSchedule } from './ScheduleTimePicker'
 import { useFue } from '@/lib/use-fue'
 import { FueCallout, FueDot } from '@/components/Fue'
-import { Children, isValidElement, useRef, useState, type ReactElement, type ReactNode, type Ref } from 'react'
+import { Children, isValidElement, useEffect, useLayoutEffect, useRef, useState, type ReactElement, type ReactNode, type Ref } from 'react'
+import { createPortal } from 'react-dom'
 import { useComposerToolbarLayout, type ComposerToolbarItemId, type ComposerToolbarLayout } from '@/hooks/useComposerToolbarLayout'
 import { useNarrowViewport } from '@/hooks/useNarrowViewport'
 import type { ComposerSendIntent } from '@/lib/messageDelivery'
 
 function ToolbarItemSlot(props: { item: ComposerToolbarItemId; children: ReactNode }) {
     return <>{props.children}</>
+}
+
+const OVERFLOW_MENU_ITEMS: Record<ComposerToolbarItemId, boolean> = {
+    attachment: true,
+    terminal: true,
+    schedule: true,
+    voiceMic: true,
+    settings: false,
+    expand: false,
+    model: false,
+    effort: false,
+    abort: false,
+    switch: false,
+    scratchlist: false,
+}
+
+function isOverflowMenuItem(item: ComposerToolbarItemId): boolean {
+    return OVERFLOW_MENU_ITEMS[item]
+}
+
+function MoreIcon() {
+    return (
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+            <circle cx="5" cy="12" r="1.6" />
+            <circle cx="12" cy="12" r="1.6" />
+            <circle cx="19" cy="12" r="1.6" />
+        </svg>
+    )
+}
+
+function placeComposerMoreMenu(anchor: DOMRect, menu: DOMRect): { top: number; left: number } {
+    const margin = 8
+    const gap = 8
+    let top = anchor.top - menu.height - gap
+    if (top < margin) top = Math.min(anchor.bottom + gap, window.innerHeight - menu.height - margin)
+    let left = anchor.left
+    if (left + menu.width > window.innerWidth - margin) left = window.innerWidth - margin - menu.width
+    if (left < margin) left = margin
+    return { top, left }
+}
+
+function ComposerMoreMenu(props: { children: ReactNode }) {
+    const { t } = useTranslation()
+    const [open, setOpen] = useState(false)
+    const [pos, setPos] = useState<{ top: number; left: number } | null>(null)
+    const buttonRef = useRef<HTMLButtonElement>(null)
+    const menuRef = useRef<HTMLDivElement>(null)
+    useEffect(() => {
+        if (!open) return
+        const close = (event: PointerEvent) => {
+            const target = event.target
+            if (!(target instanceof Node)) return
+            if (buttonRef.current?.contains(target) || menuRef.current?.contains(target)) return
+            setOpen(false)
+        }
+        document.addEventListener('pointerdown', close)
+        return () => document.removeEventListener('pointerdown', close)
+    }, [open])
+    useLayoutEffect(() => {
+        if (!open) {
+            setPos(null)
+            return
+        }
+        const place = () => {
+            const anchor = buttonRef.current?.getBoundingClientRect()
+            const menu = menuRef.current?.getBoundingClientRect()
+            if (!anchor || !menu) return
+            setPos(placeComposerMoreMenu(anchor, menu))
+        }
+        place()
+        window.addEventListener('resize', place)
+        window.addEventListener('scroll', place, true)
+        return () => {
+            window.removeEventListener('resize', place)
+            window.removeEventListener('scroll', place, true)
+        }
+    }, [open])
+    return (
+        <div className="relative shrink-0">
+            <button
+                ref={buttonRef}
+                type="button"
+                data-testid="composer-more"
+                aria-expanded={open}
+                aria-haspopup="menu"
+                aria-label={t('composer.more')}
+                className="flex h-8 w-8 items-center justify-center rounded-full text-[var(--app-fg)]/60 transition-colors hover:bg-[var(--app-bg)] hover:text-[var(--app-fg)]"
+                onClick={() => setOpen((value) => !value)}
+            >
+                <MoreIcon />
+            </button>
+            {typeof document !== 'undefined' ? createPortal(
+                <div
+                    ref={menuRef}
+                    role="menu"
+                    hidden={!open}
+                    data-testid="composer-more-menu"
+                    className="composer-more-menu fixed z-[80] flex min-w-48 flex-col gap-1 rounded-xl border border-[var(--app-border)] bg-[var(--app-bg)] p-1 shadow-lg"
+                    style={open ? (pos ? { top: pos.top, left: pos.left } : { visibility: 'hidden' }) : undefined}
+                    onClick={(event) => {
+                        const target = event.target
+                        if (target instanceof Element && target.closest('button')) setOpen(false)
+                    }}
+                >
+                    {props.children}
+                </div>,
+                document.body,
+            ) : null}
+        </div>
+    )
 }
 
 function OrderedToolbarItems(props: { layout: ComposerToolbarLayout; children: ReactNode }) {
@@ -25,11 +136,19 @@ function OrderedToolbarItems(props: { layout: ComposerToolbarLayout; children: R
         if (!slot || slot.props.children == null) return null
         return <div key={item} className="shrink-0">{slot}</div>
     })
+    const placed = [...props.layout.left, ...props.layout.right]
+    const strip = placed.filter((item) => !isOverflowMenuItem(item))
+    const menu = placed.filter((item) => isOverflowMenuItem(item))
+    const stripNodes = props.layout.mode === 'split'
+        ? <>{renderItems(props.layout.left.filter((item) => !isOverflowMenuItem(item)))}<span className="flex-1" aria-hidden="true" />{renderItems(props.layout.right.filter((item) => !isOverflowMenuItem(item)))}</>
+        : <>{renderItems(strip)}</>
 
-    if (props.layout.mode === 'split') {
-        return <>{renderItems(props.layout.left)}<span className="flex-1" aria-hidden="true" />{renderItems(props.layout.right)}</>
-    }
-    return <>{renderItems([...props.layout.left, ...props.layout.right])}</>
+    return (
+        <>
+            {stripNodes}
+            {menu.length > 0 ? <ComposerMoreMenu>{renderItems(menu)}</ComposerMoreMenu> : null}
+        </>
+    )
 }
 
 export function getComposerToolbarJustifyContent(
@@ -359,7 +478,7 @@ export function ComposerToolbarItemPreview(props: { item: ComposerToolbarItemId;
 }
 
 export function ComposerSendButtonPreview() {
-    return <span className="flex h-10 w-10 items-center justify-center rounded-full bg-black text-white dark:bg-white dark:text-black" aria-hidden="true"><SendIcon /></span>
+    return <span className="flex h-10 w-10 items-center justify-center rounded-full bg-[var(--app-button)] text-[var(--app-button-text)]" aria-hidden="true"><SendIcon /></span>
 }
 
 /**
@@ -404,7 +523,7 @@ function ScratchlistToggleButton(props: {
                 }}
                 className={`relative flex h-8 w-8 items-center justify-center rounded-full transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
                     props.scratchlistMode
-                        ? 'bg-amber-500 text-white hover:bg-amber-600'
+                        ? 'bg-[var(--app-badge-warning-text)] text-[var(--app-bg)] hover:opacity-90'
                         : 'text-[var(--app-fg)]/60 hover:bg-[var(--app-bg)] hover:text-[var(--app-fg)]'
                 }`}
             >
@@ -418,7 +537,7 @@ function ScratchlistToggleButton(props: {
                 {showCounter ? (
                     <span
                         aria-hidden="true"
-                        className="absolute -top-0.5 -right-0.5 min-w-[12px] h-3 px-[3px] flex items-center justify-center rounded-full bg-amber-500 text-white text-[8px] font-semibold leading-none tabular-nums shadow-sm"
+                        className="absolute -top-0.5 -right-0.5 min-w-[12px] h-3 px-[3px] flex items-center justify-center rounded-full bg-[var(--app-badge-warning-text)] text-[var(--app-bg)] text-[8px] font-semibold leading-none tabular-nums shadow-sm"
                     >
                         {props.scratchlistCount > 99 ? '99+' : props.scratchlistCount}
                     </span>
@@ -515,30 +634,30 @@ export function UnifiedButton(props: {
 
     if (isConnecting) {
         icon = <LoadingIcon />
-        className = 'bg-black text-white'
+        className = 'bg-[var(--app-button)] text-[var(--app-button-text)] hover:opacity-90'
         ariaLabel = t('voice.connecting')
     } else if (isConnected) {
         icon = <StopIcon />
-        className = 'bg-black text-white'
+        className = 'bg-[var(--app-button)] text-[var(--app-button-text)] hover:opacity-90'
         ariaLabel = t('composer.stop')
     } else if (routesToScratchlist) {
-        // Amber send button - matches the scratchlist drawer accent.
+        // Warning token marks a scratchlist send so it stays distinct from chat send.
         // Single visual signal carries the "this goes to the scratchlist"
         // contract; without it, the modal state is invisible to the user.
         icon = <SendIcon />
-        className = 'bg-amber-500 text-white hover:bg-amber-600'
+        className = 'bg-[var(--app-badge-warning-text)] text-[var(--app-bg)] hover:opacity-90'
         ariaLabel = t('scratchlist.sendToScratchlist')
     } else if (hasText) {
         icon = <SendIcon />
-        className = 'bg-black text-white'
+        className = 'bg-[var(--app-button)] text-[var(--app-button-text)] hover:opacity-90'
         ariaLabel = t('composer.send')
     } else if (props.voiceEnabled) {
         icon = <VoiceAssistantIcon />
-        className = 'bg-black text-white'
+        className = 'bg-[var(--app-button)] text-[var(--app-button-text)] hover:opacity-90'
         ariaLabel = props.voiceLabel ?? t('composer.voice')
     } else {
         icon = <SendIcon />
-        className = 'bg-[#C0C0C0] text-white'
+        className = 'bg-[var(--app-hint)] text-[var(--app-bg)]'
         ariaLabel = t('composer.send')
     }
 
@@ -669,6 +788,7 @@ export function ComposerButtons(props: {
         : layout
     const isVoiceConnected = props.voiceStatus === 'connected'
     const [showSchedulePicker, setShowSchedulePicker] = useState(false)
+    const [scheduleAnchor, setScheduleAnchor] = useState<{ top: number; left: number; right: number; bottom: number; width: number; height: number } | null>(null)
     const scheduleButtonRef = useRef<HTMLButtonElement>(null)
 
     const hasSchedule = props.pendingSchedule != null
@@ -679,7 +799,7 @@ export function ComposerButtons(props: {
         <div className="flex shrink-0 items-center gap-1 px-2 pb-2">
             <div
                 data-testid="composer-toolbar-items"
-                className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+                className="flex min-w-0 flex-1 items-center gap-1"
                 style={{ justifyContent: toolbarJustifyContent }}
             >
                 <OrderedToolbarItems layout={effectiveLayout}>
@@ -691,6 +811,7 @@ export function ComposerButtons(props: {
                     className="flex h-8 w-8 items-center justify-center rounded-full text-[var(--app-fg)]/60 transition-colors hover:bg-[var(--app-bg)] hover:text-[var(--app-fg)] disabled:cursor-not-allowed disabled:opacity-50"
                 >
                     <AttachmentIcon />
+                    <span className="composer-more-label">{t('composer.attach')}</span>
                 </ComposerPrimitive.AddAttachment>
                 </ToolbarItemSlot>
 
@@ -770,6 +891,7 @@ export function ComposerButtons(props: {
                         disabled={props.terminalDisabled}
                     >
                         <TerminalIcon />
+                        <span className="composer-more-label">{props.terminalLabel}</span>
                     </button>
                 ) : null}
                 </ToolbarItemSlot>
@@ -781,7 +903,7 @@ export function ComposerButtons(props: {
                         aria-label={t('composer.abort')}
                         title={t('composer.abort')}
                         disabled={props.abortDisabled}
-                        className="flex h-8 w-8 items-center justify-center rounded-full text-[var(--app-fg)]/60 transition-colors hover:bg-[var(--app-bg)] hover:text-red-500 disabled:cursor-not-allowed disabled:opacity-50"
+                        className="flex h-8 w-8 items-center justify-center rounded-full text-[var(--app-fg)]/60 transition-colors hover:bg-[var(--app-bg)] hover:text-[var(--app-badge-error-text)] disabled:cursor-not-allowed disabled:opacity-50"
                         onClick={props.onAbort}
                     >
                         <AbortIcon spinning={props.isAborting} />
@@ -796,7 +918,7 @@ export function ComposerButtons(props: {
                         aria-label={t('composer.switchRemote')}
                         title={t('composer.switchRemote')}
                         disabled={props.switchDisabled}
-                        className="flex h-8 w-8 items-center justify-center rounded-full text-[var(--app-fg)]/60 transition-colors hover:bg-[var(--app-bg)] hover:text-blue-500 disabled:cursor-not-allowed disabled:opacity-50"
+                        className="flex h-8 w-8 items-center justify-center rounded-full text-[var(--app-fg)]/60 transition-colors hover:bg-[var(--app-bg)] hover:text-[var(--app-link)] disabled:cursor-not-allowed disabled:opacity-50"
                         onClick={props.onSwitch}
                     >
                         <SwitchToRemoteIcon />
@@ -812,12 +934,13 @@ export function ComposerButtons(props: {
                         title={props.voiceMicMuted ? t('voice.unmute') : t('voice.mute')}
                         className={`flex h-8 w-8 items-center justify-center rounded-full transition-colors ${
                             props.voiceMicMuted
-                                ? 'bg-gray-200 text-gray-600 hover:bg-gray-300'
+                                ? 'bg-[var(--app-secondary-bg)] text-[var(--app-fg)] hover:bg-[var(--app-border)]'
                                 : 'text-[var(--app-fg)]/60 hover:bg-[var(--app-bg)] hover:text-[var(--app-fg)]'
                         }`}
                         onClick={props.onVoiceMicToggle}
                     >
                         <SpeakerIcon muted={props.voiceMicMuted} />
+                        <span className="composer-more-label">{props.voiceMicMuted ? t('voice.unmute') : t('voice.mute')}</span>
                     </button>
                 ) : null}
                 </ToolbarItemSlot>
@@ -859,21 +982,28 @@ export function ComposerButtons(props: {
                             onClick={() => {
                                 if (hasSchedule && props.onClearSchedule) {
                                     props.onClearSchedule()
-                                } else {
-                                    setShowSchedulePicker((v) => !v)
+                                    return
                                 }
+                                const rect = scheduleButtonRef.current?.getBoundingClientRect()
+                                if (rect) {
+                                    setScheduleAnchor({ top: rect.top, left: rect.left, right: rect.right, bottom: rect.bottom, width: rect.width, height: rect.height })
+                                }
+                                setShowSchedulePicker((v) => !v)
                             }}
+
                             className={`flex h-8 w-8 items-center justify-center rounded-full transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
                                 hasSchedule
-                                    ? 'bg-blue-500 text-white hover:bg-blue-600'
+                                    ? 'bg-[var(--app-button)] text-[var(--app-button-text)] hover:opacity-90'
                                     : 'text-[var(--app-fg)]/60 hover:bg-[var(--app-bg)] hover:text-[var(--app-fg)]'
                             }`}
                         >
                             <ScheduleIcon className="h-[18px] w-[18px]" />
+                            <span className="composer-more-label">{t('composer.scheduleSend')}</span>
                         </button>
                         {showSchedulePicker && (
                             <ScheduleTimePicker
                                 anchorRef={scheduleButtonRef}
+                                fallbackAnchor={scheduleAnchor}
                                 onSchedule={(pending) => {
                                     props.onSchedule!(pending)
                                     setShowSchedulePicker(false)

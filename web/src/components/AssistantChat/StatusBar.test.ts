@@ -2,9 +2,10 @@ import { describe, expect, it } from 'vitest'
 import {
     formatCompactContextUsageLabel,
     formatContextUsageLabel,
+    formatThinkingStatus,
     getContextWarning,
     getContextUsageDetails,
-    shouldShowCodexFastBadge
+    shouldShowCodexFastBadge,
 } from './StatusBar'
 
 describe('context warning colors', () => {
@@ -13,13 +14,20 @@ describe('context warning colors', () => {
     })
 
     it('shows a warning from 70% through below 90%', () => {
-        expect(getContextWarning(70, 100).color).toBe('text-amber-500')
-        expect(getContextWarning(89, 100).color).toBe('text-amber-500')
+        expect(getContextWarning(70, 100).color).toBe('text-[var(--app-badge-warning-text)]')
+        expect(getContextWarning(89, 100).color).toBe('text-[var(--app-badge-warning-text)]')
     })
 
     it('shows danger at 90% and above', () => {
-        expect(getContextWarning(90, 100).color).toBe('text-red-500')
-        expect(getContextWarning(95, 100).color).toBe('text-red-500')
+        expect(getContextWarning(90, 100).color).toBe('text-[var(--app-badge-error-text)]')
+        expect(getContextWarning(95, 100).color).toBe('text-[var(--app-badge-error-text)]')
+    })
+})
+
+describe('thinking status', () => {
+    it('names the phase and elapsed seconds instead of a random word', () => {
+        expect(formatThinkingStatus('responding', 0)).toBe('responding · 0s')
+        expect(formatThinkingStatus('Bash', 12)).toBe('Bash · 12s')
     })
 })
 

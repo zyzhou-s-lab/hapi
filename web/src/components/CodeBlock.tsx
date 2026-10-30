@@ -79,9 +79,7 @@ export function CodeBlock(props: {
     const isCollapsed = collapsible && !expanded
     const collapsedHeight = props.collapsedHeight ?? DEFAULT_COLLAPSED_HEIGHT
     const scrollHeight = props.maxHeight ?? DEFAULT_SCROLL_HEIGHT
-    const codeTextClass = props.size === 'comfortable'
-        ? 'text-sm leading-5'
-        : 'text-xs'
+    const codeTextClass = 'app-code-text'
     // Render one grid row per logical line: a line-number cell and a code
     // cell that are siblings in the same row. Because they share a grid row,
     // the line number stays aligned with its line even when the code cell

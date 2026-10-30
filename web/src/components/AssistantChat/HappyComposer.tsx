@@ -297,6 +297,7 @@ export function HappyComposer(props: {
     allowSendWhenInactive?: boolean
     thinking?: boolean
     agentState?: AgentState | null
+    activityLabel?: string | null
     backgroundTaskCount?: number
     contextSize?: number
     contextCacheRead?: number
@@ -416,7 +417,8 @@ export function HappyComposer(props: {
         active = true,
         allowSendWhenInactive = false,
         thinking = false,
-        agentState,
+        agentState = null,
+        activityLabel = null,
         backgroundTaskCount,
         contextSize,
         contextCacheRead,
@@ -1959,7 +1961,7 @@ export function HappyComposer(props: {
                                     <div
                                         className={`mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded border-2 ${
                                             resumeWithSessionModel
-                                                ? 'border-[var(--app-link)] bg-[var(--app-link)] text-white'
+                                                ? 'border-[var(--app-link)] bg-[var(--app-link)] text-[var(--app-bg)]'
                                                 : 'border-[var(--app-hint)]'
                                         }`}
                                     >
@@ -2371,13 +2373,13 @@ export function HappyComposer(props: {
         ? 'relative flex min-h-0 flex-1 flex-col'
         : 'relative'
     const editorClassName = isExpanded
-        ? 'h-full min-h-[1.5rem] flex-1 overflow-y-auto whitespace-pre-wrap break-words bg-transparent text-base leading-snug text-[var(--app-fg)] focus:outline-none'
-        : 'max-h-[7.5rem] min-h-[1.5rem] flex-1 overflow-y-auto whitespace-pre-wrap break-words bg-transparent text-base leading-snug text-[var(--app-fg)] focus:outline-none'
+        ? 'app-input-text h-full min-h-[var(--app-line-input)] flex-1 overflow-y-auto whitespace-pre-wrap break-words bg-transparent text-[var(--app-fg)] focus:outline-none'
+        : 'app-input-text max-h-[7.5rem] min-h-[var(--app-line-input)] flex-1 overflow-y-auto whitespace-pre-wrap break-words bg-transparent text-[var(--app-fg)] focus:outline-none'
     const frameClassName = `overflow-hidden ${
         isExpanded
             ? 'flex min-h-0 flex-1 flex-col rounded-[20px] bg-[var(--app-secondary-bg)]'
             : 'composer-floating-frame backdrop-blur-md'
-    } ${sendError ? 'ring-1 ring-red-500' : ''}`
+    } ${sendError ? 'ring-1 ring-[var(--app-badge-error-text)]' : ''}`
 
     return (
         <ComposerParkingContext.Provider value={isParkingScratchlist}>
@@ -2396,6 +2398,7 @@ export function HappyComposer(props: {
                             active={active}
                             thinking={thinking}
                             agentState={agentState}
+                            activityLabel={activityLabel}
                             backgroundTaskCount={backgroundTaskCount}
                             contextSize={contextSize}
                             contextCacheRead={contextCacheRead}
@@ -2426,7 +2429,7 @@ export function HappyComposer(props: {
                     ) : null}
 
                     {dictationActive && dictation.error ? (
-                        <div role="alert" className="mb-2 rounded-md bg-[var(--app-subtle-bg)] px-3 py-2 text-sm text-red-600">
+                        <div role="alert" className="mb-2 rounded-md bg-[var(--app-subtle-bg)] px-3 py-2 text-sm text-[var(--app-badge-error-text)]">
                             {dictation.error}
                         </div>
                     ) : null}
@@ -2435,7 +2438,7 @@ export function HappyComposer(props: {
                         <div
                             role="alert"
                             data-testid="composer-send-error"
-                            className="mb-2 flex items-center justify-between gap-3 rounded-md bg-[var(--app-subtle-bg)] px-3 py-2 text-sm text-red-600"
+                            className="mb-2 flex items-center justify-between gap-3 rounded-md bg-[var(--app-subtle-bg)] px-3 py-2 text-sm text-[var(--app-badge-error-text)]"
                         >
                             <span className="flex-1">{sendError.message}</span>
                             {sendError.action ? (
@@ -2444,7 +2447,7 @@ export function HappyComposer(props: {
                                     data-testid="composer-send-error-action"
                                     onClick={sendError.action.onClick}
                                     disabled={sendError.action.pending}
-                                    className="shrink-0 rounded-md border border-red-300 px-2 py-1 text-xs font-medium text-red-700 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-60"
+                                    className="shrink-0 rounded-md border border-[var(--app-badge-error-border)] px-2 py-1 text-xs font-medium text-[var(--app-badge-error-text)] hover:bg-[var(--app-badge-error-bg)] disabled:cursor-not-allowed disabled:opacity-60"
                                 >
                                     {sendError.action.label}
                                 </button>
@@ -2518,7 +2521,7 @@ export function HappyComposer(props: {
                                             showContinueHint,
                                         }))}
                                         disabled={controlsDisabled}
-                                        className="h-full min-h-0 flex-1 resize-none overflow-y-auto bg-transparent text-base leading-snug text-[var(--app-fg)] placeholder-[var(--app-hint)] focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
+                                        className="app-input-text h-full min-h-0 flex-1 resize-none overflow-y-auto bg-transparent text-[var(--app-fg)] placeholder-[var(--app-hint)] focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
                                     />
                                 </ComposerPrimitive.Input>
                             ) : (
@@ -2537,7 +2540,7 @@ export function HappyComposer(props: {
                                     onSelect={handleSelect}
                                     onKeyDown={handleKeyDown}
                                     onPaste={handlePaste}
-                                    className="flex-1 resize-none bg-transparent text-base leading-snug text-[var(--app-fg)] placeholder-[var(--app-hint)] focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
+                                    className="app-input-text flex-1 resize-none bg-transparent text-[var(--app-fg)] placeholder-[var(--app-hint)] focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
                                 />
                             )}
                         </div>
