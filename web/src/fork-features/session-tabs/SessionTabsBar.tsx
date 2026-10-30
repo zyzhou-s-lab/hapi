@@ -13,17 +13,25 @@ import { safeCopyToClipboard } from '@/lib/clipboard'
 import { buildSessionReferenceText } from '@/lib/sessionReference'
 import { useToast } from '@/lib/toast-context'
 import { TabSessionDialog, type TabSessionDialogKind } from './TabSessionDialogs'
+import { sessionDirectoryGroupKey } from '@/lib/sessionDirectoryGroup'
 import {
+    MAX_SESSION_TABS,
+    adoptLegacyTabs,
+    allTabIds,
+    applyToGroup,
     closeOtherTabs,
-    closeTab,
+    closeTabInDirectory,
     closeTabsToRight,
-    moveTab,
-    openTab,
     confirmedDeletedIds,
+    getSessionTabsSnapshot,
+    moveTab,
+    openTabInDirectory,
     pruneDeletedTabs,
+    rehomeTabs,
+    tabsMissingFromFirstList,
     togglePinTab,
     updateSessionTabs,
-    useSessionTabsState
+    useSessionTabsState,
 } from './sessionTabsStore'
 import { canCloseOpenTab, isEditableTarget, isTerminalTarget, matchTabShortcut } from './tabShortcuts'
 import './sessionTabs.css'
@@ -34,33 +42,87 @@ export function useSessionTabsScope(): string {
     return `${baseUrl}|${user.id}`
 }
 
+function directoryKeyOf(selectedSessionId: string | null, sessions: readonly SessionSummary[]): string | null {
+    if (!selectedSessionId) return null
+    const session = sessions.find(item => item.id === selectedSessionId)
+    return session ? sessionDirectoryGroupKey(session) : null
+}
+
+/** 正在看的会话用它所在目录；总览（没有选中会话，或会话还没出现在列表里）用上次那个目录。 */
+function visibleSessionDirectoryKey(
+    selectedSessionId: string | null,
+    sessions: readonly SessionSummary[],
+    activeDirectoryKey: string | null,
+): string | null {
+    return directoryKeyOf(selectedSessionId, sessions) ?? activeDirectoryKey
+}
+
 /**
- * 打开当前会话并放进标签。`loaded` 必须是一次成功的、未过滤的会话列表（含归档）。
- * 第一次只记下 id；之后从这份列表里消失的才算删除。未加载完、侧栏过滤、归档隐藏都不会删标签。
+ * 打开当前会话并放进它所在目录的标签。`loaded` 必须是一次成功的、未过滤的会话列表（含归档）。
+ * 第一次成功的列表会丢掉已经不在列表里的标签（所有窗口都关着时被删掉的会话），
+ * 但本窗口刚打开、列表还没跟上的 id 留着。之后只丢掉从这份列表里消失的。
+ * 未加载完、侧栏过滤、归档隐藏都不会删标签。
  */
 export function useSessionTabsSync(selectedSessionId: string | null, sessions: SessionSummary[], loaded: boolean): void {
     const scope = useSessionTabsScope()
+    const { t } = useTranslation()
+    const { addToast } = useToast()
     const baseline = useRef<{ scope: string; ids: Set<string> } | null>(null)
+    const openedThisWindow = useRef<{ scope: string; ids: Set<string> } | null>(null)
+    const directoryKey = directoryKeyOf(selectedSessionId, sessions)
+    const groups = useSessionTabsState(scope)
+    const visibleKey = visibleSessionDirectoryKey(selectedSessionId, sessions, groups.activeDirectoryKey)
+    const visibleTabs = visibleKey ? groups.groups[visibleKey] ?? [] : []
+
     useEffect(() => {
-        if (selectedSessionId) updateSessionTabs(scope, state => openTab(state, selectedSessionId, Date.now()))
-    }, [scope, selectedSessionId])
+        if (!selectedSessionId || !directoryKey) return
+        if (openedThisWindow.current?.scope !== scope) openedThisWindow.current = { scope, ids: new Set() }
+        openedThisWindow.current.ids.add(selectedSessionId)
+        const result = openTabInDirectory(getSessionTabsSnapshot(scope), directoryKey, selectedSessionId, Date.now())
+        if (result.state !== getSessionTabsSnapshot(scope)) updateSessionTabs(scope, () => result.state)
+        if (result.rejected !== 'pinned-full') return
+        // StrictMode 会马上清掉第一次 effect。延后到下一个任务，开发模式只提示一次。
+        const timer = window.setTimeout(() => {
+            addToast({
+                title: t('tabs.pinnedFull.title'),
+                body: t('tabs.pinnedFull.body', { count: MAX_SESSION_TABS }),
+                sessionId: selectedSessionId,
+                url: window.location.href,
+                variant: 'warning',
+            })
+        }, 0)
+        return () => window.clearTimeout(timer)
+    }, [scope, selectedSessionId, directoryKey, addToast, t])
+
     useEffect(() => {
         if (!loaded) return
         const current = new Set(sessions.map(session => session.id))
-        const previous = baseline.current?.scope === scope ? baseline.current.ids : null
-        baseline.current = { scope, ids: current }
-        const deleted = confirmedDeletedIds(previous, current)
-        if (deleted.size === 0) return
-        updateSessionTabs(scope, state => pruneDeletedTabs(state, deleted))
+        const directoryById = new Map(sessions.map(session => [session.id, sessionDirectoryGroupKey(session)]))
+        updateSessionTabs(scope, state => {
+            const previous = baseline.current?.scope === scope ? baseline.current.ids : null
+            const opened = openedThisWindow.current?.scope === scope ? openedThisWindow.current.ids : new Set<string>()
+            const deleted = previous
+                ? confirmedDeletedIds(previous, current)
+                : tabsMissingFromFirstList(allTabIds(state), current, opened)
+            baseline.current = { scope, ids: current }
+            return rehomeTabs(adoptLegacyTabs(pruneDeletedTabs(state, deleted), directoryById), directoryById)
+        })
     }, [scope, loaded, sessions])
-    useSessionTabShortcuts(scope, selectedSessionId)
+
+    useSessionTabShortcuts(scope, selectedSessionId, visibleKey, visibleTabs)
 }
 
-/** 关掉一个标签；关的是当前会话时跳到相邻标签，没有就回会话首页。 */
-function closeSessionTab(scope: string, id: string, selectedSessionId: string | null, go: (id: string | null) => void): void {
+/** 关掉一个标签；关的是当前会话时跳到同一目录里的相邻标签，没有就回会话首页。 */
+function closeSessionTab(
+    scope: string,
+    directoryKey: string | null,
+    id: string,
+    selectedSessionId: string | null,
+    go: (id: string | null) => void,
+): void {
     let neighbor: string | null = null
     updateSessionTabs(scope, state => {
-        const result = closeTab(state, id)
+        const result = closeTabInDirectory(state, directoryKey, id)
         neighbor = result.neighbor
         return result.state
     })
@@ -68,11 +130,15 @@ function closeSessionTab(scope: string, id: string, selectedSessionId: string | 
 }
 
 /** 见 matchTabShortcut。没有可关的会话标签时不 preventDefault，PWA 独立窗口才能用 Ctrl/⌘+W 关窗口。 */
-function useSessionTabShortcuts(scope: string, selectedSessionId: string | null): void {
+function useSessionTabShortcuts(
+    scope: string,
+    selectedSessionId: string | null,
+    directoryKey: string | null,
+    tabs: readonly { id: string }[],
+): void {
     const navigate = useNavigate()
-    const { tabs } = useSessionTabsState(scope)
-    const latest = useRef({ selectedSessionId, tabs })
-    latest.current = { selectedSessionId, tabs }
+    const latest = useRef({ selectedSessionId, directoryKey, tabs })
+    latest.current = { selectedSessionId, directoryKey, tabs }
     useEffect(() => {
         const go = (id: string | null) => {
             if (id) navigate(getSessionListSelectionNavigation(id))
@@ -88,18 +154,20 @@ function useSessionTabShortcuts(scope: string, selectedSessionId: string | null)
                 navigate({ to: '/sessions/new', ...PRESERVE_SESSION_SIDEBAR_SCROLL })
                 return
             }
-            const { selectedSessionId: current, tabs: open } = latest.current
+            const { selectedSessionId: current, directoryKey: dir, tabs: open } = latest.current
             if (!current || !canCloseOpenTab(current, open.map(tab => tab.id))) return
             event.preventDefault()
-            closeSessionTab(scope, current, current, go)
+            closeSessionTab(scope, dir, current, current, go)
         }
         window.addEventListener('keydown', onKeyDown)
         return () => window.removeEventListener('keydown', onKeyDown)
     }, [navigate, scope])
 }
 
-export function useHasSessionTabs(): boolean {
-    return useSessionTabsState(useSessionTabsScope()).tabs.length > 0
+export function useHasSessionTabs(selectedSessionId: string | null, sessions: SessionSummary[]): boolean {
+    const groups = useSessionTabsState(useSessionTabsScope())
+    const key = visibleSessionDirectoryKey(selectedSessionId, sessions, groups.activeDirectoryKey)
+    return key != null && (groups.groups[key]?.length ?? 0) > 0
 }
 
 type Menu = { id: string; x: number; y: number } | null
@@ -119,7 +187,9 @@ export function SessionTabsBar(props: {
     const { api } = useAppContext()
     const { haptic } = usePlatform()
     const { addToast } = useToast()
-    const { tabs } = useSessionTabsState(scope)
+    const groups = useSessionTabsState(scope)
+    const visibleKey = visibleSessionDirectoryKey(props.selectedSessionId, props.sessions, groups.activeDirectoryKey)
+    const tabs = visibleKey ? groups.groups[visibleKey] ?? [] : []
     // 已读水位存在 localStorage。不订阅的话，标已读/未读不会让蓝点刷新。
     useSessionLastSeenVersion()
     const [menu, setMenu] = useState<Menu>(null)
@@ -162,7 +232,7 @@ export function SessionTabsBar(props: {
         if (id) navigate(getSessionListSelectionNavigation(id))
         else navigate({ to: '/sessions', ...PRESERVE_SESSION_SIDEBAR_SCROLL })
     }
-    const close = (id: string) => closeSessionTab(scope, id, props.selectedSessionId, go)
+    const close = (id: string) => closeSessionTab(scope, visibleKey, id, props.selectedSessionId, go)
     const onAuxClick = (event: ReactMouseEvent, id: string) => {
         if (event.button === 1) {
             event.preventDefault()
@@ -192,14 +262,14 @@ export function SessionTabsBar(props: {
         ...(menuSession.active ? [{ key: 'archive', label: t('session.action.archive'), danger: true, run: () => setDialog({ id: menu.id, kind: 'archive' }) }] : [])
     ] : []
     const tabItems: MenuItem[] = menu ? [
-        { key: 'pin', label: tabs.find(tab => tab.id === menu.id)?.pinned ? t('tabs.unpin') : t('tabs.pin'), run: () => updateSessionTabs(scope, state => togglePinTab(state, menu.id)) },
+        { key: 'pin', label: tabs.find(tab => tab.id === menu.id)?.pinned ? t('tabs.unpin') : t('tabs.pin'), run: () => updateSessionTabs(scope, state => applyToGroup(state, visibleKey, list => togglePinTab(list, menu.id))) },
         { key: 'close', label: t('tabs.close'), run: () => close(menu.id) },
-        { key: 'others', label: t('tabs.closeOthers'), run: () => { updateSessionTabs(scope, state => closeOtherTabs(state, menu.id)); if (props.selectedSessionId !== menu.id) go(menu.id) } },
+        { key: 'others', label: t('tabs.closeOthers'), run: () => { updateSessionTabs(scope, state => applyToGroup(state, visibleKey, list => closeOtherTabs(list, menu.id))); if (props.selectedSessionId !== menu.id) go(menu.id) } },
         {
             key: 'right', label: t('tabs.closeRight'), run: () => {
                 const index = tabs.findIndex(tab => tab.id === menu.id)
                 const selectedIndex = tabs.findIndex(tab => tab.id === props.selectedSessionId)
-                updateSessionTabs(scope, state => closeTabsToRight(state, menu.id))
+                updateSessionTabs(scope, state => applyToGroup(state, visibleKey, list => closeTabsToRight(list, menu.id)))
                 if (selectedIndex > index && !tabs[selectedIndex]?.pinned) go(menu.id)
             }
         }
@@ -255,7 +325,7 @@ export function SessionTabsBar(props: {
                             onMenu={point => setMenu({ id: tab.id, x: point.x, y: point.y })}
                             onDragStart={() => setDragging(tab.id)}
                             canDropHere={Boolean(dragging && dragging !== tab.id)}
-                            onDrop={() => { if (dragging) updateSessionTabs(scope, state => moveTab(state, dragging, tab.id)); setDragging(null) }}
+                            onDrop={() => { if (dragging) updateSessionTabs(scope, state => applyToGroup(state, visibleKey, list => moveTab(list, dragging, tab.id))); setDragging(null) }}
                             onDragEnd={() => setDragging(null)}
                         />
                     )

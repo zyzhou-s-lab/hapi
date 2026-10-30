@@ -26,25 +26,28 @@ vi.mock('@/hooks/mutations/useSessionActions', () => ({
     useSessionActions: () => ({ renameSession: mocks.renameSession, archiveSession: mocks.archiveSession, isPending: false })
 }))
 
-import { SessionTabsBar } from './SessionTabsBar'
-import { __resetSessionTabsForTests, openTab, updateSessionTabs } from './sessionTabsStore'
+import { SessionTabsBar, useSessionTabsSync } from './SessionTabsBar'
+import { sessionDirectoryGroupKey } from '@/lib/sessionDirectoryGroup'
+import { MAX_SESSION_TABS, __resetSessionTabsForTests, applyToGroup, getSessionTabsSnapshot, openTabInDirectory, togglePinTab, updateSessionTabs } from './sessionTabsStore'
 
 const SCOPE = 'https://hub.test|1'
 
-function session(id: string, name: string, active: boolean): SessionSummary {
+function session(id: string, name: string, active: boolean, path = '/p'): SessionSummary {
     return {
         id,
         active,
         thinking: false,
         updatedAt: 1,
         pendingRequestsCount: 0,
-        metadata: { name, path: '/p', flavor: 'claude', machineId: 'm1' }
+        metadata: { name, path, flavor: 'claude', machineId: 'm1' }
     } as unknown as SessionSummary
 }
 
-function renderBar(sessions: SessionSummary[], home?: { active: boolean; onOpen: () => void }) {
-    for (const s of sessions) updateSessionTabs(SCOPE, state => openTab(state, s.id, Date.now()))
-    return render(<SessionTabsBar sessions={sessions} selectedSessionId={sessions[0]!.id} machineLabel={() => '天选6pro'} home={home} />)
+function renderBar(sessions: SessionSummary[], home?: { active: boolean; onOpen: () => void }, selectedSessionId: string | null = sessions[0]?.id ?? null) {
+    for (const s of sessions) {
+        updateSessionTabs(SCOPE, state => openTabInDirectory(state, sessionDirectoryGroupKey(s), s.id, Date.now()).state)
+    }
+    return render(<SessionTabsBar sessions={sessions} selectedSessionId={selectedSessionId} machineLabel={() => '天选6pro'} home={home} />)
 }
 
 function tab(id: string): HTMLElement {
@@ -143,4 +146,75 @@ describe('SessionTabsBar tab menu', () => {
         fireEvent.click(await screen.findByRole('button', { name: 'dialog.archive.confirm' }))
         await waitFor(() => expect(mocks.archiveSession).toHaveBeenCalled())
     })
+    it('shows only the selected directory and keeps the overview tab', () => {
+        renderBar(
+            [session('a', '甲', true, '/repo/a'), session('b', '乙', false, '/repo/b')],
+            { active: false, onOpen: vi.fn() },
+        )
+        expect(document.querySelector('[data-tab-id="a"]')).not.toBeNull()
+        expect(document.querySelector('[data-tab-id="b"]')).toBeNull()
+        expect(screen.getByTestId('session-tab-home')).toBeInTheDocument()
+    })
+
+    it('overview shows the last directory group', () => {
+        const first = session('a', '甲', true, '/repo/a')
+        const second = session('b', '乙', false, '/repo/b')
+        updateSessionTabs(SCOPE, state => openTabInDirectory(state, sessionDirectoryGroupKey(first), first.id, 1).state)
+        updateSessionTabs(SCOPE, state => openTabInDirectory(state, sessionDirectoryGroupKey(second), second.id, 2).state)
+        render(<SessionTabsBar sessions={[first, second]} selectedSessionId={null} machineLabel={() => '天选6pro'} home={{ active: true, onOpen: vi.fn() }} />)
+        expect(document.querySelector('[data-tab-id="b"]')).not.toBeNull()
+        expect(document.querySelector('[data-tab-id="a"]')).toBeNull()
+        expect(screen.getByTestId('session-tab-home')).toHaveAttribute('aria-selected', 'true')
+    })
+
+    it('drops a tab whose session was already gone when the list first loads', () => {
+        const keep = session('keep', '留', true)
+        const key = sessionDirectoryGroupKey(keep)
+        localStorage.setItem(`hapi-session-tabs:${SCOPE}`, JSON.stringify({
+            version: 2,
+            activeDirectoryKey: key,
+            groups: { [key]: [{ id: 'keep', pinned: false, activatedAt: 1 }, { id: 'gone', pinned: true, activatedAt: 2 }] },
+        }))
+        __resetSessionTabsForTests()
+        render(<SyncProbe selected={null} sessions={[keep]} />)
+        expect(getSessionTabsSnapshot(SCOPE).groups[key]?.map(tab => tab.id)).toEqual(['keep'])
+    })
+
+    it('adopts a legacy flat list into directories and drops sessions that are already gone', () => {
+        const keep = session('keep', '留', true, '/repo/a')
+        localStorage.setItem(`hapi-session-tabs:${SCOPE}`, JSON.stringify({
+            tabs: [{ id: 'keep', pinned: true, activatedAt: 1 }, { id: 'gone', pinned: false, activatedAt: 2 }],
+        }))
+        __resetSessionTabsForTests()
+        render(<SyncProbe selected={null} sessions={[keep]} />)
+        const snapshot = getSessionTabsSnapshot(SCOPE)
+        expect(snapshot.groups[sessionDirectoryGroupKey(keep)]?.map(tab => tab.id)).toEqual(['keep'])
+        expect(snapshot.groups['']).toBeUndefined()
+        expect(snapshot.activeDirectoryKey).toBe(sessionDirectoryGroupKey(keep))
+    })
+
+    it('tells the user when every tab in the directory is pinned', async () => {
+        const pinned = Array.from({ length: MAX_SESSION_TABS }, (_, index) => session(`s${index}`, `n${index}`, false))
+        const extra = session('extra', '新', true)
+        const key = sessionDirectoryGroupKey(extra)
+        let state = openTabInDirectory({ activeDirectoryKey: null, groups: {} }, key, pinned[0]!.id, 1).state
+        state = applyToGroup(state, key, list => togglePinTab(list, pinned[0]!.id))
+        for (const item of pinned.slice(1)) {
+            state = openTabInDirectory(state, key, item.id, 1).state
+            state = applyToGroup(state, key, list => togglePinTab(list, item.id))
+        }
+        updateSessionTabs(SCOPE, () => state)
+        render(<SyncProbe selected={extra.id} sessions={[...pinned, extra]} />)
+        await waitFor(() => expect(mocks.addToast).toHaveBeenCalledWith(expect.objectContaining({
+            title: 'tabs.pinnedFull.title',
+            variant: 'warning',
+        })))
+        expect(getSessionTabsSnapshot(SCOPE).groups[key]?.some(tab => tab.id === 'extra')).toBe(false)
+    })
+
 })
+
+function SyncProbe(props: { selected: string | null; sessions: SessionSummary[]; loaded?: boolean }) {
+    useSessionTabsSync(props.selected, props.sessions, props.loaded ?? true)
+    return null
+}
