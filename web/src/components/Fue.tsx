@@ -25,7 +25,7 @@ export function FueDot(props: {
     ariaLabel?: string
     className?: string
 }) {
-    const color = props.color ?? 'bg-amber-500'
+    const color = props.color ?? 'bg-[var(--app-badge-warning-text)]'
     return (
         <span
             role={props.ariaLabel ? 'status' : undefined}
@@ -200,11 +200,11 @@ export function FueCallout(props: {
             // vars are alpha 0.2 (designed to layer over chat content); using
             // them here made the popover translucent and unreadable when the
             // scratchlist drawer (same vars) was open behind it.
-            className="z-[60] rounded-lg border-2 border-amber-500 bg-[var(--app-bg)] shadow-2xl p-3 text-xs text-[var(--app-fg)]"
+            className="z-[60] rounded-lg border-2 border-[var(--app-badge-warning-text)] bg-[var(--app-bg)] shadow-2xl p-3 text-xs text-[var(--app-fg)]"
         >
             <div className="flex items-start gap-2">
                 <div className="flex-1 min-w-0">
-                    <div className="font-semibold mb-1 text-amber-500">
+                    <div className="font-semibold mb-1 text-[var(--app-badge-warning-text)]">
                         {props.title}
                     </div>
                     <div className="text-[var(--app-fg)] leading-snug">
@@ -240,7 +240,7 @@ export function FueCallout(props: {
                 <button
                     type="button"
                     onClick={props.onDismiss}
-                    className="rounded-md bg-amber-500 px-3 py-1 text-xs font-medium text-white hover:bg-amber-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-300"
+                    className="rounded-md bg-[var(--app-badge-warning-text)] px-3 py-1 text-xs font-medium text-[var(--app-bg)] hover:opacity-90"
                 >
                     {props.dismissLabel ?? 'Got it'}
                 </button>

@@ -2379,7 +2379,7 @@ export function HappyComposer(props: {
         isExpanded
             ? 'flex min-h-0 flex-1 flex-col rounded-[20px] bg-[var(--app-secondary-bg)]'
             : 'composer-floating-frame backdrop-blur-md'
-    } ${sendError ? 'ring-1 ring-red-500' : ''}`
+    } ${sendError ? 'ring-1 ring-[var(--app-badge-error-text)]' : ''}`
 
     return (
         <ComposerParkingContext.Provider value={isParkingScratchlist}>
@@ -2429,7 +2429,7 @@ export function HappyComposer(props: {
                     ) : null}
 
                     {dictationActive && dictation.error ? (
-                        <div role="alert" className="mb-2 rounded-md bg-[var(--app-subtle-bg)] px-3 py-2 text-sm text-red-600">
+                        <div role="alert" className="mb-2 rounded-md bg-[var(--app-subtle-bg)] px-3 py-2 text-sm text-[var(--app-badge-error-text)]">
                             {dictation.error}
                         </div>
                     ) : null}
@@ -2438,7 +2438,7 @@ export function HappyComposer(props: {
                         <div
                             role="alert"
                             data-testid="composer-send-error"
-                            className="mb-2 flex items-center justify-between gap-3 rounded-md bg-[var(--app-subtle-bg)] px-3 py-2 text-sm text-red-600"
+                            className="mb-2 flex items-center justify-between gap-3 rounded-md bg-[var(--app-subtle-bg)] px-3 py-2 text-sm text-[var(--app-badge-error-text)]"
                         >
                             <span className="flex-1">{sendError.message}</span>
                             {sendError.action ? (
@@ -2447,7 +2447,7 @@ export function HappyComposer(props: {
                                     data-testid="composer-send-error-action"
                                     onClick={sendError.action.onClick}
                                     disabled={sendError.action.pending}
-                                    className="shrink-0 rounded-md border border-red-300 px-2 py-1 text-xs font-medium text-red-700 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-60"
+                                    className="shrink-0 rounded-md border border-[var(--app-badge-error-border)] px-2 py-1 text-xs font-medium text-[var(--app-badge-error-text)] hover:bg-[var(--app-badge-error-bg)] disabled:cursor-not-allowed disabled:opacity-60"
                                 >
                                     {sendError.action.label}
                                 </button>

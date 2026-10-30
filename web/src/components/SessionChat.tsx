@@ -2088,13 +2088,13 @@ function SessionChatInner(props: SessionChatProps) {
                     {codexCollaborationModeSupported && codexModelsState.error ? (
                         composerFloating ? (
                             <div className="composer-floating-chrome">
-                                <div className="mx-auto w-full max-w-content rounded-md bg-[var(--app-secondary-bg)] p-3 text-sm text-red-600">
+                                <div className="mx-auto w-full max-w-content rounded-md bg-[var(--app-secondary-bg)] p-3 text-sm text-[var(--app-badge-error-text)]">
                                     {t('session.codexModelsLoadFailed')}: {codexModelsState.error}
                                 </div>
                             </div>
                         ) : (
                             <div className="px-3 pb-2">
-                                <div className="mx-auto w-full max-w-content rounded-md bg-[var(--app-subtle-bg)] p-3 text-sm text-red-600">
+                                <div className="mx-auto w-full max-w-content rounded-md bg-[var(--app-subtle-bg)] p-3 text-sm text-[var(--app-badge-error-text)]">
                                     {t('session.codexModelsLoadFailed')}: {codexModelsState.error}
                                 </div>
                             </div>

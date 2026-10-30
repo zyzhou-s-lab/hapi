@@ -50,7 +50,7 @@ function BulbIcon(props: { className?: string }) {
 }
 
 const ATTENTION_DOT_CLASS = {
-    permission: 'bg-amber-500 animate-pulse',
+    permission: 'bg-[var(--app-badge-warning-text)] animate-pulse',
     input: 'bg-[var(--app-link)]',
     background: 'bg-[var(--app-link)]/70',
     ready: 'bg-[var(--app-link)]',

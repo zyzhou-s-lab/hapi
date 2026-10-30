@@ -479,7 +479,7 @@ export function ComposerToolbarItemPreview(props: { item: ComposerToolbarItemId;
 }
 
 export function ComposerSendButtonPreview() {
-    return <span className="flex h-10 w-10 items-center justify-center rounded-full bg-black text-white dark:bg-white dark:text-black" aria-hidden="true"><SendIcon /></span>
+    return <span className="flex h-10 w-10 items-center justify-center rounded-full bg-[var(--app-button)] text-[var(--app-button-text)]" aria-hidden="true"><SendIcon /></span>
 }
 
 /**
@@ -524,7 +524,7 @@ function ScratchlistToggleButton(props: {
                 }}
                 className={`relative flex h-8 w-8 items-center justify-center rounded-full transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
                     props.scratchlistMode
-                        ? 'bg-amber-500 text-white hover:bg-amber-600'
+                        ? 'bg-[var(--app-badge-warning-text)] text-[var(--app-bg)] hover:opacity-90'
                         : 'text-[var(--app-fg)]/60 hover:bg-[var(--app-bg)] hover:text-[var(--app-fg)]'
                 }`}
             >
@@ -538,7 +538,7 @@ function ScratchlistToggleButton(props: {
                 {showCounter ? (
                     <span
                         aria-hidden="true"
-                        className="absolute -top-0.5 -right-0.5 min-w-[12px] h-3 px-[3px] flex items-center justify-center rounded-full bg-amber-500 text-white text-[8px] font-semibold leading-none tabular-nums shadow-sm"
+                        className="absolute -top-0.5 -right-0.5 min-w-[12px] h-3 px-[3px] flex items-center justify-center rounded-full bg-[var(--app-badge-warning-text)] text-[var(--app-bg)] text-[8px] font-semibold leading-none tabular-nums shadow-sm"
                     >
                         {props.scratchlistCount > 99 ? '99+' : props.scratchlistCount}
                     </span>
@@ -635,30 +635,30 @@ export function UnifiedButton(props: {
 
     if (isConnecting) {
         icon = <LoadingIcon />
-        className = 'bg-black text-white'
+        className = 'bg-[var(--app-button)] text-[var(--app-button-text)] hover:opacity-90'
         ariaLabel = t('voice.connecting')
     } else if (isConnected) {
         icon = <StopIcon />
-        className = 'bg-black text-white'
+        className = 'bg-[var(--app-button)] text-[var(--app-button-text)] hover:opacity-90'
         ariaLabel = t('composer.stop')
     } else if (routesToScratchlist) {
-        // Amber send button - matches the scratchlist drawer accent.
+        // Warning token marks a scratchlist send so it stays distinct from chat send.
         // Single visual signal carries the "this goes to the scratchlist"
         // contract; without it, the modal state is invisible to the user.
         icon = <SendIcon />
-        className = 'bg-amber-500 text-white hover:bg-amber-600'
+        className = 'bg-[var(--app-badge-warning-text)] text-[var(--app-bg)] hover:opacity-90'
         ariaLabel = t('scratchlist.sendToScratchlist')
     } else if (hasText) {
         icon = <SendIcon />
-        className = 'bg-black text-white'
+        className = 'bg-[var(--app-button)] text-[var(--app-button-text)] hover:opacity-90'
         ariaLabel = t('composer.send')
     } else if (props.voiceEnabled) {
         icon = <VoiceAssistantIcon />
-        className = 'bg-black text-white'
+        className = 'bg-[var(--app-button)] text-[var(--app-button-text)] hover:opacity-90'
         ariaLabel = props.voiceLabel ?? t('composer.voice')
     } else {
         icon = <SendIcon />
-        className = 'bg-[#C0C0C0] text-white'
+        className = 'bg-[var(--app-hint)] text-[var(--app-bg)]'
         ariaLabel = t('composer.send')
     }
 
@@ -901,7 +901,7 @@ export function ComposerButtons(props: {
                         aria-label={t('composer.abort')}
                         title={t('composer.abort')}
                         disabled={props.abortDisabled}
-                        className="flex h-8 w-8 items-center justify-center rounded-full text-[var(--app-fg)]/60 transition-colors hover:bg-[var(--app-bg)] hover:text-red-500 disabled:cursor-not-allowed disabled:opacity-50"
+                        className="flex h-8 w-8 items-center justify-center rounded-full text-[var(--app-fg)]/60 transition-colors hover:bg-[var(--app-bg)] hover:text-[var(--app-badge-error-text)] disabled:cursor-not-allowed disabled:opacity-50"
                         onClick={props.onAbort}
                     >
                         <AbortIcon spinning={props.isAborting} />
@@ -932,7 +932,7 @@ export function ComposerButtons(props: {
                         title={props.voiceMicMuted ? t('voice.unmute') : t('voice.mute')}
                         className={`flex h-8 w-8 items-center justify-center rounded-full transition-colors ${
                             props.voiceMicMuted
-                                ? 'bg-gray-200 text-gray-600 hover:bg-gray-300'
+                                ? 'bg-[var(--app-secondary-bg)] text-[var(--app-fg)] hover:bg-[var(--app-border)]'
                                 : 'text-[var(--app-fg)]/60 hover:bg-[var(--app-bg)] hover:text-[var(--app-fg)]'
                         }`}
                         onClick={props.onVoiceMicToggle}

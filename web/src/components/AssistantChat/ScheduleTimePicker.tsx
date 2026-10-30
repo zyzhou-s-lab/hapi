@@ -370,7 +370,7 @@ export function ScheduleTimePicker({ onSchedule, onClose, anchorRef, pendingSche
                             className="w-full rounded-lg border border-[var(--app-border)] bg-[var(--app-bg)] px-3 py-2 text-sm text-[var(--app-fg)] focus:outline-none focus:ring-1 focus:ring-[var(--app-link)]"
                         />
                         {specificError ? (
-                            <p className="text-xs text-red-500">{specificError}</p>
+                            <p className="text-xs text-[var(--app-badge-error-text)]">{specificError}</p>
                         ) : (
                             <p className="break-words text-xs text-[var(--app-hint)]">
                                 {t('composer.scheduleSpecificHint')}

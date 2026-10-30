@@ -56,7 +56,7 @@ describe('UnifiedButton — routesToScratchlist visual state', () => {
         cleanup()
     })
 
-    it('paints amber + announces "Send to scratchlist" when routesToScratchlist=true', () => {
+    it('paints the warning token and announces "Send to scratchlist" when routesToScratchlist=true', () => {
         renderInProviders(
             <UnifiedButton
                 canSend
@@ -69,10 +69,10 @@ describe('UnifiedButton — routesToScratchlist visual state', () => {
             />,
         )
         const btn = getButton(/scratchlist/i)
-        expect(btn.className).toContain('bg-amber-500')
+        expect(btn.className).toContain('bg-[var(--app-badge-warning-text)]')
     })
 
-    it('paints chat black + announces "Send" when routesToScratchlist=false (e.g. pending schedule)', () => {
+    it('paints the theme button and announces "Send" when routesToScratchlist=false (e.g. pending schedule)', () => {
         // Caller computed routesToScratchlist=false because a pending schedule
         // forces chat fallback. The button must look like a normal chat send.
         renderInProviders(
@@ -87,8 +87,8 @@ describe('UnifiedButton — routesToScratchlist visual state', () => {
             />,
         )
         const btn = getButton('Send')
-        expect(btn.className).not.toContain('bg-amber-500')
-        expect(btn.className).toContain('bg-black')
+        expect(btn.className).not.toContain('bg-[var(--app-badge-warning-text)]')
+        expect(btn.className).toContain('bg-[var(--app-button)]')
     })
 
     it('defaults routesToScratchlist to false when omitted', () => {
@@ -103,7 +103,7 @@ describe('UnifiedButton — routesToScratchlist visual state', () => {
             />,
         )
         const btn = getButton('Send')
-        expect(btn.className).not.toContain('bg-amber-500')
+        expect(btn.className).not.toContain('bg-[var(--app-badge-warning-text)]')
     })
 })
 
