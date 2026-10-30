@@ -203,6 +203,7 @@ export function shouldShowComposerStatusBar(agentFlavor: string | null | undefin
 export function StatusBar(props: {
     active: boolean
     thinking: boolean
+    agentState: AgentState | null | undefined
     activityLabel?: string | null
     backgroundTaskCount?: number
     contextSize?: number

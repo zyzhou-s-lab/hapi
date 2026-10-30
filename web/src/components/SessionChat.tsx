@@ -2232,6 +2232,7 @@ function SessionChatInner(props: SessionChatProps) {
                         allowSendWhenInactive
                         onResumeStoredDraft={() => handleSend('', undefined, null)}
                         thinking={props.session.thinking}
+                        agentState={props.session.agentState}
                         activityLabel={activityLabel}
                         backgroundTaskCount={props.session.backgroundTaskCount}
                         contextSize={reduced.latestUsage?.contextSize}

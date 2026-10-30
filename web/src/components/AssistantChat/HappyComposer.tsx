@@ -296,6 +296,7 @@ export function HappyComposer(props: {
     active?: boolean
     allowSendWhenInactive?: boolean
     thinking?: boolean
+    agentState?: AgentState | null
     activityLabel?: string | null
     backgroundTaskCount?: number
     contextSize?: number
@@ -416,6 +417,7 @@ export function HappyComposer(props: {
         active = true,
         allowSendWhenInactive = false,
         thinking = false,
+        agentState = null,
         activityLabel = null,
         backgroundTaskCount,
         contextSize,
@@ -2395,6 +2397,7 @@ export function HappyComposer(props: {
                         <StatusBar
                             active={active}
                             thinking={thinking}
+                            agentState={agentState}
                             activityLabel={activityLabel}
                             backgroundTaskCount={backgroundTaskCount}
                             contextSize={contextSize}
