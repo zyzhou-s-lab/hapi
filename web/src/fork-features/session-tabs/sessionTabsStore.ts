@@ -15,6 +15,11 @@ export type SessionTab = {
 
 export type SessionTabsState = { tabs: SessionTab[] }
 
+/**
+ * 打开和从 localStorage 读回共用的上限。
+ * 固定标签计入这个上限，不是额外名额；它们只是不会被自动淘汰。
+ * 12 个全是固定标签时，再打开新会话不会变成第 13 个。
+ */
 export const MAX_SESSION_TABS = 12
 
 const EMPTY: SessionTabsState = { tabs: [] }
@@ -29,12 +34,13 @@ export function openTab(state: SessionTabsState, id: string, now: number): Sessi
     if (existing) {
         return { tabs: state.tabs.map(tab => (tab.id === id ? { ...tab, activatedAt: now } : tab)) }
     }
+    if (state.tabs.length >= MAX_SESSION_TABS && state.tabs.every(tab => tab.pinned)) return state
     let tabs = [...state.tabs, { id, pinned: false, activatedAt: now }]
     while (tabs.length > MAX_SESSION_TABS) {
         const victim = tabs
             .filter(tab => !tab.pinned && tab.id !== id)
             .sort((a, b) => a.activatedAt - b.activatedAt)[0]
-        if (!victim) break
+        if (!victim) return state
         tabs = tabs.filter(tab => tab.id !== victim.id)
     }
     return { tabs }
@@ -107,7 +113,7 @@ function parse(raw: string | null): SessionTabsState {
             if (typeof tab.id !== 'string' || !tab.id || tabs.some(existing => existing.id === tab.id)) continue
             tabs.push({ id: tab.id, pinned: tab.pinned === true, activatedAt: typeof tab.activatedAt === 'number' ? tab.activatedAt : 0 })
         }
-        return { tabs: normalizeOrder(tabs).slice(0, MAX_SESSION_TABS * 2) }
+        return { tabs: normalizeOrder(tabs).slice(0, MAX_SESSION_TABS) }
     } catch {
         return EMPTY
     }

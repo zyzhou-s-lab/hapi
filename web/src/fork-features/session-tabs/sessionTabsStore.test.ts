@@ -43,6 +43,24 @@ describe('session tabs', () => {
         expect(ids(state).at(-1)).toBe('new')
     })
 
+    it('counts pinned tabs toward the cap and will not open a 13th when all are pinned', () => {
+        let state = open(...Array.from({ length: MAX_SESSION_TABS }, (_, i) => `s${i}`))
+        for (let i = 0; i < MAX_SESSION_TABS; i++) state = togglePinTab(state, `s${i}`)
+        expect(openTab(state, 'extra', 50)).toBe(state)
+        expect(state.tabs).toHaveLength(MAX_SESSION_TABS)
+    })
+
+    it('restores at most the same cap, keeping pinned tabs first', () => {
+        const tabs = [
+            ...Array.from({ length: 3 }, (_, i) => ({ id: `p${i}`, pinned: true, activatedAt: i })),
+            ...Array.from({ length: MAX_SESSION_TABS }, (_, i) => ({ id: `u${i}`, pinned: false, activatedAt: 10 + i })),
+        ]
+        localStorage.setItem('hapi-session-tabs:cap', JSON.stringify({ tabs }))
+        const loaded = getSessionTabsSnapshot('cap')
+        expect(loaded.tabs).toHaveLength(MAX_SESSION_TABS)
+        expect(loaded.tabs.filter(tab => tab.pinned).map(tab => tab.id)).toEqual(['p0', 'p1', 'p2'])
+    })
+
     it('closing picks the right neighbour, then the left one', () => {
         const state = open('a', 'b', 'c')
         expect(closeTab(state, 'b')).toMatchObject({ neighbor: 'c' })
