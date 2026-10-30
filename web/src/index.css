@@ -116,7 +116,7 @@
     /* Primary colors - override fallbacks for non-Telegram browsers */
     --app-bg: var(--tg-theme-bg-color, #1c1c1e);
     --app-fg: var(--tg-theme-text-color, #ffffff);
-    --app-hint: var(--tg-theme-hint-color, #8e8e93);
+    --app-hint: var(--tg-theme-hint-color, #98989d);
     --app-link: var(--tg-theme-link-color, #ffffff);
     --app-button: var(--tg-theme-button-color, #ffffff);
     --app-button-text: var(--tg-theme-button-text-color, #111827);
