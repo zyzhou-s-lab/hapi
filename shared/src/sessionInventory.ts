@@ -155,7 +155,6 @@ export function sessionConfigLock(
 ): 'source' | 'unsupported' | null {
     if (source !== 'user' && source !== 'project') return 'source'
     const name = (flavor ?? '').trim().toLowerCase()
-    if (kind === 'mcp' && name === 'claude' && (source === 'user' || source === 'project')) return null
     if (kind === 'mcp' && name === 'codex' && source === 'user') return null
     if (kind === 'mcp' && name === 'cursor' && source === 'user') return null
     return 'unsupported'

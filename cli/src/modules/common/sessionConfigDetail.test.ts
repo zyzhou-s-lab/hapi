@@ -69,30 +69,29 @@ describe('session config detail', () => {
             selector: { kind: 'mcp', name: 'hapi', source: 'injected' },
         })).resolves.toEqual({ error: 'This item cannot be changed' })
     })
-    it('toggles a Claude project server stored under projects and deletes disabled when re-enabled', async () => {
+    it('refuses to write disabled on a Claude MCP server because Claude does not honor it', async () => {
         const dir = mkdtempSync(join(tmpdir(), 'hapi-project-mcp-'))
         tempDirs.push(dir)
         const claudeJson = join(dir, '.claude.json')
         process.env.HAPI_CLAUDE_JSON = claudeJson
-        writeFileSync(claudeJson, JSON.stringify({
+        const original = JSON.stringify({
             projects: { [dir]: { mcpServers: { docs: { command: 'npx', disabled: true } } } },
-        }))
-        const enabled = await writeSessionConfigEnabled({
+        })
+        writeFileSync(claudeJson, original)
+        const detail = await readSessionConfigDetail({
+            cwd: dir,
+            flavor: 'claude',
+            selector: { kind: 'mcp', name: 'docs', source: 'project' },
+        })
+        expect(detail).toMatchObject({ kind: 'mcp', mutable: false, enabled: false })
+        const toggled = await writeSessionConfigEnabled({
             cwd: dir,
             flavor: 'claude',
             enabled: true,
             selector: { kind: 'mcp', name: 'docs', source: 'project' },
         })
-        expect(enabled).toEqual({ enabled: true })
-        expect(readFileSync(claudeJson, 'utf8')).not.toContain('disabled')
-        const disabled = await writeSessionConfigEnabled({
-            cwd: dir,
-            flavor: 'claude',
-            enabled: false,
-            selector: { kind: 'mcp', name: 'docs', source: 'project' },
-        })
-        expect(disabled).toEqual({ enabled: false })
-        expect(JSON.parse(readFileSync(claudeJson, 'utf8')).projects[dir].mcpServers.docs.disabled).toBe(true)
+        expect(toggled).toEqual({ error: 'This agent does not honor a per-item switch' })
+        expect(readFileSync(claudeJson, 'utf8')).toBe(original)
     })
 
     it('writes only the selected Codex mcp server boolean', async () => {

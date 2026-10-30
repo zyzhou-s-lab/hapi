@@ -51,6 +51,7 @@ function asRecord(value: unknown): Record<string, unknown> {
 }
 
 function claudeJsonPath(): string {
+    // HAPI_CLAUDE_JSON is for tests only. A real session reads ~/.claude.json.
     return process.env.HAPI_CLAUDE_JSON?.trim() || join(homedir(), '.claude.json')
 }
 
