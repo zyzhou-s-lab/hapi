@@ -87,6 +87,11 @@ function ConfigSection(props: {
                                     {item.detail ? (
                                         <div className="truncate text-xs text-[var(--app-hint)]">{item.detail}</div>
                                     ) : null}
+                                    {item.lock ? (
+                                        <div className="text-xs text-[var(--app-hint)]">
+                                            {item.lock === 'unsupported' ? t('session.config.unsupported') : t('session.config.locked')}
+                                        </div>
+                                    ) : null}
                                 </button>
                                 <ConfigSwitch
                                     row={item}
@@ -252,7 +257,7 @@ export default function SessionConfigPage() {
                 }}
             />
             <div className="app-scroll-y min-h-0 flex-1">
-                {pageError ? (
+                {pageError !== null ? (
                     <SessionReadBanner
                         message={formatSessionConfigError(pageError, t)}
                         onRetry={() => { void refetch() }}
@@ -267,6 +272,11 @@ export default function SessionConfigPage() {
                             <h2 className="min-w-0 truncate text-base font-semibold text-[var(--app-fg)]">{selected.title}</h2>
                             <ConfigSwitch row={selected} pending={pendingKey === selected.key} onToggle={(enabled) => { void toggle(selected, enabled) }} />
                         </div>
+                        {selected.lock ? (
+                            <p className="text-sm text-[var(--app-hint)]">
+                                {selected.lock === 'unsupported' ? t('session.config.unsupported') : t('session.config.locked')}
+                            </p>
+                        ) : null}
                         {detailError ? (
                             <SessionReadBanner
                                 message={formatSessionConfigError(detailError, t)}

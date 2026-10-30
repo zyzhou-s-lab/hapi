@@ -107,6 +107,8 @@ describe('SessionConfigPage', () => {
         expect(screen.getByText('PreToolUse')).toBeTruthy()
         expect(screen.getByText('Bash · my-hook')).toBeTruthy()
         expect(screen.getByText('None')).toBeTruthy()
+        expect(screen.getAllByText('This agent does not honor a per-item switch, so turning it off here would not stop it.').length).toBeGreaterThan(0)
+        expect(screen.getAllByText('Injected, system, tool, and plugin items cannot be changed here.').length).toBeGreaterThan(0)
         expect(screen.queryByText(/127\.0\.0\.1/)).toBeNull()
         expect(screen.queryByText(/token/i)).toBeNull()
         expect(mocks.header?.configActive).toBe(true)
@@ -145,6 +147,13 @@ describe('SessionConfigPage', () => {
         const alert = await screen.findByRole('alert')
         expect(alert).toHaveTextContent('Could not read session config: failed to read')
         expect(alert.textContent).not.toContain('/Users/')
+    })
+
+    it('shows unavailable when the runner error is empty', async () => {
+        mocks.getSessionConfig.mockResolvedValue({ success: false, error: '' })
+        renderPage()
+        expect(await screen.findByRole('alert')).toHaveTextContent('Unavailable')
+        expect(screen.queryByText(/Failed to read/)).toBeNull()
     })
 
     it('opens a skill, locks an injected switch, and returns to the list', async () => {

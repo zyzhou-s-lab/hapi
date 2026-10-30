@@ -68,10 +68,8 @@ export function parseSessionConfigRpc(raw: unknown): SessionConfigRpcResult {
     }
     const record = raw as { success?: unknown; error?: unknown }
     if (record.success !== true) {
-        const error = typeof record.error === 'string' && record.error.trim().length > 0
-            ? record.error
-            : 'Failed to read session config'
-        return { success: false, error }
+        const reported = typeof record.error === 'string' ? record.error.trim() : 'Failed to read session config'
+        return { success: false, error: reported ? redactConfigSecrets(reported) : '' }
     }
     const parsed = SessionInventorySchema.safeParse(raw)
     if (!parsed.success) {
@@ -142,11 +140,11 @@ export type SessionConfigToggleResult =
 export function redactConfigSecrets(value: string): string {
     return value
         .replace(/([a-z][a-z0-9+.-]*:\/\/)[^\s/@]+:[^\s/@]+@/gi, '$1***@')
-        .replace(/\b(bearer)\s+\S+/gi, '$1 ***')
+        .replace(/\b(bearer)\s+[^\s"']+/gi, '$1 ***')
         .replace(/\b(sk-|ghp_|github_pat_|xox[baprs]-)[A-Za-z0-9_-]{8,}/g, '***')
-        .replace(/\b([A-Z][A-Z0-9_]*(?:API_KEY|ACCESS_KEY|SECRET|TOKEN|PASSWORD))\s*=\s*\S+/g, '$1=***')
+        .replace(/(^|[^A-Za-z0-9])([A-Za-z][A-Za-z0-9_]*(?:API_KEY|ACCESS_KEY|SECRET|TOKEN|PASSWORD))\s*=\s*[^\s"']+/g, '$1$2=***')
         .replace(/(--(?:api[-_]?key|token|secret|password|passwd|key))(=|\s+)\S+/gi, '$1$2***')
-        .replace(/\b(token|api[_-]?key|secret|password|passwd|key)\b(\s*[:=]\s*)\S+/gi, '$1$2***')
+        .replace(/(^|[^A-Za-z0-9_])(token|api[_-]?key|secret|password|passwd|key)(\s*[:=]\s*)[^\s"']+/gi, '$1$2$3***')
 }
 
 /** null when that agent honors a per-item boolean. Otherwise the switch stays disabled. */
@@ -157,6 +155,7 @@ export function sessionConfigLock(
 ): 'source' | 'unsupported' | null {
     if (source !== 'user' && source !== 'project') return 'source'
     const name = (flavor ?? '').trim().toLowerCase()
+    if (kind === 'mcp' && name === 'claude' && (source === 'user' || source === 'project')) return null
     if (kind === 'mcp' && name === 'codex' && source === 'user') return null
     if (kind === 'mcp' && name === 'cursor' && source === 'user') return null
     return 'unsupported'
@@ -170,16 +169,17 @@ function recordField(raw: unknown, key: string): unknown {
 
 function failure(raw: unknown, fallback: string): { success: false; error: string } {
     const error = recordField(raw, 'error')
-    return {
-        success: false,
-        error: typeof error === 'string' && error.trim().length > 0 ? error : fallback,
-    }
+    if (typeof error !== 'string') return { success: false, error: fallback }
+    const trimmed = error.trim()
+    return { success: false, error: trimmed ? redactConfigSecrets(trimmed) : '' }
 }
 
 export function parseSessionConfigDetail(raw: unknown): SessionConfigDetailResult {
     if (recordField(raw, 'success') !== true) return failure(raw, 'Failed to read session config')
     const parsed = SessionConfigDetailSchema.safeParse(raw)
     if (!parsed.success) return { success: false, error: 'Invalid session config' }
+    if (parsed.data.kind === 'hook') return { success: true, ...parsed.data, script: redactConfigSecrets(parsed.data.script) }
+    if (parsed.data.kind === 'skill') return { success: true, ...parsed.data, markdown: redactConfigSecrets(parsed.data.markdown) }
     return { success: true, ...parsed.data }
 }
 

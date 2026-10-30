@@ -14,7 +14,9 @@ function stripAbsolutePaths(value: string): string {
 
 export function formatSessionConfigError(error: string | null | undefined, t: Translate): string {
     const detail = error?.trim() ?? ''
-    if (!detail) return t('session.config.unavailable')
+    if (!detail || detail === 'Failed to read session config' || detail === 'Session config unavailable') {
+        return t('session.config.unavailable')
+    }
     if (
         detail === 'handler-not-registered'
         || detail === 'socket-disconnected'

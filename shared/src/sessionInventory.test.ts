@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test'
-import { parseSessionConfigRpc, SessionInventorySchema } from './sessionInventory'
+import { parseSessionConfigDetail, parseSessionConfigRpc, redactConfigSecrets, SessionInventorySchema } from './sessionInventory'
 
 describe('SessionInventorySchema', () => {
     it('keeps names and sources and drops command, url, and token fields', () => {
@@ -55,5 +55,30 @@ describe('SessionInventorySchema', () => {
             success: false,
             error: 'handler-not-registered',
         })
+    })
+
+    it('redacts runner errors and keeps an empty failure empty', () => {
+        const token = ['s', 'k', '-', 'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j'].join('')
+        const parsed = parseSessionConfigRpc({ success: false, error: `Bearer ${token}" OPENAI_API_KEY=zzsecret GITHUB_TOKEN=zzgithub` })
+        expect(parsed.success).toBe(false)
+        if (parsed.success) return
+        expect(parsed.error).toContain('Bearer ***"')
+        expect(parsed.error).toContain('OPENAI_API_KEY=***')
+        expect(parsed.error).toContain('GITHUB_TOKEN=***')
+        expect(parsed.error).not.toContain(token)
+        expect(parsed.error).not.toContain('zzsecret')
+        expect(parseSessionConfigRpc({ success: false, error: '   ' })).toEqual({ success: false, error: '' })
+        const detail = parseSessionConfigDetail({
+            success: true,
+            kind: 'hook',
+            event: 'PreToolUse',
+            source: 'user',
+            enabled: true,
+            mutable: false,
+            script: `GITHUB_TOKEN=zzgithub ${token}`,
+            truncated: false,
+        })
+        expect(detail.success && detail.kind === 'hook' ? detail.script : '').toBe('GITHUB_TOKEN=*** ***')
+        expect(redactConfigSecrets(`prefix ${token}"`)).toBe('prefix ***"')
     })
 })

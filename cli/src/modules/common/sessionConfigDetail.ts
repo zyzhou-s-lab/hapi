@@ -9,6 +9,7 @@ import {
     jsonStringField,
     setFrontmatterBoolean,
     setJsonBoolean,
+    removeJsonField,
     setTomlBoolean,
     writeTextAtomic,
 } from './sessionConfigEdit'
@@ -50,7 +51,7 @@ function asRecord(value: unknown): Record<string, unknown> {
 }
 
 function claudeJsonPath(): string {
-    return join(homedir(), '.claude.json')
+    return process.env.HAPI_CLAUDE_JSON?.trim() || join(homedir(), '.claude.json')
 }
 
 function claudeSettingsPath(): string {
@@ -81,6 +82,11 @@ function projectMcpFiles(cwd: string): string[] {
     return paths
 }
 
+function skillBody(markdown: string): string {
+    const fence = /^---\r?\n[\s\S]*?\r?\n---\r?\n?/.exec(markdown)
+    return fence && fence.index === 0 ? markdown.slice(fence[0].length) : markdown
+}
+
 function jsonServer(text: string, name: string): { enabled: boolean; command?: string; args?: string[]; url?: string } | null {
     let parsed: unknown
     try {
@@ -98,6 +104,50 @@ function jsonServer(text: string, name: string): { enabled: boolean; command?: s
         ...(typeof entry.url === 'string' ? { url: entry.url } : {}),
     }
 }
+function jsonAt(text: string, path: string[]): { enabled: boolean; command?: string; args?: string[]; url?: string } | null {
+    let parsed: unknown
+    try {
+        parsed = JSON.parse(text) as unknown
+    } catch {
+        return null
+    }
+    let current: unknown = parsed
+    for (const key of path) {
+        if (!current || typeof current !== 'object' || Array.isArray(current)) return null
+        current = (current as Record<string, unknown>)[key]
+    }
+    const entry = asRecord(current)
+    if (Object.keys(entry).length === 0) return null
+    const args = Array.isArray(entry.args) ? entry.args.filter((arg): arg is string => typeof arg === 'string') : undefined
+    return {
+        enabled: entry.disabled !== true,
+        ...(typeof entry.command === 'string' ? { command: entry.command } : {}),
+        ...(args ? { args } : {}),
+        ...(typeof entry.url === 'string' ? { url: entry.url } : {}),
+    }
+}
+
+function claudeProjectKey(text: string, cwd: string, name: string): string | null {
+    let parsed: unknown
+    try {
+        parsed = JSON.parse(text) as unknown
+    } catch {
+        return null
+    }
+    const projects = asRecord(asRecord(parsed).projects)
+    const resolvedCwd = resolve(cwd)
+    let best: { key: string; length: number } | null = null
+    for (const key of Object.keys(projects)) {
+        const project = resolve(key)
+        const prefix = project.endsWith(sep) ? project : `${project}${sep}`
+        if (project !== resolvedCwd && !resolvedCwd.startsWith(prefix)) continue
+        const servers = asRecord(asRecord(projects[key]).mcpServers)
+        if (!Object.prototype.hasOwnProperty.call(servers, name)) continue
+        if (!best || project.length > best.length) best = { key, length: project.length }
+    }
+    return best?.key ?? null
+}
+
 
 function toolsFromNames(serverName: string, tools: readonly string[] | undefined): Array<{ name: string; description?: string }> {
     const prefix = `mcp__${serverName}__`
@@ -190,7 +240,7 @@ export async function readSessionConfigDetail(input: Omit<DetailInput, 'enabled'
             ...(source ? { source } : {}),
             enabled: skill.enabled,
             mutable: lockError(flavor, 'skill', source) === null,
-            markdown: skill.markdown,
+            markdown: skillBody(skill.markdown),
             truncated: skill.truncated,
         }
     }
@@ -256,7 +306,9 @@ export async function writeSessionConfigEnabled(input: DetailInput): Promise<{ e
             if (text === null) return { error: NOT_FOUND }
             const next = target.format === 'toml'
                 ? setTomlBoolean(text, target.header, 'enabled', input.enabled)
-                : setJsonBoolean(text, ['mcpServers', input.selector.name], 'disabled', !input.enabled)
+                : input.enabled
+                    ? removeJsonField(text, target.path, 'disabled')
+                    : setJsonBoolean(text, target.path, 'disabled', true)
             writeTextAtomic(target.file, next)
             return { enabled: input.enabled }
         }
@@ -309,15 +361,17 @@ function locateMcp(cwd: string, flavor: string, name: string, source: string, se
             url: /url\s*=\s*"([^"]*)"/.exec(section)?.[1],
         }
     }
-    const file = flavor === 'cursor'
-        ? cursorMcpPath()
-        : source === 'project'
-            ? projectMcpFiles(cwd).find((path) => {
-                const text = readText(path)
-                return Boolean(text && jsonServer(text, name))
-            })
-            : claudeJsonPath()
-    if (!file) return null
+    if (source === 'project' && flavor !== 'cursor') {
+        const file = projectMcpFiles(cwd).find((path) => {
+            const text = readText(path)
+            return Boolean(text && jsonServer(text, name))
+        })
+        if (file) return jsonServer(readText(file) ?? '', name)
+        const claude = readText(claudeJsonPath())
+        const key = claude ? claudeProjectKey(claude, cwd, name) : null
+        return key ? jsonAt(claude ?? '', ['projects', key, 'mcpServers', name]) : null
+    }
+    const file = flavor === 'cursor' ? cursorMcpPath() : claudeJsonPath()
     const text = readText(file)
     if (!text) return null
     const server = jsonServer(text, name)
@@ -326,17 +380,21 @@ function locateMcp(cwd: string, flavor: string, name: string, source: string, se
     return server
 }
 
-function mcpEditTarget(cwd: string, flavor: string, name: string, source: string): { file: string; format: 'json' | 'toml'; header: string } | null {
-    if (flavor === 'codex') return { file: codexConfigPath(), format: 'toml', header: `mcp_servers.${name}` }
-    if (flavor === 'cursor') return { file: cursorMcpPath(), format: 'json', header: '' }
+function mcpEditTarget(cwd: string, flavor: string, name: string, source: string): { file: string; format: 'json' | 'toml'; header: string; path: string[] } | null {
+    if (flavor === 'codex') return { file: codexConfigPath(), format: 'toml', header: `mcp_servers.${name}`, path: [] }
+    if (flavor === 'cursor') return { file: cursorMcpPath(), format: 'json', header: '', path: ['mcpServers', name] }
     if (source === 'project') {
         const file = projectMcpFiles(cwd).find((path) => {
             const text = readText(path)
             return Boolean(text && jsonServer(text, name))
         })
-        return file ? { file, format: 'json', header: '' } : null
+        if (file) return { file, format: 'json', header: '', path: ['mcpServers', name] }
+        const claude = claudeJsonPath()
+        const text = readText(claude)
+        const key = text ? claudeProjectKey(text, cwd, name) : null
+        return key ? { file: claude, format: 'json', header: '', path: ['projects', key, 'mcpServers', name] } : null
     }
-    return { file: claudeJsonPath(), format: 'json', header: '' }
+    return { file: claudeJsonPath(), format: 'json', header: '', path: ['mcpServers', name] }
 }
 
 function codexSection(text: string, header: string): string | null {

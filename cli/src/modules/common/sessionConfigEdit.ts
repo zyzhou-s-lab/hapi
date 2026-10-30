@@ -200,6 +200,45 @@ function replaceObjectBoolean(text: string, start: number, end: number, field: s
     return text.slice(0, start + 1) + interior + text.slice(end - 1)
 }
 
+/** Drop one property. A missing property is already the enabled state. */
+export function removeJsonField(text: string, path: string[], field: string): string {
+    const hits = collectJsonObjects(text).filter((object) => (
+        object.path.length === path.length
+        && object.path.every((part, index) => part === path[index])
+    ))
+    if (hits.length !== 1) throw new Error(NOT_FOUND)
+    const hit = hits[0]
+    const objectText = text.slice(hit.start, hit.end)
+    let i = 1
+    while (i < objectText.length) {
+        i = skip(objectText, i)
+        if (objectText[i] === '}') return text
+        const keyStart = i
+        const key = readString(objectText, i)
+        i = skip(objectText, key.end)
+        if (objectText[i] !== ':') throw new Error(NOT_FOUND)
+        const valueAt = skip(objectText, i + 1)
+        const valueEnd = parseValue(objectText, valueAt, () => undefined, [])
+        if (key.value !== field) {
+            i = skip(objectText, valueEnd)
+            if (objectText[i] === ',') i++
+            continue
+        }
+        let from = keyStart
+        let to = valueEnd
+        const after = skip(objectText, valueEnd)
+        if (objectText[after] === ',') {
+            to = after + 1
+        } else {
+            let cursor = keyStart - 1
+            while (cursor > 0 && /\s/.test(objectText[cursor])) cursor -= 1
+            if (objectText[cursor] === ',') from = cursor
+        }
+        return text.slice(0, hit.start) + objectText.slice(0, from) + objectText.slice(to) + text.slice(hit.end)
+    }
+    return text
+}
+
 export function setTomlBoolean(
     text: string,
     header: string,
