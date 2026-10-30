@@ -247,8 +247,7 @@ export function SessionTabsBar(props: {
     }
 
     const menuSession = menu ? byId.get(menu.id) : undefined
-    // Actions on the tab's session: the same ones the session list offers on long-press,
-    // minus work-line classification (this fork has no work overview).
+    // Classification lives on the workbench, not on this menu.
     const sessionItems: MenuItem[] = menu && menuSession ? [
         { key: 'rename', label: t('session.action.rename'), run: () => setDialog({ id: menu.id, kind: 'rename' }) },
         {

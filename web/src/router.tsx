@@ -40,6 +40,7 @@ import { useSlashCommands } from '@/hooks/queries/useSlashCommands'
 import { useSkills } from '@/hooks/queries/useSkills'
 import { getSessionTitle } from '@/lib/sessionTitle'
 import { SessionTabsBar, useHasSessionTabs, useSessionTabsSync } from '@/fork-features/session-tabs/SessionTabsBar'
+import { PhoneWorkToggle, usePhoneWorkPane, WorkOverview } from '@/fork-features/work-lines/WorkOverview'
 import type { SessionSummary } from '@/types/api'
 import { buildSessionReferenceText, matchSessionsForMention } from '@/lib/sessionReference'
 import type { Suggestion } from '@/hooks/useActiveSuggestions'
@@ -232,7 +233,8 @@ function SessionsPage() {
         markSessionSeen(selectedSessionId, selectedSession.updatedAt)
     }, [selectedSessionId, selectedSession?.updatedAt])
     const isSessionsIndex = pathname === '/sessions' || pathname === '/sessions/'
-    // fork-features/session-tabs：打开过的会话固定在右侧顶部。没有工作总览，首页标签回到会话列表。
+    const phonePane = usePhoneWorkPane()
+    // The overview tab stays on /sessions. Tabs keep the last directory group.
     const tabsHome = useMemo(() => ({
         active: isSessionsIndex,
         onOpen: () => navigate({ to: '/sessions', ...PRESERVE_SESSION_SIDEBAR_SCROLL }),
@@ -259,10 +261,11 @@ function SessionsPage() {
         <>
             <div className="flex h-full min-h-0">
             <div
-                className={`${isSessionsIndex ? 'flex' : 'hidden split:flex'} w-full shrink-0 flex-col bg-[var(--app-bg)]`}
+                className={`${!isSessionsIndex || phonePane === 'work' ? 'hidden split:flex' : 'flex'} w-full shrink-0 flex-col bg-[var(--app-bg)]`}
                 style={{ '--sidebar-w': `${sidebar.width}px` } as React.CSSProperties}
             >
                 <div className="flex min-h-0 flex-1 flex-col pt-[env(safe-area-inset-top)]">
+                    {isSessionsIndex ? <PhoneWorkToggle /> : null}
                     {error ? (
                         <div className="mx-auto w-full max-w-content px-3 py-2">
                             <div className="text-sm text-red-600">{error}</div>
@@ -331,7 +334,7 @@ function SessionsPage() {
                 onPointerDown={sidebar.onPointerDown}
             />
 
-            <div data-session-tabs={hasSessionTabs || undefined} className={`${isSessionsIndex ? 'hidden split:flex' : 'flex'} min-w-0 flex-1 flex-col bg-[var(--app-bg)]`}>
+            <div data-session-tabs={hasSessionTabs || undefined} className={`${!isSessionsIndex || phonePane === 'work' ? 'flex' : 'hidden split:flex'} min-w-0 flex-1 flex-col bg-[var(--app-bg)]`}>
                 <SessionTabsBar sessions={sessions} selectedSessionId={selectedSessionId} machineLabel={tabMachineLabel} home={tabsHome} />
                 <div className="flex-1 min-h-0">
                     <Outlet />
@@ -343,7 +346,9 @@ function SessionsPage() {
 }
 
 function SessionsIndexPage() {
-    return null
+    const { api } = useAppContext()
+    const { sessions } = useSessions(api)
+    return <WorkOverview sessions={sessions} />
 }
 
 /**

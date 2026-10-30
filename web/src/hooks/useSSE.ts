@@ -24,6 +24,7 @@ import { queryKeys } from '@/lib/query-keys'
 import { clearMessageWindow, getMessageWindowState, ingestIncomingMessages, markMessagesConsumed, markMessagesIndeterminate, markMessagesRequeued, removeOptimisticMessage, updateMessageStatus } from '@/lib/message-window-store'
 import { agentSkillMachinesQueryKey } from '@/fork-features/agent-skill-readiness/machineQuery'
 import { applySessionDetailPatch } from '@/lib/sessionPatch'
+import { applyCardInvalidated, refetchWatchedCardTopics } from '@/fork-features/work-lines/cardTopics'
 
 // Pure patch-application rules live in @/lib/sessionPatch (React-free, shared
 // with the fixture generator); re-exported here so hook consumers and existing
@@ -650,6 +651,11 @@ export function useSSE(options: {
                 return
             }
 
+            if (event.type === 'card-invalidated') {
+                applyCardInvalidated(queryClient, event)
+                return
+            }
+
             if (event.type === 'connection-changed') {
                 const data = event.data
                 if (data && typeof data === 'object' && 'subscriptionId' in data) {
@@ -664,6 +670,7 @@ export function useSSE(options: {
                 // the field, which safely reads as a full resync.
                 const resumed = data && typeof data === 'object'
                     && (data as { resume?: unknown }).resume === 'ok'
+                if (lastEventCursorRef.current) refetchWatchedCardTopics(queryClient)
                 onConnectRef.current?.({ resumed: Boolean(resumed) })
             }
 
