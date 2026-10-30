@@ -7,7 +7,7 @@ import {
 } from '@hapi/protocol'
 import type { PermissionModeTone } from '@hapi/protocol'
 import * as Popover from '@radix-ui/react-popover'
-import { useMemo } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import type { AgentState, CodexCollaborationMode, OmpThinkingState, PermissionMode, ThreadGoal } from '@/types/api'
 import type { ConversationStatus } from '@/realtime/types'
 import { getContextBudgetTokens } from '@/chat/modelConfig'
@@ -20,6 +20,7 @@ import {
 import { isFastServiceTier } from './codexFastMode'
 import { useTranslation } from '@/lib/use-translation'
 import { useSessionHeaderMetadata } from '@/hooks/useSessionHeaderMetadata'
+import { useStatusVibing } from '@/hooks/useStatusVibing'
 
 // Vibing messages for thinking state
 const VIBING_MESSAGES = [
@@ -50,9 +51,14 @@ const PERMISSION_TONE_CLASSES: Record<PermissionModeTone, string> = {
 const CONTEXT_WARNING_THRESHOLD_PERCENT = 70
 const CONTEXT_DANGER_THRESHOLD_PERCENT = 90
 
+export function formatThinkingStatus(phase: string, elapsedSeconds: number): string {
+    return `${phase} · ${Math.max(0, elapsedSeconds)}s`
+}
+
 function getConnectionStatus(
     active: boolean,
     thinking: boolean,
+    thinkingLabel: string,
     agentState: AgentState | null | undefined,
     voiceStatus: ConversationStatus | undefined,
     backgroundTaskCount: number,
@@ -89,9 +95,8 @@ function getConnectionStatus(
     }
 
     if (thinking) {
-        const vibingMessage = VIBING_MESSAGES[Math.floor(Math.random() * VIBING_MESSAGES.length)].toLowerCase() + '…'
         return {
-            text: vibingMessage,
+            text: thinkingLabel,
             color: 'text-[#007AFF]',
             dotColor: 'bg-[#007AFF]',
             isPulsing: true
@@ -198,7 +203,7 @@ export function shouldShowComposerStatusBar(agentFlavor: string | null | undefin
 export function StatusBar(props: {
     active: boolean
     thinking: boolean
-    agentState: AgentState | null | undefined
+    activityLabel?: string | null
     backgroundTaskCount?: number
     contextSize?: number
     contextCacheRead?: number
@@ -224,9 +229,31 @@ export function StatusBar(props: {
 }) {
     const { t } = useTranslation()
     const { preferences: headerMetadata } = useSessionHeaderMetadata()
+    const vibing = useStatusVibing()
+    const [elapsedSeconds, setElapsedSeconds] = useState(0)
+    const [vibingText, setVibingText] = useState<string | null>(null)
+    useEffect(() => {
+        if (!props.thinking) {
+            setElapsedSeconds(0)
+            setVibingText(null)
+            return
+        }
+        const started = Date.now()
+        setVibingText(vibing.enabled
+            ? VIBING_MESSAGES[Math.floor(Math.random() * VIBING_MESSAGES.length)]!.toLowerCase() + '…'
+            : null)
+        const tick = () => setElapsedSeconds(Math.floor((Date.now() - started) / 1000))
+        tick()
+        const id = window.setInterval(tick, 1000)
+        return () => window.clearInterval(id)
+    }, [props.thinking, vibing.enabled])
+    const thinkingLabel = vibingText ?? formatThinkingStatus(
+        props.activityLabel?.trim() ? props.activityLabel.trim() : t('status.responding'),
+        elapsedSeconds
+    )
     const connectionStatus = useMemo(
-        () => getConnectionStatus(props.active, props.thinking, props.agentState, props.voiceStatus, props.backgroundTaskCount ?? 0, t),
-        [props.active, props.thinking, props.agentState, props.voiceStatus, props.backgroundTaskCount, t]
+        () => getConnectionStatus(props.active, props.thinking, thinkingLabel, props.agentState, props.voiceStatus, props.backgroundTaskCount ?? 0, t),
+        [props.active, props.thinking, thinkingLabel, props.agentState, props.voiceStatus, props.backgroundTaskCount, t]
     )
 
     const contextHeuristicModel = props.contextModel ?? props.model

@@ -1432,6 +1432,15 @@ function SessionChatInner(props: SessionChatProps) {
         () => hasAbortableAgentRun(reduced.blocks),
         [reduced.blocks]
     )
+    const activityLabel = useMemo(() => {
+        for (let index = reconciled.blocks.length - 1; index >= 0; index -= 1) {
+            const block = reconciled.blocks[index]
+            if (block?.kind === 'tool-call' && (block.tool.state === 'running' || block.tool.state === 'pending')) {
+                return block.tool.name
+            }
+        }
+        return null
+    }, [reconciled.blocks])
 
     useEffect(() => {
         blocksByIdRef.current = reconciled.byId
@@ -2223,7 +2232,7 @@ function SessionChatInner(props: SessionChatProps) {
                         allowSendWhenInactive
                         onResumeStoredDraft={() => handleSend('', undefined, null)}
                         thinking={props.session.thinking}
-                        agentState={props.session.agentState}
+                        activityLabel={activityLabel}
                         backgroundTaskCount={props.session.backgroundTaskCount}
                         contextSize={reduced.latestUsage?.contextSize}
                         contextCacheRead={reduced.latestUsage?.cacheRead}
