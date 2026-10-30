@@ -1355,6 +1355,8 @@ export default {
   'tabs.referenceCopied': '已复制会话引用',
   'tabs.untitled': '未命名会话',
   'tabs.loading': '加载中…',
+  'tabs.pinnedFull.title': '无法再打开标签',
+  'tabs.pinnedFull.body': '此目录的 {count} 个标签都已固定。取消固定一个后才能再打开。',
   'mermaid.openFullscreen': '全屏查看图表',
   'mermaid.viewerTitle': '图表',
   'mermaid.loading': '正在加载图表…',

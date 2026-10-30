@@ -22,6 +22,7 @@ function PinnedSectionIcon(props: { className?: string }) {
     )
 }
 import { cn } from '@/lib/utils'
+import { sessionDirectoryGroupKey, UNKNOWN_MACHINE_ID } from '@/lib/sessionDirectoryGroup'
 import { useTranslation } from '@/lib/use-translation'
 import { DEFAULT_SESSION_PREVIEW_LIMIT, useSessionPreviewLimit } from '@/hooks/useSessionPreviewLimit'
 import { useSessionListStatusMode } from '@/hooks/useSessionListStatusMode'
@@ -193,7 +194,7 @@ function getGroupDisplayName(directory: string): string {
     return `${parts[parts.length - 2]}/${parts[parts.length - 1]}`
 }
 
-export const UNKNOWN_MACHINE_ID = '__unknown__'
+export { UNKNOWN_MACHINE_ID }
 export const GROUP_SESSION_PREVIEW_LIMIT = DEFAULT_SESSION_PREVIEW_LIMIT
 
 export function getSessionDedupKey(session: SessionSummary): string | null {
@@ -297,7 +298,7 @@ function groupSessionsByDirectory(sessions: SessionSummary[]): SessionGroup[] {
     sessions.forEach(session => {
         const path = session.metadata?.worktree?.basePath ?? session.metadata?.path ?? 'Other'
         const machineId = session.metadata?.machineId ?? null
-        const key = `${machineId ?? UNKNOWN_MACHINE_ID}::${path}`
+        const key = sessionDirectoryGroupKey(session)
         if (!groups.has(key)) {
             groups.set(key, {
                 directory: path,

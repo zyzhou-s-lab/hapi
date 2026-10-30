@@ -239,7 +239,7 @@ function SessionsPage() {
     }), [isSessionsIndex, navigate])
     // Full list, including archived. Sidebar filtering must not be passed in or it would look like deletion.
     useSessionTabsSync(selectedSessionId, sessions, isSuccess && !error)
-    const hasSessionTabs = useHasSessionTabs()
+    const hasSessionTabs = useHasSessionTabs(selectedSessionId, sessions)
     const tabMachineLabel = useCallback((session: SessionSummary) => {
         const machineId = session.metadata?.machineId
         return (machineId && machineLabelsById[machineId]) || session.metadata?.host || ''

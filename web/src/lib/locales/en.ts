@@ -1356,6 +1356,8 @@ export default {
   'tabs.referenceCopied': 'Session reference copied',
   'tabs.untitled': 'Untitled session',
   'tabs.loading': 'Loading…',
+  'tabs.pinnedFull.title': 'Cannot open another tab',
+  'tabs.pinnedFull.body': 'All {count} tabs in this folder are pinned. Unpin one to open another.',
   'mermaid.openFullscreen': 'Open diagram full screen',
   'mermaid.viewerTitle': 'Diagram',
   'mermaid.loading': 'Loading diagram…',
