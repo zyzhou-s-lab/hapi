@@ -43,8 +43,12 @@ describe('work layout', () => {
         const merged = mergeLayout(saved, workbenchLayout)
         expect(merged.regions.main.map((slot) => slot.cardId)).toContain('example.training-curves')
         const bound = bindTrainingSlot(merged, 'line-1', 'exp-1')
-        expect(bound.revision).toBe(LAYOUT_REVISION)
-        expect(bound.regions.main.find((slot) => slot.cardId === 'example.training-curves')?.args).toEqual({ run: 'exp-1', lineId: 'line-1' })
+        const both = bindTrainingSlot(bound, 'line-2', 'exp-2')
+        expect(both.revision).toBe(LAYOUT_REVISION)
+        expect(both.regions.main.filter((slot) => slot.cardId === 'example.training-curves' && slot.args?.lineId).map((slot) => slot.args)).toEqual([
+            { run: 'exp-1', lineId: 'line-1' },
+            { run: 'exp-2', lineId: 'line-2' },
+        ])
     })
 
     it('clamps a short poll and stops it while the page is hidden', () => {

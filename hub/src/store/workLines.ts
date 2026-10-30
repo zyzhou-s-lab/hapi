@@ -61,7 +61,7 @@ const RUN_MAX = 120
 const LAYOUT_REGION_MAX = 40
 const LAYOUT_ARGS_MAX = 8
 const LAYOUT_VALUE_MAX = 200
-const CARD_ID = /^[a-z0-9]+([.][a-z0-9]+)+$/
+const CARD_ID = /^[a-z0-9]+([.][a-z0-9-]+)+$/
 
 const LAYOUT_REGIONS = {
     overview: ['stats', 'body'],
@@ -353,6 +353,20 @@ export class WorkLinesStore {
             ON CONFLICT (account_id, surface) DO UPDATE SET json = excluded.json, updated_at = excluded.updated_at
         `).run(accountId, surface, JSON.stringify(normalized), Date.now())
         return normalized
+    }
+
+    bindTrainingLine(accountId: number, lineId: string, run: string): WorkLayout {
+        const cleanLine = cleanRequired(lineId, 'lineId', LAYOUT_VALUE_MAX)
+        const cleanRun = cleanRequired(run, 'run', LAYOUT_VALUE_MAX)
+        return this.db.transaction(() => {
+            const current = this.getLayout(accountId, 'workbench') ?? { revision: 1, regions: { rail: [], main: [], side: [] } }
+            const main = [...(current.regions.main ?? [])]
+            const slot = { cardId: 'example.training-curves', args: { run: cleanRun, lineId: cleanLine } }
+            const index = main.findIndex((item) => item.cardId === slot.cardId && item.args?.lineId === cleanLine)
+            if (index >= 0) main[index] = slot
+            else main.push(slot)
+            return this.putLayout(accountId, 'workbench', { revision: Math.max(current.revision, 2), regions: { ...current.regions, main } })
+        })()
     }
 
     registerTrainingRun(accountId: number, input: { run: string; machineId: string; runDir: string }): WorkTrainingRun {

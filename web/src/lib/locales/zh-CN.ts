@@ -1420,4 +1420,5 @@ export default {
   'work.trainingReconnecting': '正在重新连接…',
   'work.trainingPickRun': '训练',
   'work.trainingUseRun': '显示在这条主线上',
+  'work.trainingSaveFailed': '没能保存这次训练。',
 } as const

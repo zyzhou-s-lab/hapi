@@ -20,12 +20,15 @@ export function TrainingChart(props: { series: TrainingSeries[] }): ReactNode {
     const [log, setLog] = useState(false)
     const host = useRef<HTMLDivElement>(null)
     const chartRef = useRef<uPlot | null>(null)
+    const zoomedRef = useRef(false)
     const prepared = useMemo(() => prepareTrainingPlot(props.series, {
         hidden,
         smooth,
         log,
         alpha: SMOOTH_ALPHA,
     }), [hidden, log, props.series, smooth])
+    const preparedRef = useRef(prepared)
+    preparedRef.current = prepared
     const shape = `${log ? 1 : 0}:${[...hidden].sort().join(',')}:${prepared.drawable.map((row) => row.id).join(',')}`
 
     useEffect(() => {
@@ -46,12 +49,16 @@ export function TrainingChart(props: { series: TrainingSeries[] }): ReactNode {
                 })),
             ],
             cursor: { drag: { x: true, y: true, setScale: true } },
+            hooks: { setSelect: [() => { zoomedRef.current = true }] },
         }, data, element)
         chartRef.current = chart
-        const ys = prepared.drawable.flatMap((row) => row.values.filter((value): value is number => value != null))
+        zoomedRef.current = false
         const reset = () => {
-            const xMin = prepared.steps[0] ?? 0
-            const xMax = prepared.steps.at(-1) ?? xMin + 1
+            zoomedRef.current = false
+            const current = preparedRef.current
+            const ys = current.drawable.flatMap((row) => row.values.filter((value): value is number => value != null))
+            const xMin = current.steps[0] ?? 0
+            const xMax = current.steps.at(-1) ?? xMin + 1
             const yMin = ys.length > 0 ? Math.min(...ys) : (log ? 1 : 0)
             const yMax = ys.length > 0 ? Math.max(...ys) : 1
             chart.setScale('x', span(xMin, xMax, false))
@@ -74,7 +81,7 @@ export function TrainingChart(props: { series: TrainingSeries[] }): ReactNode {
         const chart = chartRef.current
         if (!chart || prepared.steps.length === 0) return
         const data: uPlot.AlignedData = [prepared.steps, ...prepared.drawable.map((row) => row.values)]
-        pushTrainingChartData(chart as unknown as ZoomableChart, data)
+        pushTrainingChartData(chart as unknown as ZoomableChart, data, zoomedRef.current)
     }, [prepared])
 
     const toggle = (id: string) => {

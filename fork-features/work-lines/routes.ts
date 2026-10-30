@@ -204,6 +204,21 @@ export function mountWorkLineRoutes(app: Hono<WebAppEnv>, deps: {
         }
     })
 
+    routes.put('/layout/:surface/training', async (c) => {
+        const ready = await open(c)
+        if (ready instanceof Response) return ready
+        if (c.req.param('surface') !== 'workbench') return c.json({ error: 'Not found' }, 404)
+        const body = await c.req.json().catch(() => null) as { lineId?: unknown; run?: unknown } | null
+        if (!body || typeof body.lineId !== 'string' || typeof body.run !== 'string') return c.json({ error: 'Invalid body' }, 400)
+        try {
+            const layout = ready.engine.getWorkLines().bindTrainingLine(ready.account.id, body.lineId, body.run)
+            invalidate(ready.account.defaultNamespace, ready.account.id, 'work-layout')
+            return c.json({ layout })
+        } catch (error) {
+            return mapError(c, error)
+        }
+    })
+
     routes.put('/layout/:surface', async (c) => {
         const ready = await open(c)
         if (ready instanceof Response) return ready

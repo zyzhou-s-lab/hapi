@@ -69,12 +69,12 @@ describe('training curve card', () => {
     })
 
     it('shows the curve only on the bound line and can save a run', async () => {
-        const putWorkLayout = vi.fn(async (_surface: string, _layout: unknown) => {})
+        const bindWorkTraining = vi.fn(async () => {})
         const api = {
             getWorkMap: async () => ({ lines: [], directories: [], sessions: [], dismissed: [] }),
             getWorkLayout: async () => ({ source: 'default', layout: null }),
             listTrainingRuns: async () => ({ runs: [{ run: 'exp-1' }, { run: 'exp-2' }] }),
-            putWorkLayout,
+            bindWorkTraining,
         } as unknown as ApiClient
         const other = host('other', api)
         expect(screen.queryByText('No points yet.')).toBeNull()
@@ -85,8 +85,6 @@ describe('training curve card', () => {
         expect(await screen.findByRole('option', { name: 'exp-2' })).toBeTruthy()
         fireEvent.change(screen.getByRole('combobox'), { target: { value: 'exp-2' } })
         fireEvent.click(screen.getByText('Show on this line'))
-        await waitFor(() => expect(putWorkLayout).toHaveBeenCalled())
-        const layout = putWorkLayout.mock.calls[0]?.[1] as { regions: { main: { cardId: string; args?: { run: string; lineId: string } }[] } }
-        expect(layout.regions.main.find((slot) => slot.cardId === 'example.training-curves')?.args).toEqual({ run: 'exp-2', lineId: 'line-1' })
+        await waitFor(() => expect(bindWorkTraining).toHaveBeenCalledWith('line-1', 'exp-2'))
     })
 })

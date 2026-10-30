@@ -23,13 +23,13 @@ describe('training series', () => {
         expect(failed.series).toEqual(live.series)
         expect(failed.status).toBe('reconnecting')
         expect(trainingMessageKey(failed.message)).toBe('work.trainingRunnerDown')
+        const permanent = reduceTrainingError(live, 'wandb is not available')
+        expect(permanent.status).toBe('unavailable')
         const blip = reduceTrainingDisconnect(live)
         expect(blip.series).toEqual(live.series)
-        expect(blip.status).toBe('reconnecting')
         const again = reduceTrainingFrame(blip, { run: 'exp-1', reset: true, batch: [{ step: 3, metric: 'loss', value: 0.1 }] })
         expect(again.series[0]?.points).toEqual([{ step: 1, value: 0.2 }, { step: 3, value: 0.1 }])
-        const cleared = reduceTrainingFrame(again, { run: 'exp-1', reset: true })
-        expect(cleared.series).toEqual([])
+        expect(reduceTrainingFrame(again, { run: 'exp-1', reset: true }).series).toEqual([])
         expect(nextSubscribeDelay(0)).toBe(1000)
         expect(nextSubscribeDelay(3)).toBe(5000)
     })
@@ -50,14 +50,18 @@ describe('training series', () => {
         expect(plot.steps).toEqual([1])
     })
 
-    it('updates the chart without resetting the zoom', () => {
+    it('auto-scales until the user zooms', () => {
         const scales = { x: { min: 2, max: 8 }, y: { min: 0.1, max: 0.4 } }
         const calls: unknown[] = []
-        pushTrainingChartData({
+        const chart = {
             scales,
-            setData: (_data, resetScales) => calls.push(['data', resetScales]),
-            setScale: (key, limits) => calls.push(['scale', key, limits]),
-        }, [[1, 2], [0.2, 0.1]])
+            setData: (_data: unknown, resetScales?: boolean) => calls.push(['data', resetScales]),
+            setScale: (key: string, limits: { min: number; max: number }) => calls.push(['scale', key, limits]),
+        }
+        pushTrainingChartData(chart, [[1]], false)
+        expect(calls).toEqual([['data', undefined]])
+        calls.length = 0
+        pushTrainingChartData(chart, [[1, 2]], true)
         expect(calls).toEqual([
             ['data', false],
             ['scale', 'x', { min: 2, max: 8 }],

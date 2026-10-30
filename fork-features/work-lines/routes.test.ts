@@ -84,6 +84,28 @@ describe('work line routes', () => {
         expect(JSON.stringify(await (await app.request('/api/work/training-runs', { headers: auth })).json())).not.toContain('runDir')
     })
 
+    it('binds a training run per line without dropping the other line', async () => {
+        const auth = { authorization: `Bearer ${await token()}`, 'content-type': 'application/json' }
+        const first = await app.request('/api/work/layout/workbench/training', {
+            method: 'PUT',
+            headers: auth,
+            body: JSON.stringify({ lineId: 'line-1', run: 'exp-1' }),
+        })
+        expect(first.status).toBe(200)
+        const second = await app.request('/api/work/layout/workbench/training', {
+            method: 'PUT',
+            headers: auth,
+            body: JSON.stringify({ lineId: 'line-2', run: 'exp-2' }),
+        })
+        expect(second.status).toBe(200)
+        const saved = await app.request('/api/work/layout/workbench', { headers: { authorization: `Bearer ${await token()}` } })
+        const body = await saved.json() as { layout: { regions: { main: { cardId: string; args?: { run: string; lineId: string } }[] } } }
+        expect(body.layout.regions.main.filter((slot) => slot.cardId === 'example.training-curves').map((slot) => slot.args)).toEqual([
+            { run: 'exp-1', lineId: 'line-1' },
+            { run: 'exp-2', lineId: 'line-2' },
+        ])
+    })
+
     it('broadcasts card-invalidated without curve points when a line is created', async () => {
         const auth = { authorization: `Bearer ${await token()}`, 'content-type': 'application/json' }
         const created = await app.request('/api/work/lines', {

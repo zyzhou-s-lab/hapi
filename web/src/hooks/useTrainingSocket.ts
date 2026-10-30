@@ -48,8 +48,17 @@ export function reduceTrainingDisconnect(state: TrainingSocketState): TrainingSo
     return { ...state, status: 'reconnecting' }
 }
 
+export function trainingErrorRetries(message: string | null | undefined): boolean {
+    return message === 'Runner is not connected.'
+}
+
 export function reduceTrainingError(state: TrainingSocketState, message: string | null): TrainingSocketState {
-    return { ...state, status: 'reconnecting', message, finished: false }
+    return {
+        ...state,
+        status: trainingErrorRetries(message) ? 'reconnecting' : 'unavailable',
+        message,
+        finished: false,
+    }
 }
 
 export function emptyTrainingState(): TrainingSocketState {
@@ -117,6 +126,7 @@ export function useTrainingSocket(options: { baseUrl: string; token: string; run
             note(frame.message ?? null)
             setState((current) => reduceTrainingError(current, frame.message ?? null))
             clearRetry()
+            if (!trainingErrorRetries(frame.message)) return
             const delay = nextSubscribeDelay(attempt)
             attempt += 1
             retry = setTimeout(subscribe, delay)

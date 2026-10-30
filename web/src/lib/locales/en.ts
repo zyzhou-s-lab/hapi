@@ -1421,4 +1421,5 @@ export default {
   'work.trainingReconnecting': 'Reconnecting…',
   'work.trainingPickRun': 'Run',
   'work.trainingUseRun': 'Show on this line',
+  'work.trainingSaveFailed': 'Could not save the run.',
 } as const

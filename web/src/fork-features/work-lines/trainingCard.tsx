@@ -1,11 +1,9 @@
 import { lazy, Suspense, useState, type ReactNode } from 'react'
-import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useAppContext } from '@/lib/app-context'
 import { useTranslation } from '@/lib/use-translation'
 import { trainingMessageKey, useTrainingSocket, type TrainingSocketState } from '@/hooks/useTrainingSocket'
 import { CardFrame, registerWorkCards, type WorkCardContext } from './WorkCardHost'
-import { workbenchLayout } from './defaultLayouts'
-import { bindTrainingSlot, mergeLayout } from './layout'
 import type { TrainingSeries } from './trainingSeries'
 
 const TrainingChart = lazy(() => import('./charts/TrainingChart').then((mod) => ({ default: mod.TrainingChart })))
@@ -32,7 +30,8 @@ export function TrainingCurvesBody(props: { state: TrainingSocketState }): React
 }
 
 export function trainingRunVisible(ctx: WorkCardContext): boolean {
-    return ctx.view.kind === 'line' && ctx.view.lineId.length > 0
+    if (ctx.view.kind !== 'line' || ctx.view.lineId.length === 0) return false
+    return ctx.slot.args?.lineId === ctx.view.lineId
 }
 
 export function trainingRunBound(ctx: WorkCardContext): boolean {
@@ -57,25 +56,34 @@ function TrainingCurvesCard(props: { ctx: WorkCardContext }): ReactNode {
         enabled: Boolean(api),
     })
     const [selected, setSelected] = useState(props.ctx.slot.args?.run ?? '')
+    const [saveFailed, setSaveFailed] = useState(false)
     const lineId = props.ctx.view.kind === 'line' ? props.ctx.view.lineId : ''
-    const save = async () => {
-        if (!api || !selected || !lineId) return
-        const saved = await api.getWorkLayout('workbench')
-        const base = mergeLayout(saved.source === 'saved' ? saved.layout : null, workbenchLayout)
-        await api.putWorkLayout('workbench', bindTrainingSlot(base, lineId, selected))
-        await queryClient.invalidateQueries({ queryKey: ['work', 'layout', 'workbench'] })
-    }
+    const save = useMutation({
+        mutationFn: async () => {
+            if (!api || !selected || !lineId) throw new Error('API unavailable')
+            await api.bindWorkTraining(lineId, selected)
+        },
+        onSuccess: async () => {
+            setSaveFailed(false)
+            await queryClient.invalidateQueries({ queryKey: ['work', 'layout', 'workbench'] })
+        },
+        onError: (error) => {
+            console.error(error)
+            setSaveFailed(true)
+        },
+    })
     return (
         <CardFrame title={t('work.trainingCurves')}>
-            <form className="mb-3 flex flex-wrap items-center gap-2" onSubmit={(event) => { event.preventDefault(); void save() }}>
+            <form className="mb-3 flex flex-wrap items-center gap-2" onSubmit={(event) => { event.preventDefault(); setSaveFailed(false); save.mutate() }}>
                 <label className="text-xs text-[var(--app-hint)]">
                     {t('work.trainingPickRun')}
-                    <select className="ml-2 rounded border border-[var(--app-divider)] bg-transparent px-2 py-1 text-sm text-[var(--app-fg)]" value={selected} onChange={(event) => setSelected(event.target.value)}>
+                    <select className="ml-2 rounded border border-[var(--app-divider)] bg-transparent px-2 py-1 text-sm text-[var(--app-fg)]" value={selected} onChange={(event) => { setSaveFailed(false); setSelected(event.target.value) }}>
                         <option value="">{t('work.trainingPickRun')}</option>
                         {(runs.data?.runs ?? []).map((item) => <option key={item.run} value={item.run}>{item.run}</option>)}
                     </select>
                 </label>
-                <button type="submit" className="text-sm text-[var(--app-link)]" disabled={!selected}>{t('work.trainingUseRun')}</button>
+                <button type="submit" className="text-sm text-[var(--app-link)]" disabled={!selected || save.isPending}>{t('work.trainingUseRun')}</button>
+                {saveFailed ? <p className="text-sm text-red-600">{t('work.trainingSaveFailed')}</p> : null}
             </form>
             {bound ? <TrainingCurvesBody state={state} /> : null}
         </CardFrame>

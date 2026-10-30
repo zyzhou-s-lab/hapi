@@ -4,7 +4,11 @@ export type ZoomableChart = {
     setScale: (key: string, limits: { min: number; max: number }) => void
 }
 
-export function pushTrainingChartData(chart: ZoomableChart, data: unknown): void {
+export function pushTrainingChartData(chart: ZoomableChart, data: unknown, zoomed: boolean): void {
+    if (!zoomed) {
+        chart.setData(data)
+        return
+    }
     const x = chart.scales.x
     const y = chart.scales.y
     chart.setData(data, false)
