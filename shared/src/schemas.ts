@@ -8,12 +8,20 @@ import { MachineAgentSkillsSchema } from './forkAgentSkills'
 export {
     SessionInventorySchema,
     parseSessionConfigRpc,
+    SessionConfigItemSelectorSchema,
+    parseSessionConfigDetail,
+    parseSessionConfigToggle,
+    redactConfigSecrets,
     type SessionInventory,
     type SessionInventoryHook,
     type SessionInventoryMcpServer,
     type SessionInventorySkill,
     type SessionInventorySource,
     type SessionConfigRpcResult,
+    type SessionConfigDetail,
+    type SessionConfigDetailResult,
+    type SessionConfigToggleResult,
+    type SessionConfigItemSelector,
 } from './sessionInventory'
 export * from './forkAgentSkills'
 

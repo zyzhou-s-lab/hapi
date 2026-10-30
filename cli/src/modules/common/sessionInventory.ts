@@ -10,7 +10,7 @@ import {
     type SessionInventorySource,
 } from '@hapi/protocol/schemas';
 import { buildHookSettings, readMachineClaudeSettings } from '@/modules/common/hooks/generateHookSettings';
-import { listSkills } from '@/modules/common/skills';
+import { listInventorySkills } from '@/modules/common/skills';
 
 const MAX_CONFIG_BYTES = 1_000_000;
 const SOURCE_RANK: Record<SessionInventorySource, number> = {
@@ -146,7 +146,11 @@ export function dedupeServers(servers: readonly SessionInventoryMcpServer[]): Se
         const name = server.name.trim();
         const previous = byName.get(name);
         if (!previous || SOURCE_RANK[server.source] >= SOURCE_RANK[previous.source]) {
-            byName.set(name, { name, source: server.source });
+            byName.set(name, {
+                name,
+                source: server.source,
+                ...(server.enabled === false ? { enabled: false } : {}),
+            });
         }
     }
     return [...byName.values()].sort((left, right) => left.name.localeCompare(right.name)).slice(0, 200);
@@ -166,6 +170,7 @@ export function dedupeHooks(items: readonly SessionInventoryHook[]): SessionInve
             source: item.source,
             ...(matcher ? { matcher } : {}),
             ...(commandName ? { commandName } : {}),
+            ...(item.enabled === false ? { enabled: false } : {}),
         };
         const key = `${next.event}\0${next.matcher ?? ''}\0${next.source}\0${next.commandName ?? ''}`;
         const previous = byKey.get(key);
@@ -177,7 +182,7 @@ export function dedupeHooks(items: readonly SessionInventoryHook[]): SessionInve
 }
 
 export function inventorySkills(
-    skills: readonly { name: string; description?: string; source?: string }[],
+    skills: readonly { name: string; description?: string; source?: string; enabled?: boolean }[],
     options?: { catalogUnavailable?: boolean }
 ): NonNullable<SessionInventory['skills']> {
     const items: SessionInventorySkill[] = [];
@@ -190,6 +195,7 @@ export function inventorySkills(
             name,
             ...(description ? { description } : {}),
             ...(source ? { source } : {}),
+            ...(skill.enabled === false ? { enabled: false } : {}),
         });
         if (items.length >= 400) break;
     }
@@ -203,7 +209,14 @@ export function mcpServersFromConfig(value: unknown, source: SessionInventorySou
     const servers = asRecord(asRecord(value).mcpServers);
     return Object.keys(servers)
         .filter((name) => isSafeInventoryName(name))
-        .map((name) => ({ name: name.trim(), source }));
+        .map((name) => {
+            const disabled = asRecord(servers[name]).disabled === true;
+            return {
+                name: name.trim(),
+                source,
+                ...(disabled ? { enabled: false as const } : {}),
+            };
+        });
 }
 
 export function mcpServersFromClaudeJson(value: unknown, cwd: string): SessionInventoryMcpServer[] {
@@ -229,7 +242,8 @@ export function hooksFromClaudeSettings(settings: unknown): SessionInventoryHook
             const matcher = safeMatcher(record.matcher);
             const commands = Array.isArray(record.hooks) ? record.hooks : [record];
             for (const commandEntry of commands) {
-                const command = asRecord(commandEntry).command;
+                const commandRecord = asRecord(commandEntry);
+                const command = commandRecord.command;
                 if (typeof command !== 'string' || command.trim().length === 0) continue;
                 const commandName = commandBasename(command);
                 items.push({
@@ -237,6 +251,7 @@ export function hooksFromClaudeSettings(settings: unknown): SessionInventoryHook
                     source: command.includes('hook-forwarder') ? 'injected' : 'user',
                     ...(matcher ? { matcher } : {}),
                     ...(commandName ? { commandName } : {}),
+                    ...(commandRecord.disabled === true ? { enabled: false } : {}),
                 });
             }
         }
@@ -250,21 +265,40 @@ export function parseCodexConfigInventory(toml: string): {
 } {
     const servers: SessionInventoryMcpServer[] = [];
     const hooks: SessionInventoryHook[] = [];
+    let section: { kind: 'server' | 'hook'; name: string } | null = null;
+    const disableLast = (kind: 'server' | 'hook', name: string) => {
+        const items = kind === 'server' ? servers : hooks;
+        for (let index = items.length - 1; index >= 0; index--) {
+            const item = items[index];
+            const matches = kind === 'server'
+                ? 'name' in item && item.name === name
+                : 'event' in item && item.event === name;
+            if (!matches) continue;
+            item.enabled = false;
+            return;
+        }
+    };
     for (const rawLine of toml.split(/\r?\n/)) {
         const line = rawLine.trim();
         if (!line || line.startsWith('#')) continue;
         const table = /^\[\[?([^\]\s]+)\]\]?$/.exec(line);
-        if (!table) continue;
-        const key = table[1] ?? '';
-        const server = /^mcp_servers\.([^.[\]]+)/.exec(key);
-        if (server?.[1] && isSafeInventoryName(server[1])) {
-            servers.push({ name: server[1], source: 'user' });
+        if (table) {
+            const key = table[1] ?? '';
+            const server = /^mcp_servers\.([^.[\]]+)/.exec(key);
+            const hook = /^hooks\.([^.[\]]+)/.exec(key);
+            const exact = !key.slice(key.indexOf('.') + 1).includes('.');
+            if (server?.[1] && isSafeInventoryName(server[1])) {
+                section = exact ? { kind: 'server', name: server[1] } : null;
+                servers.push({ name: server[1], source: 'user' });
+            } else if (hook?.[1] && isSafeInventoryName(hook[1])) {
+                section = exact ? { kind: 'hook', name: hook[1] } : null;
+                hooks.push({ event: hook[1], source: 'user' });
+            } else {
+                section = null;
+            }
             continue;
         }
-        const hook = /^hooks\.([^.[\]]+)/.exec(key);
-        if (hook?.[1] && isSafeInventoryName(hook[1])) {
-            hooks.push({ event: hook[1], source: 'user' });
-        }
+        if (section && /^enabled\s*=\s*false\b/.test(line)) disableLast(section.kind, section.name);
     }
     return { servers: dedupeServers(servers), hooks: dedupeHooks(hooks) };
 }
@@ -485,6 +519,12 @@ export async function readLiveSessionConfig(input: {
 }): Promise<LiveSessionConfig> {
     const flavor = (input.flavor ?? '').trim().toLowerCase();
     const sections = flavorInventory({ ...input, flavor });
-    const skills = input.skills ?? inventorySkills(await listSkills(input.cwd, { flavor: flavor || undefined }));
+    const diskSkills = await listInventorySkills(input.cwd, { flavor: flavor || undefined });
+    const disabledSkills = new Set(diskSkills.filter((skill) => skill.enabled === false).map((skill) => skill.name));
+    const listed = input.skills ?? inventorySkills(diskSkills);
+    const skills = {
+        ...listed,
+        items: listed.items.map((item) => disabledSkills.has(item.name) ? { ...item, enabled: false as const } : item),
+    };
     return { ...sections, skills };
 }

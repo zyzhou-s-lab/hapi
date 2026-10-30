@@ -16,7 +16,7 @@ import type { CursorChatStoreStatus, CursorMigrateOutcome, CursorMigrateToAcpReq
 import type { SteerQueuedMessageResponse } from '@hapi/protocol/schemas'
 import type { AgentFlavor, ClaudeLaunch, CodexCollaborationMode, CopilotAgentMode, DecryptedMessage, PermissionMode, Session, SyncEvent } from '@hapi/protocol/types'
 import { getLiveMessageStreamId, unwrapRoleWrappedRecordEnvelope } from '@hapi/protocol/messages'
-import type { ProbeAgentSkillsResponse } from '@hapi/protocol/schemas'
+import type { ProbeAgentSkillsResponse, SessionConfigItemSelector } from '@hapi/protocol/schemas'
 import type { Server } from 'socket.io'
 import { randomUUID } from 'node:crypto'
 import type { Store, CancelQueuedMessageResult } from '../store'
@@ -4083,6 +4083,14 @@ export class SyncEngine {
         skills?: unknown
     }> {
         return await this.rpcGateway.listSessionConfig(sessionId)
+    }
+
+    async getSessionConfigItem(sessionId: string, selector: SessionConfigItemSelector) {
+        return await this.rpcGateway.getSessionConfigItem(sessionId, selector)
+    }
+
+    async setSessionConfigItemEnabled(sessionId: string, selector: SessionConfigItemSelector, enabled: boolean) {
+        return await this.rpcGateway.setSessionConfigItemEnabled(sessionId, selector, enabled)
     }
 
     async listAgyModelsForMachine(machineId: string): Promise<RpcListAgyModelsResponse> {

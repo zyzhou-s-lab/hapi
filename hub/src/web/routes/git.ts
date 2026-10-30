@@ -1,6 +1,7 @@
 import { Hono } from 'hono'
 import { isWildcardSearch, matchesSearchQuery, toSearchGlob } from '@hapi/protocol'
 import { z } from 'zod'
+import { SessionConfigItemSelectorSchema } from '@hapi/protocol/schemas'
 import type { SyncEngine } from '../../sync/syncEngine'
 import type { WebAppEnv } from '../middleware/auth'
 import { requireSessionFromParam, requireSyncEngine } from './guards'
@@ -103,6 +104,29 @@ export function createGitRoutes(getSyncEngine: () => SyncEngine | null): Hono<We
         }
 
         const result = await runRpc(() => engine.listSessionConfig(sessionResult.sessionId))
+        return c.json(result)
+    })
+
+    app.post('/sessions/:id/config/item', async (c) => {
+        const engine = requireSyncEngine(c, getSyncEngine)
+        if (engine instanceof Response) return engine
+        const sessionResult = requireSessionFromParam(c, engine)
+        if (sessionResult instanceof Response) return sessionResult
+        const selector = SessionConfigItemSelectorSchema.safeParse(await c.req.json().catch(() => null))
+        if (!selector.success) return c.json({ success: false, error: 'Invalid session config' })
+        const result = await runRpc(() => engine.getSessionConfigItem(sessionResult.sessionId, selector.data))
+        return c.json(result)
+    })
+
+    app.post('/sessions/:id/config/item/enabled', async (c) => {
+        const engine = requireSyncEngine(c, getSyncEngine)
+        if (engine instanceof Response) return engine
+        const sessionResult = requireSessionFromParam(c, engine)
+        if (sessionResult instanceof Response) return sessionResult
+        const body = SessionConfigItemSelectorSchema.extend({ enabled: z.boolean() }).safeParse(await c.req.json().catch(() => null))
+        if (!body.success) return c.json({ success: false, error: 'Invalid session config' })
+        const { enabled, ...selector } = body.data
+        const result = await runRpc(() => engine.setSessionConfigItemEnabled(sessionResult.sessionId, selector, enabled))
         return c.json(result)
     })
 

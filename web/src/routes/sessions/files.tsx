@@ -26,6 +26,7 @@ import { useTranslation } from '@/lib/use-translation'
 import * as Popover from '@radix-ui/react-popover'
 import { CheckIcon, CloseIcon } from '@/components/icons'
 import { Button } from '@/components/ui/button'
+import { SessionReadBanner } from '@/components/SessionReadBanner'
 import {
     DEFAULT_DIRECTORY_SORT,
     type DirectorySort,
@@ -599,10 +600,8 @@ export default function FilesPage() {
                 className="app-scroll-y flex-1 min-h-0"
             >
                 <div className="mx-auto w-full max-w-content">
-                    {showGitErrorBanner && activeTab === 'changes' ? (
-                        <div className="border-b border-[var(--app-divider)] bg-amber-500/10 px-3 py-2 text-xs text-[var(--app-hint)]">
-                            {gitErrorMessage}
-                        </div>
+                    {showGitErrorBanner && activeTab === 'changes' && gitErrorMessage ? (
+                        <SessionReadBanner message={gitErrorMessage} />
                     ) : null}
                     {shouldSearch ? (
                         searchResults.isLoading ? (

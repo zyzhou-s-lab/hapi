@@ -70,7 +70,7 @@ import type {
     UploadFileResponse
 } from '@hapi/protocol/apiTypes'
 import type { AgentFlavor, MessageDeliveryMode } from '@hapi/protocol'
-import type { CancelMessageResponse, ProbeAgentSkillsResponse, SteerQueuedMessageResponse } from '@hapi/protocol/schemas'
+import type { CancelMessageResponse, ProbeAgentSkillsResponse, SessionConfigDetailResult, SessionConfigItemSelector, SessionConfigToggleResult, SteerQueuedMessageResponse } from '@hapi/protocol/schemas'
 import type { TranscriptionMode, TranscriptionProvider, TranscriptionProviderInfo } from '@hapi/protocol/voice'
 import type { ForkRouteResult } from '../../../fork-features/session-fork/rpcPayloads'
 
@@ -431,6 +431,20 @@ export class ApiClient {
 
     async getSessionConfig(sessionId: string): Promise<SessionConfigResponse> {
         return await this.request<SessionConfigResponse>(`/api/sessions/${encodeURIComponent(sessionId)}/config`)
+    }
+
+    async getSessionConfigItem(sessionId: string, item: SessionConfigItemSelector): Promise<SessionConfigDetailResult> {
+        return await this.request<SessionConfigDetailResult>(`/api/sessions/${encodeURIComponent(sessionId)}/config/item`, {
+            method: 'POST',
+            body: JSON.stringify(item),
+        })
+    }
+
+    async setSessionConfigItemEnabled(sessionId: string, item: SessionConfigItemSelector, enabled: boolean): Promise<SessionConfigToggleResult> {
+        return await this.request<SessionConfigToggleResult>(`/api/sessions/${encodeURIComponent(sessionId)}/config/item/enabled`, {
+            method: 'POST',
+            body: JSON.stringify({ ...item, enabled }),
+        })
     }
 
     async getGitDiffNumstat(sessionId: string, staged: boolean): Promise<GitCommandResponse> {

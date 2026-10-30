@@ -37,8 +37,9 @@ type InstalledPluginsFile = {
 
 type DiscoveredSkill = ResolvedSkill & {
     fileSize: number;
+    filePath: string;
+    enabled: boolean;
 };
-
 export function getHomeDirectory(): string {
     return process.env.HOME ?? process.env.USERPROFILE ?? homedir();
 }
@@ -243,11 +244,14 @@ async function readSkillsFromDirs(skillDirs: string[], source: NonNullable<Skill
             return null;
         }
 
+        const parsed = parseFrontmatter(skillFile.content);
         return {
             ...summary,
             source: dir.split(sep).includes('.system') ? 'system' : source,
-            body: parseFrontmatter(skillFile.content).body,
-            fileSize: skillFile.fileSize
+            body: parsed.body,
+            fileSize: skillFile.fileSize,
+            filePath,
+            enabled: parsed.frontmatter?.disabled !== true,
         };
     }));
 
@@ -324,11 +328,48 @@ async function discoverSkills(workingDirectory?: string, options: { flavor?: str
     return [...dedupedSkills.values()].sort((a, b) => a.name.localeCompare(b.name));
 }
 
+export async function listInventorySkills(workingDirectory?: string, options: { flavor?: string } = {}): Promise<Array<SkillSummary & { enabled?: boolean }>> {
+    const skills = await discoverSkills(workingDirectory, options);
+    return skills.map(({ name, description, source, enabled }) => ({
+        name,
+        ...(description ? { description } : {}),
+        ...(source ? { source } : {}),
+        ...(enabled ? {} : { enabled: false }),
+    }));
+}
+
+export async function findSkill(
+    name: string,
+    workingDirectory?: string,
+    options: { flavor?: string } = {}
+): Promise<{
+    name: string;
+    source?: SkillSummary['source'];
+    filePath: string;
+    enabled: boolean;
+    markdown: string;
+    truncated: boolean;
+} | null> {
+    const skillName = validateSkillName(name);
+    const skills = await discoverSkills(workingDirectory, options);
+    const skill = skills.find((candidate) => candidate.name === skillName);
+    if (!skill) return null;
+    const file = await readSkillFile(skill.filePath);
+    if (!file) return null;
+    return {
+        name: skill.name,
+        source: skill.source,
+        filePath: skill.filePath,
+        enabled: skill.enabled,
+        markdown: file.content.slice(0, MAX_SKILL_FILE_BYTES),
+        truncated: file.fileSize > MAX_SKILL_FILE_BYTES,
+    };
+}
+
 export async function listSkills(workingDirectory?: string, options: { flavor?: string } = {}): Promise<SkillSummary[]> {
     const skills = await discoverSkills(workingDirectory, options);
     return skills.map(({ name, description, source }) => ({ name, description, ...(source ? { source } : {}) }));
 }
-
 function validateSkillName(name: string): string {
     const trimmed = name.trim();
     if (

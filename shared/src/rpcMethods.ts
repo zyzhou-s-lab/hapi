@@ -32,6 +32,8 @@ export const RPC_METHODS = {
     ListSlashCommands: 'listSlashCommands',
     ListSkills: 'listSkills',
     ListSessionConfig: 'listSessionConfig',
+    GetSessionConfigItem: 'getSessionConfigItem',
+    SetSessionConfigItemEnabled: 'setSessionConfigItemEnabled',
     ListCodexModels: 'listCodexModels',
     ListPiModelsForMachine: 'listPiModelsForMachine',
     ListCodexSessions: 'listCodexSessions',

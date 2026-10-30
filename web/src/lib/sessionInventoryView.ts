@@ -1,10 +1,13 @@
-import type { SessionInventory, SessionInventorySource } from '@hapi/protocol/types'
+import type { SessionConfigItemSelector, SessionInventory, SessionInventorySource } from '@hapi/protocol/schemas'
 
 export type InventoryRow = {
     key: string
     title: string
     detail?: string
     source?: SessionInventorySource
+    enabled: boolean
+    mutable: boolean
+    ref: SessionConfigItemSelector
 }
 
 export type InventorySection =
@@ -41,16 +44,20 @@ export function visibleInventoryText(value: string | undefined): string | undefi
     return text
 }
 
-function row(title: string, source: string | undefined, detail?: string): InventoryRow | null {
+function row(title: string, source: string | undefined, detail: string | undefined, ref: SessionConfigItemSelector, enabled: boolean | undefined): InventoryRow | null {
     const visibleTitle = visibleInventoryText(title)
     if (!visibleTitle) return null
     const visibleDetail = visibleInventoryText(detail)
     const visibleSource = asSource(source)
+    const mutable = visibleSource === 'user' || visibleSource === 'project'
     return {
-        key: `${visibleSource ?? ''}:${visibleTitle}:${visibleDetail ?? ''}`,
+        key: `${ref.kind}:${visibleSource ?? ''}:${visibleTitle}:${visibleDetail ?? ''}`,
         title: visibleTitle,
         ...(visibleDetail ? { detail: visibleDetail } : {}),
         ...(visibleSource ? { source: visibleSource } : {}),
+        enabled: enabled !== false,
+        mutable,
+        ref: { ...ref, ...(visibleSource ? { source: visibleSource } : {}) },
     }
 }
 
@@ -62,7 +69,7 @@ export function mcpSection(inventory: SessionInventory | null | undefined): Inve
     const mcp = inventory?.mcp
     if (!mcp) return { status: 'unreported' }
     const rows = mcp.servers.flatMap((server) => {
-        const next = row(server.name, server.source)
+        const next = row(server.name, server.source, undefined, { kind: 'mcp', name: server.name, source: server.source }, server.enabled)
         return next ? [next] : []
     })
     if (mcp.kind === 'tools') return { status: 'list', rows, tools: true }
@@ -75,7 +82,13 @@ export function hooksSection(inventory: SessionInventory | null | undefined): In
     if (hooks.availability === 'none') return { status: 'none' }
     const rows = hooks.items.flatMap((item) => {
         const detail = [item.matcher, item.commandName].filter((part): part is string => Boolean(part)).join(' · ')
-        const next = row(item.event, item.source, detail || undefined)
+        const next = row(item.event, item.source, detail || undefined, {
+            kind: 'hook',
+            event: item.event,
+            source: item.source,
+            ...(item.matcher ? { matcher: item.matcher } : {}),
+            ...(item.commandName ? { commandName: item.commandName } : {}),
+        }, item.enabled)
         return next ? [next] : []
     })
     return rowsOrEmpty(rows)
@@ -86,7 +99,7 @@ export function skillsSection(inventory: SessionInventory | null | undefined): I
     if (!skills) return { status: 'unreported' }
     if (skills.catalogUnavailable) return { status: 'catalogUnavailable' }
     return rowsOrEmpty(skills.items.flatMap((skill) => {
-        const next = row(skill.name, skill.source, skill.description)
+        const next = row(skill.name, skill.source, skill.description, { kind: 'skill', name: skill.name, source: skill.source }, skill.enabled)
         return next ? [next] : []
     }))
 }

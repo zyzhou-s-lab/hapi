@@ -7,6 +7,7 @@ export function useSessionConfig(api: ApiClient | null, sessionId: string | null
     config: SessionConfigResponse | null
     error: string | null
     isLoading: boolean
+    isFetching: boolean
     refetch: () => Promise<unknown>
 } {
     const resolvedSessionId = sessionId ?? 'unknown'
@@ -35,6 +36,7 @@ export function useSessionConfig(api: ApiClient | null, sessionId: string | null
         config: query.data?.config ?? null,
         error: queryError ?? query.data?.error ?? null,
         isLoading: query.isLoading,
+        isFetching: query.isFetching,
         refetch: query.refetch,
     }
 }
