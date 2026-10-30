@@ -1,7 +1,7 @@
-import type { WorkLayout } from './layout'
+import { LAYOUT_REVISION, type WorkLayout } from './layout'
 
 export const overviewLayout: WorkLayout = {
-    revision: 1,
+    revision: LAYOUT_REVISION,
     regions: {
         stats: [
             { cardId: 'overview.line-count' },
@@ -16,7 +16,7 @@ export const overviewLayout: WorkLayout = {
 }
 
 export const workbenchLayout: WorkLayout = {
-    revision: 1,
+    revision: LAYOUT_REVISION,
     regions: {
         rail: [{ cardId: 'workbench.line-list' }],
         main: [
@@ -24,6 +24,7 @@ export const workbenchLayout: WorkLayout = {
             { cardId: 'workbench.focus' },
             { cardId: 'workbench.directories' },
             { cardId: 'workbench.inbox' },
+            { cardId: 'example.training-curves' },
         ],
         side: [
             { cardId: 'workbench.sessions' },

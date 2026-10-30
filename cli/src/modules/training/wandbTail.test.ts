@@ -135,7 +135,10 @@ describe('startTrainingTail', () => {
         child.stderr = stderr
         child.kill = () => true
         const frames: { event: TrainingFrameEvent; payload: TrainingHistoryPayload }[] = []
-        const { promise, resolve } = Promise.withResolvers<void>()
+        let resolveFrame: () => void = () => {}
+        const promise = new Promise<void>((resolve) => {
+            resolveFrame = resolve
+        })
         try {
             startTrainingTail({
                 run: 'exp-1',
@@ -144,7 +147,7 @@ describe('startTrainingTail', () => {
                 batchMs: 0,
                 emit: (event, payload) => {
                     frames.push({ event, payload: payload as TrainingHistoryPayload })
-                    resolve()
+                    resolveFrame()
                 },
                 spawnPython: (_script, file) => {
                     expect(file.endsWith(join('wandb', 'offline-run-1', 'run-1.wandb'))).toBe(true)
@@ -172,8 +175,10 @@ describe('attachTrainingHandlers', () => {
         attachTrainingHandlers({
             on: (event, handler) => listeners.set(event, handler),
             emit: (event, payload) => emitted.push({ event, payload }),
-        }, 'gpu', () => {
-            throw new Error('should not start')
+        }, 'gpu', {
+            start: () => {
+                throw new Error('should not start')
+            },
         })
         listeners.get('training:subscribe')?.({ run: 'exp-1', runDir: '/data/wandb/run-1', machineId: 'other' })
         expect(emitted).toEqual([])
@@ -185,9 +190,9 @@ describe('wandb reader script', () => {
         const child = spawn('python3', ['-c', READ_WANDB_SCRIPT, '/no/such.wandb'], { stdio: ['ignore', 'pipe', 'pipe'] })
         const chunks: Buffer[] = []
         child.stdout.on('data', (chunk: Buffer) => chunks.push(chunk))
-        const { promise, resolve } = Promise.withResolvers<number | null>()
-        child.on('exit', resolve)
-        const code = await promise
+        const code = await new Promise<number | null>((resolve) => {
+            child.on('exit', resolve)
+        })
         const line = JSON.parse(Buffer.concat(chunks).toString('utf8').trim()) as { kind: string; message: string }
         expect(code).toBe(0)
         expect(line).toEqual({ kind: 'fatal', message: 'wandb is not available' })

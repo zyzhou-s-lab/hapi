@@ -282,6 +282,14 @@ export class ApiClient {
         return await this.request(`/api/work/layout/${surface}`)
     }
 
+    async putWorkLayout(surface: 'overview' | 'workbench', layout: WorkLayout): Promise<void> {
+        await this.request(`/api/work/layout/${surface}`, { method: 'PUT', body: JSON.stringify(layout) })
+    }
+
+    async listTrainingRuns(): Promise<{ runs: { run: string }[] }> {
+        return await this.request('/api/work/training-runs')
+    }
+
     async putWorkDismissed(sessionId: string, dismissed: boolean): Promise<void> {
         await this.request('/api/work/dismissed', {
             method: 'PUT',

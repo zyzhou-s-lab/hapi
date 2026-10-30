@@ -1415,4 +1415,10 @@ export default {
   'work.trainingLog': 'Log',
   'work.trainingDropped': '{count} points at or below 0 are hidden on the log scale.',
   'work.trainingZoom': 'Drag to zoom. Double-click to reset.',
+  'work.trainingNoWandb': 'This machine cannot read wandb.',
+  'work.trainingUnreadable': 'This run cannot be read.',
+  'work.trainingRunnerDown': 'The runner is not connected.',
+  'work.trainingReconnecting': 'Reconnecting…',
+  'work.trainingPickRun': 'Run',
+  'work.trainingUseRun': 'Show on this line',
 } as const

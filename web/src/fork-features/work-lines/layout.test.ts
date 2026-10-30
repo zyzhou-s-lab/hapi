@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { CARD_POLL_MIN_MS, clampCardPollMs, mergeLayout, slotsForRegion, visiblePollInterval, type WorkLayout } from './layout'
+import { CARD_POLL_MIN_MS, clampCardPollMs, bindTrainingSlot, mergeLayout, slotsForRegion, LAYOUT_REVISION, visiblePollInterval, type WorkLayout } from './layout'
+import { workbenchLayout } from './defaultLayouts'
 
 const defaults: WorkLayout = {
     revision: 1,
@@ -34,6 +35,16 @@ describe('work layout', () => {
             'overview.line-count',
         ])
         expect(mergeLayout(saved, defaults).regions.body.map((slot) => slot.cardId)).toEqual(['overview.needs-you-list'])
+    })
+
+    it('adds the training card to an older workbench layout and can bind a run', () => {
+        expect(workbenchLayout.regions.main.some((slot) => slot.cardId === 'example.training-curves')).toBe(true)
+        const saved: WorkLayout = { revision: 1, regions: { main: [{ cardId: 'workbench.line-header' }] } }
+        const merged = mergeLayout(saved, workbenchLayout)
+        expect(merged.regions.main.map((slot) => slot.cardId)).toContain('example.training-curves')
+        const bound = bindTrainingSlot(merged, 'line-1', 'exp-1')
+        expect(bound.revision).toBe(LAYOUT_REVISION)
+        expect(bound.regions.main.find((slot) => slot.cardId === 'example.training-curves')?.args).toEqual({ run: 'exp-1', lineId: 'line-1' })
     })
 
     it('clamps a short poll and stops it while the page is hidden', () => {

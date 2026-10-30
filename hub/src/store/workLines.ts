@@ -371,6 +371,13 @@ export class WorkLinesStore {
         return this.requireTrainingRun(accountId, run)
     }
 
+    listTrainingRuns(accountId: number): { run: string }[] {
+        const rows = this.db.prepare(
+            'SELECT run FROM work_training_runs WHERE account_id = ? ORDER BY run'
+        ).all(accountId) as { run: string }[]
+        return rows.map((row) => ({ run: row.run }))
+    }
+
     getTrainingRun(accountId: number, run: string): WorkTrainingRun | null {
         const row = this.db.prepare(
             'SELECT run, machine_id, run_dir, created_at FROM work_training_runs WHERE account_id = ? AND run = ?'

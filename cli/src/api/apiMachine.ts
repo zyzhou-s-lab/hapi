@@ -755,7 +755,7 @@ export class ApiMachineClient {
             emit: (event, payload) => {
                 this.socket.emit(event, payload)
             },
-        }, this.machine.id)
+        }, this.machine.id, { policy: this.pathPolicy })
     }
 
     private startKeepAlive(): void {

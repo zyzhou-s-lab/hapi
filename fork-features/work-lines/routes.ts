@@ -220,6 +220,12 @@ export function mountWorkLineRoutes(app: Hono<WebAppEnv>, deps: {
         }
     })
 
+    routes.get('/training-runs', async (c) => {
+        const ready = await open(c)
+        if (ready instanceof Response) return ready
+        return c.json({ runs: ready.engine.getWorkLines().listTrainingRuns(ready.account.id) })
+    })
+
     routes.post('/training-runs', async (c) => {
         const ready = await open(c)
         if (ready instanceof Response) return ready

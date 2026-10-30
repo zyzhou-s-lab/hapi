@@ -3,6 +3,7 @@ import uPlot from 'uplot'
 import 'uplot/dist/uPlot.min.css'
 import { useTranslation } from '@/lib/use-translation'
 import { prepareTrainingPlot, type TrainingSeries } from '../trainingSeries'
+import { pushTrainingChartData, type ZoomableChart } from './chartUpdate'
 
 const STROKES = ['#2563eb', '#dc2626', '#059669', '#d97706', '#7c3aed', '#0891b2']
 const SMOOTH_ALPHA = 0.6
@@ -18,12 +19,14 @@ export function TrainingChart(props: { series: TrainingSeries[] }): ReactNode {
     const [smooth, setSmooth] = useState(false)
     const [log, setLog] = useState(false)
     const host = useRef<HTMLDivElement>(null)
+    const chartRef = useRef<uPlot | null>(null)
     const prepared = useMemo(() => prepareTrainingPlot(props.series, {
         hidden,
         smooth,
         log,
         alpha: SMOOTH_ALPHA,
     }), [hidden, log, props.series, smooth])
+    const shape = `${log ? 1 : 0}:${[...hidden].sort().join(',')}:${prepared.drawable.map((row) => row.id).join(',')}`
 
     useEffect(() => {
         const element = host.current
@@ -44,6 +47,7 @@ export function TrainingChart(props: { series: TrainingSeries[] }): ReactNode {
             ],
             cursor: { drag: { x: true, y: true, setScale: true } },
         }, data, element)
+        chartRef.current = chart
         const ys = prepared.drawable.flatMap((row) => row.values.filter((value): value is number => value != null))
         const reset = () => {
             const xMin = prepared.steps[0] ?? 0
@@ -62,8 +66,16 @@ export function TrainingChart(props: { series: TrainingSeries[] }): ReactNode {
             element.removeEventListener('dblclick', reset)
             observer.disconnect()
             chart.destroy()
+            chartRef.current = null
         }
-    }, [log, prepared])
+    }, [log, shape])
+
+    useEffect(() => {
+        const chart = chartRef.current
+        if (!chart || prepared.steps.length === 0) return
+        const data: uPlot.AlignedData = [prepared.steps, ...prepared.drawable.map((row) => row.values)]
+        pushTrainingChartData(chart as unknown as ZoomableChart, data)
+    }, [prepared])
 
     const toggle = (id: string) => {
         setHidden((current) => {

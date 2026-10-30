@@ -1,6 +1,7 @@
 import { spawn, type ChildProcess } from 'node:child_process'
-import { readdir } from 'node:fs/promises'
+import { readdir, realpath } from 'node:fs/promises'
 import { basename, dirname, join } from 'node:path'
+import type { MachinePathPolicy } from '../../api/machinePathPolicy'
 import type { TrainingErrorPayload, TrainingHistoryPayload } from '@hapi/protocol'
 import { READ_WANDB_SCRIPT } from './readWandbScript'
 
@@ -11,6 +12,19 @@ export function isWandbRunDir(runDir: string): boolean {
     const parent = basename(dirname(runDir))
     if (parent !== 'wandb') return false
     return /^run-.+$/.test(name) || /^offline-run-.+$/.test(name)
+}
+
+export async function resolveTrainingRunDir(runDir: string, policy?: Pick<MachinePathPolicy, 'resolveForCheck' | 'isWithinSpawnRoots'>): Promise<string | null> {
+    if (!isWandbRunDir(runDir)) return null
+    let resolved: string
+    try {
+        resolved = policy ? await policy.resolveForCheck(runDir) : await realpath(runDir)
+    } catch {
+        return null
+    }
+    if (!isWandbRunDir(resolved)) return null
+    if (policy && !policy.isWithinSpawnRoots(resolved)) return null
+    return resolved
 }
 
 type TailLine =
@@ -148,6 +162,7 @@ export function startTrainingTail(options: {
     emit: (event: TrainingFrameEvent, payload: TrainingHistoryPayload | TrainingErrorPayload) => void
     batchMs?: number
     spawnPython?: (script: string, file: string) => ChildProcess
+    policy?: Pick<MachinePathPolicy, 'resolveForCheck' | 'isWithinSpawnRoots'>
 }): { stop: () => void } {
     let stopped = false
     let child: ChildProcess | null = null
@@ -158,11 +173,13 @@ export function startTrainingTail(options: {
     }
 
     void (async () => {
-        if (!isWandbRunDir(options.runDir)) {
+        const resolved = await resolveTrainingRunDir(options.runDir, options.policy)
+        if (stopped) return
+        if (!resolved) {
             fail('cannot read this run')
             return
         }
-        const file = await wandbFile(options.runDir)
+        const file = await wandbFile(resolved)
         if (stopped) return
         if (!file) {
             fail('cannot read this run')
@@ -220,7 +237,11 @@ export function startTrainingTail(options: {
 export function attachTrainingHandlers(socket: {
     on: (event: string, handler: (data?: unknown) => void) => void
     emit: (event: TrainingFrameEvent, payload: TrainingHistoryPayload | TrainingErrorPayload) => void
-}, machineId: string, start: typeof startTrainingTail = startTrainingTail): () => void {
+}, machineId: string, options: {
+    start?: typeof startTrainingTail
+    policy?: Pick<MachinePathPolicy, 'resolveForCheck' | 'isWithinSpawnRoots'>
+} = {}): () => void {
+    const start = options.start ?? startTrainingTail
     const tails = new Map<string, { stop: () => void }>()
     const stopRun = (run: string) => {
         tails.get(run)?.stop()
@@ -238,6 +259,7 @@ export function attachTrainingHandlers(socket: {
             run: payload.run,
             runDir: payload.runDir,
             machineId,
+            policy: options.policy,
             emit: (event, frame) => socket.emit(event, frame),
         }))
     })

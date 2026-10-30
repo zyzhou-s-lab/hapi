@@ -76,6 +76,12 @@ describe('work line routes', () => {
         expect(summary.status).toBe(200)
         expect(await summary.json()).toEqual({ unavailable: true })
         expect(rpcCalls).toEqual([{ machineId: 'gpu', run: 'exp-1', runDir: '/data/wandb/offline-run-1' }])
+
+
+        const listed = await app.request('/api/work/training-runs', { headers: auth })
+        expect(listed.status).toBe(200)
+        expect(await listed.json()).toEqual({ runs: [{ run: 'exp-1' }] })
+        expect(JSON.stringify(await (await app.request('/api/work/training-runs', { headers: auth })).json())).not.toContain('runDir')
     })
 
     it('broadcasts card-invalidated without curve points when a line is created', async () => {

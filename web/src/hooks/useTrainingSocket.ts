@@ -3,7 +3,7 @@ import { Manager, type Socket } from 'socket.io-client'
 import { applyTrainingBatch, type TrainingBatchPoint, type TrainingSeries } from '@/fork-features/work-lines/trainingSeries'
 
 export type TrainingSocketState = {
-    status: 'connecting' | 'live' | 'unavailable'
+    status: 'connecting' | 'live' | 'reconnecting' | 'unavailable'
     message: string | null
     finished: boolean
     series: TrainingSeries[]
@@ -17,13 +17,39 @@ type TrainingFrame = {
     batch?: TrainingBatchPoint[]
 }
 
+const MESSAGE_KEYS: Record<string, string> = {
+    'wandb is not available': 'work.trainingNoWandb',
+    'cannot read this run': 'work.trainingUnreadable',
+    'Runner is not connected.': 'work.trainingRunnerDown',
+    'Training run is unavailable.': 'work.trainingUnavailable',
+}
+
+export function trainingMessageKey(raw: string | null | undefined): string {
+    if (!raw) return 'work.trainingUnavailable'
+    return MESSAGE_KEYS[raw] ?? 'work.trainingUnavailable'
+}
+
+export function nextSubscribeDelay(attempt: number): number {
+    return Math.min(1000 * 2 ** attempt, 5000)
+}
+
 export function reduceTrainingFrame(state: TrainingSocketState, frame: TrainingFrame): TrainingSocketState {
+    const emptyReset = Boolean(frame.reset) && (frame.batch == null || frame.batch.length === 0)
+    const replace = emptyReset || (Boolean(frame.reset) && state.series.length === 0)
     return {
         status: 'live',
         message: frame.lastError ?? null,
-        finished: frame.reset ? Boolean(frame.finished) : state.finished || Boolean(frame.finished),
-        series: applyTrainingBatch(state.series, frame.batch, Boolean(frame.reset)),
+        finished: replace ? Boolean(frame.finished) : state.finished || Boolean(frame.finished),
+        series: applyTrainingBatch(state.series, frame.batch, replace),
     }
+}
+
+export function reduceTrainingDisconnect(state: TrainingSocketState): TrainingSocketState {
+    return { ...state, status: 'reconnecting' }
+}
+
+export function reduceTrainingError(state: TrainingSocketState, message: string | null): TrainingSocketState {
+    return { ...state, status: 'reconnecting', message, finished: false }
 }
 
 export function emptyTrainingState(): TrainingSocketState {
@@ -36,11 +62,13 @@ export function useTrainingSocket(options: { baseUrl: string; token: string; run
 
     useEffect(() => {
         if (!token || !run) {
-            setState({ status: 'unavailable', message: null, finished: false, series: [] })
+            setState(emptyTrainingState())
             return
         }
         let socket: Socket | null = null
         let active = true
+        let attempt = 0
+        let retry: ReturnType<typeof setTimeout> | null = null
         setState(emptyTrainingState())
         const manager = new Manager(baseUrl, {
             path: '/socket.io/',
@@ -53,38 +81,59 @@ export function useTrainingSocket(options: { baseUrl: string; token: string; run
             autoConnect: false,
         })
         socket = manager.socket('/terminal', { auth: { token } })
-
-        const forRun = (frame: TrainingFrame) => frame.run === run
+        const subscribe = () => {
+            socket?.emit('training:subscribe', { run })
+        }
+        const clearRetry = () => {
+            if (!retry) return
+            clearTimeout(retry)
+            retry = null
+        }
+        const note = (raw: string | null) => {
+            if (raw) console.error(raw)
+        }
 
         socket.on('connect', () => {
             if (!active) return
-            setState((current) => ({ ...current, status: 'connecting', message: null }))
-            socket?.emit('training:subscribe', { run })
+            clearRetry()
+            attempt = 0
+            setState((current) => ({ ...current, status: current.series.length > 0 ? 'live' : 'connecting', message: null }))
+            subscribe()
         })
         socket.on('training:history', (frame: TrainingFrame) => {
-            if (!active || !forRun(frame)) return
+            if (!active || frame.run !== run) return
+            note(frame.lastError ?? null)
+            clearRetry()
+            attempt = 0
             setState((current) => reduceTrainingFrame(current, frame))
         })
         socket.on('training:points', (frame: TrainingFrame) => {
-            if (!active || !forRun(frame)) return
+            if (!active || frame.run !== run) return
+            note(frame.lastError ?? null)
             setState((current) => reduceTrainingFrame(current, frame))
         })
         socket.on('training:error', (frame: { run?: string; message?: string }) => {
             if (!active || frame.run !== run) return
-            setState({ status: 'unavailable', message: frame.message ?? null, finished: false, series: [] })
+            note(frame.message ?? null)
+            setState((current) => reduceTrainingError(current, frame.message ?? null))
+            clearRetry()
+            const delay = nextSubscribeDelay(attempt)
+            attempt += 1
+            retry = setTimeout(subscribe, delay)
         })
         socket.on('disconnect', (reason: string) => {
             if (!active || reason === 'io client disconnect') return
-            setState({ status: 'unavailable', message: null, finished: false, series: [] })
+            setState((current) => reduceTrainingDisconnect(current))
         })
         socket.on('connect_error', () => {
             if (!active) return
-            setState({ status: 'unavailable', message: null, finished: false, series: [] })
+            setState((current) => reduceTrainingDisconnect(current))
         })
         socket.connect()
 
         return () => {
             active = false
+            clearRetry()
             socket?.emit('training:unsubscribe', { run })
             socket?.removeAllListeners()
             socket?.disconnect()

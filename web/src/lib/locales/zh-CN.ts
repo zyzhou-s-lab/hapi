@@ -1414,4 +1414,10 @@ export default {
   'work.trainingLog': '对数',
   'work.trainingDropped': '对数轴隐藏了 {count} 个小于等于 0 的点。',
   'work.trainingZoom': '拖拽缩放，双击还原。',
+  'work.trainingNoWandb': '这台机器读不了 wandb。',
+  'work.trainingUnreadable': '这次训练读不了。',
+  'work.trainingRunnerDown': 'runner 没连上。',
+  'work.trainingReconnecting': '正在重新连接…',
+  'work.trainingPickRun': '训练',
+  'work.trainingUseRun': '显示在这条主线上',
 } as const
