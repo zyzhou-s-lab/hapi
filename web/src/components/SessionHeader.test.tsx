@@ -104,6 +104,7 @@ describe('SessionHeader config toggle', () => {
         )
 
         const button = screen.getByRole('button', { name: 'Return to conversation' })
+        expect(screen.getByRole('button', { name: 'Back' })).toBeTruthy()
         expect(button).toHaveAttribute('aria-pressed', 'true')
         fireEvent.click(button)
         expect(onToggleConfig).toHaveBeenCalledOnce()

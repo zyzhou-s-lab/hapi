@@ -107,10 +107,32 @@ describe('SessionConfigPage', () => {
         }))
     })
 
-    it('shows unavailable when the runner cannot answer', async () => {
-        mocks.getSessionConfig.mockResolvedValue({ success: false, error: 'handler-not-registered' })
+    it('shows why the runner is offline and retries', async () => {
+        mocks.getSessionConfig
+            .mockResolvedValueOnce({ success: false, error: 'RPC handler not registered: session-1:listSessionConfig' })
+            .mockResolvedValueOnce({
+                success: true,
+                mcp: { kind: 'servers', servers: [{ name: 'hapi', source: 'injected' }] },
+                skills: { items: [], catalogUnavailable: false },
+                hooks: { availability: 'listed', items: [] },
+            })
         renderPage()
-        expect(await screen.findByText('Unavailable')).toBeTruthy()
+        expect(await screen.findByRole('alert')).toHaveTextContent('Runner is offline and the config could not be read.')
         expect(screen.queryByRole('heading', { name: 'MCP' })).toBeNull()
+
+        fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
+        expect(await screen.findByRole('heading', { name: 'MCP' })).toBeTruthy()
+        expect(screen.queryByRole('alert')).toBeNull()
+    })
+
+    it('shows a truncated reason without an absolute path', async () => {
+        mocks.getSessionConfig.mockResolvedValue({
+            success: false,
+            error: 'failed to read /Users/dev/project/.mcp.json',
+        })
+        renderPage()
+        const alert = await screen.findByRole('alert')
+        expect(alert).toHaveTextContent('Could not read session config: failed to read')
+        expect(alert.textContent).not.toContain('/Users/')
     })
 })

@@ -245,6 +245,8 @@ export default {
   'session.config.unreported': '未上报',
   'session.config.empty': '无',
   'session.config.unavailable': '不可用',
+  'session.config.runnerOffline': 'Runner 离线，无法读取配置',
+  'session.config.errorWithDetail': '无法读取会话配置：{error}',
   'session.config.hooks.none': '此 flavor 无 hooks',
   'session.config.mcp.toolsHint': '工具名，不是服务器',
   'session.config.skills.catalogUnavailable': '技能目录不可用',

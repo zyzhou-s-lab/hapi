@@ -241,6 +241,8 @@ export default {
   'session.config.unreported': 'Not reported',
   'session.config.empty': 'None',
   'session.config.unavailable': 'Unavailable',
+  'session.config.runnerOffline': 'Runner is offline and the config could not be read.',
+  'session.config.errorWithDetail': 'Could not read session config: {error}',
   'session.config.hooks.none': 'This flavor has no hooks',
   'session.config.mcp.toolsHint': 'Tool names, not servers',
   'session.config.skills.catalogUnavailable': 'Skill catalog unavailable',
