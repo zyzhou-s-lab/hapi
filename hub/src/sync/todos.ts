@@ -24,11 +24,11 @@ function isOmpTodoToolName(name: string | null): boolean {
     return normalized === 'todo' || normalized === 'todowrite'
 }
 
-// checklist.tsx normalizeChecklistStatus: only completed / in_progress are
-// distinct. omp also emits blocked and abandoned; those stay pending.
-function normalizeOmpTodoStatus(value: unknown): 'pending' | 'in_progress' | 'completed' {
-    if (value === 'completed') return 'completed'
-    if (value === 'in_progress') return 'in_progress'
+// Abandoned omp tasks are omitted. Blocked stays blocked. Anything else
+// unknown falls back to pending, matching checklist.tsx.
+function visibleOmpStatus(value: unknown): 'pending' | 'in_progress' | 'completed' | 'blocked' | null {
+    if (value === 'abandoned') return null
+    if (value === 'completed' || value === 'in_progress' || value === 'blocked') return value
     return 'pending'
 }
 
@@ -37,36 +37,59 @@ function todosFromClaudeArray(todos: unknown): TodoItem[] | null {
     return parsed.success ? parsed.data : null
 }
 
-function todosFromOmpPhases(phases: unknown[]): TodoItem[] | null {
-    const todos: Array<Pick<TodoItem, 'content' | 'status' | 'priority' | 'id'>> = []
-    for (const phase of phases) {
-        if (!isObject(phase) || !Array.isArray(phase.tasks)) continue
-        for (const task of phase.tasks) {
-            if (!isObject(task) || typeof task.content !== 'string') continue
-            todos.push({
-                content: task.content,
-                status: normalizeOmpTodoStatus(task.status),
-                priority: 'medium',
-                id: typeof task.id === 'string' ? task.id : ''
-            })
-        }
-    }
-    return todosFromClaudeArray(todos)
+function ompTodoId(phaseName: string, index: number, id: unknown): string {
+    if (typeof id === 'string' && id !== '') return id
+    return `${phaseName}:${index}`
 }
 
-function ompTodoDetails(value: Record<string, unknown>): { phases: unknown[] } | null {
+function ompTodoDetails(value: Record<string, unknown>): { op: string; phases: unknown[] } | null {
     if (typeof value.op !== 'string' || OMP_TODO_OPS[value.op] !== true || !Array.isArray(value.phases)) return null
-    return { phases: value.phases }
+    return { op: value.op, phases: value.phases }
 }
 
-// omp `todo` results are `{ op, phases, storage }`, sometimes wrapped as
-// `{ content, details }` — the same two shapes extractTodoChecklist reads.
+// Result details only: `{ op, phases }` or `{ content, details: { op, phases } }`.
+// Input objects that merely contain `phases` are not snapshots.
 function extractOmpTodoSnapshot(value: unknown): TodoItem[] | null {
     if (!isObject(value)) return null
     const details = ompTodoDetails(value)
         ?? (isObject(value.details) ? ompTodoDetails(value.details) : null)
     if (!details) return null
-    return todosFromOmpPhases(details.phases)
+
+    const todos: Array<Pick<TodoItem, 'content' | 'status' | 'priority' | 'id'>> = []
+    let opaque = false
+    for (const phase of details.phases) {
+        if (!isObject(phase) || !Array.isArray(phase.tasks)) {
+            opaque = true
+            continue
+        }
+        const phaseName = typeof phase.name === 'string' && phase.name !== '' ? phase.name : 'phase'
+        phase.tasks.forEach((task, index) => {
+            if (!isObject(task) || typeof task.content !== 'string') {
+                opaque = true
+                return
+            }
+            const status = visibleOmpStatus(task.status)
+            if (!status) return
+            todos.push({
+                content: task.content,
+                status,
+                priority: 'medium',
+                id: ompTodoId(phaseName, index, task.id)
+            })
+        })
+    }
+
+    if (todos.length > 0) return todosFromClaudeArray(todos)
+    if (opaque) return null
+    // phases: [] is a whole-list publish only for init (replace), view (read of
+    // an empty list), and rm. Other ops do not emit an empty phase array on
+    // success; an errored rm keeps the previous phases and is skipped earlier.
+    // A non-empty phase list with no remaining tasks is a real clear (rm emptied
+    // every task, or every task was abandoned and is hidden).
+    if (details.phases.length === 0 && details.op !== 'init' && details.op !== 'view' && details.op !== 'rm') {
+        return null
+    }
+    return []
 }
 
 function extractTodosFromClaudeOutput(content: Record<string, unknown>): TodoItem[] | null {
@@ -88,45 +111,33 @@ function extractTodosFromClaudeOutput(content: Record<string, unknown>): TodoIte
         const input = 'input' in block ? (block as Record<string, unknown>).input : null
         if (!isObject(input)) continue
 
-        const todosCandidate = input.todos
-        const parsed = todosFromClaudeArray(todosCandidate)
+        const parsed = todosFromClaudeArray(input.todos)
         if (parsed) return parsed
     }
 
     return null
 }
+
 function extractTodosFromOmpOutput(content: Record<string, unknown>): TodoItem[] | null {
     if (content.type !== 'output') return null
     const data = isObject(content.data) ? content.data : null
     if (!data) return null
 
-    const fromToolUseResult = extractOmpTodoSnapshot(data.toolUseResult)
-    if (fromToolUseResult) return fromToolUseResult
-
     const message = isObject(data.message) ? data.message : null
     if (!message || !Array.isArray(message.content)) return null
 
     for (const block of message.content) {
-        if (!isObject(block)) continue
-        if (block.type === 'tool_result') {
-            const snapshot = extractOmpTodoSnapshot('content' in block ? (block as Record<string, unknown>).content : null)
-            if (snapshot) return snapshot
-            continue
-        }
-        if (block.type !== 'tool_use' || !isOmpTodoToolName(typeof block.name === 'string' ? block.name : null)) continue
-        const input = 'input' in block ? (block as Record<string, unknown>).input : null
-        if (!isObject(input)) continue
-        if (Array.isArray(input.todos)) {
-            const parsed = todosFromClaudeArray(input.todos)
-            if (parsed) return parsed
-        }
-        const snapshot = extractOmpTodoSnapshot(input)
+        if (!isObject(block) || block.type !== 'tool_result') continue
+        const resultName = typeof block.name === 'string' ? block.name : typeof block.toolName === 'string' ? block.toolName : null
+        if (!isOmpTodoToolName(resultName)) continue
+        if (block.is_error === true || block.isError === true) continue
+        const snapshot = extractOmpTodoSnapshot('content' in block ? (block as Record<string, unknown>).content : null)
+            ?? extractOmpTodoSnapshot(data.toolUseResult)
         if (snapshot) return snapshot
     }
 
     return null
 }
-
 
 function extractTodosFromCodexMessage(content: Record<string, unknown>): TodoItem[] | null {
     if (content.type !== 'codex') return null
@@ -134,16 +145,18 @@ function extractTodosFromCodexMessage(content: Record<string, unknown>): TodoIte
     const data = isObject(content.data) ? content.data : null
     if (!data) return null
 
-    const name = typeof data.name === 'string' ? data.name : null
-    const input = 'input' in data ? (data as Record<string, unknown>).input : null
     if (data.type === 'tool-call-result') {
+        const name = typeof data.name === 'string' ? data.name : null
+        if (!isOmpTodoToolName(name) || data.is_error === true || data.isError === true) return null
         return extractOmpTodoSnapshot('output' in data ? data.output : null)
     }
+
     if (data.type !== 'tool-call') return null
-    if (name !== 'TodoWrite' && !isOmpTodoToolName(name)) return null
-    if (!isObject(input)) return null
-    if (Array.isArray(input.todos)) return todosFromClaudeArray(input.todos)
-    return extractOmpTodoSnapshot(input)
+    const name = typeof data.name === 'string' ? data.name : null
+    if (name !== 'TodoWrite') return null
+    const input = 'input' in data ? (data as Record<string, unknown>).input : null
+    if (!isObject(input) || !Array.isArray(input.todos)) return null
+    return todosFromClaudeArray(input.todos)
 }
 
 function extractTodosFromAcpMessage(content: Record<string, unknown>): TodoItem[] | null {

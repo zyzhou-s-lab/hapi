@@ -97,6 +97,18 @@ describe('extractTodoChecklist', () => {
             { id: 'todo-1', text: 'Ship it', status: 'completed' }
         ])
     })
+
+    it('keeps blocked todos distinct and leaves abandoned as pending on the tool card', () => {
+        expect(extractTodoChecklist({
+            todos: [
+                { content: 'wait', status: 'blocked', id: 'b' },
+                { content: 'drop', status: 'abandoned' }
+            ]
+        }, null)).toEqual([
+            { id: 'b', text: 'wait', status: 'blocked' },
+            { id: undefined, text: 'drop', status: 'pending' }
+        ])
+    })
 })
 
 describe('update_plan tool presentation', () => {

@@ -10,6 +10,7 @@ public struct TodoItem: Codable, Equatable, Sendable {
         case pending
         case inProgress = "in_progress"
         case completed
+        case blocked
     }
 
     public enum Priority: String, Codable, Sendable {

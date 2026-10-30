@@ -896,6 +896,7 @@ export class OmpRpcEventAdapter {
                 content: [{
                     type: 'tool_result',
                     tool_use_id: toolResult.toolCallId,
+                    name: toolResult.toolName,
                     content: toolOutput,
                     is_error: toolResult.isError
                 }]

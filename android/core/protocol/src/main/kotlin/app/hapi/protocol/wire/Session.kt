@@ -65,7 +65,7 @@ data class Session(
 @Serializable
 data class TodoItem(
     val content: String,
-    /** `'pending' | 'in_progress' | 'completed'`. */
+    /** `'pending' | 'in_progress' | 'completed' | 'blocked'`. */
     val status: String,
     val priority: String = "medium",
     val id: String = "",

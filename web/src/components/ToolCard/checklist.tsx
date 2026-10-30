@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react'
 import { isObject } from '@hapi/protocol'
 
-export type ChecklistStatus = 'pending' | 'in_progress' | 'completed'
+export type ChecklistStatus = 'pending' | 'in_progress' | 'completed' | 'blocked'
 
 export type ChecklistItem = {
     id?: string
@@ -12,6 +12,7 @@ export type ChecklistItem = {
 function normalizeChecklistStatus(value: unknown): ChecklistStatus {
     if (value === 'completed') return 'completed'
     if (value === 'in_progress') return 'in_progress'
+    if (value === 'blocked') return 'blocked'
     return 'pending'
 }
 
@@ -107,12 +108,14 @@ export function extractUpdatePlanChecklist(input: unknown, result: unknown): Che
 function checklistTone(item: ChecklistItem): string {
     if (item.status === 'completed') return 'text-emerald-600 line-through'
     if (item.status === 'in_progress') return 'text-[var(--app-link)]'
+    if (item.status === 'blocked') return 'text-red-500'
     return 'text-[var(--app-hint)]'
 }
 
 function checklistIcon(item: ChecklistItem): ReactNode {
     if (item.status === 'completed') return '☑'
     if (item.status === 'in_progress') return '◉'
+    if (item.status === 'blocked') return '⚠'
     return '☐'
 }
 
@@ -128,7 +131,7 @@ export function ChecklistList(props: { items: ChecklistItem[]; emptyLabel?: stri
             {props.items.map((item, idx) => {
                 const text = item.text.trim().length > 0 ? item.text.trim() : '(empty)'
                 return (
-                    <div key={item.id ?? String(idx)} className={`text-sm ${checklistTone(item)}`}>
+                    <div key={item.id ? item.id : String(idx)} className={`text-sm ${checklistTone(item)}`}>
                         {checklistIcon(item)} {text}
                     </div>
                 )

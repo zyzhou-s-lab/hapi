@@ -248,7 +248,7 @@ export type AgentState = z.infer<typeof AgentStateSchema>
 
 export const TodoItemSchema = z.object({
     content: z.string(),
-    status: z.enum(['pending', 'in_progress', 'completed']),
+    status: z.enum(['pending', 'in_progress', 'completed', 'blocked']),
     priority: z.enum(['high', 'medium', 'low']).optional().default('medium'),
     id: z.string().optional().default(''),
     activeForm: z.string().optional()
