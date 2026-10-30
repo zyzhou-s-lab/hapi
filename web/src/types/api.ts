@@ -172,6 +172,7 @@ export type GitStatusFiles = {
 export type SkillSummary = {
     name: string
     description?: string
+    source?: 'user' | 'project' | 'plugin' | 'system'
 }
 
 export type SkillsResponse = {

@@ -15,10 +15,15 @@ import { registerGitHandlers } from './handlers/git'
 import { registerRipgrepHandlers } from './handlers/ripgrep'
 import { registerSlashCommandHandlers } from './handlers/slashCommands'
 import { registerSkillsHandlers } from './handlers/skills'
+import type { SkillSummary } from './skills'
 import { registerUploadHandlers } from './handlers/uploads'
 import { registerImportableSessionHandlers } from '../../../../fork-features/history-import/cli/register'
 
-export function registerCommonHandlers(rpcHandlerManager: RpcHandlerManager, workingDirectory: string): void {
+export function registerCommonHandlers(
+    rpcHandlerManager: RpcHandlerManager,
+    workingDirectory: string,
+    options?: { onSkills?: (skills: SkillSummary[]) => void }
+): void {
     registerAgyModelHandlers(rpcHandlerManager)
     registerBashHandlers(rpcHandlerManager, workingDirectory)
     registerCodexModelHandlers(rpcHandlerManager)
@@ -33,7 +38,7 @@ export function registerCommonHandlers(rpcHandlerManager: RpcHandlerManager, wor
     registerRipgrepHandlers(rpcHandlerManager, workingDirectory)
     registerDifftasticHandlers(rpcHandlerManager, workingDirectory)
     registerSlashCommandHandlers(rpcHandlerManager, workingDirectory)
-    registerSkillsHandlers(rpcHandlerManager, workingDirectory)
+    registerSkillsHandlers(rpcHandlerManager, workingDirectory, options?.onSkills)
     registerGitHandlers(rpcHandlerManager, workingDirectory)
     registerUploadHandlers(rpcHandlerManager)
     registerImportableSessionHandlers(rpcHandlerManager)

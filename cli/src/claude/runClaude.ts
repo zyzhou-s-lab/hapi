@@ -28,6 +28,7 @@ import {
     toConversationHistoryCapabilities
 } from '@hapi/protocol/conversationHistory';
 import { listSkills, type SkillSummary } from '@/modules/common/skills';
+import { inventorySkills, loadClaudeInventory, publishSessionInventory, withSessionInventory } from '@/modules/common/sessionInventory';
 
 export interface StartOptions {
     model?: string
@@ -109,20 +110,22 @@ export async function runClaude(options: StartOptions = {}): Promise<void> {
                 logger.debug('[start] SDK metadata extracted, updating session:', sdkMetadata);
                 if (sdkMetadata.slashCommands === undefined) {
                     catalogPromise = null;
-                    if (sdkMetadata.tools !== undefined) {
-                        session.updateMetadata((currentMetadata) => ({
-                            ...currentMetadata,
-                            tools: sdkMetadata.tools
-                        }));
-                    }
+                    session.updateMetadata((currentMetadata) => withSessionInventory({
+                        ...currentMetadata,
+                        ...(sdkMetadata.tools !== undefined ? { tools: sdkMetadata.tools } : {}),
+                    }, {
+                        skills: inventorySkills([], { catalogUnavailable: true }),
+                    }));
                     return result;
                 }
                 nativeSkills = catalog.skills;
                 currentSessionRef.current?.setNativeSkillNames(catalog.skills.map((skill) => skill.name));
-                session.updateMetadata((currentMetadata) => ({
+                session.updateMetadata((currentMetadata) => withSessionInventory({
                     ...currentMetadata,
                     tools: sdkMetadata.tools,
-                    slashCommands: catalog.commands
+                    slashCommands: catalog.commands,
+                }, {
+                    skills: inventorySkills(catalog.skills),
                 }));
                 logger.debug('[start] Session metadata updated with SDK capabilities');
                 return result;
@@ -211,6 +214,7 @@ export async function runClaude(options: StartOptions = {}): Promise<void> {
         trackPermissionMode: true
     });
     logger.debug(`[START] Generated hook settings files: ${hookSettingsPath}, ${localHookSettingsPath}`);
+    publishSessionInventory(session, loadClaudeInventory(workingDirectory));
 
     // Print log file path
     const logPath = logger.logFilePath;

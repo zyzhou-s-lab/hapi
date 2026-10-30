@@ -21,6 +21,7 @@ import { getBuiltinSlashCommands, mergeSlashCommands } from '@hapi/protocol/slas
 import type { ListPiModelsResponse, PiCommandSummary, PiModelSummary, SlashCommand, SlashCommandsResponse } from '@hapi/protocol/apiTypes';
 import { RPC_METHODS } from '@hapi/protocol/rpcMethods';
 import type { ListSkillsResponse, SkillSummary } from '@/modules/common/skills';
+import { EMPTY_FLAVOR_INVENTORY, publishSessionInventory } from '@/modules/common/sessionInventory';
 import type { AttachmentMetadata } from '@/api/types';
 import { readBoundedAttachmentFile } from '@/modules/common/attachmentFile';
 import { MAX_UPLOAD_BYTES } from '@/modules/common/attachmentLimits';
@@ -225,6 +226,7 @@ export async function runPi(opts: {
             model: undefined
         });
     const { session: apiSession } = bootstrap;
+    publishSessionInventory(apiSession, EMPTY_FLAVOR_INVENTORY);
 
     setControlledByUser(apiSession, startingMode);
 

@@ -1,0 +1,396 @@
+import { existsSync, lstatSync, readFileSync, statSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { dirname, join, resolve, sep } from 'node:path';
+import type { Metadata } from '@/api/types';
+import { logger } from '@/ui/logger';
+import {
+    SessionInventorySchema,
+    type SessionInventory,
+    type SessionInventoryHook,
+    type SessionInventoryMcpServer,
+    type SessionInventorySkill,
+    type SessionInventorySource,
+} from '@hapi/protocol/schemas';
+import { buildHookSettings, readMachineClaudeSettings } from '@/modules/common/hooks/generateHookSettings';
+
+const MAX_CONFIG_BYTES = 1_000_000;
+const SOURCE_RANK: Record<SessionInventorySource, number> = {
+    tool: 1,
+    user: 2,
+    system: 3,
+    project: 4,
+    plugin: 5,
+    injected: 6,
+};
+
+export type SessionInventoryPatch = {
+    mcp?: SessionInventory['mcp'];
+    hooks?: SessionInventory['hooks'];
+    skills?: SessionInventory['skills'];
+};
+
+const SECRET_TEXT = /token|api[_-]?key|secret|password|bearer|authorization/i;
+
+export function isSafeInventoryName(value: string): boolean {
+    const name = value.trim();
+    if (!name || name.length > 200) return false;
+    if (/[\r\n\0]/.test(name)) return false;
+    if (/:\/\//.test(name)) return false;
+    if (SECRET_TEXT.test(name)) return false;
+    return true;
+}
+
+export function commandBasename(command: string): string | undefined {
+    if (command.includes('hook-forwarder')) return 'hook-forwarder';
+    const first = command.trim().split(/\s+/)[0]?.replace(/^['"]|['"]$/g, '');
+    if (!first) return undefined;
+    const base = first.split(/[/\\]/).pop() ?? '';
+    if (!isSafeInventoryName(base) || base.length > 80) return undefined;
+    return base;
+}
+
+export function safeMatcher(value: unknown): string | undefined {
+    if (typeof value !== 'string') return undefined;
+    const matcher = value.trim();
+    if (!isSafeInventoryName(matcher) || matcher.length > 120) return undefined;
+    return matcher;
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+    return value && typeof value === 'object' && !Array.isArray(value)
+        ? value as Record<string, unknown>
+        : {};
+}
+
+function isSource(value: string | undefined): value is SessionInventorySource {
+    return value === 'injected'
+        || value === 'user'
+        || value === 'project'
+        || value === 'plugin'
+        || value === 'system'
+        || value === 'tool';
+}
+
+export function redactStoredText(value: string | undefined, max: number): string | undefined {
+    if (!value) return undefined;
+    const redacted = value
+        .replace(/https?:\/\/\S+/gi, '')
+        .replace(/\b(?:token|api[_-]?key|secret|password|bearer)\b\s*[:=]\s*\S+/gi, '')
+        .replace(/\s+/g, ' ')
+        .trim()
+        .slice(0, max);
+    return redacted.length > 0 ? redacted : undefined;
+}
+
+export function dedupeServers(servers: readonly SessionInventoryMcpServer[]): SessionInventoryMcpServer[] {
+    const byName = new Map<string, SessionInventoryMcpServer>();
+    for (const server of servers) {
+        if (!isSafeInventoryName(server.name)) continue;
+        const name = server.name.trim();
+        const previous = byName.get(name);
+        if (!previous || SOURCE_RANK[server.source] >= SOURCE_RANK[previous.source]) {
+            byName.set(name, { name, source: server.source });
+        }
+    }
+    return [...byName.values()].sort((left, right) => left.name.localeCompare(right.name)).slice(0, 200);
+}
+
+export function dedupeHooks(items: readonly SessionInventoryHook[]): SessionInventoryHook[] {
+    const byKey = new Map<string, SessionInventoryHook>();
+    for (const item of items) {
+        const event = item.event.trim();
+        if (!isSafeInventoryName(event) || event.length > 80) continue;
+        const matcher = item.matcher && isSafeInventoryName(item.matcher) ? item.matcher.trim() : undefined;
+        const commandName = item.commandName && isSafeInventoryName(item.commandName)
+            ? item.commandName.trim().slice(0, 80)
+            : undefined;
+        const next: SessionInventoryHook = {
+            event,
+            source: item.source,
+            ...(matcher ? { matcher } : {}),
+            ...(commandName ? { commandName } : {}),
+        };
+        const key = `${next.event}\0${next.matcher ?? ''}\0${next.source}\0${next.commandName ?? ''}`;
+        const previous = byKey.get(key);
+        if (!previous || SOURCE_RANK[next.source] >= SOURCE_RANK[previous.source]) {
+            byKey.set(key, next);
+        }
+    }
+    return [...byKey.values()].slice(0, 400);
+}
+
+export function inventorySkills(
+    skills: readonly { name: string; description?: string; source?: string }[],
+    options?: { catalogUnavailable?: boolean }
+): NonNullable<SessionInventory['skills']> {
+    const items: SessionInventorySkill[] = [];
+    for (const skill of skills) {
+        const name = skill.name.trim();
+        if (!isSafeInventoryName(name)) continue;
+        const description = redactStoredText(skill.description, 500);
+        const source = isSource(skill.source) ? skill.source : undefined;
+        items.push({
+            name,
+            ...(description ? { description } : {}),
+            ...(source ? { source } : {}),
+        });
+        if (items.length >= 400) break;
+    }
+    return {
+        ...(options?.catalogUnavailable ? { catalogUnavailable: true } : {}),
+        items,
+    };
+}
+
+export function mergeSessionInventory(
+    current: SessionInventory | undefined,
+    patch: SessionInventoryPatch,
+    now = Date.now()
+): SessionInventory {
+    return {
+        reportedAt: now,
+        ...(patch.mcp || current?.mcp ? { mcp: patch.mcp ?? current?.mcp } : {}),
+        ...(patch.hooks || current?.hooks ? { hooks: patch.hooks ?? current?.hooks } : {}),
+        ...(patch.skills || current?.skills ? { skills: patch.skills ?? current?.skills } : {}),
+    };
+}
+
+export function withSessionInventory(metadata: Metadata, patch: SessionInventoryPatch, now = Date.now()): Metadata {
+    const merged = mergeSessionInventory(metadata.sessionInventory, patch, now);
+    const parsed = SessionInventorySchema.safeParse(merged);
+    if (!parsed.success) return metadata;
+    return {
+        ...metadata,
+        sessionInventory: parsed.data,
+    };
+}
+
+export function publishSessionInventory(
+    client: { updateMetadata?: (handler: (metadata: Metadata) => Metadata) => void },
+    patch: SessionInventoryPatch
+): void {
+    if (typeof client.updateMetadata !== 'function') return;
+    try {
+        client.updateMetadata((metadata) => withSessionInventory(metadata, patch));
+    } catch (error) {
+        logger.debug('[session-inventory] publish failed', error);
+    }
+}
+
+export function mcpServersFromConfig(value: unknown, source: SessionInventorySource): SessionInventoryMcpServer[] {
+    const servers = asRecord(asRecord(value).mcpServers);
+    return Object.keys(servers)
+        .filter((name) => isSafeInventoryName(name))
+        .map((name) => ({ name: name.trim(), source }));
+}
+
+export function mcpServersFromClaudeJson(value: unknown, cwd: string): SessionInventoryMcpServer[] {
+    const root = asRecord(value);
+    const items = mcpServersFromConfig(root, 'user');
+    const resolvedCwd = resolve(cwd);
+    for (const [projectPath, projectValue] of Object.entries(asRecord(root.projects))) {
+        const projectResolved = resolve(projectPath);
+        const matches = projectResolved === resolvedCwd || resolvedCwd.startsWith(projectResolved + sep);
+        if (!matches) continue;
+        items.push(...mcpServersFromConfig(projectValue, 'project'));
+    }
+    return items;
+}
+
+export function hooksFromClaudeSettings(settings: unknown): SessionInventoryHook[] {
+    const hooks = asRecord(asRecord(settings).hooks);
+    const items: SessionInventoryHook[] = [];
+    for (const [event, groups] of Object.entries(hooks)) {
+        if (!Array.isArray(groups)) continue;
+        for (const group of groups) {
+            const record = asRecord(group);
+            const matcher = safeMatcher(record.matcher);
+            const commands = Array.isArray(record.hooks) ? record.hooks : [record];
+            for (const commandEntry of commands) {
+                const command = asRecord(commandEntry).command;
+                if (typeof command !== 'string' || command.trim().length === 0) continue;
+                const commandName = commandBasename(command);
+                items.push({
+                    event,
+                    source: command.includes('hook-forwarder') ? 'injected' : 'user',
+                    ...(matcher ? { matcher } : {}),
+                    ...(commandName ? { commandName } : {}),
+                });
+            }
+        }
+    }
+    return dedupeHooks(items);
+}
+
+export function parseCodexConfigInventory(toml: string): {
+    servers: SessionInventoryMcpServer[];
+    hooks: SessionInventoryHook[];
+} {
+    const servers: SessionInventoryMcpServer[] = [];
+    const hooks: SessionInventoryHook[] = [];
+    for (const rawLine of toml.split(/\r?\n/)) {
+        const line = rawLine.trim();
+        if (!line || line.startsWith('#')) continue;
+        const table = /^\[\[?([^\]\s]+)\]\]?$/.exec(line);
+        if (!table) continue;
+        const key = table[1] ?? '';
+        const server = /^mcp_servers\.([^.[\]]+)/.exec(key);
+        if (server?.[1] && isSafeInventoryName(server[1])) {
+            servers.push({ name: server[1], source: 'user' });
+            continue;
+        }
+        const hook = /^hooks\.([^.[\]]+)/.exec(key);
+        if (hook?.[1] && isSafeInventoryName(hook[1])) {
+            hooks.push({ event: hook[1], source: 'user' });
+        }
+    }
+    return { servers: dedupeServers(servers), hooks: dedupeHooks(hooks) };
+}
+
+export function codexInjectedHooks(): SessionInventoryHook[] {
+    return [
+        { event: 'SessionStart', source: 'injected', commandName: 'hook-forwarder' },
+        { event: 'PreToolUse', source: 'injected', matcher: '*', commandName: 'hook-forwarder' },
+        { event: 'PostToolUse', source: 'injected', matcher: '*', commandName: 'hook-forwarder' },
+    ];
+}
+
+export function ompInventoryFromTools(tools: readonly string[]): SessionInventoryPatch {
+    const servers = dedupeServers(tools.flatMap((tool) => {
+        if (!tool.startsWith('mcp__')) return [];
+        const name = tool.slice('mcp__'.length);
+        return isSafeInventoryName(name) ? [{ name, source: 'tool' as const }] : [];
+    }));
+    return {
+        mcp: { kind: 'tools', servers },
+        hooks: { availability: 'none', items: [] },
+    };
+}
+
+export const EMPTY_FLAVOR_INVENTORY: SessionInventoryPatch = {
+    mcp: { kind: 'servers', servers: [] },
+    hooks: { availability: 'none', items: [] },
+};
+
+export function bridgeInventory(flavor: string): SessionInventoryPatch | null {
+    if (flavor !== 'copilot' && flavor !== 'grok' && flavor !== 'kimi' && flavor !== 'opencode') {
+        return null;
+    }
+    return {
+        mcp: { kind: 'servers', servers: [{ name: 'hapi', source: 'injected' }] },
+        ...(flavor === 'opencode'
+            ? {}
+            : { hooks: { availability: 'none' as const, items: [] } }),
+    };
+}
+
+export const OPENCODE_HOOK_INVENTORY: SessionInventoryPatch = {
+    hooks: {
+        availability: 'listed',
+        items: [{ event: 'plugin', source: 'injected', commandName: 'hapi-hook' }],
+    },
+};
+
+function readTextFile(path: string, options?: { allowSymlink?: boolean }): string | null {
+    try {
+        const linked = lstatSync(path);
+        if (!linked.isFile() && !(options?.allowSymlink && linked.isSymbolicLink())) return null;
+        if (linked.isSymbolicLink() && !options?.allowSymlink) return null;
+        const info = statSync(path);
+        if (!info.isFile() || info.size > MAX_CONFIG_BYTES) return null;
+        return readFileSync(path, 'utf8');
+    } catch {
+        return null;
+    }
+}
+
+function readJsonFile(path: string, options?: { allowSymlink?: boolean }): unknown {
+    const text = readTextFile(path, options);
+    if (text === null) return null;
+    try {
+        return JSON.parse(text) as unknown;
+    } catch {
+        return null;
+    }
+}
+
+function projectMcpPaths(cwd: string): string[] {
+    const paths: string[] = [];
+    let current = resolve(cwd);
+    const seen = new Set<string>();
+    while (!seen.has(current)) {
+        seen.add(current);
+        paths.push(join(current, '.mcp.json'));
+        if (existsSync(join(current, '.git'))) break;
+        const parent = dirname(current);
+        if (parent === current) break;
+        current = parent;
+    }
+    return paths;
+}
+
+export function loadClaudeInventory(cwd: string): SessionInventoryPatch {
+    let machine: Record<string, unknown> = {};
+    try {
+        machine = readMachineClaudeSettings();
+    } catch (error) {
+        logger.debug('[session-inventory] Claude settings unreadable', error);
+    }
+    const hookSettings = [
+        buildHookSettings(machine, 'hook-forwarder'),
+        buildHookSettings(machine, 'hook-forwarder', undefined, true),
+        buildHookSettings(machine, 'hook-forwarder', undefined, false, true),
+    ];
+    const servers = [
+        { name: 'hapi', source: 'injected' as const },
+        ...mcpServersFromClaudeJson(readJsonFile(join(homedir(), '.claude.json'), { allowSymlink: true }), cwd),
+    ];
+    for (const path of projectMcpPaths(cwd)) {
+        const parsed = readJsonFile(path);
+        if (parsed) servers.push(...mcpServersFromConfig(parsed, 'project'));
+    }
+    return {
+        mcp: { kind: 'servers', servers: dedupeServers(servers) },
+        hooks: { availability: 'listed', items: dedupeHooks(hookSettings.flatMap((settings) => hooksFromClaudeSettings(settings))) },
+    };
+}
+
+export function loadCodexInventory(includeInjectedHooks: boolean): SessionInventoryPatch {
+    const home = process.env.CODEX_HOME?.trim() || join(homedir(), '.codex');
+    const text = readTextFile(join(home, 'config.toml'), { allowSymlink: true }) ?? '';
+    const parsed = parseCodexConfigInventory(text);
+    return {
+        mcp: {
+            kind: 'servers',
+            servers: dedupeServers([
+                { name: 'hapi', source: 'injected' },
+                ...parsed.servers,
+            ]),
+        },
+        hooks: {
+            availability: 'listed',
+            items: dedupeHooks([
+                ...(includeInjectedHooks ? codexInjectedHooks() : []),
+                ...parsed.hooks,
+            ]),
+        },
+    };
+}
+
+export function cursorInventory(servers: readonly { name: string; source: 'injected' | 'user' }[]): SessionInventoryPatch {
+    return {
+        mcp: {
+            kind: 'servers',
+            servers: dedupeServers(servers.map((server) => ({
+                name: server.name,
+                source: server.source,
+            }))),
+        },
+        hooks: { availability: 'none', items: [] },
+    };
+}
+
+export function codexSkillSource(scope: string | undefined): 'user' | 'project' | 'plugin' | 'system' | undefined {
+    if (scope === 'user' || scope === 'project' || scope === 'plugin' || scope === 'system') return scope;
+    return undefined;
+}

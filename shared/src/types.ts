@@ -14,6 +14,8 @@ export type {
     OmpInputMode,
     RunnerState,
     Session,
+    SessionInventory,
+    SessionInventorySource,
     SessionPatch,
     SessionUpdatedData,
     SyncEvent,

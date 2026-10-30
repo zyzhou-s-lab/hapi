@@ -62,6 +62,7 @@ import { clearCodexImportedSession } from '@/lib/codexImportedSessions'
 import { getSupersedingSessionId, prepareFollowSupersedingSession, shouldFollowSupersedingSession } from '@/routes/sessions/followSupersedingSession'
 import { migrateSuppressedSendError } from '@/lib/suppressed-send-error'
 import FilesPage from '@/routes/sessions/files'
+import SessionConfigPage from '@/routes/sessions/config'
 import FilePage from '@/routes/sessions/file'
 import TerminalPage from '@/routes/sessions/terminal'
 import SettingsLayout from '@/routes/settings/layout'
@@ -1119,6 +1120,12 @@ const sessionFilesRoute = createRoute({
     component: FilesPage,
 })
 
+const sessionConfigRoute = createRoute({
+    getParentRoute: () => sessionDetailRoute,
+    path: 'config',
+    component: SessionConfigPage,
+})
+
 const sessionTerminalRoute = createRoute({
     getParentRoute: () => sessionDetailRoute,
     path: 'terminal',
@@ -1321,6 +1328,7 @@ export const routeTree = rootRoute.addChildren([
         sessionDetailRoute.addChildren([
             sessionTerminalRoute,
             sessionFilesRoute,
+            sessionConfigRoute,
             sessionFileRoute,
         ]),
     ]),

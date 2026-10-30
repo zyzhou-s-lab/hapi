@@ -22,6 +22,7 @@ import { shouldIgnoreTerminalEvent } from './utils/terminalEventGuard';
 import { parseCodexSpecialCommand } from './codexSpecialCommands';
 import { extractErrorInfo } from '@/utils/errorUtils';
 import { RPC_METHODS } from '@hapi/protocol/rpcMethods';
+import { codexSkillSource, inventorySkills, loadCodexInventory, publishSessionInventory } from '@/modules/common/sessionInventory';
 import { createCodexSessionScanner, type CodexSessionScanner } from './utils/codexSessionScanner';
 import { createCodexTranscriptLocator, type CodexTranscriptLocator } from './utils/codexTranscriptLocator';
 import { convertCodexEvent, isCodexEventFromCurrentProcess } from './utils/codexEventConverter';
@@ -3587,6 +3588,7 @@ class CodexRemoteLauncher extends RemoteLauncherBase {
         });
 
         let nativeSkills: SkillMetadata[] = [];
+        let reportedSkills: Array<{ name: string; description: string; source?: 'user' | 'project' | 'plugin' | 'system' }> = [];
         let nativeSkillsAvailable = false;
         const refreshNativeSkills = async (forceReload: boolean): Promise<void> => {
             const response = await appServerClient.listSkills({
@@ -3599,14 +3601,20 @@ class CodexRemoteLauncher extends RemoteLauncherBase {
                 throw new Error('skills/list returned no usable inventory');
             }
             nativeSkills = inventory.skills.filter(skill => skill.enabled);
+            reportedSkills = nativeSkills.map(skill => {
+                const source = codexSkillSource(skill.scope);
+                return {
+                    name: skill.name,
+                    description: skill.description,
+                    ...(source ? { source } : {}),
+                };
+            });
+            publishSessionInventory(session.client, { skills: inventorySkills(reportedSkills) });
             if (!nativeSkillsAvailable) {
                 nativeSkillsAvailable = true;
                 session.client.rpcHandlerManager.registerHandler(RPC_METHODS.ListSkills, async () => ({
                     success: true,
-                    skills: nativeSkills.map(skill => ({
-                        name: skill.name,
-                        description: skill.description
-                    }))
+                    skills: reportedSkills
                 }));
             }
         };
@@ -3664,6 +3672,7 @@ class CodexRemoteLauncher extends RemoteLauncherBase {
             emitTitleSummary: false
         });
         this.happyServer = happyServer;
+        publishSessionInventory(session.client, loadCodexInventory(false));
 
         this.setupAbortHandlers(session.client.rpcHandlerManager, {
             onAbort: () => this.handleAbort(),

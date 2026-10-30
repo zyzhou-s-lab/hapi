@@ -5,6 +5,7 @@ import type { LocalLaunchExitReason } from '@/agent/localLaunchPolicy';
 import type { OmpNativeSession } from '@hapi/protocol/types';
 import type { OmpConfiguredThinkingLevel, OmpThinkingState } from '@hapi/protocol/omp';
 import type { OmpInputQueue } from './OmpInputQueue';
+import { ompInventoryFromTools, withSessionInventory } from '@/modules/common/sessionInventory';
 
 type LocalLaunchFailure = {
     message: string;
@@ -122,11 +123,11 @@ export class OmpSession extends AgentSessionBase<OmpMode, OmpInputQueue> {
         tools?: string[];
         slashCommands?: string[];
     }): void => {
-        this.client.updateMetadata((metadata) => ({
+        this.client.updateMetadata((metadata) => withSessionInventory({
             ...metadata,
             ...(capabilities.tools ? { tools: capabilities.tools } : {}),
-            ...(capabilities.slashCommands ? { slashCommands: capabilities.slashCommands } : {})
-        }));
+            ...(capabilities.slashCommands ? { slashCommands: capabilities.slashCommands } : {}),
+        }, capabilities.tools ? ompInventoryFromTools(capabilities.tools) : {}));
     };
 
     applyNativeSessionSnapshot = (snapshot: OmpNativeSession): void => {

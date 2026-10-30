@@ -1,11 +1,12 @@
 import { access, open, readdir, readFile, stat } from 'fs/promises';
-import { basename, dirname, join, resolve } from 'path';
+import { basename, dirname, join, resolve, sep } from 'path';
 import { homedir } from 'os';
 import { parse as parseYaml } from 'yaml';
 
 export interface SkillSummary {
     name: string;
     description?: string;
+    source?: 'user' | 'project' | 'plugin' | 'system';
 }
 
 export interface ResolvedSkill extends SkillSummary {
@@ -229,7 +230,7 @@ async function readSkillFile(filePath: string): Promise<{ content: string; fileS
     }
 }
 
-async function readSkillsFromDirs(skillDirs: string[]): Promise<DiscoveredSkill[]> {
+async function readSkillsFromDirs(skillDirs: string[], source: NonNullable<SkillSummary['source']>): Promise<DiscoveredSkill[]> {
     const skills = await Promise.all(skillDirs.map(async (dir): Promise<DiscoveredSkill | null> => {
         const filePath = join(dir, 'SKILL.md');
         const skillFile = await readSkillFile(filePath);
@@ -244,6 +245,7 @@ async function readSkillsFromDirs(skillDirs: string[]): Promise<DiscoveredSkill[
 
         return {
             ...summary,
+            source: dir.split(sep).includes('.system') ? 'system' : source,
             body: parseFrontmatter(skillFile.content).body,
             fileSize: skillFile.fileSize
         };
@@ -301,10 +303,10 @@ async function discoverSkills(workingDirectory?: string, options: { flavor?: str
     ]);
 
     const [projectSkills, userSkills, pluginSkills, adminSkills] = await Promise.all([
-        readSkillsFromDirs(projectSkillDirs),
-        readSkillsFromDirs(userSkillDirs),
-        readSkillsFromDirs(pluginSkillDirs),
-        readSkillsFromDirs(adminSkillDirs),
+        readSkillsFromDirs(projectSkillDirs, 'project'),
+        readSkillsFromDirs(userSkillDirs, 'user'),
+        readSkillsFromDirs(pluginSkillDirs, 'plugin'),
+        readSkillsFromDirs(adminSkillDirs, 'system'),
     ]);
 
     const dedupedSkills = new Map<string, DiscoveredSkill>();
@@ -324,7 +326,7 @@ async function discoverSkills(workingDirectory?: string, options: { flavor?: str
 
 export async function listSkills(workingDirectory?: string, options: { flavor?: string } = {}): Promise<SkillSummary[]> {
     const skills = await discoverSkills(workingDirectory, options);
-    return skills.map(({ name, description }) => ({ name, description }));
+    return skills.map(({ name, description, source }) => ({ name, description, ...(source ? { source } : {}) }));
 }
 
 function validateSkillName(name: string): string {

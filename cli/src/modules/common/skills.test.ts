@@ -78,7 +78,7 @@ describe('listSkills', () => {
 
         const skills = await listSkills()
 
-        expect(skills).toEqual([{ name: 'linked', description: 'Linked skill' }])
+        expect(skills).toEqual([{ name: 'linked', description: 'Linked skill', source: 'user' }])
     })
 
     it('lists user skills from ~/.claude/skills', async () => {
@@ -254,7 +254,7 @@ describe('listSkills', () => {
 
         const skills = await listSkills(undefined, { flavor: 'codex' })
 
-        expect(skills).toEqual([{ name: 'plugin-skill', description: 'New marketplace skill' }])
+        expect(skills).toEqual([{ name: 'plugin-skill', description: 'New marketplace skill', source: 'plugin' }])
     })
 
     it('falls back to directory name when frontmatter is missing', async () => {
@@ -263,7 +263,7 @@ describe('listSkills', () => {
         await writeFile(join(skillDir, 'SKILL.md'), '# No Frontmatter\n')
 
         await expect(listSkills()).resolves.toEqual([
-            { name: 'no-frontmatter', description: undefined }
+            { name: 'no-frontmatter', description: undefined, source: 'user' }
         ])
     })
 
@@ -321,7 +321,7 @@ describe('listSkills', () => {
         const skills = await listSkills(workingDirectory)
 
         expect(skills).toHaveLength(1)
-        expect(skills[0]).toEqual({ name: 'shared', description: 'From agents' })
+        expect(skills[0]).toEqual({ name: 'shared', description: 'From agents', source: 'project' })
     })
 
     it('uses only cwd project skills outside a git repository', async () => {
@@ -351,7 +351,8 @@ describe('listSkills', () => {
         expect(sharedSkills).toHaveLength(1)
         expect(sharedSkills[0]).toEqual({
             name: 'shared',
-            description: 'Local shared skill'
+            description: 'Local shared skill',
+            source: 'project'
         })
     })
 
@@ -428,7 +429,8 @@ describe('listSkills', () => {
 
         await expect(listSkills()).resolves.toContainEqual({
             name: 'huge',
-            description: 'Huge skill'
+            description: 'Huge skill',
+            source: 'user'
         })
         await expect(resolveSkill('huge')).rejects.toThrow('Skill is too large to load')
     })

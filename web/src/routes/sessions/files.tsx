@@ -452,6 +452,14 @@ export default function FilesPage() {
         })
     }, [navigate, sessionId])
 
+    const handleToggleConfig = useCallback(() => {
+        navigate({
+            to: '/sessions/$sessionId/config',
+            params: { sessionId },
+            ...PRESERVE_SESSION_SIDEBAR_SCROLL,
+        })
+    }, [navigate, sessionId])
+
     const handleToggleOutline = useCallback(() => {
         navigate({
             to: '/sessions/$sessionId',
@@ -478,6 +486,8 @@ export default function FilesPage() {
                 filesActive={true}
                 onToggleOutline={handleToggleOutline}
                 outlineActive={false}
+                onToggleConfig={handleToggleConfig}
+                configActive={false}
                 api={api}
                 titleSuggestionAvailable={titleSuggestionAvailable}
                 onSessionDeleted={goBack}

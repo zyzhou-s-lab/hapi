@@ -13,6 +13,7 @@ import { registerSessionConfigRpc } from '@/agent/sessionConfigRpc';
 import { formatMessageWithAttachments } from '@/utils/attachmentFormatter';
 import { getInvokedCwd } from '@/utils/invokedCwd';
 import type { SessionEffort, SessionModel } from '@/api/types';
+import { EMPTY_FLAVOR_INVENTORY, publishSessionInventory } from '@/modules/common/sessionInventory';
 
 export async function runAgy(opts: {
     startedBy?: 'runner' | 'terminal';
@@ -57,7 +58,7 @@ export async function runAgy(opts: {
             effort: opts.effort ?? undefined
         });
     const { api, session } = bootstrap;
-
+    publishSessionInventory(session, EMPTY_FLAVOR_INVENTORY);
     const messageQueue = new MessageQueue2<AgyMode>((mode) => hashObject({
         permissionMode: mode.permissionMode,
         model: mode.model,
