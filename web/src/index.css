@@ -369,7 +369,8 @@ html:has(.chat-scroll-y) #root {
 }
 
 .composer-floating-frame,
-.composer-floating-chrome {
+.composer-floating-chrome,
+.composer-dock-card {
     border: 1px solid var(--app-composer-border);
     background-color: var(--app-secondary-bg);
     background-color: var(--app-composer-surface);
@@ -385,6 +386,10 @@ html:has(.chat-scroll-y) #root {
 .composer-floating-chrome {
     margin-inline: 0.75rem;
     border-radius: 20px;
+}
+
+.composer-dock-card {
+    border-radius: 0.5rem;
 }
 
 .composer-floating-chrome:not(:has(*)) {

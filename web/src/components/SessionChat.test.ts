@@ -110,12 +110,14 @@ describe('chatComposerGridPlacement', () => {
 })
 
 describe('floating dock surface', () => {
-    it('frosts the error bar on its own chrome, not a shared wrap around tasks or queued', () => {
+    it('frosts the error bar, tasks card, and queued card on their own surfaces', () => {
         const css = readFileSync('src/index.css', 'utf8')
-        const surface = css.match(/\.composer-floating-frame,\s*\.composer-floating-chrome \{[^}]+\}/)?.[0] ?? ''
+        const surface = css.match(/\.composer-floating-frame,\s*\.composer-floating-chrome,\s*\.composer-dock-card \{[^}]+\}/)?.[0] ?? ''
         const chrome = css.match(/\.composer-floating-chrome \{\s*margin-inline:[^}]+\}/)?.[0] ?? ''
         const source = readFileSync('src/components/SessionChat.tsx', 'utf8')
         const composer = readFileSync('src/components/AssistantChat/HappyComposer.tsx', 'utf8')
+        const tasks = readFileSync('src/fork-features/task-panel/TodoPanel.tsx', 'utf8')
+        const queued = readFileSync('src/components/AssistantChat/QueuedMessagesBar.tsx', 'utf8')
         expect(surface).toContain('background-color: var(--app-composer-surface)')
         expect(surface).toContain('backdrop-filter: blur(12px)')
         expect(chrome).toContain('margin-inline: 0.75rem')
@@ -127,7 +129,11 @@ describe('floating dock surface', () => {
         expect(source).not.toContain('composer-floating-chrome px-3')
         expect(source).toContain('bg-[var(--app-secondary-bg)] p-3 text-sm text-red-600')
         expect(source).toContain('<div className="px-3">')
+        expect(tasks).toContain('composer-dock-card')
+        expect(tasks).not.toContain('bg-[var(--app-subtle-bg)]')
+        expect(queued).toContain('composer-dock-card')
         expect(composer).not.toContain('composer-floating-chrome')
+        expect(composer).not.toContain('composer-dock-card')
     })
 })
 
