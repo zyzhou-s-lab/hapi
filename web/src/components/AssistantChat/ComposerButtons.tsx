@@ -813,6 +813,7 @@ export function ComposerButtons(props: {
                     className="flex h-8 w-8 items-center justify-center rounded-full text-[var(--app-fg)]/60 transition-colors hover:bg-[var(--app-bg)] hover:text-[var(--app-fg)] disabled:cursor-not-allowed disabled:opacity-50"
                 >
                     <AttachmentIcon />
+                    <span className="composer-more-label">{t('composer.attach')}</span>
                 </ComposerPrimitive.AddAttachment>
                 </ToolbarItemSlot>
 
@@ -892,6 +893,7 @@ export function ComposerButtons(props: {
                         disabled={props.terminalDisabled}
                     >
                         <TerminalIcon />
+                        <span className="composer-more-label">{props.terminalLabel}</span>
                     </button>
                 ) : null}
                 </ToolbarItemSlot>
@@ -940,6 +942,7 @@ export function ComposerButtons(props: {
                         onClick={props.onVoiceMicToggle}
                     >
                         <SpeakerIcon muted={props.voiceMicMuted} />
+                        <span className="composer-more-label">{props.voiceMicMuted ? t('voice.unmute') : t('voice.mute')}</span>
                     </button>
                 ) : null}
                 </ToolbarItemSlot>
@@ -997,6 +1000,7 @@ export function ComposerButtons(props: {
                             }`}
                         >
                             <ScheduleIcon className="h-[18px] w-[18px]" />
+                            <span className="composer-more-label">{t('composer.scheduleSend')}</span>
                         </button>
                         {showSchedulePicker && (
                             <ScheduleTimePicker

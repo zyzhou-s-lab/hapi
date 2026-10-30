@@ -820,6 +820,10 @@ html[data-theme="oled"] .shiki span:not([data-line-number]) {
   animation: bounce-in 0.3s ease-out;
 }
 
+.composer-more-label {
+    display: none;
+}
+
 .composer-more-menu button {
     width: 100%;
     min-height: 2.75rem;
@@ -829,8 +833,8 @@ html[data-theme="oled"] .shiki span:not([data-line-number]) {
     border-radius: 0.5rem;
 }
 
-.composer-more-menu button::after {
-    content: attr(aria-label);
+.composer-more-menu .composer-more-label {
+    display: inline;
     font-size: var(--app-font-size-nav);
     line-height: var(--app-line-nav);
 }
