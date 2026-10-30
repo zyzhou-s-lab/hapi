@@ -57,7 +57,7 @@ function placeComposerMoreMenu(anchor: DOMRect, menu: DOMRect): { top: number; l
     return { top, left }
 }
 
-function ComposerMoreMenu(props: { children: ReactNode; onOpen?: () => void }) {
+function ComposerMoreMenu(props: { children: ReactNode }) {
     const { t } = useTranslation()
     const [open, setOpen] = useState(false)
     const [pos, setPos] = useState<{ top: number; left: number } | null>(null)
@@ -103,20 +103,18 @@ function ComposerMoreMenu(props: { children: ReactNode; onOpen?: () => void }) {
                 aria-haspopup="menu"
                 aria-label={t('composer.more')}
                 className="flex h-8 w-8 items-center justify-center rounded-full text-[var(--app-fg)]/60 transition-colors hover:bg-[var(--app-bg)] hover:text-[var(--app-fg)]"
-                onClick={() => {
-                    if (!open) props.onOpen?.()
-                    setOpen((value) => !value)
-                }}
+                onClick={() => setOpen((value) => !value)}
             >
                 <MoreIcon />
             </button>
-            {open && typeof document !== 'undefined' ? createPortal(
+            {typeof document !== 'undefined' ? createPortal(
                 <div
                     ref={menuRef}
                     role="menu"
+                    hidden={!open}
                     data-testid="composer-more-menu"
                     className="composer-more-menu fixed z-[80] flex min-w-48 flex-col gap-1 rounded-xl border border-[var(--app-border)] bg-[var(--app-bg)] p-1 shadow-lg"
-                    style={pos ? { top: pos.top, left: pos.left } : { visibility: 'hidden' }}
+                    style={open ? (pos ? { top: pos.top, left: pos.left } : { visibility: 'hidden' }) : undefined}
                     onClick={(event) => {
                         const target = event.target
                         if (target instanceof Element && target.closest('button')) setOpen(false)
@@ -130,7 +128,7 @@ function ComposerMoreMenu(props: { children: ReactNode; onOpen?: () => void }) {
     )
 }
 
-function OrderedToolbarItems(props: { layout: ComposerToolbarLayout; children: ReactNode; onMoreMenuOpen?: () => void }) {
+function OrderedToolbarItems(props: { layout: ComposerToolbarLayout; children: ReactNode }) {
     const slots = Children.toArray(props.children).filter(
         (child): child is ReactElement<{ item: ComposerToolbarItemId; children: ReactNode }> => isValidElement(child),
     )
@@ -150,7 +148,7 @@ function OrderedToolbarItems(props: { layout: ComposerToolbarLayout; children: R
     return (
         <>
             {stripNodes}
-            {menu.length > 0 ? <ComposerMoreMenu onOpen={props.onMoreMenuOpen}>{renderItems(menu)}</ComposerMoreMenu> : null}
+            {menu.length > 0 ? <ComposerMoreMenu>{renderItems(menu)}</ComposerMoreMenu> : null}
         </>
     )
 }
@@ -792,6 +790,7 @@ export function ComposerButtons(props: {
         : layout
     const isVoiceConnected = props.voiceStatus === 'connected'
     const [showSchedulePicker, setShowSchedulePicker] = useState(false)
+    const [scheduleAnchor, setScheduleAnchor] = useState<{ top: number; left: number; right: number; bottom: number; width: number; height: number } | null>(null)
     const scheduleButtonRef = useRef<HTMLButtonElement>(null)
 
     const hasSchedule = props.pendingSchedule != null
@@ -805,7 +804,7 @@ export function ComposerButtons(props: {
                 className="flex min-w-0 flex-1 items-center gap-1"
                 style={{ justifyContent: toolbarJustifyContent }}
             >
-                <OrderedToolbarItems layout={effectiveLayout} onMoreMenuOpen={() => setShowSchedulePicker(false)}>
+                <OrderedToolbarItems layout={effectiveLayout}>
                 <ToolbarItemSlot item="attachment">
                 <ComposerPrimitive.AddAttachment
                     aria-label={t('composer.attach')}
@@ -982,10 +981,15 @@ export function ComposerButtons(props: {
                             onClick={() => {
                                 if (hasSchedule && props.onClearSchedule) {
                                     props.onClearSchedule()
-                                } else {
-                                    setShowSchedulePicker((v) => !v)
+                                    return
                                 }
+                                const rect = scheduleButtonRef.current?.getBoundingClientRect()
+                                if (rect) {
+                                    setScheduleAnchor({ top: rect.top, left: rect.left, right: rect.right, bottom: rect.bottom, width: rect.width, height: rect.height })
+                                }
+                                setShowSchedulePicker((v) => !v)
                             }}
+
                             className={`flex h-8 w-8 items-center justify-center rounded-full transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
                                 hasSchedule
                                     ? 'bg-[var(--app-button)] text-[var(--app-button-text)] hover:opacity-90'
@@ -997,6 +1001,7 @@ export function ComposerButtons(props: {
                         {showSchedulePicker && (
                             <ScheduleTimePicker
                                 anchorRef={scheduleButtonRef}
+                                fallbackAnchor={scheduleAnchor}
                                 onSchedule={(pending) => {
                                     props.onSchedule!(pending)
                                     setShowSchedulePicker(false)
