@@ -180,6 +180,26 @@ describe('SessionTabsBar tab menu', () => {
         expect(getSessionTabsSnapshot(SCOPE).groups[key]?.map(tab => tab.id)).toEqual(['keep'])
     })
 
+    it('keeps the session this window is viewing when it is not in the first list yet', () => {
+        const fresh = session('fresh', '新', true, '/repo/a')
+        const key = sessionDirectoryGroupKey(fresh)
+        localStorage.setItem(`hapi-session-tabs:${SCOPE}`, JSON.stringify({
+            version: 2,
+            activeDirectoryKey: key,
+            groups: { [key]: [{ id: 'fresh', pinned: false, activatedAt: 1 }] },
+        }))
+        __resetSessionTabsForTests()
+        render(<SyncProbe selected="fresh" sessions={[]} />)
+        expect(getSessionTabsSnapshot(SCOPE).groups[key]?.map(tab => tab.id)).toEqual(['fresh'])
+    })
+
+    it('keeps a tab another window added after this window started when the first list is stale', () => {
+        const { rerender } = render(<SyncProbe selected={null} sessions={[]} loaded={false} />)
+        updateSessionTabs(SCOPE, state => openTabInDirectory(state, 'm1::/elsewhere', 'from-other', 1).state)
+        rerender(<SyncProbe selected={null} sessions={[]} loaded />)
+        expect(getSessionTabsSnapshot(SCOPE).groups['m1::/elsewhere']?.map(tab => tab.id)).toEqual(['from-other'])
+    })
+
     it('adopts a legacy flat list into directories and drops sessions that are already gone', () => {
         const keep = session('keep', '留', true, '/repo/a')
         localStorage.setItem(`hapi-session-tabs:${SCOPE}`, JSON.stringify({

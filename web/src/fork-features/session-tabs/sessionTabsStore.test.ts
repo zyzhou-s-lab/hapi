@@ -3,7 +3,9 @@ import {
     MAX_SESSION_TABS,
     __resetSessionTabsForTests,
     adoptLegacyTabs,
+    allTabIds,
     applyToGroup,
+    closeTabInDirectory,
     closeOtherTabs,
     closeTab,
     closeTabsToRight,
@@ -107,6 +109,7 @@ describe('session tabs', () => {
         expect([...first]).toEqual(['a'])
         expect(groupIds(pruneDeletedTabs(state, first), 'dir')).toEqual(['b'])
         expect([...tabsMissingFromFirstList(['a', 'b'], new Set(['b']), new Set(['a']))]).toEqual([])
+        expect([...tabsMissingFromFirstList(['a', 'new'], new Set(), new Set(), new Set(['a']))]).toEqual(['a'])
         expect([...confirmedDeletedIds(new Set(['a', 'b']), new Set(['b']))]).toEqual(['a'])
         expect(pruneDeletedTabs(state, new Set())).toBe(state)
     })
@@ -144,7 +147,7 @@ describe('session tabs', () => {
         expect(groupIds(state, 'd1').length).toBe(MAX_SESSION_TABS)
     })
 
-    it('moves a tab when its session changes directory and leaves it when the destination is full of pins', () => {
+    it('moves a tab when its session changes directory and drops it when the destination is full of pins', () => {
         let state = empty()
         state = openTabInDirectory(state, 'd1', 'a', 1).state
         state = applyToGroup(state, 'd1', list => togglePinTab(list, 'a'))
@@ -161,9 +164,20 @@ describe('session tabs', () => {
             full = applyToGroup(full, 'full', list => togglePinTab(list, `p${i}`))
         }
         full = openTabInDirectory(full, 'old', 'stuck', 50).state
-        const stayed = rehomeTabs(full, new Map([['stuck', 'full']]))
-        expect(groupIds(stayed, 'old')).toEqual(['stuck'])
-        expect(groupIds(stayed, 'full')).not.toContain('stuck')
+        const dropped = rehomeTabs(full, new Map([['stuck', 'full']]))
+        expect(dropped.groups.old).toBeUndefined()
+        expect(allTabIds(dropped)).not.toContain('stuck')
+        expect(dropped.activeDirectoryKey).toBe('full')
+    })
+
+    it('points the overview at another directory after the active group is emptied', () => {
+        let state = empty()
+        state = openTabInDirectory(state, 'd1', 'a', 1).state
+        state = openTabInDirectory(state, 'd2', 'b', 5).state
+        state = openTabInDirectory(state, 'd1', 'a', 9).state
+        const closed = closeTabInDirectory(state, 'd1', 'a')
+        expect(closed.state.groups.d1).toBeUndefined()
+        expect(closed.state.activeDirectoryKey).toBe('d2')
     })
 
     it('splits a legacy flat list into directories and drops sessions that are already gone', () => {

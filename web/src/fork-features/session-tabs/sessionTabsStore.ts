@@ -112,17 +112,22 @@ export function confirmedDeletedIds(previous: ReadonlySet<string> | null, curren
 }
 
 /**
- * 本窗口还没见过完整列表时：已经不在列表里的标签就是被删掉的。
- * 本窗口刚打开、列表还没跟上的 id 留着，避免新建会话被清掉。
+ * 本窗口还没见过完整列表时，启动前就已经在的、而且列表里没有的标签当作已被删除。
+ * `openedThisWindow` 是本窗口正在看的会话（列表可能还没跟上）。
+ * `idsAtStart` 是启动时已经有的标签；启动之后才出现的（别的窗口刚写入）先留着。
+ * 不传 `idsAtStart` 时，缺失的 id 都算删除候选。
  */
 export function tabsMissingFromFirstList(
     tabIds: readonly string[],
     current: ReadonlySet<string>,
     openedThisWindow: ReadonlySet<string>,
+    idsAtStart: ReadonlySet<string> | null = null,
 ): Set<string> {
     const deleted = new Set<string>()
     for (const id of tabIds) {
-        if (!current.has(id) && !openedThisWindow.has(id)) deleted.add(id)
+        if (current.has(id) || openedThisWindow.has(id)) continue
+        if (idsAtStart && !idsAtStart.has(id)) continue
+        deleted.add(id)
     }
     return deleted
 }
@@ -142,6 +147,15 @@ function findDirectoryKey(state: SessionTabGroups, id: string): string | null {
     return null
 }
 
+/** 总览指向的目录已经没有标签时，改看最近激活的那一组。 */
+function settleActiveDirectory(state: SessionTabGroups): SessionTabGroups {
+    const key = state.activeDirectoryKey
+    if (key && (state.groups[key]?.length ?? 0) > 0) return state
+    const nextKey = mostRecentlyActivatedKey(state)
+    if (nextKey === key) return state
+    return { ...state, activeDirectoryKey: nextKey }
+}
+
 function commitGroup(state: SessionTabGroups, directoryKey: string, tabs: SessionTab[], activate: boolean): SessionTabGroups {
     const sameTabs = state.groups[directoryKey] === tabs
     const sameActive = !activate || state.activeDirectoryKey === directoryKey
@@ -149,10 +163,10 @@ function commitGroup(state: SessionTabGroups, directoryKey: string, tabs: Sessio
     const groups = { ...state.groups }
     if (tabs.length === 0) delete groups[directoryKey]
     else groups[directoryKey] = tabs
-    return {
+    return settleActiveDirectory({
         activeDirectoryKey: activate ? directoryKey : state.activeDirectoryKey,
         groups,
-    }
+    })
 }
 
 /** 追加一个标签。目录已满且全部固定时返回 null，调用方不要改原组。 */
@@ -239,7 +253,7 @@ export function pruneDeletedTabs(state: SessionTabGroups, deletedIds: ReadonlySe
         if (next.length > 0) groups[key] = next
     }
     if (!changed) return state
-    return { ...state, groups }
+    return settleActiveDirectory({ ...state, groups })
 }
 
 function mostRecentlyActivatedKey(state: SessionTabGroups): string | null {
@@ -281,7 +295,11 @@ export function adoptLegacyTabs(state: SessionTabGroups, directoryById: Readonly
     return next
 }
 
-/** 会话换了目录（路径变了）就把标签搬到新目录，不改激活时间，也不改总览正在看的目录。搬不进去就留在原处。 */
+/**
+ * 会话换了目录（路径变了）就把标签搬到新目录，不改激活时间。
+ * 目标目录 12 个都已固定时丢掉该标签，不留在旧目录：留在旧目录会显示在错误的一组里，
+ * 而且取消固定不会刷新会话列表，这次搬迁也不会再被触发。会话还在侧栏里，下次打开会再试。
+ */
 export function rehomeTabs(state: SessionTabGroups, directoryById: ReadonlyMap<string, string>): SessionTabGroups {
     const moves: { id: string; to: string }[] = []
     for (const [key, tabs] of Object.entries(state.groups)) {
@@ -298,15 +316,14 @@ export function rehomeTabs(state: SessionTabGroups, directoryById: ReadonlyMap<s
         if (!fromKey || fromKey === move.to) continue
         const tab = next.groups[fromKey]!.find(item => item.id === move.id)!
         const inserted = insertTab(next.groups[move.to] ?? [], tab)
-        if (!inserted) continue
         const groups = { ...next.groups }
         const source = groups[fromKey]!.filter(item => item.id !== move.id)
         if (source.length === 0) delete groups[fromKey]
         else groups[fromKey] = source
-        groups[move.to] = inserted
+        if (inserted) groups[move.to] = inserted
         next = { ...next, groups }
     }
-    return next
+    return next === state ? state : settleActiveDirectory(next)
 }
 
 function parseTabs(value: unknown): SessionTab[] {

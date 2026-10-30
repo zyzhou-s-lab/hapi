@@ -59,9 +59,9 @@ function visibleSessionDirectoryKey(
 
 /**
  * 打开当前会话并放进它所在目录的标签。`loaded` 必须是一次成功的、未过滤的会话列表（含归档）。
- * 第一次成功的列表会丢掉已经不在列表里的标签（所有窗口都关着时被删掉的会话），
- * 但本窗口刚打开、列表还没跟上的 id 留着。之后只丢掉从这份列表里消失的。
- * 未加载完、侧栏过滤、归档隐藏都不会删标签。
+ * 第一次成功的列表会丢掉启动前就在、而且列表里已经没有的标签（所有窗口都关着时被删掉的会话）。
+ * 本窗口正在看的 id 会先记下来，即使目录还没解析出来；启动之后才出现的标签（别的窗口刚写入）也先留着。
+ * 之后只丢掉从这份列表里消失的。未加载完、侧栏过滤、归档隐藏都不会删标签。
  */
 export function useSessionTabsSync(selectedSessionId: string | null, sessions: SessionSummary[], loaded: boolean): void {
     const scope = useSessionTabsScope()
@@ -69,15 +69,21 @@ export function useSessionTabsSync(selectedSessionId: string | null, sessions: S
     const { addToast } = useToast()
     const baseline = useRef<{ scope: string; ids: Set<string> } | null>(null)
     const openedThisWindow = useRef<{ scope: string; ids: Set<string> } | null>(null)
+    const idsAtStart = useRef<{ scope: string; ids: Set<string> } | null>(null)
+    if (idsAtStart.current?.scope !== scope) {
+        idsAtStart.current = { scope, ids: new Set(allTabIds(getSessionTabsSnapshot(scope))) }
+    }
     const directoryKey = directoryKeyOf(selectedSessionId, sessions)
     const groups = useSessionTabsState(scope)
     const visibleKey = visibleSessionDirectoryKey(selectedSessionId, sessions, groups.activeDirectoryKey)
     const visibleTabs = visibleKey ? groups.groups[visibleKey] ?? [] : []
 
     useEffect(() => {
-        if (!selectedSessionId || !directoryKey) return
+        if (!selectedSessionId) return
+        // 目录还没解析出来也要记下，这样本窗口正在看、但首份列表里还没有的会话不会被清掉。
         if (openedThisWindow.current?.scope !== scope) openedThisWindow.current = { scope, ids: new Set() }
         openedThisWindow.current.ids.add(selectedSessionId)
+        if (!directoryKey) return
         const result = openTabInDirectory(getSessionTabsSnapshot(scope), directoryKey, selectedSessionId, Date.now())
         if (result.state !== getSessionTabsSnapshot(scope)) updateSessionTabs(scope, () => result.state)
         if (result.rejected !== 'pinned-full') return
@@ -98,15 +104,15 @@ export function useSessionTabsSync(selectedSessionId: string | null, sessions: S
         if (!loaded) return
         const current = new Set(sessions.map(session => session.id))
         const directoryById = new Map(sessions.map(session => [session.id, sessionDirectoryGroupKey(session)]))
-        updateSessionTabs(scope, state => {
-            const previous = baseline.current?.scope === scope ? baseline.current.ids : null
-            const opened = openedThisWindow.current?.scope === scope ? openedThisWindow.current.ids : new Set<string>()
-            const deleted = previous
-                ? confirmedDeletedIds(previous, current)
-                : tabsMissingFromFirstList(allTabIds(state), current, opened)
-            baseline.current = { scope, ids: current }
-            return rehomeTabs(adoptLegacyTabs(pruneDeletedTabs(state, deleted), directoryById), directoryById)
-        })
+        const snapshot = getSessionTabsSnapshot(scope)
+        const previous = baseline.current?.scope === scope ? baseline.current.ids : null
+        const opened = openedThisWindow.current?.scope === scope ? openedThisWindow.current.ids : new Set<string>()
+        const started = idsAtStart.current?.scope === scope ? idsAtStart.current.ids : new Set<string>()
+        const deleted = previous
+            ? confirmedDeletedIds(previous, current)
+            : tabsMissingFromFirstList(allTabIds(snapshot), current, opened, started)
+        baseline.current = { scope, ids: current }
+        updateSessionTabs(scope, state => rehomeTabs(adoptLegacyTabs(pruneDeletedTabs(state, deleted), directoryById), directoryById))
     }, [scope, loaded, sessions])
 
     useSessionTabShortcuts(scope, selectedSessionId, visibleKey, visibleTabs)
