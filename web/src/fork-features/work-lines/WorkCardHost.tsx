@@ -9,7 +9,7 @@ import { watchCardTopic } from './cardTopics'
 import { deriveWork, deriveWorkbench, type WorkbenchModel, type WorkMapData, type WorkModel } from './deriveWork'
 import { mergeLayout, slotsForRegion, visiblePollInterval, type WorkCardSize, type WorkLayout, type WorkLayoutSlot, type WorkSurface } from './layout'
 import { overviewLayout, workbenchLayout } from './defaultLayouts'
-import { loadWorkCardMap, workCardMapKey } from './useWorkMap'
+import { loadWorkCardMap, workCardMapKey, workMapKey } from './useWorkMap'
 
 export type WorkView = { kind: 'overview' } | { kind: 'line'; lineId: string } | { kind: 'inbox' }
 
@@ -58,6 +58,27 @@ export function WorkCardHost(props: {
 }): ReactNode {
     const { user } = useAppContext()
     const { t } = useTranslation()
+    const queryClient = useQueryClient()
+    const sharedMap = useQuery({
+        queryKey: workMapKey,
+        queryFn: () => {
+            if (!props.api) throw new Error('API unavailable')
+            return props.api.getWorkMap()
+        },
+        enabled: Boolean(props.api),
+    })
+    const model = useMemo(() => deriveWork(
+        props.sessions,
+        sharedMap.data ?? null,
+        getSessionTitle,
+        (session) => session.metadata?.host ?? session.metadata?.machineId ?? '',
+    ), [sharedMap.data, props.sessions])
+    const bench = useMemo(() => deriveWorkbench(
+        props.sessions,
+        sharedMap.data ?? null,
+        getSessionTitle,
+        (session) => session.metadata?.host ?? session.metadata?.machineId ?? '',
+    ), [sharedMap.data, props.sessions])
 
     const saved = useQuery({
         queryKey: ['work', 'layout', props.surface],
@@ -83,6 +104,9 @@ export function WorkCardHost(props: {
                     sessions={props.sessions}
                     api={props.api}
                     accountId={user.id}
+                    model={model}
+                    bench={bench}
+                    map={sharedMap.data ?? null}
 
                     retryLabel={t('work.retry')}
                     failedMessage={t('work.cardFailed')}
@@ -100,7 +124,9 @@ function WorkRegion(props: {
     sessions: SessionSummary[]
     api: ApiClient | null
     accountId: number
-
+    model: WorkModel | null
+    bench: WorkbenchModel
+    map: WorkMapData | null
     retryLabel: string
     failedMessage: string
 }): ReactNode {
@@ -121,6 +147,9 @@ function WorkRegion(props: {
                         sessions={props.sessions}
                         api={props.api}
                         accountId={props.accountId}
+                        model={props.model}
+                        bench={props.bench}
+                        map={props.map}
                         retryLabel={props.retryLabel}
                         failedMessage={props.failedMessage}
                     />
@@ -138,6 +167,9 @@ function CardSlot(props: {
     sessions: SessionSummary[]
     api: ApiClient | null
     accountId: number
+    model: WorkModel | null
+    bench: WorkbenchModel
+    map: WorkMapData | null
     retryLabel: string
     failedMessage: string
 }): ReactNode {
@@ -174,26 +206,14 @@ function CardSlot(props: {
         document.addEventListener('visibilitychange', onShow)
         return () => document.removeEventListener('visibilitychange', onShow)
     }, [polled.refetch, querySource?.pollMs])
-    const model = useMemo(() => workModel ? deriveWork(
-        props.sessions,
-        mapQuery.data ?? null,
-        getSessionTitle,
-        (session) => session.metadata?.host ?? session.metadata?.machineId ?? '',
-    ) : null, [mapQuery.data, props.sessions, workModel])
-    const bench = useMemo(() => deriveWorkbench(
-        props.sessions,
-        mapQuery.data ?? null,
-        getSessionTitle,
-        (session) => session.metadata?.host ?? session.metadata?.machineId ?? '',
-    ), [mapQuery.data, props.sessions])
     const ctx: WorkCardContext = {
         sessions: props.sessions,
         surface: props.surface,
         view: props.view,
         slot: props.slot,
-        model,
-        bench,
-        map: mapQuery.data ?? null,
+        model: props.model,
+        bench: props.bench,
+        map: props.map,
         query: {
             data: active.data,
             error: active.error instanceof Error ? active.error.message : null,

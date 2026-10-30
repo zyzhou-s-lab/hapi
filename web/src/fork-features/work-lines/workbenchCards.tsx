@@ -58,7 +58,10 @@ function LineList(props: { ctx: WorkCardContext }): ReactNode {
             await refresh()
             await navigate({ to: '/work', search: { line: id } })
         },
-        onError: () => setCreateFailed(true),
+        onError: (error) => {
+            console.error(error)
+            setCreateFailed(true)
+        },
     })
     const selected = lineIdOf(props.ctx)
     return (
@@ -76,14 +79,14 @@ function LineList(props: { ctx: WorkCardContext }): ReactNode {
                 {t('work.inbox')} ({bench.inboxDirectoryCount})
             </button>
             {machines.length === 0 ? <p className="mt-3 text-xs text-[var(--app-hint)]">{t('work.noMachines')}</p> : (
-                <form className="mt-3 flex flex-col gap-2" onSubmit={(event) => { event.preventDefault(); create.mutate() }}>
-                    <input className="rounded border border-[var(--app-divider)] bg-transparent px-2 py-1 text-sm" value={name} onChange={(event) => setName(event.target.value)} placeholder={t('work.lineName')} />
-                    <input className="rounded border border-[var(--app-divider)] bg-transparent px-2 py-1 text-sm" value={goal} onChange={(event) => setGoal(event.target.value)} placeholder={t('work.lineGoal')} />
-                    <select className="rounded border border-[var(--app-divider)] bg-transparent px-2 py-1 text-sm" value={machineId} onChange={(event) => setMachineId(event.target.value)}>
+                <form className="mt-3 flex flex-col gap-2" onSubmit={(event) => { event.preventDefault(); setCreateFailed(false); create.mutate() }}>
+                    <input className="rounded border border-[var(--app-divider)] bg-transparent px-2 py-1 text-sm" value={name} onChange={(event) => { setCreateFailed(false); setName(event.target.value) }} placeholder={t('work.lineName')} />
+                    <input className="rounded border border-[var(--app-divider)] bg-transparent px-2 py-1 text-sm" value={goal} onChange={(event) => { setCreateFailed(false); setGoal(event.target.value) }} placeholder={t('work.lineGoal')} />
+                    <select className="rounded border border-[var(--app-divider)] bg-transparent px-2 py-1 text-sm" value={machineId} onChange={(event) => { setCreateFailed(false); setMachineId(event.target.value) }}>
                         <option value="">{t('work.pickMachine')}</option>
                         {machines.map((machine) => <option key={machine.id} value={machine.id}>{machine.metadata?.displayName || machine.id}</option>)}
                     </select>
-                    <input className="rounded border border-[var(--app-divider)] bg-transparent px-2 py-1 text-sm" value={path} onChange={(event) => setPath(event.target.value)} placeholder={t('work.primaryPath')} />
+                    <input className="rounded border border-[var(--app-divider)] bg-transparent px-2 py-1 text-sm" value={path} onChange={(event) => { setCreateFailed(false); setPath(event.target.value) }} placeholder={t('work.primaryPath')} />
                     <button type="submit" className="text-sm text-[var(--app-link)]" disabled={create.isPending || !name || !machineId || !path}>{t('work.createLine')}</button>
                     {createFailed ? <p className="text-sm text-red-600">{t('work.createLineFailed')}</p> : null}
                 </form>

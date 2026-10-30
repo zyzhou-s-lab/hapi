@@ -1,11 +1,12 @@
 import { useEffect, type ReactNode } from 'react'
+import { useQuery } from '@tanstack/react-query'
 import { useNavigate } from '@tanstack/react-router'
 import { useAppContext } from '@/lib/app-context'
 import { useTranslation } from '@/lib/use-translation'
 import { useSessions } from '@/hooks/queries/useSessions'
 import { WorkCardHost } from './WorkCardHost'
 import './workbenchCards'
-import { useWorkMap } from './useWorkMap'
+import { workMapKey } from './useWorkMap'
 import { defaultWorkSearch, type WorkSearch } from './workSearch'
 
 export function Workbench(props: { search: WorkSearch }): ReactNode {
@@ -13,13 +14,21 @@ export function Workbench(props: { search: WorkSearch }): ReactNode {
     const { sessions } = useSessions(api)
     const { t } = useTranslation()
     const navigate = useNavigate()
-    const mapQuery = useWorkMap(api)
+    const mapQuery = useQuery({
+        queryKey: workMapKey,
+        queryFn: () => {
+            if (!api) throw new Error('API unavailable')
+            return api.getWorkMap()
+        },
+        enabled: Boolean(api),
+    })
+    const map = mapQuery.data ?? null
     useEffect(() => {
-        if (!mapQuery.map) return
-        const next = defaultWorkSearch(props.search, mapQuery.map.lines.map((line) => line.id))
+        if (!map) return
+        const next = defaultWorkSearch(props.search, map.lines.map((line) => line.id))
         if (!next) return
         void navigate({ to: '/work', search: next, replace: true })
-    }, [mapQuery.map, navigate, props.search.inbox, props.search.line])
+    }, [map, navigate, props.search.inbox, props.search.line])
     const view = props.search.line
         ? { kind: 'line' as const, lineId: props.search.line }
         : props.search.inbox
