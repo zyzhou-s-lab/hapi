@@ -55,6 +55,22 @@ export function formatThinkingStatus(phase: string, elapsedSeconds: number): str
     return `${phase} · ${Math.max(0, elapsedSeconds)}s`
 }
 
+function ThinkingClock(props: { phase: string; vibing: boolean }) {
+    const [elapsedSeconds, setElapsedSeconds] = useState(0)
+    const [vibingText, setVibingText] = useState<string | null>(null)
+    useEffect(() => {
+        const started = Date.now()
+        setElapsedSeconds(0)
+        setVibingText(props.vibing
+            ? VIBING_MESSAGES[Math.floor(Math.random() * VIBING_MESSAGES.length)]!.toLowerCase() + '…'
+            : null)
+        const tick = () => setElapsedSeconds(Math.floor((Date.now() - started) / 1000))
+        const id = window.setInterval(tick, 1000)
+        return () => window.clearInterval(id)
+    }, [props.vibing])
+    return <>{vibingText ?? formatThinkingStatus(props.phase, elapsedSeconds)}</>
+}
+
 function getConnectionStatus(
     active: boolean,
     thinking: boolean,
@@ -231,31 +247,12 @@ export function StatusBar(props: {
     const { t } = useTranslation()
     const { preferences: headerMetadata } = useSessionHeaderMetadata()
     const vibing = useStatusVibing()
-    const [elapsedSeconds, setElapsedSeconds] = useState(0)
-    const [vibingText, setVibingText] = useState<string | null>(null)
-    useEffect(() => {
-        if (!props.thinking) {
-            setElapsedSeconds(0)
-            setVibingText(null)
-            return
-        }
-        const started = Date.now()
-        setVibingText(vibing.enabled
-            ? VIBING_MESSAGES[Math.floor(Math.random() * VIBING_MESSAGES.length)]!.toLowerCase() + '…'
-            : null)
-        const tick = () => setElapsedSeconds(Math.floor((Date.now() - started) / 1000))
-        tick()
-        const id = window.setInterval(tick, 1000)
-        return () => window.clearInterval(id)
-    }, [props.thinking, vibing.enabled])
-    const thinkingLabel = vibingText ?? formatThinkingStatus(
-        props.activityLabel?.trim() ? props.activityLabel.trim() : t('status.responding'),
-        elapsedSeconds
-    )
+    const thinkingPhase = props.activityLabel?.trim() ? props.activityLabel.trim() : t('status.responding')
     const connectionStatus = useMemo(
-        () => getConnectionStatus(props.active, props.thinking, thinkingLabel, props.agentState, props.voiceStatus, props.backgroundTaskCount ?? 0, t),
-        [props.active, props.thinking, thinkingLabel, props.agentState, props.voiceStatus, props.backgroundTaskCount, t]
+        () => getConnectionStatus(props.active, props.thinking, '', props.agentState, props.voiceStatus, props.backgroundTaskCount ?? 0, t),
+        [props.active, props.thinking, props.agentState, props.voiceStatus, props.backgroundTaskCount, t]
     )
+
 
     const contextHeuristicModel = props.contextModel ?? props.model
     const contextWarning = useMemo(
@@ -343,7 +340,9 @@ export function StatusBar(props: {
                         className={`h-2 w-2 rounded-full ${connectionStatus.dotColor} ${connectionStatus.isPulsing ? 'animate-pulse' : ''}`}
                     />
                     <span className={`whitespace-nowrap text-xs ${connectionStatus.color}`}>
-                        {connectionStatus.text}
+                        {props.thinking
+                            ? <ThinkingClock phase={thinkingPhase} vibing={vibing.enabled} />
+                            : connectionStatus.text}
                     </span>
                 </div>
                 {contextUsageLabel ? (
