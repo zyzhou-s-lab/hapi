@@ -820,6 +820,22 @@ html[data-theme="oled"] .shiki span:not([data-line-number]) {
   animation: bounce-in 0.3s ease-out;
 }
 
+.composer-more-menu button {
+    width: 100%;
+    min-height: 2.75rem;
+    justify-content: flex-start;
+    gap: 0.5rem;
+    padding-inline: 0.75rem;
+    border-radius: 0.5rem;
+}
+
+.composer-more-menu button::after {
+    content: attr(aria-label);
+    font-size: var(--app-font-size-nav);
+    line-height: var(--app-line-nav);
+}
+
+
 /* ReactQueryDevtools button - move to middle-right to avoid blocking UI */
 .tsqd-open-btn-container {
   bottom: 50% !important;

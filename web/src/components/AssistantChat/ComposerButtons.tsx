@@ -6,13 +6,77 @@ import { ScheduleTimePicker } from './ScheduleTimePicker'
 import type { PendingSchedule } from './ScheduleTimePicker'
 import { useFue } from '@/lib/use-fue'
 import { FueCallout, FueDot } from '@/components/Fue'
-import { Children, isValidElement, useRef, useState, type ReactElement, type ReactNode, type Ref } from 'react'
+import { Children, isValidElement, useEffect, useRef, useState, type ReactElement, type ReactNode, type Ref } from 'react'
 import { useComposerToolbarLayout, type ComposerToolbarItemId, type ComposerToolbarLayout } from '@/hooks/useComposerToolbarLayout'
 import { useNarrowViewport } from '@/hooks/useNarrowViewport'
 import type { ComposerSendIntent } from '@/lib/messageDelivery'
 
 function ToolbarItemSlot(props: { item: ComposerToolbarItemId; children: ReactNode }) {
     return <>{props.children}</>
+}
+
+const OVERFLOW_MENU_ITEMS: Record<ComposerToolbarItemId, boolean> = {
+    attachment: true,
+    terminal: true,
+    schedule: true,
+    voiceMic: true,
+    settings: false,
+    expand: false,
+    model: false,
+    effort: false,
+    abort: false,
+    switch: false,
+    scratchlist: false,
+}
+
+function isOverflowMenuItem(item: ComposerToolbarItemId): boolean {
+    return OVERFLOW_MENU_ITEMS[item]
+}
+
+
+
+function MoreIcon() {
+    return (
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+            <circle cx="5" cy="12" r="1.6" />
+            <circle cx="12" cy="12" r="1.6" />
+            <circle cx="19" cy="12" r="1.6" />
+        </svg>
+    )
+}
+
+function ComposerMoreMenu(props: { children: ReactNode }) {
+    const { t } = useTranslation()
+    const [open, setOpen] = useState(false)
+    const rootRef = useRef<HTMLDivElement>(null)
+    useEffect(() => {
+        if (!open) return
+        const close = (event: PointerEvent) => {
+            if (!rootRef.current?.contains(event.target as Node)) setOpen(false)
+        }
+        document.addEventListener('pointerdown', close)
+        return () => document.removeEventListener('pointerdown', close)
+    }, [open])
+    return (
+        <div ref={rootRef} className="relative shrink-0">
+            <button
+                type="button"
+                data-testid="composer-more"
+                aria-expanded={open}
+                aria-haspopup="menu"
+                aria-label={t('composer.more')}
+                className="flex h-8 w-8 items-center justify-center rounded-full text-[var(--app-fg)]/60 transition-colors hover:bg-[var(--app-bg)] hover:text-[var(--app-fg)]"
+                onClick={() => setOpen((value) => !value)}
+            >
+                <MoreIcon />
+            </button>
+            {open ? (
+                <div role="menu" className="composer-more-menu absolute bottom-10 left-0 z-30 flex min-w-48 flex-col gap-1 rounded-xl border border-[var(--app-border)] bg-[var(--app-bg)] p-1 shadow-lg">
+                    {props.children}
+                </div>
+            ) : null}
+        </div>
+    )
 }
 
 function OrderedToolbarItems(props: { layout: ComposerToolbarLayout; children: ReactNode }) {
@@ -25,11 +89,19 @@ function OrderedToolbarItems(props: { layout: ComposerToolbarLayout; children: R
         if (!slot || slot.props.children == null) return null
         return <div key={item} className="shrink-0">{slot}</div>
     })
+    const placed = [...props.layout.left, ...props.layout.right]
+    const strip = placed.filter((item) => !isOverflowMenuItem(item))
+    const menu = placed.filter((item) => isOverflowMenuItem(item))
+    const stripNodes = props.layout.mode === 'split'
+        ? <>{renderItems(props.layout.left.filter((item) => !isOverflowMenuItem(item)))}<span className="flex-1" aria-hidden="true" />{renderItems(props.layout.right.filter((item) => !isOverflowMenuItem(item)))}</>
+        : <>{renderItems(strip)}</>
 
-    if (props.layout.mode === 'split') {
-        return <>{renderItems(props.layout.left)}<span className="flex-1" aria-hidden="true" />{renderItems(props.layout.right)}</>
-    }
-    return <>{renderItems([...props.layout.left, ...props.layout.right])}</>
+    return (
+        <>
+            {stripNodes}
+            {menu.length > 0 ? <ComposerMoreMenu>{renderItems(menu)}</ComposerMoreMenu> : null}
+        </>
+    )
 }
 
 export function getComposerToolbarJustifyContent(
@@ -679,7 +751,7 @@ export function ComposerButtons(props: {
         <div className="flex shrink-0 items-center gap-1 px-2 pb-2">
             <div
                 data-testid="composer-toolbar-items"
-                className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+                className="flex min-w-0 flex-1 items-center gap-1"
                 style={{ justifyContent: toolbarJustifyContent }}
             >
                 <OrderedToolbarItems layout={effectiveLayout}>

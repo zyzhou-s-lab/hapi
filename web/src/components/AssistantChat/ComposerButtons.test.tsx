@@ -209,7 +209,7 @@ describe('ComposerExpandButton', () => {
 describe('ComposerButtons responsive toolbar', () => {
     afterEach(cleanup)
 
-    it('keeps toolbar actions non-shrinking inside a horizontal scroll area', () => {
+    it('keeps secondary actions in a menu instead of a hidden scroller', () => {
         const noop = () => {}
         render(
             <RuntimeProviders>
@@ -246,10 +246,12 @@ describe('ComposerButtons responsive toolbar', () => {
         )
 
         const toolbar = screen.getByTestId('composer-toolbar-items')
-        expect(toolbar.className).toContain('overflow-x-auto')
-        const toolbarButtons = within(toolbar).getAllByRole('button')
-        expect(toolbarButtons.length).toBeGreaterThanOrEqual(8)
-        for (const button of toolbarButtons) {
+        expect(toolbar.className).not.toContain('overflow-x-auto')
+        expect(within(toolbar).queryByRole('button', { name: 'Terminal' })).toBeNull()
+        fireEvent.click(screen.getByTestId('composer-more'))
+        expect(screen.getByRole('button', { name: 'Terminal' })).toBeInTheDocument()
+        expect(screen.getByRole('button', { name: 'Attach file' })).toBeInTheDocument()
+        for (const button of within(toolbar).getAllByRole('button')) {
             expect(button.closest('.shrink-0')).not.toBeNull()
         }
     })

@@ -648,6 +648,7 @@ export default {
   'composer.abort': 'Abort',
   'composer.switchRemote': 'Switch to remote mode',
   'composer.attach': 'Attach file',
+  'composer.more': 'More actions',
   'composer.expand': 'Expand message editor',
   'composer.collapse': 'Collapse message editor',
   'composer.dropToAttach': 'Drop to attach',
