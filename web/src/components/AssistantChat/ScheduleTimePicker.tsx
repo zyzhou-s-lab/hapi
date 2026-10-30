@@ -349,7 +349,7 @@ export function ScheduleTimePicker({ onSchedule, onClose, anchorRef, pendingSche
                                     onClick={() => handlePresetClick(preset)}
                                     className={`rounded-lg border px-3 py-2 text-sm font-medium transition-colors ${
                                         isSelected
-                                            ? 'border-blue-500 bg-blue-500 text-white'
+                                            ? 'border-[var(--app-button)] bg-[var(--app-button)] text-[var(--app-button-text)]'
                                             : 'border-[var(--app-border)] text-[var(--app-fg)] hover:bg-[var(--app-secondary-bg)] hover:border-[var(--app-link)]'
                                     }`}
                                 >
@@ -380,7 +380,7 @@ export function ScheduleTimePicker({ onSchedule, onClose, anchorRef, pendingSche
                             type="button"
                             disabled={!specificValue}
                             onClick={handleSpecificSubmit}
-                            className="w-full rounded-lg bg-blue-500 px-3 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-600 disabled:cursor-not-allowed disabled:opacity-40"
+                            className="w-full rounded-lg bg-[var(--app-button)] px-3 py-2 text-sm font-medium text-[var(--app-button-text)] transition-colors hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
                         >
                             {t('composer.scheduleSend')}
                         </button>

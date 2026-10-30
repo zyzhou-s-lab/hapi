@@ -868,7 +868,7 @@ export function ComposerButtons(props: {
                         aria-label={t('composer.switchRemote')}
                         title={t('composer.switchRemote')}
                         disabled={props.switchDisabled}
-                        className="flex h-8 w-8 items-center justify-center rounded-full text-[var(--app-fg)]/60 transition-colors hover:bg-[var(--app-bg)] hover:text-blue-500 disabled:cursor-not-allowed disabled:opacity-50"
+                        className="flex h-8 w-8 items-center justify-center rounded-full text-[var(--app-fg)]/60 transition-colors hover:bg-[var(--app-bg)] hover:text-[var(--app-link)] disabled:cursor-not-allowed disabled:opacity-50"
                         onClick={props.onSwitch}
                     >
                         <SwitchToRemoteIcon />
@@ -937,7 +937,7 @@ export function ComposerButtons(props: {
                             }}
                             className={`flex h-8 w-8 items-center justify-center rounded-full transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
                                 hasSchedule
-                                    ? 'bg-blue-500 text-white hover:bg-blue-600'
+                                    ? 'bg-[var(--app-button)] text-[var(--app-button-text)] hover:opacity-90'
                                     : 'text-[var(--app-fg)]/60 hover:bg-[var(--app-bg)] hover:text-[var(--app-fg)]'
                             }`}
                         >

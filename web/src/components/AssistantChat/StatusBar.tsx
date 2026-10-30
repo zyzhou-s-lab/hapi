@@ -43,9 +43,9 @@ const VIBING_MESSAGES = [
 
 const PERMISSION_TONE_CLASSES: Record<PermissionModeTone, string> = {
     neutral: 'text-[var(--app-hint)]',
-    info: 'text-blue-500',
-    warning: 'text-amber-500',
-    danger: 'text-red-500'
+    info: 'text-[var(--app-link)]',
+    warning: 'text-[var(--app-badge-warning-text)]',
+    danger: 'text-[var(--app-badge-error-text)]'
 }
 
 const CONTEXT_WARNING_THRESHOLD_PERCENT = 70
@@ -70,8 +70,8 @@ function getConnectionStatus(
     if (voiceStatus === 'connecting') {
         return {
             text: t('voice.connecting'),
-            color: 'text-[#007AFF]',
-            dotColor: 'bg-[#007AFF]',
+            color: 'text-[var(--app-link)]',
+            dotColor: 'bg-[var(--app-link)]',
             isPulsing: true
         }
     }
@@ -79,8 +79,8 @@ function getConnectionStatus(
     if (!active) {
         return {
             text: 'offline',
-            color: 'text-[#999]',
-            dotColor: 'bg-[#999]',
+            color: 'text-[var(--app-hint)]',
+            dotColor: 'bg-[var(--app-hint)]',
             isPulsing: false
         }
     }
@@ -88,8 +88,8 @@ function getConnectionStatus(
     if (hasPermissions) {
         return {
             text: t('misc.permissionRequired'),
-            color: 'text-[#FF9500]',
-            dotColor: 'bg-[#FF9500]',
+            color: 'text-[var(--app-badge-warning-text)]',
+            dotColor: 'bg-[var(--app-badge-warning-text)]',
             isPulsing: true
         }
     }
@@ -97,8 +97,8 @@ function getConnectionStatus(
     if (thinking) {
         return {
             text: thinkingLabel,
-            color: 'text-[#007AFF]',
-            dotColor: 'bg-[#007AFF]',
+            color: 'text-[var(--app-link)]',
+            dotColor: 'bg-[var(--app-link)]',
             isPulsing: true
         }
     }
@@ -106,16 +106,16 @@ function getConnectionStatus(
     if (backgroundTaskCount > 0) {
         return {
             text: `${backgroundTaskCount} background task${backgroundTaskCount > 1 ? 's' : ''} running`,
-            color: 'text-[#007AFF]',
-            dotColor: 'bg-[#007AFF]',
+            color: 'text-[var(--app-link)]',
+            dotColor: 'bg-[var(--app-link)]',
             isPulsing: true
         }
     }
 
     return {
             text: 'online',
-        color: 'text-[#34C759]',
-        dotColor: 'bg-[#34C759]',
+        color: 'text-[var(--app-badge-success-text)]',
+        dotColor: 'bg-[var(--app-badge-success-text)]',
         isPulsing: false
     }
 }
@@ -124,9 +124,9 @@ export function getContextWarning(contextSize: number, maxContextSize: number): 
     const percentageUsed = (contextSize / maxContextSize) * 100
 
     if (percentageUsed >= CONTEXT_DANGER_THRESHOLD_PERCENT) {
-        return { color: 'text-red-500' }
+        return { color: 'text-[var(--app-badge-error-text)]' }
     } else if (percentageUsed >= CONTEXT_WARNING_THRESHOLD_PERCENT) {
-        return { color: 'text-amber-500' }
+        return { color: 'text-[var(--app-badge-warning-text)]' }
     } else {
         return { color: 'text-[var(--app-hint)]' }
     }
@@ -425,17 +425,17 @@ export function StatusBar(props: {
                     </span>
                 ) : null}
                 {codexFastMode ? (
-                    <span className="whitespace-nowrap text-xs text-[#34C759]">
+                    <span className="whitespace-nowrap text-xs text-[var(--app-badge-success-text)]">
                         fast
                     </span>
                 ) : null}
                 {collaborationModeLabel ? (
-                    <span className="whitespace-nowrap text-xs text-blue-500">
+                    <span className="whitespace-nowrap text-xs text-[var(--app-link)]">
                         {collaborationModeLabel}
                     </span>
                 ) : null}
                 {copilotAgentModeLabel ? (
-                    <span className="whitespace-nowrap text-xs text-blue-500">
+                    <span className="whitespace-nowrap text-xs text-[var(--app-link)]">
                         {copilotAgentModeLabel}
                     </span>
                 ) : null}

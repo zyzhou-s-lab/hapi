@@ -440,7 +440,7 @@ onSessionReopened?: (newSessionId: string) => void | Promise<void>
                                 {mobileSecondary === 'updatedAt' && updatedAtLabel ? <span className="truncate">{headerMetadata.showLabels ? `${t('session.header.updatedAt')}: ` : ''}{updatedAtLabel}</span> : null}
                                 {mobileSecondary === 'createdAt' && createdAtLabel ? <span className="truncate">{headerMetadata.showLabels ? `${t('session.header.createdAt')}: ` : ''}{createdAtLabel}</span> : null}
                                 {mobileSecondary === 'worktree' && worktreeBranch ? <span className="truncate">{headerMetadata.showLabels ? `${t('session.item.worktree')}: ` : ''}{worktreeBranch}</span> : null}
-                                {mobileSecondary === 'fastMode' ? <span className="truncate text-[#34C759]">fast</span> : null}
+                                {mobileSecondary === 'fastMode' ? <span className="truncate text-[var(--app-badge-success-text)]">fast</span> : null}
                             </div>
                         ) : null}
                         <div className="hidden flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-[var(--app-hint)] sm:flex">
@@ -474,7 +474,7 @@ onSessionReopened?: (newSessionId: string) => void | Promise<void>
                                 </span>
                             ) : null}
                             {headerMetadata.fastMode && showFastBadge ? (
-                                <span data-testid="session-header-fast" className="text-[#34C759]">
+                                <span data-testid="session-header-fast" className="text-[var(--app-badge-success-text)]">
                                     fast
                                 </span>
                             ) : null}
