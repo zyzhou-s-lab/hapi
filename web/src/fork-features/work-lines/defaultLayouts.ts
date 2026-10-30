@@ -24,7 +24,6 @@ export const workbenchLayout: WorkLayout = {
             { cardId: 'workbench.focus' },
             { cardId: 'workbench.directories' },
             { cardId: 'workbench.inbox' },
-            { cardId: 'example.training-curves' },
         ],
         side: [
             { cardId: 'workbench.sessions' },

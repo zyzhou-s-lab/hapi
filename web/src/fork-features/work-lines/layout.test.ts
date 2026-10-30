@@ -37,11 +37,11 @@ describe('work layout', () => {
         expect(mergeLayout(saved, defaults).regions.body.map((slot) => slot.cardId)).toEqual(['overview.needs-you-list'])
     })
 
-    it('adds the training card to an older workbench layout and can bind a run', () => {
-        expect(workbenchLayout.regions.main.some((slot) => slot.cardId === 'example.training-curves')).toBe(true)
+    it('binds a run per line without using a dead default slot', () => {
+        expect(workbenchLayout.regions.main.some((slot) => slot.cardId === 'example.training-curves')).toBe(false)
         const saved: WorkLayout = { revision: 1, regions: { main: [{ cardId: 'workbench.line-header' }] } }
         const merged = mergeLayout(saved, workbenchLayout)
-        expect(merged.regions.main.map((slot) => slot.cardId)).toContain('example.training-curves')
+        expect(merged.regions.main.map((slot) => slot.cardId)).not.toContain('example.training-curves')
         const bound = bindTrainingSlot(merged, 'line-1', 'exp-1')
         const both = bindTrainingSlot(bound, 'line-2', 'exp-2')
         expect(both.revision).toBe(LAYOUT_REVISION)

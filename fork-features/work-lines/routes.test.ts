@@ -86,24 +86,60 @@ describe('work line routes', () => {
 
     it('binds a training run per line without dropping the other line', async () => {
         const auth = { authorization: `Bearer ${await token()}`, 'content-type': 'application/json' }
+        const missingLine = await app.request('/api/work/layout/workbench/training', {
+            method: 'PUT',
+            headers: auth,
+            body: JSON.stringify({ lineId: 'missing-line', run: 'exp-1' }),
+        })
+        expect(missingLine.status).toBe(404)
+        const createdLines: string[] = []
+        for (const path of ['/data/bind-a', '/data/bind-b']) {
+            const created = await app.request('/api/work/lines', {
+                method: 'POST',
+                headers: auth,
+                body: JSON.stringify({ name: path, primaryMachineId: 'gpu', primaryPath: path }),
+            })
+            createdLines.push((await created.json() as { line: { id: string } }).line.id)
+        }
+        await app.request('/api/work/training-runs', {
+            method: 'POST',
+            headers: auth,
+            body: JSON.stringify({ run: 'exp-2', machineId: 'gpu', runDir: '/data/wandb/offline-run-2' }),
+        })
+        const missingRun = await app.request('/api/work/layout/workbench/training', {
+            method: 'PUT',
+            headers: auth,
+            body: JSON.stringify({ lineId: createdLines[0], run: 'no-such-run' }),
+        })
+        expect(missingRun.status).toBe(404)
         const first = await app.request('/api/work/layout/workbench/training', {
             method: 'PUT',
             headers: auth,
-            body: JSON.stringify({ lineId: 'line-1', run: 'exp-1' }),
+            body: JSON.stringify({ lineId: createdLines[0], run: 'exp-1' }),
         })
         expect(first.status).toBe(200)
+        const firstBody = await first.json() as { layout: { revision: number; regions: Record<string, { cardId: string }[]> } }
+        expect(firstBody.layout.revision).toBe(1)
+        expect(firstBody.layout.regions.rail.map((slot) => slot.cardId)).toEqual(['workbench.line-list'])
+        expect(firstBody.layout.regions.side.map((slot) => slot.cardId)).toEqual(['workbench.sessions', 'workbench.continue'])
         const second = await app.request('/api/work/layout/workbench/training', {
             method: 'PUT',
             headers: auth,
-            body: JSON.stringify({ lineId: 'line-2', run: 'exp-2' }),
+            body: JSON.stringify({ lineId: createdLines[1], run: 'exp-2' }),
         })
         expect(second.status).toBe(200)
         const saved = await app.request('/api/work/layout/workbench', { headers: { authorization: `Bearer ${await token()}` } })
         const body = await saved.json() as { layout: { regions: { main: { cardId: string; args?: { run: string; lineId: string } }[] } } }
         expect(body.layout.regions.main.filter((slot) => slot.cardId === 'example.training-curves').map((slot) => slot.args)).toEqual([
-            { run: 'exp-1', lineId: 'line-1' },
-            { run: 'exp-2', lineId: 'line-2' },
+            { run: 'exp-1', lineId: createdLines[0] },
+            { run: 'exp-2', lineId: createdLines[1] },
         ])
+        const hyphen = await app.request('/api/work/layout/overview', {
+            method: 'PUT',
+            headers: auth,
+            body: JSON.stringify({ revision: 1, regions: { stats: [{ cardId: 'a.b-' }], body: [] } }),
+        })
+        expect(hyphen.status).toBe(400)
     })
 
     it('broadcasts card-invalidated without curve points when a line is created', async () => {
