@@ -14,6 +14,7 @@ import { UserStore } from './userStore'
 import { UsageStore } from './usageStore'
 import { WORK_LINES_SCHEMA_SQL, WorkLinesStore } from './workLines'
 import { WorkGraphStore } from './workGraphStore'
+
 export type {
     NativeDevicePlatform,
     StoredMachine,
@@ -80,6 +81,7 @@ export class Store {
     readonly usage: UsageStore
     readonly workGraph: WorkGraphStore
     readonly workLines: WorkLinesStore
+
     /**
      * Filesystem path of the underlying SQLite database, or ':memory:' for
      * in-memory stores. Used by the legacy → ACP migrator (#824) to take a

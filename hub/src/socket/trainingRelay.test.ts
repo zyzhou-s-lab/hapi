@@ -82,9 +82,7 @@ function harness() {
             io: io as never,
             relay,
             getRun: (accountId, name) => accountId === 7 && name === 'exp-1' ? run : null,
-            getMachine: (machineId, namespace) => machineId === 'gpu' && namespace === 'account-a'
-                ? { id: 'gpu', namespace } as never
-                : null
+            canAccessMachine: (accountId, machineId) => accountId === 7 && machineId === 'gpu' ? 'account-a' : null
         })
         return socket
     }
@@ -141,5 +139,42 @@ describe('training relay', () => {
             event: 'training:error',
             data: { run: 'exp-1', message: 'Runner is not connected.' }
         })
+    })
+
+    it('sends training:subscribe again when the runner socket changes', () => {
+        const { cli, cliNamespace, web } = harness()
+        const viewer = web('web-1')
+        viewer.trigger('training:subscribe', { run: 'exp-1' })
+        const next = new FakeSocket('cli-2')
+        next.data.namespace = 'account-a'
+        cliNamespace.add(next, 'machine:gpu')
+        cliNamespace.adapter.rooms.get('machine:gpu')!.delete(cli.id)
+        viewer.trigger('training:subscribe', { run: 'exp-1' })
+        expect(next.emitted).toEqual([{
+            event: 'training:subscribe',
+            data: { run: 'exp-1', runDir: '/data/wandb/run-abc', machineId: 'gpu' }
+        }])
+    })
+
+    it('follows a granted machine into the owner namespace', () => {
+        const relay = new TrainingRelay()
+        const cliNamespace = new FakeNamespace()
+        const cli = new FakeSocket('cli-owner')
+        cli.data.namespace = 'owner-namespace'
+        cliNamespace.add(cli, 'machine:gpu')
+        const socket = new FakeSocket('web-grant')
+        socket.data.namespace = 'viewer-namespace'
+        socket.data.gatewayAccountId = 7
+        registerTrainingWebHandlers(socket as unknown as SocketWithData, {
+            io: { of: () => cliNamespace } as never,
+            relay,
+            getRun: () => run,
+            canAccessMachine: () => 'owner-namespace'
+        })
+        socket.trigger('training:subscribe', { run: 'exp-1' })
+        expect(cli.emitted).toEqual([{
+            event: 'training:subscribe',
+            data: { run: 'exp-1', runDir: '/data/wandb/run-abc', machineId: 'gpu' }
+        }])
     })
 })

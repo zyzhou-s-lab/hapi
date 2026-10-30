@@ -10,6 +10,7 @@ import type { Capability, ResourceType } from './domain'
 import { streamSSE } from 'hono/streaming'
 import { randomUUID } from 'node:crypto'
 import { mountWorkLineRoutes } from '../work-lines/routes'
+
 export async function gatewayAccountId(request: Request, secret: Uint8Array): Promise<number | null> {
     const authorization = request.headers.get('authorization')
     const queryToken = new URL(request.url).searchParams.get('token')

@@ -4011,8 +4011,8 @@ export class SyncEngine {
         return await this.rpcGateway.listMachineDirectory(machineId, path, includeHidden)
     }
 
-    async queryTrainingRun(machineId: string): Promise<unknown> {
-        return await this.rpcGateway.queryTrainingRun(machineId)
+    async queryTrainingRun(machineId: string, query: { run: string; runDir: string }): Promise<unknown> {
+        return await this.rpcGateway.queryTrainingRun(machineId, query)
     }
 
     getWorkLines() {

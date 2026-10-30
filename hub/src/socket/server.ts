@@ -50,6 +50,7 @@ export type SocketServerDeps = {
     onMessagesConsumed?: (sessionId: string) => void
     resolveTerminalNamespace?: (accountId: number, sessionId: string) => string | null
     resolveCliNamespace?: (token: string) => string | null
+    canAccessMachine?: (accountId: number, machineId: string) => string | null
 }
 
 export function createSocketServer(deps: SocketServerDeps): {
@@ -186,7 +187,7 @@ export function createSocketServer(deps: SocketServerDeps): {
             io,
             relay: trainingRelay,
             getRun: (accountId, run) => deps.store.workLines.getTrainingRun(accountId, run),
-            getMachine: (machineId, namespace) => deps.store.machines.getMachineByNamespace(machineId, namespace)
+            canAccessMachine: (accountId, machineId) => deps.canAccessMachine?.(accountId, machineId) ?? null
         })
     })
 

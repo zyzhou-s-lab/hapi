@@ -69,18 +69,16 @@ export function mountWorkLineRoutes(app: Hono<WebAppEnv>, deps: {
         return { account, engine }
     }
 
-    const canSeeSession = (accountId: number, namespace: string, sessionId: string, engine: SyncEngine): boolean => {
-        if (deps.store.listAccessibleResources('session', accountId).some((binding) => binding.resourceId === sessionId)) {
-            return true
-        }
-        return engine.getSession(sessionId)?.namespace === namespace
+    // Visibility is the gateway binding (owner or grant), the same set
+    // GET /sessions and GET /machines return. Sharing defaultNamespace is
+    // not enough: another account in that namespace must not classify a
+    // session or machine it cannot open.
+    const canSeeSession = (accountId: number, sessionId: string): boolean => {
+        return deps.store.listAccessibleResources('session', accountId).some((binding) => binding.resourceId === sessionId)
     }
 
-    const canSeeMachine = (accountId: number, namespace: string, machineId: string, engine: SyncEngine): boolean => {
-        if (deps.store.listAccessibleResources('machine', accountId).some((binding) => binding.resourceId === machineId)) {
-            return true
-        }
-        return engine.getMachine(machineId)?.namespace === namespace
+    const canSeeMachine = (accountId: number, machineId: string): boolean => {
+        return deps.store.listAccessibleResources('machine', accountId).some((binding) => binding.resourceId === machineId)
     }
 
     const invalidate = (namespace: string, accountId: number, topic: 'work-map' | 'work-layout') => {
@@ -103,7 +101,7 @@ export function mountWorkLineRoutes(app: Hono<WebAppEnv>, deps: {
         if (ready instanceof Response) return ready
         const parsed = lineCreateSchema.safeParse(await c.req.json().catch(() => null))
         if (!parsed.success) return c.json({ error: 'Invalid body' }, 400)
-        if (!canSeeMachine(ready.account.id, ready.account.defaultNamespace, parsed.data.primaryMachineId, ready.engine)) {
+        if (!canSeeMachine(ready.account.id, parsed.data.primaryMachineId)) {
             return c.json({ error: 'Not found' }, 404)
         }
         try {
@@ -120,7 +118,7 @@ export function mountWorkLineRoutes(app: Hono<WebAppEnv>, deps: {
         if (ready instanceof Response) return ready
         const parsed = linePatchSchema.safeParse(await c.req.json().catch(() => null))
         if (!parsed.success) return c.json({ error: 'Invalid body' }, 400)
-        if (parsed.data.primaryMachineId && !canSeeMachine(ready.account.id, ready.account.defaultNamespace, parsed.data.primaryMachineId, ready.engine)) {
+        if (parsed.data.primaryMachineId && !canSeeMachine(ready.account.id, parsed.data.primaryMachineId)) {
             return c.json({ error: 'Not found' }, 404)
         }
         try {
@@ -149,6 +147,8 @@ export function mountWorkLineRoutes(app: Hono<WebAppEnv>, deps: {
         if (ready instanceof Response) return ready
         const parsed = directorySchema.safeParse(await c.req.json().catch(() => null))
         if (!parsed.success) return c.json({ error: 'Invalid body' }, 400)
+        const machineId = machineIdFromDirectoryKey(parsed.data.directoryKey)
+        if (!canSeeMachine(ready.account.id, machineId)) return c.json({ error: 'Not found' }, 404)
         try {
             ready.engine.getWorkLines().putDirectory(ready.account.id, parsed.data)
             invalidate(ready.account.defaultNamespace, ready.account.id, 'work-map')
@@ -163,7 +163,7 @@ export function mountWorkLineRoutes(app: Hono<WebAppEnv>, deps: {
         if (ready instanceof Response) return ready
         const parsed = sessionSchema.safeParse(await c.req.json().catch(() => null))
         if (!parsed.success) return c.json({ error: 'Invalid body' }, 400)
-        if (!canSeeSession(ready.account.id, ready.account.defaultNamespace, parsed.data.sessionId, ready.engine)) {
+        if (!canSeeSession(ready.account.id, parsed.data.sessionId)) {
             return c.json({ error: 'Not found' }, 404)
         }
         try {
@@ -180,7 +180,7 @@ export function mountWorkLineRoutes(app: Hono<WebAppEnv>, deps: {
         if (ready instanceof Response) return ready
         const parsed = dismissedSchema.safeParse(await c.req.json().catch(() => null))
         if (!parsed.success) return c.json({ error: 'Invalid body' }, 400)
-        if (!canSeeSession(ready.account.id, ready.account.defaultNamespace, parsed.data.sessionId, ready.engine)) {
+        if (!canSeeSession(ready.account.id, parsed.data.sessionId)) {
             return c.json({ error: 'Not found' }, 404)
         }
         try {
@@ -225,7 +225,7 @@ export function mountWorkLineRoutes(app: Hono<WebAppEnv>, deps: {
         if (ready instanceof Response) return ready
         const parsed = trainingSchema.safeParse(await c.req.json().catch(() => null))
         if (!parsed.success) return c.json({ error: 'Invalid body' }, 400)
-        if (!canSeeMachine(ready.account.id, ready.account.defaultNamespace, parsed.data.machineId, ready.engine)) {
+        if (!canSeeMachine(ready.account.id, parsed.data.machineId)) {
             return c.json({ error: 'Not found' }, 404)
         }
         try {
@@ -240,9 +240,9 @@ export function mountWorkLineRoutes(app: Hono<WebAppEnv>, deps: {
         const ready = await open(c)
         if (ready instanceof Response) return ready
         const row = ready.engine.getWorkLines().getTrainingRun(ready.account.id, c.req.param('run'))
-        if (!row) return c.json({ error: 'Not found' }, 404)
+        if (!row || !canSeeMachine(ready.account.id, row.machineId)) return c.json({ error: 'Not found' }, 404)
         try {
-            const summary = await ready.engine.queryTrainingRun(row.machineId)
+            const summary = await ready.engine.queryTrainingRun(row.machineId, { run: row.run, runDir: row.runDir })
             if (!summary || typeof summary !== 'object') return c.json({ unavailable: true })
             return c.json(summary)
         } catch {
@@ -255,6 +255,11 @@ export function mountWorkLineRoutes(app: Hono<WebAppEnv>, deps: {
 
 function mapError(c: { json: (body: unknown, status?: number) => Response }, error: unknown): Response {
     if (error instanceof WorkMapError) return c.json({ error: error.message }, error.status)
-    const message = error instanceof Error ? error.message : 'Work map failed'
-    return c.json({ error: message }, 400)
+    console.error('[work-lines] request failed', error)
+    return c.json({ error: 'Work request failed' }, 500)
+}
+
+function machineIdFromDirectoryKey(key: string): string {
+    const separator = key.indexOf('::')
+    return separator > 0 ? key.slice(0, separator) : ''
 }
