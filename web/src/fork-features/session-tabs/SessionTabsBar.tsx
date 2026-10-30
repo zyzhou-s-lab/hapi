@@ -19,7 +19,8 @@ import {
     closeTabsToRight,
     moveTab,
     openTab,
-    pruneTabs,
+    confirmedDeletedIds,
+    pruneDeletedTabs,
     togglePinTab,
     updateSessionTabs,
     useSessionTabsState
@@ -33,18 +34,25 @@ export function useSessionTabsScope(): string {
     return `${baseUrl}|${user.id}`
 }
 
-/** 会话页每次打开一个会话就把它放进标签（已在就只更新激活时间，不挪位置）；会话被删就清掉。 */
+/**
+ * 打开当前会话并放进标签。`loaded` 必须是一次成功的、未过滤的会话列表（含归档）。
+ * 第一次只记下 id；之后从这份列表里消失的才算删除。未加载完、侧栏过滤、归档隐藏都不会删标签。
+ */
 export function useSessionTabsSync(selectedSessionId: string | null, sessions: SessionSummary[], loaded: boolean): void {
     const scope = useSessionTabsScope()
+    const baseline = useRef<{ scope: string; ids: Set<string> } | null>(null)
     useEffect(() => {
         if (selectedSessionId) updateSessionTabs(scope, state => openTab(state, selectedSessionId, Date.now()))
     }, [scope, selectedSessionId])
     useEffect(() => {
-        if (!loaded || sessions.length === 0) return
-        const existing = new Set(sessions.map(session => session.id))
-        if (selectedSessionId) existing.add(selectedSessionId)
-        updateSessionTabs(scope, state => pruneTabs(state, existing))
-    }, [scope, loaded, sessions, selectedSessionId])
+        if (!loaded) return
+        const current = new Set(sessions.map(session => session.id))
+        const previous = baseline.current?.scope === scope ? baseline.current.ids : null
+        baseline.current = { scope, ids: current }
+        const deleted = confirmedDeletedIds(previous, current)
+        if (deleted.size === 0) return
+        updateSessionTabs(scope, state => pruneDeletedTabs(state, deleted))
+    }, [scope, loaded, sessions])
     useSessionTabShortcuts(scope, selectedSessionId)
 }
 

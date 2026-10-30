@@ -172,7 +172,7 @@ function SessionsPage() {
     const matchRoute = useMatchRoute()
     const { t } = useTranslation()
     const { addToast } = useToast()
-    const { sessions, isLoading, error, refetch } = useSessions(api)
+    const { sessions, isLoading, isSuccess, error, refetch } = useSessions(api)
     const { hideArchivedSessions } = useHideArchivedSessions()
     // Hide user-archived sessions from the list when the preference is on.
     // `sessions` (unfiltered) is still used for selected-session resolution so an
@@ -237,7 +237,8 @@ function SessionsPage() {
         active: isSessionsIndex,
         onOpen: () => navigate({ to: '/sessions', ...PRESERVE_SESSION_SIDEBAR_SCROLL }),
     }), [isSessionsIndex, navigate])
-    useSessionTabsSync(selectedSessionId, sessions, !isLoading && !error)
+    // Full list, including archived. Sidebar filtering must not be passed in or it would look like deletion.
+    useSessionTabsSync(selectedSessionId, sessions, isSuccess && !error)
     const hasSessionTabs = useHasSessionTabs()
     const tabMachineLabel = useCallback((session: SessionSummary) => {
         const machineId = session.metadata?.machineId

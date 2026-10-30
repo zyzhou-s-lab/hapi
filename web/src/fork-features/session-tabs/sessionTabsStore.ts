@@ -76,9 +76,23 @@ export function moveTab(state: SessionTabsState, fromId: string, toId: string): 
     return { tabs }
 }
 
-/** 会话已被删除（列表里查不到）的标签直接去掉。 */
-export function pruneTabs(state: SessionTabsState, existing: ReadonlySet<string>): SessionTabsState {
-    const tabs = state.tabs.filter(tab => existing.has(tab.id))
+/**
+ * Ids present in a previous complete list and missing from the next one.
+ * `previous === null` means this window has not seen a full list yet, so nothing is confirmed deleted.
+ */
+export function confirmedDeletedIds(previous: ReadonlySet<string> | null, current: ReadonlySet<string>): ReadonlySet<string> {
+    if (!previous) return new Set()
+    const deleted = new Set<string>()
+    for (const id of previous) {
+        if (!current.has(id)) deleted.add(id)
+    }
+    return deleted
+}
+
+/** Drop tabs whose sessions were confirmed deleted. Ids the list has not shown yet stay. */
+export function pruneDeletedTabs(state: SessionTabsState, deletedIds: ReadonlySet<string>): SessionTabsState {
+    if (deletedIds.size === 0) return state
+    const tabs = state.tabs.filter(tab => !deletedIds.has(tab.id))
     return tabs.length === state.tabs.length ? state : { tabs }
 }
 

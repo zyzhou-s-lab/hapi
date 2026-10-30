@@ -7,7 +7,8 @@ import {
     closeTabsToRight,
     moveTab,
     openTab,
-    pruneTabs,
+    pruneDeletedTabs,
+    confirmedDeletedIds,
     togglePinTab,
     getSessionTabsSnapshot,
     updateSessionTabs,
@@ -69,10 +70,13 @@ describe('session tabs', () => {
         expect(ids(moveTab(state, 'c', 'b'))).toEqual(['b', 'a', 'c'])
     })
 
-    it('prunes tabs whose session no longer exists', () => {
+    it('drops a tab only after the session disappears from a list already seen', () => {
         const state = open('a', 'b')
-        expect(ids(pruneTabs(state, new Set(['b'])))).toEqual(['b'])
-        expect(pruneTabs(state, new Set(['a', 'b']))).toBe(state)
+        expect(confirmedDeletedIds(null, new Set(['b'])).size).toBe(0)
+        expect(ids(pruneDeletedTabs(state, confirmedDeletedIds(null, new Set(['b']))))).toEqual(['a', 'b'])
+        expect([...confirmedDeletedIds(new Set(['a', 'b']), new Set(['b']))]).toEqual(['a'])
+        expect(ids(pruneDeletedTabs(state, confirmedDeletedIds(new Set(['a', 'b']), new Set(['b']))))).toEqual(['b'])
+        expect(pruneDeletedTabs(state, new Set())).toBe(state)
     })
 
     it('persists per scope in localStorage', () => {
