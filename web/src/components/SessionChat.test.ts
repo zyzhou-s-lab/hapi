@@ -110,7 +110,7 @@ describe('chatComposerGridPlacement', () => {
 })
 
 describe('floating dock surface', () => {
-    it('frosts the error bar, tasks card, and queued card on their own surfaces', () => {
+    it('frosts the error bar and tasks card, not a wrapper around queued rows', () => {
         const css = readFileSync('src/index.css', 'utf8')
         const surface = css.match(/\.composer-floating-frame,\s*\.composer-floating-chrome,\s*\.composer-dock-card \{[^}]+\}/)?.[0] ?? ''
         const chrome = css.match(/\.composer-floating-chrome \{\s*margin-inline:[^}]+\}/)?.[0] ?? ''
@@ -131,7 +131,7 @@ describe('floating dock surface', () => {
         expect(source).toContain('<div className="px-3">')
         expect(tasks).toContain('composer-dock-card')
         expect(tasks).not.toContain('bg-[var(--app-subtle-bg)]')
-        expect(queued).toContain('composer-dock-card')
+        expect(queued).not.toContain('composer-dock-card')
         expect(composer).not.toContain('composer-floating-chrome')
         expect(composer).not.toContain('composer-dock-card')
     })

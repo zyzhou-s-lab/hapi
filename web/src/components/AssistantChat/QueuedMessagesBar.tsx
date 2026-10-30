@@ -332,7 +332,7 @@ export function QueuedMessagesBar({
         <div
             role="status"
             aria-label={`${queued.length} queued message${queued.length === 1 ? '' : 's'} pending invocation`}
-            className="composer-dock-card mx-auto w-full max-w-content rounded-lg"
+            className="mx-auto w-full max-w-content"
         >
             <div className="px-3 pb-0 pt-2 text-sm text-[var(--app-fg-muted)]">
                 <div className="flex items-center gap-1.5 mb-1.5 text-xs font-medium text-[var(--app-hint)]">
@@ -497,7 +497,7 @@ export function QueuedMessagesBar({
                         return (
                             <li
                                 key={msg.localId ?? msg.id}
-                                className="flex items-start gap-2 min-w-0 rounded-lg bg-[var(--app-secondary-bg)] px-3 py-2"
+                                className="flex items-start gap-2 min-w-0 rounded-lg bg-[var(--app-secondary-bg)] px-3 py-2 shadow-sm"
                             >
                                 <div className="flex-1 min-w-0">
                                     {text ? (
