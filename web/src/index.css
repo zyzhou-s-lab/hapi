@@ -864,3 +864,30 @@ html[data-theme="oled"] .shiki span:not([data-line-number]) {
     transition: none;
   }
 }
+
+@media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+        scroll-behavior: auto !important;
+    }
+
+    .hapi-composer-attachment-control {
+        opacity: 1;
+        pointer-events: auto;
+    }
+}
+
+:focus-visible {
+    outline: 2px solid var(--app-button);
+    outline-offset: 2px;
+}
+
+[class*="text-[var(--app-fg)]/40"],
+[class*="text-[var(--app-fg)]/50"] {
+    color: var(--app-hint);
+}
+
