@@ -24,12 +24,14 @@ function isOmpTodoToolName(name: string | null): boolean {
     return normalized === 'todo' || normalized === 'todowrite'
 }
 
-// Abandoned omp tasks are omitted. Blocked stays blocked. Anything else
-// unknown falls back to pending, matching checklist.tsx.
-function visibleOmpStatus(value: unknown): 'pending' | 'in_progress' | 'completed' | 'blocked' | null {
+// Abandoned omp tasks are omitted. Blocked stays a flag beside `pending`:
+// shipped iOS builds reject a `blocked` status enum value. Unknown statuses
+// fall back to pending, matching checklist.tsx.
+function visibleOmpTask(value: unknown): { status: 'pending' | 'in_progress' | 'completed'; blocked?: true } | null {
     if (value === 'abandoned') return null
-    if (value === 'completed' || value === 'in_progress' || value === 'blocked') return value
-    return 'pending'
+    if (value === 'blocked') return { status: 'pending', blocked: true }
+    if (value === 'completed' || value === 'in_progress') return { status: value }
+    return { status: 'pending' }
 }
 
 function todosFromClaudeArray(todos: unknown): TodoItem[] | null {
@@ -55,7 +57,7 @@ function extractOmpTodoSnapshot(value: unknown): TodoItem[] | null {
         ?? (isObject(value.details) ? ompTodoDetails(value.details) : null)
     if (!details) return null
 
-    const todos: Array<Pick<TodoItem, 'content' | 'status' | 'priority' | 'id'>> = []
+    const todos: Array<Pick<TodoItem, 'content' | 'status' | 'priority' | 'id' | 'blocked'>> = []
     let opaque = false
     for (const phase of details.phases) {
         if (!isObject(phase) || !Array.isArray(phase.tasks)) {
@@ -68,13 +70,14 @@ function extractOmpTodoSnapshot(value: unknown): TodoItem[] | null {
                 opaque = true
                 return
             }
-            const status = visibleOmpStatus(task.status)
-            if (!status) return
+            const mapped = visibleOmpTask(task.status)
+            if (!mapped) return
             todos.push({
                 content: task.content,
-                status,
+                status: mapped.status,
                 priority: 'medium',
-                id: ompTodoId(phaseName, index, task.id)
+                id: ompTodoId(phaseName, index, task.id),
+                ...(mapped.blocked ? { blocked: true } : {})
             })
         })
     }
@@ -126,14 +129,18 @@ function extractTodosFromOmpOutput(content: Record<string, unknown>): TodoItem[]
     const message = isObject(data.message) ? data.message : null
     if (!message || !Array.isArray(message.content)) return null
 
-    for (const block of message.content) {
-        if (!isObject(block) || block.type !== 'tool_result') continue
+    const blocks = message.content.filter((block) => isObject(block) && block.type === 'tool_result')
+    for (const block of blocks) {
         const resultName = typeof block.name === 'string' ? block.name : typeof block.toolName === 'string' ? block.toolName : null
-        if (!isOmpTodoToolName(resultName)) continue
+        if (resultName !== null && !isOmpTodoToolName(resultName)) continue
         if (block.is_error === true || block.isError === true) continue
-        const snapshot = extractOmpTodoSnapshot('content' in block ? (block as Record<string, unknown>).content : null)
-            ?? extractOmpTodoSnapshot(data.toolUseResult)
-        if (snapshot) return snapshot
+        const fromContent = extractOmpTodoSnapshot('content' in block ? (block as Record<string, unknown>).content : null)
+        if (fromContent) return fromContent
+        // toolUseResult is one envelope for the whole message. Only a single
+        // tool_result can own it; with several blocks it would stick to the wrong one.
+        if (blocks.length !== 1) continue
+        const fromEnvelope = extractOmpTodoSnapshot(data.toolUseResult)
+        if (fromEnvelope) return fromEnvelope
     }
 
     return null
@@ -146,8 +153,9 @@ function extractTodosFromCodexMessage(content: Record<string, unknown>): TodoIte
     if (!data) return null
 
     if (data.type === 'tool-call-result') {
+        if (data.is_error === true || data.isError === true) return null
         const name = typeof data.name === 'string' ? data.name : null
-        if (!isOmpTodoToolName(name) || data.is_error === true || data.isError === true) return null
+        if (name !== null && !isOmpTodoToolName(name)) return null
         return extractOmpTodoSnapshot('output' in data ? data.output : null)
     }
 

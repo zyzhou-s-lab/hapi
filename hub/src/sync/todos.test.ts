@@ -12,7 +12,7 @@ function codexMessage(data: Record<string, unknown>) {
 
 function ompToolResult(
     details: Record<string, unknown>,
-    opts?: { toolUseResult?: boolean; blockContent?: boolean; name?: string; isError?: boolean }
+    opts?: { toolUseResult?: boolean; blockContent?: boolean; name?: string | null; isError?: boolean }
 ) {
     const toolOutput = {
         content: [{ type: 'text', text: 'summary' }],
@@ -27,7 +27,7 @@ function ompToolResult(
             content: [{
                 type: 'tool_result',
                 tool_use_id: 'call-1',
-                name: opts?.name ?? 'todo',
+                ...(opts?.name === null ? {} : { name: opts?.name ?? 'todo' }),
                 content: includeBlock ? toolOutput : [{ type: 'text', text: 'summary' }],
                 is_error: opts?.isError === true
             }]
@@ -84,20 +84,21 @@ const doneDetails = {
 const initTodos: TodoItem[] = [
     { content: '查找已有实现', status: 'in_progress', priority: 'medium', id: 'task-1' },
     { content: '对照协议', status: 'pending', priority: 'medium', id: 'Research:1' },
-    { content: '被阻塞的步骤', status: 'blocked', priority: 'medium', id: 'Ship:0' },
+    { content: '被阻塞的步骤', status: 'pending', priority: 'medium', id: 'Ship:0', blocked: true },
     { content: '已完成的步骤', status: 'completed', priority: 'medium', id: 'Ship:2' }
 ]
 
 const doneTodos: TodoItem[] = [
     { content: '查找已有实现', status: 'completed', priority: 'medium', id: 'task-1' },
     { content: '对照协议', status: 'in_progress', priority: 'medium', id: 'Research:1' },
-    { content: '被阻塞的步骤', status: 'blocked', priority: 'medium', id: 'Ship:0' },
+    { content: '被阻塞的步骤', status: 'pending', priority: 'medium', id: 'Ship:0', blocked: true },
     { content: '已完成的步骤', status: 'completed', priority: 'medium', id: 'Ship:2' }
 ]
 
 describe('omp todo extraction', () => {
-    test('reads details.phases, keeps blocked, hides abandoned, and fills blank ids', () => {
+    test('reads details.phases, keeps blocked as a flag, hides abandoned, and fills blank ids', () => {
         expect(extractTodoWriteTodosFromMessageContent(ompToolResult(initDetails))).toEqual(initTodos)
+        expect(extractTodoWriteTodosFromMessageContent(ompToolResult(initDetails, { name: null }))).toEqual(initTodos)
         expect(extractTodoWriteTodosFromMessageContent(ompToolResult(initDetails, { toolUseResult: false }))).toEqual(initTodos)
         expect(extractTodoWriteTodosFromMessageContent(ompToolResult(initDetails, { blockContent: false }))).toEqual(initTodos)
     })
@@ -175,6 +176,34 @@ describe('omp todo extraction', () => {
                 content: [{ type: 'tool_result', tool_use_id: 'read-1', name: 'read', content: 'file text' }]
             }
         }))).toBeNull()
+        expect(extractTodoWriteTodosFromMessageContent(outputMessage({
+            type: 'user',
+            message: {
+                role: 'user',
+                content: [
+                    { type: 'tool_result', tool_use_id: 'read-1', name: 'read', content: 'file', is_error: false },
+                    { type: 'tool_result', tool_use_id: 'todo-1', name: 'todo', content: [{ type: 'text', text: 'summary' }], is_error: false }
+                ]
+            },
+            toolUseResult: { content: [{ type: 'text', text: 'summary' }], details: initDetails }
+        }))).toBeNull()
+        expect(extractTodoWriteTodosFromMessageContent(outputMessage({
+            type: 'user',
+            message: {
+                role: 'user',
+                content: [
+                    { type: 'tool_result', tool_use_id: 'read-1', name: 'read', content: 'file', is_error: false },
+                    {
+                        type: 'tool_result',
+                        tool_use_id: 'todo-1',
+                        name: 'todo',
+                        content: { content: [{ type: 'text', text: 'summary' }], details: initDetails },
+                        is_error: false
+                    }
+                ]
+            },
+            toolUseResult: { details: { op: 'view', phases: [], storage: 'session' } }
+        }))).toEqual(initTodos)
     })
 
     test('reads a named omp tool-call-result and still accepts TodoWrite', () => {
@@ -188,7 +217,7 @@ describe('omp todo extraction', () => {
             type: 'tool-call-result',
             callId: 'call-1',
             output: { details: doneDetails }
-        }))).toBeNull()
+        }))).toEqual(doneTodos)
         expect(extractTodoWriteTodosFromMessageContent(codexMessage({
             type: 'tool-call-result',
             name: 'todo',

@@ -248,10 +248,14 @@ export type AgentState = z.infer<typeof AgentStateSchema>
 
 export const TodoItemSchema = z.object({
     content: z.string(),
-    status: z.enum(['pending', 'in_progress', 'completed', 'blocked']),
+    status: z.enum(['pending', 'in_progress', 'completed']),
     priority: z.enum(['high', 'medium', 'low']).optional().default('medium'),
     id: z.string().optional().default(''),
-    activeForm: z.string().optional()
+    activeForm: z.string().optional(),
+    // omp `blocked` is not a status value: shipped iOS builds decode `status`
+    // with a strict enum and reject `blocked`. The flag is ignored by those
+    // clients; the web checklist renders it.
+    blocked: z.boolean().optional()
 })
 
 export type TodoItem = z.infer<typeof TodoItemSchema>

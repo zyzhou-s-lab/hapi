@@ -34,9 +34,9 @@ function parseChecklistEntries(
 
         const idValue = opts.idKey ? entry[opts.idKey] : undefined
         items.push({
-            id: typeof idValue === 'string' ? idValue : undefined,
+            id: typeof idValue === 'string' && idValue !== '' ? idValue : undefined,
             text,
-            status: normalizeChecklistStatus(entry.status)
+            status: entry.blocked === true ? 'blocked' : normalizeChecklistStatus(entry.status)
         })
     }
 

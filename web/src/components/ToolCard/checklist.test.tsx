@@ -98,15 +98,20 @@ describe('extractTodoChecklist', () => {
         ])
     })
 
-    it('keeps blocked todos distinct and leaves abandoned as pending on the tool card', () => {
+    it('keeps a blocked flag distinct from pending and still reads a raw blocked status', () => {
         expect(extractTodoChecklist({
             todos: [
-                { content: 'wait', status: 'blocked', id: 'b' },
+                { content: 'wait', status: 'pending', blocked: true, id: 'b' },
                 { content: 'drop', status: 'abandoned' }
             ]
         }, null)).toEqual([
             { id: 'b', text: 'wait', status: 'blocked' },
             { id: undefined, text: 'drop', status: 'pending' }
+        ])
+        expect(extractTodoChecklist(null, {
+            phases: [{ name: 'Ship', tasks: [{ content: 'wait', status: 'blocked', id: 'b' }] }]
+        })).toEqual([
+            { id: 'b', text: 'wait', status: 'blocked' }
         ])
     })
 })
