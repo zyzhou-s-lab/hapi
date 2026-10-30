@@ -42,7 +42,6 @@ import {
     installCursorMcpOverlay,
     type CursorMcpOverlayHandle,
 } from './utils/cursorMcpOverlay';
-import { cursorInventory, publishSessionInventory } from '@/modules/common/sessionInventory';
 import {
     resolveCursorSpawnModel,
     tryRemapCursorSpawnModelFromConnectError
@@ -120,15 +119,12 @@ class CursorAcpRemoteLauncher extends RemoteLauncherBase {
                 }, {
                     serverId: cursorHapiMcpServerId(session.client.sessionId),
                 });
-                if (Array.isArray(this.cursorMcpOverlay.servers)) {
-                    publishSessionInventory(session.client, cursorInventory(this.cursorMcpOverlay.servers));
-                }
             } catch (error) {
                 logger.warn(
                     '[cursor-acp] failed to install HAPI MCP overlay; continuing without inline media',
                     error,
                 );
-                this.cursorMcpOverlay = { cleanup: () => {}, servers: [] };
+                this.cursorMcpOverlay = { cleanup: () => {} };
             }
         }
 

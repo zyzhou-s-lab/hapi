@@ -15,14 +15,14 @@ import { registerGitHandlers } from './handlers/git'
 import { registerRipgrepHandlers } from './handlers/ripgrep'
 import { registerSlashCommandHandlers } from './handlers/slashCommands'
 import { registerSkillsHandlers } from './handlers/skills'
-import type { SkillSummary } from './skills'
+import { registerSessionConfigHandlers, type SessionConfigContext } from './handlers/sessionConfig'
 import { registerUploadHandlers } from './handlers/uploads'
 import { registerImportableSessionHandlers } from '../../../../fork-features/history-import/cli/register'
 
 export function registerCommonHandlers(
     rpcHandlerManager: RpcHandlerManager,
     workingDirectory: string,
-    options?: { onSkills?: (skills: SkillSummary[]) => void }
+    options?: { getSessionConfigContext?: () => SessionConfigContext }
 ): void {
     registerAgyModelHandlers(rpcHandlerManager)
     registerBashHandlers(rpcHandlerManager, workingDirectory)
@@ -38,7 +38,8 @@ export function registerCommonHandlers(
     registerRipgrepHandlers(rpcHandlerManager, workingDirectory)
     registerDifftasticHandlers(rpcHandlerManager, workingDirectory)
     registerSlashCommandHandlers(rpcHandlerManager, workingDirectory)
-    registerSkillsHandlers(rpcHandlerManager, workingDirectory, options?.onSkills)
+    registerSkillsHandlers(rpcHandlerManager, workingDirectory)
+    registerSessionConfigHandlers(rpcHandlerManager, workingDirectory, options?.getSessionConfigContext)
     registerGitHandlers(rpcHandlerManager, workingDirectory)
     registerUploadHandlers(rpcHandlerManager)
     registerImportableSessionHandlers(rpcHandlerManager)

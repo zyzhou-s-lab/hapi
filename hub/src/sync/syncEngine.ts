@@ -4075,6 +4075,16 @@ export class SyncEngine {
         return await this.rpcGateway.listSkills(sessionId, flavor)
     }
 
+    async listSessionConfig(sessionId: string): Promise<{
+        success: boolean
+        error?: string
+        mcp?: unknown
+        hooks?: unknown
+        skills?: unknown
+    }> {
+        return await this.rpcGateway.listSessionConfig(sessionId)
+    }
+
     async listAgyModelsForMachine(machineId: string): Promise<RpcListAgyModelsResponse> {
         return await this.rpcGateway.listAgyModelsForMachine(machineId)
     }

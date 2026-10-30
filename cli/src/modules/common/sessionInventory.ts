@@ -1,10 +1,8 @@
 import { existsSync, lstatSync, readFileSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join, resolve, sep } from 'node:path';
-import type { Metadata } from '@/api/types';
 import { logger } from '@/ui/logger';
 import {
-    SessionInventorySchema,
     type SessionInventory,
     type SessionInventoryHook,
     type SessionInventoryMcpServer,
@@ -12,6 +10,7 @@ import {
     type SessionInventorySource,
 } from '@hapi/protocol/schemas';
 import { buildHookSettings, readMachineClaudeSettings } from '@/modules/common/hooks/generateHookSettings';
+import { listSkills } from '@/modules/common/skills';
 
 const MAX_CONFIG_BYTES = 1_000_000;
 const SOURCE_RANK: Record<SessionInventorySource, number> = {
@@ -23,11 +22,8 @@ const SOURCE_RANK: Record<SessionInventorySource, number> = {
     injected: 6,
 };
 
-export type SessionInventoryPatch = {
-    mcp?: SessionInventory['mcp'];
-    hooks?: SessionInventory['hooks'];
-    skills?: SessionInventory['skills'];
-};
+export type LiveSessionConfig = SessionInventory;
+type SessionInventoryPatch = LiveSessionConfig;
 
 const SECRET_TEXT = /token|api[_-]?key|secret|password|bearer|authorization/i;
 
@@ -140,41 +136,6 @@ export function inventorySkills(
         ...(options?.catalogUnavailable ? { catalogUnavailable: true } : {}),
         items,
     };
-}
-
-export function mergeSessionInventory(
-    current: SessionInventory | undefined,
-    patch: SessionInventoryPatch,
-    now = Date.now()
-): SessionInventory {
-    return {
-        reportedAt: now,
-        ...(patch.mcp || current?.mcp ? { mcp: patch.mcp ?? current?.mcp } : {}),
-        ...(patch.hooks || current?.hooks ? { hooks: patch.hooks ?? current?.hooks } : {}),
-        ...(patch.skills || current?.skills ? { skills: patch.skills ?? current?.skills } : {}),
-    };
-}
-
-export function withSessionInventory(metadata: Metadata, patch: SessionInventoryPatch, now = Date.now()): Metadata {
-    const merged = mergeSessionInventory(metadata.sessionInventory, patch, now);
-    const parsed = SessionInventorySchema.safeParse(merged);
-    if (!parsed.success) return metadata;
-    return {
-        ...metadata,
-        sessionInventory: parsed.data,
-    };
-}
-
-export function publishSessionInventory(
-    client: { updateMetadata?: (handler: (metadata: Metadata) => Metadata) => void },
-    patch: SessionInventoryPatch
-): void {
-    if (typeof client.updateMetadata !== 'function') return;
-    try {
-        client.updateMetadata((metadata) => withSessionInventory(metadata, patch));
-    } catch (error) {
-        logger.debug('[session-inventory] publish failed', error);
-    }
 }
 
 export function mcpServersFromConfig(value: unknown, source: SessionInventorySource): SessionInventoryMcpServer[] {
@@ -393,4 +354,75 @@ export function cursorInventory(servers: readonly { name: string; source: 'injec
 export function codexSkillSource(scope: string | undefined): 'user' | 'project' | 'plugin' | 'system' | undefined {
     if (scope === 'user' || scope === 'project' || scope === 'plugin' || scope === 'system') return scope;
     return undefined;
+}
+
+const CURSOR_OVERLAY_PID_ENV = 'HAPI_MCP_OVERLAY_PID';
+
+export function cursorServersFromMcpJson(value: unknown, sessionId?: string): SessionInventoryMcpServer[] {
+    const servers = asRecord(asRecord(value).mcpServers);
+    const items: SessionInventoryMcpServer[] = [];
+    for (const [name, entry] of Object.entries(servers)) {
+        if (!isSafeInventoryName(name)) continue;
+        const env = asRecord(asRecord(entry).env);
+        const stamped = typeof env[CURSOR_OVERLAY_PID_ENV] === 'string' && String(env[CURSOR_OVERLAY_PID_ENV]).trim() !== '';
+        const injected = (sessionId !== undefined && name === `hapi-${sessionId}`) || (name.startsWith('hapi-') && stamped);
+        items.push({ name: name.trim(), source: injected ? 'injected' : 'user' });
+    }
+    return dedupeServers(items);
+}
+
+function loadCursorInventory(sessionId?: string): LiveSessionConfig {
+    const parsed = readJsonFile(join(homedir(), '.cursor', 'mcp.json'), { allowSymlink: true });
+    return {
+        mcp: { kind: 'servers', servers: cursorServersFromMcpJson(parsed, sessionId) },
+        hooks: { availability: 'none', items: [] },
+    };
+}
+
+function flavorInventory(input: {
+    flavor: string;
+    cwd: string;
+    tools?: readonly string[];
+    sessionId?: string;
+    startingMode?: string | null;
+}): LiveSessionConfig {
+    switch (input.flavor) {
+        case 'claude':
+            return loadClaudeInventory(input.cwd);
+        case 'codex':
+            return loadCodexInventory(input.startingMode === 'local');
+        case 'cursor':
+            return loadCursorInventory(input.sessionId);
+        case 'omp':
+            return ompInventoryFromTools(input.tools ?? []);
+        case 'copilot':
+        case 'grok':
+        case 'kimi':
+            return bridgeInventory(input.flavor) ?? {};
+        case 'opencode':
+            return {
+                ...(bridgeInventory('opencode') ?? {}),
+                ...(input.startingMode === 'local' ? OPENCODE_HOOK_INVENTORY : {}),
+            };
+        case 'pi':
+        case 'dsh':
+        case 'agy':
+            return EMPTY_FLAVOR_INVENTORY;
+        default:
+            return {};
+    }
+}
+
+export async function readLiveSessionConfig(input: {
+    flavor?: string | null;
+    cwd: string;
+    tools?: readonly string[];
+    sessionId?: string;
+    startingMode?: string | null;
+    skills?: LiveSessionConfig['skills'];
+}): Promise<LiveSessionConfig> {
+    const flavor = (input.flavor ?? '').trim().toLowerCase();
+    const sections = flavorInventory({ ...input, flavor });
+    const skills = input.skills ?? inventorySkills(await listSkills(input.cwd, { flavor: flavor || undefined }));
+    return { ...sections, skills };
 }

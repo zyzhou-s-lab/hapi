@@ -22,7 +22,8 @@ import { shouldIgnoreTerminalEvent } from './utils/terminalEventGuard';
 import { parseCodexSpecialCommand } from './codexSpecialCommands';
 import { extractErrorInfo } from '@/utils/errorUtils';
 import { RPC_METHODS } from '@hapi/protocol/rpcMethods';
-import { codexSkillSource, inventorySkills, loadCodexInventory, publishSessionInventory } from '@/modules/common/sessionInventory';
+import { codexSkillSource, inventorySkills, readLiveSessionConfig } from '@/modules/common/sessionInventory';
+import { getErrorMessage, rpcError } from '@/modules/common/rpcResponses';
 import { createCodexSessionScanner, type CodexSessionScanner } from './utils/codexSessionScanner';
 import { createCodexTranscriptLocator, type CodexTranscriptLocator } from './utils/codexTranscriptLocator';
 import { convertCodexEvent, isCodexEventFromCurrentProcess } from './utils/codexEventConverter';
@@ -3609,7 +3610,19 @@ class CodexRemoteLauncher extends RemoteLauncherBase {
                     ...(source ? { source } : {}),
                 };
             });
-            publishSessionInventory(session.client, { skills: inventorySkills(reportedSkills) });
+            session.client.rpcHandlerManager.registerHandler(RPC_METHODS.ListSessionConfig, async () => {
+                try {
+                    const config = await readLiveSessionConfig({
+                        flavor: 'codex',
+                        cwd: session.path,
+                        startingMode: session.startingMode,
+                        skills: inventorySkills(reportedSkills),
+                    });
+                    return { success: true, ...config };
+                } catch (error) {
+                    return rpcError(getErrorMessage(error, 'Failed to read session config'));
+                }
+            });
             if (!nativeSkillsAvailable) {
                 nativeSkillsAvailable = true;
                 session.client.rpcHandlerManager.registerHandler(RPC_METHODS.ListSkills, async () => ({
@@ -3672,7 +3685,6 @@ class CodexRemoteLauncher extends RemoteLauncherBase {
             emitTitleSummary: false
         });
         this.happyServer = happyServer;
-        publishSessionInventory(session.client, loadCodexInventory(false));
 
         this.setupAbortHandlers(session.client.rpcHandlerManager, {
             onAbort: () => this.handleAbort(),

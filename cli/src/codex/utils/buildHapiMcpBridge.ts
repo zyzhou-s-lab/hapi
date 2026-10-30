@@ -9,7 +9,6 @@ import { startHappyServer } from '@/claude/utils/startHappyServer';
 import { getHappyCliCommand } from '@/utils/spawnHappyCLI';
 import type { ApiSessionClient } from '@/api/apiSession';
 import { exportHapiSessionEnv } from '@/agent/hapiSessionEnv';
-import { bridgeInventory, publishSessionInventory } from '@/modules/common/sessionInventory';
 
 /**
  * MCP server entry configuration.
@@ -135,10 +134,5 @@ export async function buildHapiMcpBridge(
             }
         }
     };
-    const flavor = options.skillLookup?.flavor;
-    if (flavor) {
-        const patch = bridgeInventory(flavor);
-        if (patch) publishSessionInventory(client, patch);
-    }
     return bridge;
 }

@@ -6,7 +6,6 @@ import { buildOpencodeEnv } from './utils/config';
 import { ensureOpencodeConfig } from './utils/opencodeConfig';
 import { getTitleInstruction } from './utils/systemPrompt';
 import { buildHapiMcpBridge } from '@/codex/utils/buildHapiMcpBridge';
-import { OPENCODE_HOOK_INVENTORY, publishSessionInventory } from '@/modules/common/sessionInventory';
 import type { OpencodeHookEvent } from './types';
 import type { OpencodeHookServer } from './utils/startOpencodeHookServer';
 import { createOpencodeStorageScanner, type OpencodeStorageScannerHandle } from './utils/opencodeStorageScanner';
@@ -183,7 +182,6 @@ export async function opencodeLocalLauncher(
 
     const opencodeConfigDir = resolveOpencodeConfigDir(session);
     ensureOpencodeHookPlugin(opencodeConfigDir, hookUrl, opts.hookServer.token);
-    publishSessionInventory(session.client, OPENCODE_HOOK_INVENTORY);
     // Start the hapi MCP server for change_title support (optional feature)
     let happyServer: { url: string; stop: () => void } | null = null;
     let opencodeConfigPath: string | null = null;

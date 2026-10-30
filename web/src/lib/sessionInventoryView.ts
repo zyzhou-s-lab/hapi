@@ -9,18 +9,10 @@ export type InventoryRow = {
 
 export type InventorySection =
     | { status: 'unreported' }
-    | { status: 'loading' }
     | { status: 'empty' }
-    | { status: 'offline' }
     | { status: 'none' }
     | { status: 'catalogUnavailable' }
     | { status: 'list'; rows: InventoryRow[]; tools?: boolean }
-
-export type LiveSkillsState = {
-    state: 'idle' | 'loading' | 'ready' | 'error'
-    skills?: ReadonlyArray<{ name: string; description?: string; source?: string }>
-    catalogUnavailable?: boolean
-}
 
 const SECRET_TEXT = /token|api[_-]?key|secret|password|bearer|authorization/i
 
@@ -89,26 +81,12 @@ export function hooksSection(inventory: SessionInventory | null | undefined): In
     return rowsOrEmpty(rows)
 }
 
-export function skillsSection(input: {
-    inventory: SessionInventory | null | undefined
-    live: LiveSkillsState
-    sessionActive: boolean
-}): InventorySection {
-    if (input.live.state === 'ready') {
-        if (input.live.catalogUnavailable) return { status: 'catalogUnavailable' }
-        return rowsOrEmpty((input.live.skills ?? []).flatMap((skill) => {
-            const next = row(skill.name, skill.source, skill.description)
-            return next ? [next] : []
-        }))
-    }
-    if (input.inventory?.skills?.catalogUnavailable) return { status: 'catalogUnavailable' }
-    if (input.inventory?.skills) {
-        return rowsOrEmpty(input.inventory.skills.items.flatMap((skill) => {
-            const next = row(skill.name, skill.source, skill.description)
-            return next ? [next] : []
-        }))
-    }
-    if (input.live.state === 'loading') return { status: 'loading' }
-    if (!input.sessionActive) return { status: 'offline' }
-    return { status: 'unreported' }
+export function skillsSection(inventory: SessionInventory | null | undefined): InventorySection {
+    const skills = inventory?.skills
+    if (!skills) return { status: 'unreported' }
+    if (skills.catalogUnavailable) return { status: 'catalogUnavailable' }
+    return rowsOrEmpty(skills.items.flatMap((skill) => {
+        const next = row(skill.name, skill.source, skill.description)
+        return next ? [next] : []
+    }))
 }

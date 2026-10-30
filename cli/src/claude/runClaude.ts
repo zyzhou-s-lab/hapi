@@ -28,7 +28,8 @@ import {
     toConversationHistoryCapabilities
 } from '@hapi/protocol/conversationHistory';
 import { listSkills, type SkillSummary } from '@/modules/common/skills';
-import { inventorySkills, loadClaudeInventory, publishSessionInventory, withSessionInventory } from '@/modules/common/sessionInventory';
+import { inventorySkills, readLiveSessionConfig } from '@/modules/common/sessionInventory';
+import { getErrorMessage, rpcError } from '@/modules/common/rpcResponses';
 
 export interface StartOptions {
     model?: string
@@ -110,22 +111,20 @@ export async function runClaude(options: StartOptions = {}): Promise<void> {
                 logger.debug('[start] SDK metadata extracted, updating session:', sdkMetadata);
                 if (sdkMetadata.slashCommands === undefined) {
                     catalogPromise = null;
-                    session.updateMetadata((currentMetadata) => withSessionInventory({
-                        ...currentMetadata,
-                        ...(sdkMetadata.tools !== undefined ? { tools: sdkMetadata.tools } : {}),
-                    }, {
-                        skills: inventorySkills([], { catalogUnavailable: true }),
-                    }));
+                    if (sdkMetadata.tools !== undefined) {
+                        session.updateMetadata((currentMetadata) => ({
+                            ...currentMetadata,
+                            tools: sdkMetadata.tools
+                        }));
+                    }
                     return result;
                 }
                 nativeSkills = catalog.skills;
                 currentSessionRef.current?.setNativeSkillNames(catalog.skills.map((skill) => skill.name));
-                session.updateMetadata((currentMetadata) => withSessionInventory({
+                session.updateMetadata((currentMetadata) => ({
                     ...currentMetadata,
                     tools: sdkMetadata.tools,
-                    slashCommands: catalog.commands,
-                }, {
-                    skills: inventorySkills(catalog.skills),
+                    slashCommands: catalog.commands
                 }));
                 logger.debug('[start] Session metadata updated with SDK capabilities');
                 return result;
@@ -141,6 +140,22 @@ export async function runClaude(options: StartOptions = {}): Promise<void> {
         return result.sdkMetadata.slashCommands === undefined
             ? { success: false, error: 'Claude skill catalog unavailable' }
             : { success: true, skills: result.catalog.skills };
+    });
+    session.rpcHandlerManager.registerHandler(RPC_METHODS.ListSessionConfig, async () => {
+        try {
+            const result = await getCatalog();
+            const skills = result.sdkMetadata.slashCommands === undefined
+                ? inventorySkills([], { catalogUnavailable: true })
+                : inventorySkills(result.catalog.skills);
+            const config = await readLiveSessionConfig({
+                flavor: 'claude',
+                cwd: workingDirectory,
+                skills,
+            });
+            return { success: true, ...config };
+        } catch (error) {
+            return rpcError(getErrorMessage(error, 'Failed to read session config'));
+        }
     });
 
     // Extract SDK metadata in background and update session when ready
@@ -214,7 +229,6 @@ export async function runClaude(options: StartOptions = {}): Promise<void> {
         trackPermissionMode: true
     });
     logger.debug(`[START] Generated hook settings files: ${hookSettingsPath}, ${localHookSettingsPath}`);
-    publishSessionInventory(session, loadClaudeInventory(workingDirectory));
 
     // Print log file path
     const logPath = logger.logFilePath;

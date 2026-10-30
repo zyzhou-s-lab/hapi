@@ -6,7 +6,6 @@ import { bootstrapExistingSession, bootstrapSession } from '@/agent/sessionFacto
 import { formatMessageWithAttachments } from '@/utils/attachmentFormatter'
 import { getInvokedCwd } from '@/utils/invokedCwd'
 import { logger } from '@/ui/logger'
-import { EMPTY_FLAVOR_INVENTORY, publishSessionInventory } from '@/modules/common/sessionInventory'
 import type { AgentState } from '@/api/types'
 import { DshRemoteLauncher } from './dshRemoteLauncher'
 import { DshSession } from './session'
@@ -40,7 +39,6 @@ export async function runDsh(opts: {
             agentState: initialState
         })
     const { api, session } = bootstrap
-    publishSessionInventory(session, EMPTY_FLAVOR_INVENTORY)
     setControlledByUser(session, startingMode)
 
     const queue = new MessageQueue2<DshMode>((mode) => hashObject(mode))

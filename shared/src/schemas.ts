@@ -4,7 +4,6 @@ import { CODEX_COLLABORATION_MODES, PERMISSION_MODES } from './modes'
 import { AgentConfigDescriptorSchema } from './agentConfig'
 import { OMP_EFFORT_LEVELS, OMP_THINKING_LEVELS } from './omp'
 import { MachineAgentSkillsSchema } from './forkAgentSkills'
-import { SessionInventorySchema } from './sessionInventory'
 
 export {
     SessionInventorySchema,
@@ -133,7 +132,6 @@ export const MetadataSchema = z.object({
     }).optional(),
     tools: z.array(z.string()).optional(),
     slashCommands: z.array(z.string()).optional(),
-    sessionInventory: SessionInventorySchema.optional(),
     homeDir: z.string().optional(),
     happyHomeDir: z.string().optional(),
     happyLibDir: z.string().optional(),

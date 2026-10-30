@@ -240,7 +240,7 @@ export default {
   'session.config.hooks': 'Hooks',
   'session.config.unreported': 'Not reported',
   'session.config.empty': 'None',
-  'session.config.offline': 'Session offline',
+  'session.config.unavailable': 'Unavailable',
   'session.config.hooks.none': 'This flavor has no hooks',
   'session.config.mcp.toolsHint': 'Tool names, not servers',
   'session.config.skills.catalogUnavailable': 'Skill catalog unavailable',

@@ -5,6 +5,7 @@ import type {
     Machine,
     RunnerState,
     Session,
+    SessionInventory,
     SessionSummary,
     SyncEvent as ProtocolSyncEvent,
     WorktreeMetadata
@@ -179,6 +180,14 @@ export type SkillsResponse = {
     success: boolean
     skills?: SkillSummary[]
     error?: string
+}
+
+export type SessionConfigResponse = {
+    success: boolean
+    error?: string
+    mcp?: SessionInventory['mcp']
+    hooks?: SessionInventory['hooks']
+    skills?: SessionInventory['skills']
 }
 
 export type PushSubscriptionKeys = {

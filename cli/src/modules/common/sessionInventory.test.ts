@@ -1,15 +1,14 @@
 import { describe, expect, it } from 'vitest'
 import {
     commandBasename,
+    cursorServersFromMcpJson,
     hooksFromClaudeSettings,
     inventorySkills,
     mcpServersFromClaudeJson,
     mcpServersFromConfig,
     ompInventoryFromTools,
     parseCodexConfigInventory,
-    withSessionInventory,
 } from './sessionInventory'
-import type { Metadata } from '@/api/types'
 
 describe('session inventory collectors', () => {
     it('keeps Claude server names and drops commands, urls, and tokens', () => {
@@ -88,27 +87,27 @@ command = "my-hook --token abc"
         })
     })
 
-    it('merges a skill snapshot without dropping an earlier mcp report', () => {
-        const metadata = {
-            path: '/work',
-            host: 'local',
-            sessionInventory: {
-                reportedAt: 1,
-                mcp: { kind: 'servers' as const, servers: [{ name: 'hapi', source: 'injected' as const }] },
-            },
-        } satisfies Metadata
-
-        const next = withSessionInventory(metadata, {
-            skills: inventorySkills([{ name: 'review', description: 'Look at https://example.test token=abc', source: 'project' }]),
-        }, 2)
-
-        expect(next.sessionInventory?.mcp?.servers).toEqual([{ name: 'hapi', source: 'injected' }])
-        expect(next.sessionInventory?.skills?.items).toEqual([{
+    it('redacts skill text and marks stamped cursor bridges as injected', () => {
+        expect(inventorySkills([{
+            name: 'review',
+            description: 'Look at https://example.test token=abc',
+            source: 'project',
+        }]).items).toEqual([{
             name: 'review',
             description: 'Look at',
             source: 'project',
         }])
-        expect(JSON.stringify(next.sessionInventory)).not.toContain('http')
-        expect(JSON.stringify(next.sessionInventory)).not.toContain('abc')
+
+        expect(cursorServersFromMcpJson({
+            mcpServers: {
+                docs: { command: 'npx', url: 'http://example.test/?token=abc' },
+                'hapi-session-1': { command: 'hapi', env: { HAPI_MCP_OVERLAY_PID: '10' } },
+                'hapi-user': { command: 'user-owned' },
+            },
+        }, 'session-1')).toEqual([
+            { name: 'docs', source: 'user' },
+            { name: 'hapi-session-1', source: 'injected' },
+            { name: 'hapi-user', source: 'user' },
+        ])
     })
 })

@@ -445,6 +445,21 @@ export class RpcGateway {
         }
     }
 
+    async listSessionConfig(sessionId: string): Promise<{
+        success: boolean
+        error?: string
+        mcp?: unknown
+        hooks?: unknown
+        skills?: unknown
+    }> {
+        return await this.sessionRpc(sessionId, RPC_METHODS.ListSessionConfig, {}) as {
+            success: boolean
+            error?: string
+            mcp?: unknown
+            hooks?: unknown
+            skills?: unknown
+        }
+    }
     async listCodexModelsForMachine(machineId: string): Promise<RpcListCodexModelsResponse> {
         return await this.machineRpc(machineId, RPC_METHODS.ListCodexModels, {}, MODEL_LIST_RPC_TIMEOUT_MS) as RpcListCodexModelsResponse
     }

@@ -1,12 +1,10 @@
-import { useMemo } from 'react'
 import { useNavigate, useParams } from '@tanstack/react-router'
-import { useQuery } from '@tanstack/react-query'
 import { SessionHeader } from '@/components/SessionHeader'
 import { LoadingState } from '@/components/LoadingState'
 import { useAppContext } from '@/lib/app-context'
 import { useAppGoBack } from '@/hooks/useAppGoBack'
 import { useSession } from '@/hooks/queries/useSession'
-import { queryKeys } from '@/lib/query-keys'
+import { useSessionConfig } from '@/hooks/queries/useSessionConfig'
 import { PRESERVE_SESSION_SIDEBAR_SCROLL } from '@/lib/sessionNavigation'
 import { transferComposerDraftThenNavigate } from '@/lib/composer-draft-transfer'
 import { useTranslation } from '@/lib/use-translation'
@@ -15,19 +13,14 @@ import {
     mcpSection,
     skillsSection,
     type InventorySection,
-    type LiveSkillsState,
 } from '@/lib/sessionInventoryView'
 
 function sectionMessage(section: InventorySection, t: (key: string) => string): string | null {
     switch (section.status) {
         case 'unreported':
             return t('session.config.unreported')
-        case 'loading':
-            return t('session.config.loading')
         case 'empty':
             return t('session.config.empty')
-        case 'offline':
-            return t('session.config.offline')
         case 'none':
             return t('session.config.hooks.none')
         case 'catalogUnavailable':
@@ -84,45 +77,20 @@ export default function SessionConfigPage() {
     const goBack = useAppGoBack()
     const { sessionId } = useParams({ from: '/sessions/$sessionId/config' })
     const { session } = useSession(api, sessionId)
-    const skillsQuery = useQuery({
-        queryKey: queryKeys.skills(sessionId),
-        enabled: Boolean(api && session?.active),
-        retry: false,
-        queryFn: async () => {
-            if (!api) throw new Error('API unavailable')
-            return await api.getSkills(sessionId)
-        },
-    })
+    const { config, error, isLoading } = useSessionConfig(api, sessionId)
 
-    const liveSkills = useMemo((): LiveSkillsState => {
-        if (!session?.active) return { state: 'idle' }
-        if (skillsQuery.isPending) return { state: 'loading' }
-        if (skillsQuery.isError || !skillsQuery.data?.success) {
-            const error = skillsQuery.data?.error ?? ''
-            return {
-                state: 'error',
-                catalogUnavailable: error === 'Claude skill catalog unavailable',
-            }
-        }
-        return { state: 'ready', skills: skillsQuery.data.skills ?? [] }
-    }, [session?.active, skillsQuery.data, skillsQuery.isError, skillsQuery.isPending])
-
-    const inventory = session?.metadata?.sessionInventory
-    const mcp = mcpSection(inventory)
-    const skills = skillsSection({
-        inventory,
-        live: liveSkills,
-        sessionActive: session?.active === true,
-    })
-    const hooks = hooksSection(inventory)
-
-    if (!session) {
+    if (!session || isLoading) {
         return (
             <div className="flex flex-1 items-center justify-center p-4">
                 <LoadingState label={t('session.config.loading')} className="text-sm" />
             </div>
         )
     }
+
+    const inventory = config
+    const mcp = mcpSection(inventory)
+    const skills = skillsSection(inventory)
+    const hooks = hooksSection(inventory)
 
     return (
         <div className="flex h-full min-h-0 flex-col">
@@ -172,9 +140,15 @@ export default function SessionConfigPage() {
             />
             <div className="app-scroll-y min-h-0 flex-1">
                 <div className="mx-auto flex w-full max-w-content flex-col gap-6 p-4">
-                    <ConfigSection title={t('session.config.mcp')} section={mcp} toolsHint={t('session.config.mcp.toolsHint')} />
-                    <ConfigSection title={t('session.config.skills')} section={skills} />
-                    <ConfigSection title={t('session.config.hooks')} section={hooks} />
+                    {error ? (
+                        <p className="text-sm text-[var(--app-hint)]">{t('session.config.unavailable')}</p>
+                    ) : (
+                        <>
+                            <ConfigSection title={t('session.config.mcp')} section={mcp} toolsHint={t('session.config.mcp.toolsHint')} />
+                            <ConfigSection title={t('session.config.skills')} section={skills} />
+                            <ConfigSection title={t('session.config.hooks')} section={hooks} />
+                        </>
+                    )}
                 </div>
             </div>
         </div>

@@ -244,7 +244,7 @@ export default {
   'session.config.hooks': 'Hooks',
   'session.config.unreported': '未上报',
   'session.config.empty': '无',
-  'session.config.offline': '会话离线',
+  'session.config.unavailable': '不可用',
   'session.config.hooks.none': '此 flavor 无 hooks',
   'session.config.mcp.toolsHint': '工具名，不是服务器',
   'session.config.skills.catalogUnavailable': '技能目录不可用',

@@ -36,7 +36,6 @@ import type {
 import { AgentStateSchema, CliMessagesResponseSchema, MetadataSchema, UserMessageSchema } from './types'
 import { RpcHandlerManager } from './rpc/RpcHandlerManager'
 import { registerCommonHandlers } from '../modules/common/registerCommonHandlers'
-import { inventorySkills, publishSessionInventory } from '../modules/common/sessionInventory'
 import { cleanupUploadDir } from '../modules/common/handlers/uploads'
 import { TerminalManager } from '@/terminal/TerminalManager'
 import { applyVersionedAck } from './versionedUpdate'
@@ -311,7 +310,12 @@ export class ApiSessionClient extends EventEmitter {
 
         if (this.metadata?.path) {
             registerCommonHandlers(this.rpcHandlerManager, this.metadata.path, {
-                onSkills: (skills) => publishSessionInventory(this, { skills: inventorySkills(skills) }),
+                getSessionConfigContext: () => ({
+                    flavor: this.metadata?.flavor,
+                    startingMode: this.metadata?.startingMode,
+                    sessionId: this.sessionId,
+                    tools: this.metadata?.tools,
+                }),
             })
         }
 

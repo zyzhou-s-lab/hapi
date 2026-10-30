@@ -66,7 +66,6 @@ type LockOwner = {
 
 export type CursorMcpOverlayHandle = {
     cleanup: () => void;
-    servers: Array<{ name: string; source: 'injected' | 'user' }>;
 };
 
 type EnableCursorMcpResult = {
@@ -304,7 +303,6 @@ export function installCursorMcpOverlay(
     let hadFile = false;
     let hadServer = false;
     let previousServer: McpServerEntry | undefined;
-    let servers: CursorMcpOverlayHandle['servers'] = [];
     withMcpJsonLock(lockPath, () => {
         hadFile = existsSync(mcpJsonPath);
         const previous = hadFile ? readMcpJson(mcpJsonPath) : { mcpServers: {} as Record<string, McpServerEntry> };
@@ -340,13 +338,6 @@ export function installCursorMcpOverlay(
             },
         };
         writeMcpJsonAtomic(mcpJsonPath, config);
-        const listed = config.mcpServers ?? {};
-        servers = Object.keys(listed).sort((left, right) => left.localeCompare(right)).map((name) => {
-            const entry = listed[name];
-            const stamped = typeof entry?.env?.[HAPI_MCP_OVERLAY_PID_ENV] === 'string' && entry.env[HAPI_MCP_OVERLAY_PID_ENV].trim() !== '';
-            const injected = name === serverId || (name.startsWith('hapi-') && stamped);
-            return { name, source: injected ? 'injected' as const : 'user' as const };
-        });
     });
 
     const cleanup = (): void => {
@@ -400,5 +391,5 @@ export function installCursorMcpOverlay(
     }
 
     logger.debug(`[cursor-acp] enabled native MCP server ${serverId} via ${mcpJsonPath}`);
-    return { cleanup, servers };
+    return { cleanup };
 }

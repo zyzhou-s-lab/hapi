@@ -29,12 +29,10 @@ export const SessionInventorySkillSchema = z.object({
 })
 
 /**
- * Runner → hub snapshot of the session's MCP servers, hooks, and skills.
- * A missing section means that list was not reported. Present sections are
- * what the CLI could actually see; values never include commands, URLs, or tokens.
+ * Live session-RPC payload. A missing section was not collected.
+ * Commands, URLs, and tokens are not fields. The hub does not store this.
  */
 export const SessionInventorySchema = z.object({
-    reportedAt: z.number().int(),
     mcp: z.object({
         kind: z.enum(['servers', 'tools']),
         servers: z.array(SessionInventoryMcpServerSchema).max(200),

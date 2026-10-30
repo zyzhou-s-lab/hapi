@@ -28,6 +28,7 @@ import type {
     HapiSessionExportResponse,
     HubHealthResponse,
     SessionResponse,
+    SessionConfigResponse,
     SessionTitleSuggestionResponse,
     SessionsResponse
 } from '@/types/api'
@@ -426,6 +427,10 @@ export class ApiClient {
 
     async getGitStatus(sessionId: string): Promise<GitCommandResponse> {
         return await this.request<GitCommandResponse>(`/api/sessions/${encodeURIComponent(sessionId)}/git-status`)
+    }
+
+    async getSessionConfig(sessionId: string): Promise<SessionConfigResponse> {
+        return await this.request<SessionConfigResponse>(`/api/sessions/${encodeURIComponent(sessionId)}/config`)
     }
 
     async getGitDiffNumstat(sessionId: string, staged: boolean): Promise<GitCommandResponse> {

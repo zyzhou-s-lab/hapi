@@ -18,7 +18,6 @@ import { BaseLocalLauncher } from '@/modules/common/launcher/BaseLocalLauncher';
 import { createCodexTranscriptLocator, type CodexTranscriptLocator } from './utils/codexTranscriptLocator';
 import { CodexToolHookBridge, isCodexToolHookEvent } from './utils/codexToolHookBridge';
 import { countHookCoveredExecCalls } from './utils/codexExecWrapper';
-import { loadCodexInventory, publishSessionInventory } from '@/modules/common/sessionInventory';
 
 type ProposedPlanMessage = Extract<CodexMessage, { type: 'proposed_plan' }>;
 type ToolCallMessage = Extract<CodexMessage, { type: 'tool-call' }>;
@@ -384,7 +383,6 @@ export async function codexLocalLauncher(session: CodexSession): Promise<'switch
         }
     });
     logger.debug(`[codex-local]: Started Codex SessionStart hook server on port ${hookServer.port}`);
-    publishSessionInventory(session.client, loadCodexInventory(true));
     if (session.client.isPending()) {
         const createdLocator = createCodexTranscriptLocator({
             cwd: effectiveCodexCwd,
