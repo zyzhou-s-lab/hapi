@@ -1406,4 +1406,12 @@ export default {
   'work.continue': '继续',
   'work.continueHere': '在主目录新建会话',
   'work.openWorkbench': '工作台',
+  'work.trainingCurves': '训练曲线',
+  'work.trainingEmpty': '还没有点。',
+  'work.trainingUnavailable': '训练曲线不可用。',
+  'work.trainingFinished': '这次训练已结束。',
+  'work.trainingSmooth': '平滑',
+  'work.trainingLog': '对数',
+  'work.trainingDropped': '对数轴隐藏了 {count} 个小于等于 0 的点。',
+  'work.trainingZoom': '拖拽缩放，双击还原。',
 } as const

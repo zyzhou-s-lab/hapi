@@ -6,6 +6,7 @@ import { useTranslation } from '@/lib/use-translation'
 import { useSessions } from '@/hooks/queries/useSessions'
 import { WorkCardHost } from './WorkCardHost'
 import './workbenchCards'
+import './trainingCard'
 import { workMapQueryOptions } from './useWorkMap'
 import { defaultWorkSearch, type WorkSearch } from './workSearch'
 

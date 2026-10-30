@@ -28,7 +28,7 @@ export type WorkCardDefinition = {
     id: string
     titleKey: string
     size: WorkCardSize
-    source: { kind: 'work-model' } | {
+    source: { kind: 'work-model' } | { kind: 'training' } | {
         kind: 'query'
         queryKey: readonly unknown[]
         queryFn: (args: { signal: AbortSignal; accountId: number; view: WorkView }) => Promise<unknown>

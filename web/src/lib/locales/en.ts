@@ -1407,4 +1407,12 @@ export default {
   'work.continue': 'Continue',
   'work.continueHere': 'New session in the primary directory',
   'work.openWorkbench': 'Workbench',
+  'work.trainingCurves': 'Training',
+  'work.trainingEmpty': 'No points yet.',
+  'work.trainingUnavailable': 'Training is unavailable.',
+  'work.trainingFinished': 'Run finished.',
+  'work.trainingSmooth': 'Smooth',
+  'work.trainingLog': 'Log',
+  'work.trainingDropped': '{count} points at or below 0 are hidden on the log scale.',
+  'work.trainingZoom': 'Drag to zoom. Double-click to reset.',
 } as const

@@ -61,6 +61,7 @@ import { homedir } from 'node:os'
 import type { CursorChatStoreStatus } from '@hapi/protocol/apiTypes'
 import { MachinePathPolicy } from './machinePathPolicy'
 import { getAgentAvailabilityResponse } from '@/agent/agentAvailability'
+import { attachTrainingHandlers } from '../modules/training/wandbTail'
 
 import { normalizeWindowsDriveRoot } from './machinePathPolicy'
 
@@ -139,6 +140,7 @@ export class ApiMachineClient {
     private readonly ompMachineIntegration: OmpMachineIntegration | null
 
     private readonly pathPolicy: MachinePathPolicy
+    private stopTraining: (() => void) | null = null
 
     constructor(
         private readonly token: string,
@@ -594,6 +596,8 @@ export class ApiMachineClient {
     }
 
     connect(): void {
+        this.stopTraining?.()
+        this.stopTraining = null
         this.socket = io(`${configuration.apiUrl}/cli`, {
             transports: ['websocket'],
             auth: {
@@ -744,6 +748,14 @@ export class ApiMachineClient {
         this.socket.on('error', (payload) => {
             logger.debug('[API MACHINE] Socket error:', payload)
         })
+        this.stopTraining = attachTrainingHandlers({
+            on: (event, handler) => {
+                this.socket.on(event as 'training:subscribe', handler as (data: { run: string; runDir: string; machineId: string }) => void)
+            },
+            emit: (event, payload) => {
+                this.socket.emit(event, payload)
+            },
+        }, this.machine.id)
     }
 
     private startKeepAlive(): void {
