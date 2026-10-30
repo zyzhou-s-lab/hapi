@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs'
 import {
     AssistantRuntimeProvider,
     type ChatModelAdapter,
@@ -41,6 +42,11 @@ vi.mock('@/components/AssistantChat/StatusBar', () => ({
 vi.mock('@/hooks/useComposerDraft', () => ({
     useComposerDraft: () => ({ sessionId: undefined, complete: true, restoredAny: false, hasStoredAttachments: false }),
 }))
+const pwaState = vi.hoisted(() => ({
+    isStandalone: false,
+    isIOS: false,
+}))
+
 vi.mock('@/hooks/usePlatform', () => ({
     usePlatform: () => ({
         isTelegram: false,
@@ -57,8 +63,8 @@ vi.mock('@/hooks/usePWAInstall', () => ({
         installState: 'idle',
         canInstall: false,
         canInstallIOS: false,
-        isStandalone: false,
-        isIOS: false,
+        isStandalone: pwaState.isStandalone,
+        isIOS: pwaState.isIOS,
         promptInstall: async () => false,
         dismissInstall: () => {},
     }),
@@ -73,13 +79,14 @@ const adapter: ChatModelAdapter = {
     async *run() {},
 }
 
-function TestRuntime(props: { withSettings?: boolean }) {
+function TestRuntime(props: { withSettings?: boolean; onExpandedChange?: (expanded: boolean) => void }) {
     const runtime = useLocalRuntime(adapter)
     return (
         <AssistantRuntimeProvider runtime={runtime}>
             <HappyComposer
                 agentFlavor={props.withSettings ? 'claude' : undefined}
                 onPermissionModeChange={props.withSettings ? () => {} : undefined}
+                onExpandedChange={props.onExpandedChange}
             />
             {props.withSettings ? (
                 <button
@@ -94,6 +101,8 @@ function TestRuntime(props: { withSettings?: boolean }) {
 
 describe('HappyComposer plain-text expansion', () => {
     beforeEach(() => {
+        pwaState.isStandalone = false
+        pwaState.isIOS = false
         localStorage.clear()
         localStorage.setItem('hapi.composer.richMentions', '0')
     })
@@ -133,6 +142,64 @@ describe('HappyComposer plain-text expansion', () => {
             expect(nextCollapsedInput.selectionDirection).toBe('backward')
             expect(document.activeElement).toBe(nextCollapsedInput)
         })
+    })
+
+    it('floats the collapsed composer and keeps the expanded shell solid', () => {
+        const onExpandedChange = vi.fn()
+        render(<TestRuntime withSettings onExpandedChange={onExpandedChange} />)
+
+        const shell = screen.getByTestId('composer-shell')
+        const frame = screen.getByTestId('composer-frame')
+        expect(shell).toHaveAttribute('data-floating', 'true')
+        expect(shell).not.toHaveAttribute('data-expanded')
+        expect(shell.className).toContain('composer-floating-shell')
+        expect(shell.className).not.toContain('bg-[var(--app-bg)]')
+        expect(frame.className).toContain('composer-floating-frame')
+        expect(frame.className).toContain('backdrop-blur-md')
+        expect(frame.className).not.toContain('rounded-[20px]')
+
+        fireEvent.click(screen.getByRole('button', { name: 'Composer settings' }))
+        expect(screen.getByText('misc.permissionMode').closest('div.absolute')?.className).toContain('bottom-[100%]')
+        fireEvent.click(screen.getByRole('button', { name: 'Composer settings' }))
+
+        fireEvent.click(screen.getByRole('button', { name: 'Expand message editor' }))
+
+        expect(onExpandedChange).toHaveBeenCalledWith(true)
+        expect(shell).toHaveAttribute('data-expanded', 'true')
+        expect(shell).not.toHaveAttribute('data-floating')
+        expect(shell.className).toContain('bg-[var(--app-bg)]')
+        expect(shell.className).toContain('sm:absolute')
+        expect(shell.className).toContain('sm:inset-0')
+        expect(shell.className).not.toContain('composer-floating-shell')
+        expect(frame.className).toContain('rounded-[20px]')
+        expect(frame.className).toContain('bg-[var(--app-secondary-bg)]')
+        expect(frame.className).not.toContain('composer-floating-frame')
+
+        fireEvent.click(screen.getByRole('button', { name: 'Composer settings' }))
+        expect(screen.getByText('misc.permissionMode').closest('div.absolute')?.className).toContain('bottom-12')
+    })
+
+    it('counts the bottom safe area once, and not at all on iOS PWA', () => {
+        const css = readFileSync('src/index.css', 'utf8')
+        const base = css.match(/\.composer-floating-shell \{[^}]+\}/)?.[0] ?? ''
+        const ios = css.match(/\.composer-floating-shell-ios-pwa \{[^}]+\}/)?.[0] ?? ''
+        expect(base.match(/safe-area-inset-bottom/g)).toHaveLength(1)
+        expect(ios).toContain('padding-bottom: 0.5rem')
+        expect(ios).not.toContain('safe-area')
+
+        pwaState.isIOS = true
+        pwaState.isStandalone = true
+        render(<TestRuntime />)
+        const shell = screen.getByTestId('composer-shell')
+        expect(shell.className).toBe('composer-floating-shell composer-floating-shell-ios-pwa')
+        expect(shell.className).not.toContain('pb-0')
+        expect(shell.className).not.toContain('pb-3')
+
+        fireEvent.click(screen.getByRole('button', { name: 'Expand message editor' }))
+        expect(shell.className).toContain('pb-0')
+        expect(shell.className).not.toContain('pb-3')
+        expect(shell.className).not.toContain('composer-floating-shell')
+        expect(shell.className).not.toContain('safe-area-inset-bottom')
     })
 
     it('closes settings when clicking outside while preserving inside and trigger interactions', () => {

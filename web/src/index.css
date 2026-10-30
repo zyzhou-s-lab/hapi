@@ -49,6 +49,9 @@
 
     /* Theme-aware colors (light mode defaults) */
     --app-border: rgba(15, 23, 42, 0.08);
+    --app-composer-border: rgba(15, 23, 42, 0.16);
+    --app-composer-surface: color-mix(in srgb, var(--app-secondary-bg) 92%, transparent);
+    --app-composer-shadow: 0 1px 2px rgba(15, 23, 42, 0.06), 0 10px 28px rgba(15, 23, 42, 0.12);
     --app-divider: rgba(15, 23, 42, 0.08);
     --app-subtle-bg: rgba(15, 23, 42, 0.04);
     --app-code-bg: #f5f6f7;
@@ -131,6 +134,9 @@
     --app-scrollbar-thumb-hover: rgba(196, 203, 214, 0.42);
 
     --app-border: rgba(255, 255, 255, 0.08);
+    --app-composer-border: rgba(255, 255, 255, 0.16);
+    --app-composer-surface: color-mix(in srgb, var(--app-secondary-bg) 86%, transparent);
+    --app-composer-shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 12px 32px rgba(0, 0, 0, 0.48);
     --app-divider: rgba(255, 255, 255, 0.08);
     --app-subtle-bg: rgba(255, 255, 255, 0.05);
     --app-code-bg: #2a2f35;
@@ -212,6 +218,9 @@
     --app-scrollbar-thumb-hover: rgba(196, 203, 214, 0.4);
 
     --app-border: rgba(255, 255, 255, 0.12);
+    --app-composer-border: rgba(255, 255, 255, 0.18);
+    --app-composer-surface: color-mix(in srgb, #1a1a1c 94%, transparent);
+    --app-composer-shadow: 0 0 0 1px rgba(255, 255, 255, 0.04), 0 14px 36px rgba(0, 0, 0, 0.72);
     --app-divider: rgba(255, 255, 255, 0.1);
     --app-subtle-bg: rgba(255, 255, 255, 0.06);
     --app-code-bg: #0e0e10;
@@ -346,6 +355,45 @@ html:has(.chat-scroll-y) #root {
             calc(0.75rem - var(--chat-scroll-gutter-inline, 0px))
         );
     }
+}
+
+.composer-floating-shell {
+    pointer-events: none;
+    background: transparent;
+    padding: 0.5rem 0.75rem max(0.75rem, env(safe-area-inset-bottom, 0px));
+}
+
+/* iOS standalone already insets the layout for the home indicator. */
+.composer-floating-shell-ios-pwa {
+    padding-bottom: 0.5rem;
+}
+
+.composer-floating-frame,
+.composer-floating-chrome,
+.composer-dock-card {
+    border: 1px solid var(--app-composer-border);
+    background-color: var(--app-secondary-bg);
+    background-color: var(--app-composer-surface);
+    box-shadow: var(--app-composer-shadow);
+    -webkit-backdrop-filter: blur(12px);
+    backdrop-filter: blur(12px);
+}
+
+.composer-floating-frame {
+    border-radius: 26px;
+}
+
+.composer-floating-chrome {
+    margin-inline: 0.75rem;
+    border-radius: 20px;
+}
+
+.composer-dock-card {
+    border-radius: 0.5rem;
+}
+
+.composer-floating-chrome:not(:has(*)) {
+    display: none;
 }
 
 @media (hover: hover) and (pointer: fine) {

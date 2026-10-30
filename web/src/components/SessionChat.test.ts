@@ -1,7 +1,9 @@
+import { readFileSync } from 'node:fs'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
     applyGlobalSelectAll,
     applyModelChangeWithReasoningRollback,
+    chatComposerGridPlacement,
     buildGoalStateMessages,
     isScratchlistHotkeyBlockedTarget,
     isScratchlistToggleHotkey,
@@ -48,6 +50,90 @@ describe('applyModelChangeWithReasoningRollback', () => {
         expect(setModelReasoningEffort).toHaveBeenCalledOnce()
         expect(setModelReasoningEffort).toHaveBeenCalledWith(null)
         expect(setModel).toHaveBeenCalledWith('gpt-next')
+    })
+})
+
+describe('chatComposerGridPlacement', () => {
+    it('stacks the floating dock under the thread in one column', () => {
+        const placement = chatComposerGridPlacement({
+            terminalShown: false,
+            composerExpanded: false,
+            outlineOpen: false,
+        })
+        expect(placement.stage).toContain('grid-cols-1')
+        expect(placement.stage).not.toContain('grid-cols-2')
+        expect(placement.thread).toContain('col-start-1')
+        expect(placement.dock).toContain('col-start-1')
+        expect(placement.thread).not.toContain('col-start-2')
+        expect(placement.dock).not.toContain('col-start-2')
+        expect(placement.thread).toContain('row-start-1')
+        expect(placement.dock).toContain('row-start-2')
+    })
+
+    it('keeps the expanded stage on the same single column', () => {
+        const placement = chatComposerGridPlacement({
+            terminalShown: false,
+            composerExpanded: true,
+            outlineOpen: false,
+        })
+        expect(placement.stage).toContain('grid-cols-1')
+        expect(placement.thread).toContain('col-start-1')
+        expect(placement.dock).toContain('col-start-1')
+    })
+
+    it('positions the expanded dock against the chat column, not the stage', () => {
+        const expanded = chatComposerGridPlacement({
+            terminalShown: false,
+            composerExpanded: true,
+            outlineOpen: false,
+        })
+        expect(expanded.stage).not.toContain('relative')
+        expect(expanded.dock).toContain('absolute')
+        expect(expanded.dock).toContain('inset-0')
+
+        const collapsed = chatComposerGridPlacement({
+            terminalShown: false,
+            composerExpanded: false,
+            outlineOpen: false,
+        })
+        expect(collapsed.stage).toContain('relative')
+
+        const terminalExpanded = chatComposerGridPlacement({
+            terminalShown: true,
+            composerExpanded: true,
+            outlineOpen: false,
+        })
+        expect(terminalExpanded.stage ?? '').not.toContain('relative')
+        expect(terminalExpanded.dock).toContain('absolute')
+        expect(terminalExpanded.dock).toContain('inset-0')
+    })
+})
+
+describe('floating dock surface', () => {
+    it('frosts the error bar and tasks card, not a wrapper around queued rows', () => {
+        const css = readFileSync('src/index.css', 'utf8')
+        const surface = css.match(/\.composer-floating-frame,\s*\.composer-floating-chrome,\s*\.composer-dock-card \{[^}]+\}/)?.[0] ?? ''
+        const chrome = css.match(/\.composer-floating-chrome \{\s*margin-inline:[^}]+\}/)?.[0] ?? ''
+        const source = readFileSync('src/components/SessionChat.tsx', 'utf8')
+        const composer = readFileSync('src/components/AssistantChat/HappyComposer.tsx', 'utf8')
+        const tasks = readFileSync('src/fork-features/task-panel/TodoPanel.tsx', 'utf8')
+        const queued = readFileSync('src/components/AssistantChat/QueuedMessagesBar.tsx', 'utf8')
+        expect(surface).toContain('background-color: var(--app-composer-surface)')
+        expect(surface).toContain('backdrop-filter: blur(12px)')
+        expect(chrome).toContain('margin-inline: 0.75rem')
+        expect(chrome).toContain('border-radius: 20px')
+        expect(css).toContain('.composer-floating-chrome:not(:has(*))')
+        expect(css).not.toContain('.composer-floating-stack')
+        expect(css).not.toContain('.composer-floating-shell .composer-floating-chrome')
+        expect(source).toContain('className="composer-floating-chrome"')
+        expect(source).not.toContain('composer-floating-chrome px-3')
+        expect(source).toContain('bg-[var(--app-secondary-bg)] p-3 text-sm text-red-600')
+        expect(source).toContain('<div className="px-3">')
+        expect(tasks).toContain('composer-dock-card')
+        expect(tasks).not.toContain('bg-[var(--app-subtle-bg)]')
+        expect(queued).not.toContain('composer-dock-card')
+        expect(composer).not.toContain('composer-floating-chrome')
+        expect(composer).not.toContain('composer-dock-card')
     })
 })
 

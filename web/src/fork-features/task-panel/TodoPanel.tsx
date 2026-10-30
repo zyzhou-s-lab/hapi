@@ -30,7 +30,7 @@ export function TodoPanel(props: { sessionId: string; todos: TodoItem[] | undefi
 
     return (
         <div className="mx-auto mb-1 w-full max-w-content">
-            <div className="rounded-lg border border-[var(--app-border)] bg-[var(--app-subtle-bg)]" data-testid="todo-panel">
+            <div className="composer-dock-card rounded-lg" data-testid="todo-panel">
                 <button type="button" onClick={toggleCollapsed} aria-expanded={!collapsed} aria-controls={`todo-panel-body-${props.sessionId}`} className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs font-medium text-[var(--app-fg)] hover:opacity-90">
                     <ChevronIcon open={!collapsed} />
                     <span aria-hidden="true" className="shrink-0 text-[var(--app-hint)]">☑</span>

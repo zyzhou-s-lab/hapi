@@ -384,6 +384,8 @@ export function HappyComposer(props: {
     sendAcceptance?: { attemptId: string | null } | null
     /** Terminal result for a chat mutation, including attachment-bearing failures. */
     sendSettlement?: { attemptId: string; status: 'success' | 'error' } | null
+    /** Notifies the chat shell so the floating dock can yield the screen while expanded. */
+    onExpandedChange?: (expanded: boolean) => void
     /**
      * Resume/handoff path for inactive drafts that only exist in IndexedDB
      * (no visible text/attachments for assistant-ui to append).
@@ -567,6 +569,14 @@ export function HappyComposer(props: {
         selection: { start: 0, end: 0 }
     })
     const [isExpanded, setIsExpanded] = useState(false)
+    const isExpandedRef = useRef(false)
+    const onExpandedChangeRef = useRef(props.onExpandedChange)
+    onExpandedChangeRef.current = props.onExpandedChange
+    const setExpanded = useCallback((next: boolean) => {
+        isExpandedRef.current = next
+        setIsExpanded(next)
+        onExpandedChangeRef.current?.(next)
+    }, [])
     const lastSendAcceptanceRef = useRef(props.sendAcceptance)
     const pendingSendAttemptIdRef = useRef<string | null>(null)
     const [showSettings, setShowSettings] = useState(false)
@@ -589,15 +599,15 @@ export function HappyComposer(props: {
         lastSendAcceptanceRef.current = acceptance
         if (acceptance.attemptId === null) {
             pendingSendAttemptIdRef.current = null
-            setIsExpanded(false)
+            setExpanded(false)
             return
         }
         pendingSendAttemptIdRef.current = acceptance.attemptId
         const settlement = props.sendSettlement
         if (!settlement || settlement.attemptId !== acceptance.attemptId) return
         pendingSendAttemptIdRef.current = null
-        if (settlement.status === 'success') setIsExpanded(false)
-    }, [props.sendAcceptance, props.sendSettlement])
+        if (settlement.status === 'success') setExpanded(false)
+    }, [props.sendAcceptance, props.sendSettlement, setExpanded])
 
     // Match the terminal mutation result to the exact accepted attempt. Text
     // failures also expose sendError for draft restoration, while attachment
@@ -606,8 +616,8 @@ export function HappyComposer(props: {
         const settlement = props.sendSettlement
         if (!settlement || settlement.attemptId !== pendingSendAttemptIdRef.current) return
         pendingSendAttemptIdRef.current = null
-        if (settlement.status === 'success') setIsExpanded(false)
-    }, [props.sendSettlement])
+        if (settlement.status === 'success') setExpanded(false)
+    }, [props.sendSettlement, setExpanded])
 
     const textareaRef = useRef<HTMLTextAreaElement>(null)
     const richInputRef = useRef<RichComposerInputHandle>(null)
@@ -903,7 +913,7 @@ export function HappyComposer(props: {
             direction: currentInput.selectionDirection,
         } : null
 
-        setIsExpanded((expanded) => !expanded)
+        setExpanded(!isExpandedRef.current)
         haptic('light')
         setTimeout(() => {
             if (richMentionsEnabled) {
@@ -926,7 +936,7 @@ export function HappyComposer(props: {
                 )
             }
         }, 0)
-    }, [haptic, richMentionsEnabled])
+    }, [haptic, richMentionsEnabled, setExpanded])
 
     const handleSuggestionSelect = useCallback((index: number) => {
         const suggestion = suggestions[index]
@@ -1200,7 +1210,7 @@ export function HappyComposer(props: {
                 await prepared.beforeClear()
                 api.composer().setText('')
                 await api.composer().clearAttachments()
-                setIsExpanded(false)
+                setExpanded(false)
             } finally {
                 parkInFlightRef.current = false
                 setIsParkingScratchlist(false)
@@ -1262,6 +1272,7 @@ export function HappyComposer(props: {
         attachmentOrderRef,
         pendingSendIntentRef,
         resetPendingSendIntent,
+        setExpanded,
     ])
 
     const flushAndSend = useCallback((intent: ComposerSendIntent = 'default') => {
@@ -2352,20 +2363,30 @@ export function HappyComposer(props: {
 
     const shellClassName = isExpanded
         ? `z-[60] flex min-h-0 flex-col bg-[var(--app-bg)] px-3 ${bottomPaddingClass} max-sm:fixed max-sm:inset-x-0 max-sm:top-0 max-sm:h-[var(--tg-viewport-stable-height,var(--app-viewport-height,100dvh))] max-sm:pt-[calc(0.5rem+env(safe-area-inset-top))] sm:absolute sm:inset-0 sm:pt-2`
-        : `bg-[var(--app-bg)] px-3 ${bottomPaddingClass} pt-2`
+        : `composer-floating-shell${isIOSPWA ? ' composer-floating-shell-ios-pwa' : ''}`
     const innerClassName = isExpanded
         ? 'mx-auto flex min-h-0 w-full max-w-content flex-1 flex-col'
-        : 'mx-auto w-full max-w-content'
+        : 'pointer-events-auto relative mx-auto w-full max-w-content'
     const rootClassName = isExpanded
         ? 'relative flex min-h-0 flex-1 flex-col'
         : 'relative'
     const editorClassName = isExpanded
         ? 'h-full min-h-[1.5rem] flex-1 overflow-y-auto whitespace-pre-wrap break-words bg-transparent text-base leading-snug text-[var(--app-fg)] focus:outline-none'
         : 'max-h-[7.5rem] min-h-[1.5rem] flex-1 overflow-y-auto whitespace-pre-wrap break-words bg-transparent text-base leading-snug text-[var(--app-fg)] focus:outline-none'
+    const frameClassName = `overflow-hidden ${
+        isExpanded
+            ? 'flex min-h-0 flex-1 flex-col rounded-[20px] bg-[var(--app-secondary-bg)]'
+            : 'composer-floating-frame backdrop-blur-md'
+    } ${sendError ? 'ring-1 ring-red-500' : ''}`
 
     return (
         <ComposerParkingContext.Provider value={isParkingScratchlist}>
-        <div className={shellClassName} data-testid="composer-shell" data-expanded={isExpanded || undefined}>
+        <div
+            className={shellClassName}
+            data-testid="composer-shell"
+            data-expanded={isExpanded || undefined}
+            data-floating={isExpanded ? undefined : 'true'}
+        >
             <div className={innerClassName}>
                 <ComposerPrimitive.Root className={rootClassName} onSubmit={handleSubmit}>
                     {overlays}
@@ -2431,13 +2452,7 @@ export function HappyComposer(props: {
                         </div>
                     ) : null}
 
-                    <div
-                        className={`overflow-hidden rounded-[20px] bg-[var(--app-secondary-bg)] ${
-                            isExpanded ? 'flex min-h-0 flex-1 flex-col' : ''
-                        } ${
-                            sendError ? 'ring-1 ring-red-500' : ''
-                        }`}
-                    >
+                    <div data-testid="composer-frame" className={frameClassName}>
                         {attachments.length > 0 ? (
                             <div className={`flex flex-wrap gap-2 px-4 pt-3 ${
                                 isExpanded ? 'max-h-[35%] shrink-0 overflow-y-auto' : ''
