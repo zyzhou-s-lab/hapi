@@ -25,7 +25,7 @@ import {
     updateSessionTabs,
     useSessionTabsState
 } from './sessionTabsStore'
-import { isTerminalTarget, matchTabShortcut } from './tabShortcuts'
+import { isEditableTarget, isTerminalTarget, matchTabShortcut } from './tabShortcuts'
 import './sessionTabs.css'
 
 /** 标签按 hub + 账号分开存：同一浏览器切账号不会串。 */
@@ -81,6 +81,8 @@ function useSessionTabShortcuts(scope: string, selectedSessionId: string | null)
         const onKeyDown = (event: KeyboardEvent) => {
             const shortcut = matchTabShortcut(event)
             if (!shortcut || event.defaultPrevented || isTerminalTarget(event.target)) return
+            // Alt/⌥ 在输入框里是在打 ∑、† 或 AltGr 字符，不关标签、不新建。
+            if (event.altKey && !event.ctrlKey && !event.metaKey && isEditableTarget(event.target)) return
             if (shortcut === 'new') {
                 event.preventDefault()
                 navigate({ to: '/sessions/new', ...PRESERVE_SESSION_SIDEBAR_SCROLL })

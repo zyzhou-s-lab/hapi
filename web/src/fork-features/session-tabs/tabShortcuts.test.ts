@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { isTerminalTarget, matchTabShortcut } from './tabShortcuts'
+import { isEditableTarget, isTerminalTarget, matchTabShortcut } from './tabShortcuts'
 
 const key = (over: Partial<Parameters<typeof matchTabShortcut>[0]>) => ({
     key: '', code: '', ctrlKey: false, metaKey: false, altKey: false, shiftKey: false, repeat: false, isComposing: false, ...over
@@ -27,6 +27,36 @@ describe('matchTabShortcut', () => {
         expect(matchTabShortcut(key({ key: 'w', code: 'KeyW', ctrlKey: true, repeat: true }))).toBeNull()
         expect(matchTabShortcut(key({ key: 'w', code: 'KeyW', altKey: true, isComposing: true }))).toBeNull()
         expect(matchTabShortcut(key({ key: 'm', code: 'KeyM', ctrlKey: true }))).toBeNull()
+    })
+
+    it('does not treat AltGraph as a tab shortcut', () => {
+        expect(matchTabShortcut(key({
+            key: '∑',
+            code: 'KeyW',
+            altKey: true,
+            getModifierState: (name: string) => name === 'AltGraph',
+        }))).toBeNull()
+    })
+
+    it('treats text fields as editable and ignores non-text inputs', () => {
+        const input = document.createElement('input')
+        const area = document.createElement('textarea')
+        const editor = document.createElement('div')
+        editor.setAttribute('contenteditable', 'true')
+        const text = document.createElement('span')
+        editor.appendChild(text)
+        const box = document.createElement('input')
+        box.type = 'checkbox'
+        document.body.append(input, area, editor, box)
+        expect(isEditableTarget(input)).toBe(true)
+        expect(isEditableTarget(area)).toBe(true)
+        expect(isEditableTarget(text)).toBe(true)
+        expect(isEditableTarget(box)).toBe(false)
+        expect(isEditableTarget(document.body)).toBe(false)
+        input.remove()
+        area.remove()
+        editor.remove()
+        box.remove()
     })
 
     it('recognises focus inside the terminal', () => {
