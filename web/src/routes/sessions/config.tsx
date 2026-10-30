@@ -47,7 +47,7 @@ function ConfigSwitch(props: { row: InventoryRow; pending: boolean; onToggle: (e
             aria-checked={props.row.enabled}
             aria-label={t('session.config.toggle', { name: props.row.title })}
             disabled={!props.row.mutable || props.pending}
-            title={props.row.mutable ? t('session.config.effect') : t('session.config.locked')}
+            title={props.row.lock === 'unsupported' ? t('session.config.unsupported') : props.row.mutable ? t('session.config.effect') : t('session.config.locked')}
             onClick={(event) => {
                 event.stopPropagation()
                 props.onToggle(!props.row.enabled)
@@ -176,9 +176,10 @@ export default function SessionConfigPage() {
         )
     }
 
-    const mcp = mcpSection(config)
-    const skills = skillsSection(config)
-    const hooks = hooksSection(config)
+    const flavor = session.metadata?.flavor
+    const mcp = mcpSection(config, flavor)
+    const skills = skillsSection(config, flavor)
+    const hooks = hooksSection(config, flavor)
     const detailError = detailQuery.error instanceof Error
         ? detailQuery.error.message
         : detailQuery.data?.error ?? null

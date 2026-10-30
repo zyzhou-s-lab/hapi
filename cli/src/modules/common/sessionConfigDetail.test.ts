@@ -33,7 +33,7 @@ describe('session config detail', () => {
             flavor: 'claude',
             selector: { kind: 'hook', event: 'PreToolUse', matcher: 'Bash', commandName: 'my-hook', source: 'user' },
         })
-        expect(detail).toMatchObject({ kind: 'hook', mutable: true, enabled: true })
+        expect(detail).toMatchObject({ kind: 'hook', mutable: false, enabled: true })
         if (!('script' in detail)) throw new Error('missing script')
         expect(detail.script).toContain('--token ***')
         expect(detail.script).not.toContain('secret-value')
@@ -44,11 +44,9 @@ describe('session config detail', () => {
             enabled: false,
             selector: { kind: 'hook', event: 'PreToolUse', matcher: 'Bash', commandName: 'my-hook', source: 'user' },
         })
-        expect(toggled).toEqual({ enabled: false })
-        const written = readFileSync(settingsPath, 'utf8')
-        expect(written).toContain('"disabled": true')
-        expect(written).toContain('my-hook --token secret-value')
-        expect(written).toContain('"matcher": "Bash"')
+        expect(toggled).toEqual({ error: 'This agent does not honor a per-item switch' })
+        expect(readFileSync(settingsPath, 'utf8')).not.toContain('"disabled"')
+        expect(readFileSync(settingsPath, 'utf8')).toContain('"matcher": "Bash"')
     })
 
     it('refuses to change an injected item', async () => {

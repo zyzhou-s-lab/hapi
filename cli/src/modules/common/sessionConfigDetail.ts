@@ -1,8 +1,7 @@
-import { spawn } from 'node:child_process'
-import { existsSync, readFileSync, statSync } from 'node:fs'
+import { existsSync, readFileSync, realpathSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { isAbsolute, join } from 'node:path'
-import { redactConfigSecrets, type SessionConfigDetail, type SessionConfigItemSelector } from '@hapi/protocol/schemas'
+import { extname, isAbsolute, join, resolve, sep } from 'node:path'
+import { redactConfigSecrets, sessionConfigLock, type SessionConfigDetail, type SessionConfigItemSelector } from '@hapi/protocol/schemas'
 import { findSkill } from '@/modules/common/skills'
 import { commandBasename } from './sessionInventory'
 import {
@@ -18,6 +17,7 @@ const MAX_TEXT = 1_000_000
 const SCRIPT_LIMIT = 32 * 1024
 const NOT_FOUND = 'Config entry not found'
 const LOCKED = 'This item cannot be changed'
+const UNSUPPORTED = 'This agent does not honor a per-item switch'
 
 type DetailInput = {
     cwd: string
@@ -28,8 +28,11 @@ type DetailInput = {
     enabled: boolean
 }
 
-function mutable(source: string | undefined): boolean {
-    return source === 'user' || source === 'project'
+function lockError(flavor: string, kind: 'mcp' | 'skill' | 'hook', source: string | undefined): string | null {
+    const lock = sessionConfigLock(flavor, kind, source)
+    if (lock === 'source') return LOCKED
+    if (lock === 'unsupported') return UNSUPPORTED
+    return null
 }
 
 function readText(path: string): string | null {
@@ -106,95 +109,45 @@ function toolsFromNames(serverName: string, tools: readonly string[] | undefined
     return [...new Set(names)].slice(0, 200).map((name) => ({ name }))
 }
 
-function toolsFromRpc(payload: unknown): Array<{ name: string; description?: string }> {
-    const result = asRecord(asRecord(payload).result)
-    const tools = Array.isArray(result.tools) ? result.tools : []
-    const items: Array<{ name: string; description?: string }> = []
-    for (const tool of tools) {
-        const record = asRecord(tool)
-        if (typeof record.name !== 'string' || record.name.length === 0 || record.name.length > 200) continue
-        const description = typeof record.description === 'string'
-            ? redactConfigSecrets(record.description).replace(/\s+/g, ' ').trim().slice(0, 500)
-            : ''
-        items.push({
-            name: record.name,
-            ...(description ? { description } : {}),
-        })
-        if (items.length >= 200) break
-    }
-    return items
+
+function reportedTools(serverName: string, tools: readonly string[] | undefined): { tools: Array<{ name: string }>; toolsUnavailable?: boolean } {
+    const names = toolsFromNames(serverName, tools)
+    return names.length > 0 ? { tools: names } : { tools: [], toolsUnavailable: true }
 }
 
-function frame(message: unknown): Buffer {
-    const body = Buffer.from(JSON.stringify(message))
-    return Buffer.concat([Buffer.from(`Content-Length: ${body.length}\r\n\r\n`), body])
-}
-async function requestMcpTools(entry: { command?: string; args?: string[]; url?: string }): Promise<unknown> {
-    if (entry.url) {
-        const init = { jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 'hapi', version: '1' } } }
-        const list = { jsonrpc: '2.0', id: 2, method: 'tools/list' }
-        await fetch(entry.url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(init), signal: AbortSignal.timeout(5000) })
-        const response = await fetch(entry.url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(list), signal: AbortSignal.timeout(5000) })
-        return await response.json() as unknown
-    }
-    if (!entry.command) throw new Error('no transport')
-    const command = entry.command
-    const args = entry.args ?? []
-    const { promise, resolve, reject } = Promise.withResolvers<unknown>()
-    const child = spawn(command, args, { stdio: ['pipe', 'pipe', 'ignore'] })
-    const timer = setTimeout(() => {
-        child.kill()
-        reject(new Error('timeout'))
-    }, 5000)
-    let buffer = Buffer.alloc(0)
-    const finish = (value: unknown) => {
-        clearTimeout(timer)
-        child.kill()
-        resolve(value)
-    }
-    child.on('error', (error) => {
-        clearTimeout(timer)
-        reject(error)
-    })
-    child.stdout.on('data', (chunk: Buffer) => {
-        buffer = Buffer.concat([buffer, chunk])
-        const headerEnd = buffer.indexOf('\r\n\r\n')
-        if (headerEnd === -1) return
-        const header = buffer.subarray(0, headerEnd).toString('utf8')
-        const match = /Content-Length:\s*(\d+)/i.exec(header)
-        if (!match) return
-        const length = Number(match[1])
-        const bodyStart = headerEnd + 4
-        if (buffer.length < bodyStart + length) return
-        try {
-            const message: unknown = JSON.parse(buffer.subarray(bodyStart, bodyStart + length).toString('utf8'))
-            if (asRecord(message).id === 2) finish(message)
-        } catch {
-            reject(new Error('bad response'))
-        }
-    })
-    child.stdin.write(frame({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 'hapi', version: '1' } } }))
-    child.stdin.write(frame({ jsonrpc: '2.0', method: 'notifications/initialized' }))
-    child.stdin.write(frame({ jsonrpc: '2.0', id: 2, method: 'tools/list' }))
-    return await promise
+const SCRIPT_EXTENSIONS = new Set(['.js', '.mjs', '.cjs', '.ts', '.tsx', '.sh', '.bash', '.zsh', '.py', '.rb', '.pl'])
+
+function withinRoot(real: string, root: string): boolean {
+    return real === root || real.startsWith(root + sep)
 }
 
-async function mcpTools(entry: { command?: string; args?: string[]; url?: string } | null, reported: Array<{ name: string }>): Promise<{ tools: Array<{ name: string; description?: string }>; toolsUnavailable?: boolean }> {
-    if (!entry?.command && !entry?.url) {
-        return reported.length > 0 ? { tools: reported } : { tools: [], toolsUnavailable: true }
-    }
-    try {
-        const tools = toolsFromRpc(await requestMcpTools(entry))
-        return tools.length > 0 ? { tools } : { tools: reported, ...(reported.length === 0 ? { toolsUnavailable: true } : {}) }
-    } catch {
-        return reported.length > 0 ? { tools: reported } : { tools: [], toolsUnavailable: true }
-    }
-}
-
-function scriptText(command: string): { script: string; truncated: boolean } {
+function scriptFile(command: string, cwd: string): string | null {
     const tokens = command.match(/"([^"]*)"|'([^']*)'|(\S+)/g)?.map((token) => token.replace(/^['"]|['"]$/g, '')) ?? []
-    const file = [...tokens].reverse().find((token) => (isAbsolute(token) || token.includes('/')) && existsSync(token) && statSync(token).isFile())
-    const raw = file ? readFileSync(file, 'utf8') : command
+    let home = homedir()
+    let root = cwd
+    try { home = realpathSync(home) } catch { /* keep the raw home */ }
+    try { root = realpathSync(root) } catch { /* keep the raw cwd */ }
+    for (const token of tokens) {
+        if (!(isAbsolute(token) || token.startsWith('.'))) continue
+        const candidate = isAbsolute(token) ? token : resolve(cwd, token)
+        if (!existsSync(candidate)) continue
+        let real = candidate
+        try { real = realpathSync(candidate) } catch { continue }
+        if (!withinRoot(real, home) && !withinRoot(real, root)) continue
+        const info = statSync(real)
+        if (!info.isFile() || info.size > MAX_TEXT) continue
+        if ((info.mode & 0o111) === 0 && !SCRIPT_EXTENSIONS.has(extname(real).toLowerCase())) continue
+        return real
+    }
+    return null
+}
+
+function scriptText(command: string, cwd: string): { script: string; truncated: boolean } {
+    const file = scriptFile(command, cwd)
+    let raw = command
+    if (file) {
+        try { raw = readFileSync(file, 'utf8') } catch { raw = command }
+    }
     const redacted = redactConfigSecrets(raw)
     if (redacted.length <= SCRIPT_LIMIT) return { script: redacted, truncated: false }
     return { script: redacted.slice(0, SCRIPT_LIMIT), truncated: true }
@@ -216,21 +169,11 @@ function claudeHookObjects(text: string, event: string, matcher: string | undefi
     })
 }
 
-function editClaudeHooks(text: string, event: string, matcher: string | undefined, commandName: string | undefined, disabled: boolean): string {
-    const done = new Set<string>()
-    let next = text
-    for (let guard = 0; guard < 100; guard++) {
-        const hit = claudeHookObjects(next, event, matcher, commandName)
-            .find((object) => !done.has(object.path.map(String).join('\0')))
-        if (!hit) {
-            if (done.size === 0) throw new Error(NOT_FOUND)
-            return next
-        }
-        done.add(hit.path.map(String).join('\0'))
-        const updated = setJsonBoolean(next.slice(hit.start, hit.end), [], 'disabled', disabled)
-        next = `${next.slice(0, hit.start)}${updated}${next.slice(hit.end)}`
-    }
-    throw new Error(NOT_FOUND)
+function editClaudeHooks(text: string, event: string, matcher: string | undefined, commandName: string | undefined, index: number, disabled: boolean): string {
+    const hit = claudeHookObjects(text, event, matcher, commandName)[index]
+    if (!hit) throw new Error(NOT_FOUND)
+    const updated = setJsonBoolean(text.slice(hit.start, hit.end), [], 'disabled', disabled)
+    return `${text.slice(0, hit.start)}${updated}${text.slice(hit.end)}`
 }
 
 export async function readSessionConfigDetail(input: Omit<DetailInput, 'enabled'>): Promise<SessionConfigDetail | { error: string }> {
@@ -246,7 +189,7 @@ export async function readSessionConfigDetail(input: Omit<DetailInput, 'enabled'
             name: skill.name,
             ...(source ? { source } : {}),
             enabled: skill.enabled,
-            mutable: mutable(source),
+            mutable: lockError(flavor, 'skill', source) === null,
             markdown: skill.markdown,
             truncated: skill.truncated,
         }
@@ -265,20 +208,19 @@ export async function readSessionConfigDetail(input: Omit<DetailInput, 'enabled'
             }
         }
         const located = locateMcp(input.cwd, flavor, selector.name, selector.source, input.sessionId)
-        const reported = toolsFromNames(selector.name, input.tools)
-        const listed = await mcpTools(located, reported)
+        const listed = reportedTools(selector.name, input.tools)
         return {
             kind: 'mcp',
             name: selector.name,
             source: selector.source,
             enabled: located?.enabled ?? true,
-            mutable: mutable(selector.source),
+            mutable: lockError(flavor, 'mcp', selector.source) === null,
             ...listed,
         }
     }
     if (!selector.event || !selector.source) return { error: NOT_FOUND }
-    const hook = locateHook(flavor, selector.event, selector.matcher, selector.commandName)
-    const script = scriptText(hook?.command ?? selector.commandName ?? '')
+    const hook = locateHook(input.cwd, flavor, selector.source, selector.event, selector.matcher, selector.commandName, selector.index ?? 0)
+    const script = scriptText(hook?.command ?? selector.commandName ?? '', input.cwd)
     return {
         kind: 'hook',
         event: selector.event,
@@ -286,13 +228,15 @@ export async function readSessionConfigDetail(input: Omit<DetailInput, 'enabled'
         ...(selector.commandName ? { commandName: selector.commandName } : {}),
         source: selector.source,
         enabled: hook?.enabled ?? true,
-        mutable: mutable(selector.source),
+        mutable: lockError(flavor, 'hook', selector.source) === null,
         ...script,
     }
 }
 
 export async function writeSessionConfigEnabled(input: DetailInput): Promise<{ enabled: boolean } | { error: string }> {
-    if (!mutable(input.selector.source)) return { error: LOCKED }
+    const flavor = (input.flavor ?? '').trim().toLowerCase()
+    const refused = lockError(flavor, input.selector.kind, input.selector.source)
+    if (refused) return { error: refused }
     try {
         if (input.selector.kind === 'skill') {
             if (!input.selector.name) return { error: NOT_FOUND }
@@ -317,21 +261,41 @@ export async function writeSessionConfigEnabled(input: DetailInput): Promise<{ e
             return { enabled: input.enabled }
         }
         if (!input.selector.event) return { error: NOT_FOUND }
-        const target = hookEditTarget((input.flavor ?? '').trim().toLowerCase(), input.selector.event, input.selector.matcher, input.selector.commandName)
+        const target = hookEditTarget(input.cwd, flavor, input.selector.source ?? 'user', input.selector.event)
         if (!target) return { error: NOT_FOUND }
         const text = readText(target.file)
         if (text === null) return { error: NOT_FOUND }
+        let hookMatchCount = 0
         const next = target.format === 'toml'
             ? setTomlBoolean(text, target.header, 'enabled', input.enabled, (section) => {
                 const command = /command\s*=\s*"([^"]*)"/.exec(section)?.[1]
-                return Boolean(command && (!input.selector.commandName || commandBasename(command) === input.selector.commandName))
+                if (!command || (input.selector.commandName && commandBasename(command) !== input.selector.commandName)) return false
+                const current = hookMatchCount
+                hookMatchCount += 1
+                return current === (input.selector.index ?? 0)
             })
-            : editClaudeHooks(text, input.selector.event, input.selector.matcher, input.selector.commandName, !input.enabled)
+            : editClaudeHooks(text, input.selector.event, input.selector.matcher, input.selector.commandName, input.selector.index ?? 0, !input.enabled)
         writeTextAtomic(target.file, next)
         return { enabled: input.enabled }
-    } catch {
-        return { error: NOT_FOUND }
+    } catch (error) {
+        return { error: writeFailure(error) }
     }
+}
+
+function writeFailure(error: unknown): string {
+    if (error && typeof error === 'object' && 'code' in error) {
+        const code = String(error.code)
+        if (code === 'EACCES' || code === 'EPERM' || code === 'EROFS') return 'Could not update session config: permission denied'
+        if (code === 'ENOSPC') return 'Could not update session config: no space'
+    }
+    const message = error instanceof Error ? error.message : ''
+    if (message === NOT_FOUND || message === 'Skill has no frontmatter') return message === NOT_FOUND ? NOT_FOUND : 'Skill has no frontmatter'
+    const redacted = redactConfigSecrets(message)
+        .replace(/(^|\s)(?:~|\/)\S*/g, '$1')
+        .replace(/(^|\s)[A-Za-z]:\\[^\s]*/g, '$1')
+        .replace(/\s+/g, ' ')
+        .trim()
+    return redacted ? `Could not update session config: ${redacted}` : 'Could not update session config'
 }
 
 function locateMcp(cwd: string, flavor: string, name: string, source: string, sessionId?: string): { enabled: boolean; command?: string; args?: string[]; url?: string } | null {
@@ -384,20 +348,28 @@ function codexSection(text: string, header: string): string | null {
     return lines.slice(start, end).join('\n')
 }
 
-function locateHook(flavor: string, event: string, matcher: string | undefined, commandName: string | undefined): { command: string; enabled: boolean } | null {
+function hookSettingsPath(cwd: string, flavor: string, source: string): string {
+    if (source === 'project') {
+        return flavor === 'codex' ? join(cwd, '.codex', 'config.toml') : join(cwd, '.claude', 'settings.json')
+    }
+    return flavor === 'codex' ? codexConfigPath() : claudeSettingsPath()
+}
+
+function locateHook(cwd: string, flavor: string, source: string, event: string, matcher: string | undefined, commandName: string | undefined, index: number): { command: string; enabled: boolean } | null {
+    const file = hookSettingsPath(cwd, flavor, source)
     if (flavor === 'codex') {
-        const text = readText(codexConfigPath()) ?? ''
-        const sections = text.split(/\n(?=\[\[)/)
-        const section = sections.find((part) => part.includes(`[[hooks.${event}]]`) && (!commandName || commandBasename(/command\s*=\s*"([^"]*)"/.exec(part)?.[1] ?? '') === commandName))
+        const text = readText(file) ?? ''
+        const sections = text.split(/\n(?=\[\[)/).filter((part) => part.includes(`[[hooks.${event}]]`) && (!commandName || commandBasename(/command\s*=\s*"([^"]*)"/.exec(part)?.[1] ?? '') === commandName))
+        const section = sections[index]
         if (!section) return null
         return {
             command: /command\s*=\s*"([^"]*)"/.exec(section)?.[1] ?? '',
             enabled: !/^enabled\s*=\s*false\b/m.test(section),
         }
     }
-    const text = readText(claudeSettingsPath())
+    const text = readText(file)
     if (!text) return null
-    const hit = claudeHookObjects(text, event, matcher, commandName)[0]
+    const hit = claudeHookObjects(text, event, matcher, commandName)[index]
     if (!hit) return null
     const objectText = text.slice(hit.start, hit.end)
     return {
@@ -406,7 +378,10 @@ function locateHook(flavor: string, event: string, matcher: string | undefined, 
     }
 }
 
-function hookEditTarget(flavor: string, event: string, _matcher: string | undefined, _commandName: string | undefined): { file: string; format: 'json' | 'toml'; header: string } | null {
-    if (flavor === 'codex') return { file: codexConfigPath(), format: 'toml', header: `hooks.${event}` }
-    return { file: claudeSettingsPath(), format: 'json', header: '' }
+function hookEditTarget(cwd: string, flavor: string, source: string, event: string): { file: string; format: 'json' | 'toml'; header: string } | null {
+    return {
+        file: hookSettingsPath(cwd, flavor, source),
+        format: flavor === 'codex' ? 'toml' : 'json',
+        header: `hooks.${event}`,
+    }
 }

@@ -1,4 +1,4 @@
-import type { SessionConfigItemSelector, SessionInventory, SessionInventorySource } from '@hapi/protocol/schemas'
+import { sessionConfigLock, type SessionConfigItemSelector, type SessionInventory, type SessionInventorySource } from '@hapi/protocol/schemas'
 
 export type InventoryRow = {
     key: string
@@ -7,6 +7,7 @@ export type InventoryRow = {
     source?: SessionInventorySource
     enabled: boolean
     mutable: boolean
+    lock: 'source' | 'unsupported' | null
     ref: SessionConfigItemSelector
 }
 
@@ -44,19 +45,27 @@ export function visibleInventoryText(value: string | undefined): string | undefi
     return text
 }
 
-function row(title: string, source: string | undefined, detail: string | undefined, ref: SessionConfigItemSelector, enabled: boolean | undefined): InventoryRow | null {
+function row(
+    title: string,
+    source: string | undefined,
+    detail: string | undefined,
+    ref: SessionConfigItemSelector,
+    enabled: boolean | undefined,
+    flavor: string | null | undefined,
+): InventoryRow | null {
     const visibleTitle = visibleInventoryText(title)
     if (!visibleTitle) return null
     const visibleDetail = visibleInventoryText(detail)
     const visibleSource = asSource(source)
-    const mutable = visibleSource === 'user' || visibleSource === 'project'
+    const lock = sessionConfigLock(flavor, ref.kind, visibleSource)
     return {
-        key: `${ref.kind}:${visibleSource ?? ''}:${visibleTitle}:${visibleDetail ?? ''}`,
+        key: `${ref.kind}:${visibleSource ?? ''}:${visibleTitle}:${ref.index ?? 0}:${visibleDetail ?? ''}`,
         title: visibleTitle,
         ...(visibleDetail ? { detail: visibleDetail } : {}),
         ...(visibleSource ? { source: visibleSource } : {}),
         enabled: enabled !== false,
-        mutable,
+        mutable: lock === null,
+        lock,
         ref: { ...ref, ...(visibleSource ? { source: visibleSource } : {}) },
     }
 }
@@ -65,18 +74,18 @@ function rowsOrEmpty(rows: InventoryRow[]): InventorySection {
     return rows.length === 0 ? { status: 'empty' } : { status: 'list', rows }
 }
 
-export function mcpSection(inventory: SessionInventory | null | undefined): InventorySection {
+export function mcpSection(inventory: SessionInventory | null | undefined, flavor?: string | null): InventorySection {
     const mcp = inventory?.mcp
     if (!mcp) return { status: 'unreported' }
     const rows = mcp.servers.flatMap((server) => {
-        const next = row(server.name, server.source, undefined, { kind: 'mcp', name: server.name, source: server.source }, server.enabled)
+        const next = row(server.name, server.source, undefined, { kind: 'mcp', name: server.name, source: server.source }, server.enabled, flavor)
         return next ? [next] : []
     })
     if (mcp.kind === 'tools') return { status: 'list', rows, tools: true }
     return rowsOrEmpty(rows)
 }
 
-export function hooksSection(inventory: SessionInventory | null | undefined): InventorySection {
+export function hooksSection(inventory: SessionInventory | null | undefined, flavor?: string | null): InventorySection {
     const hooks = inventory?.hooks
     if (!hooks) return { status: 'unreported' }
     if (hooks.availability === 'none') return { status: 'none' }
@@ -88,18 +97,19 @@ export function hooksSection(inventory: SessionInventory | null | undefined): In
             source: item.source,
             ...(item.matcher ? { matcher: item.matcher } : {}),
             ...(item.commandName ? { commandName: item.commandName } : {}),
-        }, item.enabled)
+            ...(item.index ? { index: item.index } : {}),
+        }, item.enabled, flavor)
         return next ? [next] : []
     })
     return rowsOrEmpty(rows)
 }
 
-export function skillsSection(inventory: SessionInventory | null | undefined): InventorySection {
+export function skillsSection(inventory: SessionInventory | null | undefined, flavor?: string | null): InventorySection {
     const skills = inventory?.skills
     if (!skills) return { status: 'unreported' }
     if (skills.catalogUnavailable) return { status: 'catalogUnavailable' }
     return rowsOrEmpty(skills.items.flatMap((skill) => {
-        const next = row(skill.name, skill.source, skill.description, { kind: 'skill', name: skill.name, source: skill.source }, skill.enabled)
+        const next = row(skill.name, skill.source, skill.description, { kind: 'skill', name: skill.name, source: skill.source }, skill.enabled, flavor)
         return next ? [next] : []
     }))
 }

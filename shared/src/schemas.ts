@@ -12,6 +12,7 @@ export {
     parseSessionConfigDetail,
     parseSessionConfigToggle,
     redactConfigSecrets,
+    sessionConfigLock,
     type SessionInventory,
     type SessionInventoryHook,
     type SessionInventoryMcpServer,

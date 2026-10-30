@@ -21,6 +21,7 @@ export const SessionInventoryHookSchema = z.object({
     matcher: z.string().min(1).max(120).optional(),
     source: SessionInventorySourceSchema,
     commandName: z.string().min(1).max(80).optional(),
+    index: z.number().int().min(0).max(50).optional(),
     enabled: z.boolean().optional(),
 })
 
@@ -89,6 +90,7 @@ export const SessionConfigItemSelectorSchema = z.object({
     event: z.string().min(1).max(80).optional(),
     matcher: z.string().min(1).max(120).optional(),
     commandName: z.string().min(1).max(80).optional(),
+    index: z.number().int().min(0).max(50).optional(),
 })
 
 const SessionConfigToolSchema = z.object({
@@ -141,8 +143,23 @@ export function redactConfigSecrets(value: string): string {
     return value
         .replace(/([a-z][a-z0-9+.-]*:\/\/)[^\s/@]+:[^\s/@]+@/gi, '$1***@')
         .replace(/\b(bearer)\s+\S+/gi, '$1 ***')
+        .replace(/\b(sk-|ghp_|github_pat_|xox[baprs]-)[A-Za-z0-9_-]{8,}/g, '***')
+        .replace(/\b([A-Z][A-Z0-9_]*(?:API_KEY|ACCESS_KEY|SECRET|TOKEN|PASSWORD))\s*=\s*\S+/g, '$1=***')
         .replace(/(--(?:api[-_]?key|token|secret|password|passwd|key))(=|\s+)\S+/gi, '$1$2***')
         .replace(/\b(token|api[_-]?key|secret|password|passwd|key)\b(\s*[:=]\s*)\S+/gi, '$1$2***')
+}
+
+/** null when that agent honors a per-item boolean. Otherwise the switch stays disabled. */
+export function sessionConfigLock(
+    flavor: string | null | undefined,
+    kind: 'mcp' | 'skill' | 'hook',
+    source: string | undefined,
+): 'source' | 'unsupported' | null {
+    if (source !== 'user' && source !== 'project') return 'source'
+    const name = (flavor ?? '').trim().toLowerCase()
+    if (kind === 'mcp' && name === 'codex' && source === 'user') return null
+    if (kind === 'mcp' && name === 'cursor' && source === 'user') return null
+    return 'unsupported'
 }
 
 function recordField(raw: unknown, key: string): unknown {

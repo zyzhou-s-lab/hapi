@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, lstatSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -91,6 +91,7 @@ description: Read docs
         expect(disabled).toContain('disabled: true')
         expect(disabled).toContain('# Hello token=keep')
         expect(setFrontmatterBoolean(disabled, 'disabled', false)).toContain('disabled: false')
+        expect(() => setFrontmatterBoolean('# Hello only\n', 'disabled', true)).toThrow('Skill has no frontmatter')
     })
 
     it('replaces a file through a temporary name', () => {
@@ -100,5 +101,20 @@ description: Read docs
         writeFileSync(path, '{"a":1}\n')
         writeTextAtomic(path, '{"a":1,"disabled":true}\n')
         expect(readFileSync(path, 'utf8')).toBe('{"a":1,"disabled":true}\n')
+        expect(readFileSync(path, 'utf8')).toBe('{"a":1,"disabled":true}\n')
+    })
+
+    it('keeps mode 0600 when replacing through a symlink', () => {
+        const dir = mkdtempSync(join(tmpdir(), 'hapi-config-'))
+        tempDirs.push(dir)
+        const path = join(dir, 'settings.json')
+        const link = join(dir, 'link.json')
+        writeFileSync(path, '{"a":1}\n', { mode: 0o600 })
+        chmodSync(path, 0o600)
+        symlinkSync(path, link)
+        writeTextAtomic(link, '{"a":2}\n')
+        expect(readFileSync(path, 'utf8')).toBe('{"a":2}\n')
+        expect(lstatSync(link).isSymbolicLink()).toBe(true)
+        expect(statSync(path).mode & 0o777).toBe(0o600)
     })
 })

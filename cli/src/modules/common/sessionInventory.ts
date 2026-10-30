@@ -165,14 +165,16 @@ export function dedupeHooks(items: readonly SessionInventoryHook[]): SessionInve
         const commandName = item.commandName && isSafeInventoryName(item.commandName)
             ? item.commandName.trim().slice(0, 80)
             : undefined;
+        const index = typeof item.index === 'number' ? item.index : 0;
         const next: SessionInventoryHook = {
             event,
             source: item.source,
             ...(matcher ? { matcher } : {}),
             ...(commandName ? { commandName } : {}),
+            ...(index > 0 ? { index } : {}),
             ...(item.enabled === false ? { enabled: false } : {}),
         };
-        const key = `${next.event}\0${next.matcher ?? ''}\0${next.source}\0${next.commandName ?? ''}`;
+        const key = `${next.event}\0${next.matcher ?? ''}\0${next.source}\0${next.commandName ?? ''}\0${index}`;
         const previous = byKey.get(key);
         if (!previous || SOURCE_RANK[next.source] >= SOURCE_RANK[previous.source]) {
             byKey.set(key, next);
@@ -235,6 +237,7 @@ export function mcpServersFromClaudeJson(value: unknown, cwd: string): SessionIn
 export function hooksFromClaudeSettings(settings: unknown): SessionInventoryHook[] {
     const hooks = asRecord(asRecord(settings).hooks);
     const items: SessionInventoryHook[] = [];
+    const seen = new Map<string, number>();
     for (const [event, groups] of Object.entries(hooks)) {
         if (!Array.isArray(groups)) continue;
         for (const group of groups) {
@@ -246,11 +249,16 @@ export function hooksFromClaudeSettings(settings: unknown): SessionInventoryHook
                 const command = commandRecord.command;
                 if (typeof command !== 'string' || command.trim().length === 0) continue;
                 const commandName = commandBasename(command);
+                const source = command.includes('hook-forwarder') ? 'injected' : 'user';
+                const identity = `${event}\0${matcher ?? ''}\0${source}\0${commandName ?? ''}`;
+                const index = seen.get(identity) ?? 0;
+                seen.set(identity, index + 1);
                 items.push({
                     event,
-                    source: command.includes('hook-forwarder') ? 'injected' : 'user',
+                    source,
                     ...(matcher ? { matcher } : {}),
                     ...(commandName ? { commandName } : {}),
+                    ...(index > 0 ? { index } : {}),
                     ...(commandRecord.disabled === true ? { enabled: false } : {}),
                 });
             }
@@ -265,6 +273,7 @@ export function parseCodexConfigInventory(toml: string): {
 } {
     const servers: SessionInventoryMcpServer[] = [];
     const hooks: SessionInventoryHook[] = [];
+    const hookCounts = new Map<string, number>();
     let section: { kind: 'server' | 'hook'; name: string } | null = null;
     const disableLast = (kind: 'server' | 'hook', name: string) => {
         const items = kind === 'server' ? servers : hooks;
@@ -291,8 +300,10 @@ export function parseCodexConfigInventory(toml: string): {
                 section = exact ? { kind: 'server', name: server[1] } : null;
                 servers.push({ name: server[1], source: 'user' });
             } else if (hook?.[1] && isSafeInventoryName(hook[1])) {
+                const index = hookCounts.get(hook[1]) ?? 0;
+                hookCounts.set(hook[1], index + 1);
                 section = exact ? { kind: 'hook', name: hook[1] } : null;
-                hooks.push({ event: hook[1], source: 'user' });
+                hooks.push({ event: hook[1], source: 'user', ...(index > 0 ? { index } : {}) });
             } else {
                 section = null;
             }

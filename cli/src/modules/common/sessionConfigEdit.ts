@@ -1,4 +1,4 @@
-import { renameSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, chownSync, closeSync, fsyncSync, openSync, realpathSync, renameSync, rmSync, statSync, writeSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 
 const NOT_FOUND = 'Config entry not found'
@@ -240,7 +240,7 @@ export function setFrontmatterBoolean(text: string, field: string, value: boolea
     const literal = value ? 'true' : 'false'
     const match = /^---\r?\n([\s\S]*?)\r?\n---/.exec(text)
     if (!match || match.index !== 0) {
-        return `---\n${field}: ${literal}\n---\n${text}`
+        throw new Error('Skill has no frontmatter')
     }
     const block = match[1] ?? ''
     const line = new RegExp(`^(${field}:\\s*)(?:true|false)\\s*$`, 'm')
@@ -249,10 +249,29 @@ export function setFrontmatterBoolean(text: string, field: string, value: boolea
 }
 
 export function writeTextAtomic(path: string, text: string): void {
-    const tmp = join(dirname(path), `.${process.pid}-${Date.now()}.tmp`)
+    const real = realpathSync(path)
+    const info = statSync(real)
+    const mode = info.mode & 0o777
+    const tmp = join(dirname(real), `.${process.pid}-${Date.now()}.tmp`)
+    const fd = openSync(tmp, 'wx', mode)
+    const fail = (error: unknown) => {
+        try { closeSync(fd) } catch { /* already closed */ }
+        rmSync(tmp, { force: true })
+        throw error
+    }
     try {
-        writeFileSync(tmp, text, 'utf8')
-        renameSync(tmp, path)
+        const body = Buffer.from(text, 'utf8')
+        let offset = 0
+        while (offset < body.length) offset += writeSync(fd, body, offset)
+        fsyncSync(fd)
+        closeSync(fd)
+    } catch (error) {
+        fail(error)
+    }
+    try {
+        chmodSync(tmp, mode)
+        try { chownSync(tmp, info.uid, info.gid) } catch { /* the creating user already owns a new file */ }
+        renameSync(tmp, real)
     } catch (error) {
         rmSync(tmp, { force: true })
         throw error
