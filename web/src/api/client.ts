@@ -289,6 +289,22 @@ export class ApiClient {
         })
     }
 
+    async createWorkLine(body: { name: string; goal?: string | null; primaryMachineId: string; primaryPath: string }): Promise<{ line: { id: string } }> {
+        return await this.request('/api/work/lines', { method: 'POST', body: JSON.stringify(body) })
+    }
+
+    async deleteWorkLine(id: string): Promise<void> {
+        await this.request(`/api/work/lines/${encodeURIComponent(id)}`, { method: 'DELETE' })
+    }
+
+    async putWorkDirectory(body: { directoryKey: string; mode: 'line' | 'mixed' | 'ignored' | null; lineId?: string | null }): Promise<void> {
+        await this.request('/api/work/directories', { method: 'PUT', body: JSON.stringify(body) })
+    }
+
+    async putWorkSession(body: { sessionId: string; state: 'line' | 'ignored' | 'follow'; lineId?: string | null }): Promise<void> {
+        await this.request('/api/work/sessions', { method: 'PUT', body: JSON.stringify(body) })
+    }
+
     async getHealth(): Promise<HubHealthResponse> {
         return await this.request<HubHealthResponse>('/health')
     }

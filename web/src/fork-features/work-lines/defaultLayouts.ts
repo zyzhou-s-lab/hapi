@@ -14,3 +14,20 @@ export const overviewLayout: WorkLayout = {
         ],
     },
 }
+
+export const workbenchLayout: WorkLayout = {
+    revision: 1,
+    regions: {
+        rail: [{ cardId: 'workbench.line-list' }],
+        main: [
+            { cardId: 'workbench.line-header' },
+            { cardId: 'workbench.focus' },
+            { cardId: 'workbench.directories' },
+            { cardId: 'workbench.inbox' },
+        ],
+        side: [
+            { cardId: 'workbench.sessions' },
+            { cardId: 'workbench.continue' },
+        ],
+    },
+}

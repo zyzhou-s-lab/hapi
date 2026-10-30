@@ -6,9 +6,9 @@ import { useAppContext } from '@/lib/app-context'
 import { getSessionTitle } from '@/lib/sessionTitle'
 import { useTranslation } from '@/lib/use-translation'
 import { watchCardTopic } from './cardTopics'
-import { deriveWork, type WorkModel } from './deriveWork'
+import { deriveWork, deriveWorkbench, type WorkbenchModel, type WorkMapData, type WorkModel } from './deriveWork'
 import { mergeLayout, slotsForRegion, visiblePollInterval, type WorkCardSize, type WorkLayout, type WorkLayoutSlot, type WorkSurface } from './layout'
-import { overviewLayout } from './defaultLayouts'
+import { overviewLayout, workbenchLayout } from './defaultLayouts'
 import { loadWorkCardMap, workCardMapKey } from './useWorkMap'
 
 export type WorkView = { kind: 'overview' } | { kind: 'line'; lineId: string } | { kind: 'inbox' }
@@ -19,6 +19,8 @@ export type WorkCardContext = {
     view: WorkView
     slot: WorkLayoutSlot
     model: WorkModel | null
+    bench: WorkbenchModel
+    map: WorkMapData | null
     query: { data: unknown; error: string | null; isLoading: boolean; refetch: () => void }
 }
 
@@ -64,11 +66,12 @@ export function WorkCardHost(props: {
         },
         enabled: Boolean(props.api),
     })
-    const defaults = props.layoutFor?.(props.surface) ?? overviewLayout
+    const defaults = props.layoutFor?.(props.surface) ?? (props.surface === 'workbench' ? workbenchLayout : overviewLayout)
     const layout = mergeLayout(saved.data?.source === 'saved' ? saved.data.layout : null, defaults)
     const regions = Object.keys(layout.regions)
+    const workbench = props.surface === 'workbench'
     return (
-        <div className="flex min-h-0 flex-1 flex-col gap-4">
+        <div className={workbench ? 'grid min-h-0 flex-1 grid-cols-1 gap-4 lg:grid-cols-[16rem_minmax(0,1fr)_18rem]' : 'flex min-h-0 flex-1 flex-col gap-4'}>
             {regions.map((region) => (
                 <WorkRegion
                     key={region}
@@ -95,6 +98,7 @@ function WorkRegion(props: {
     sessions: SessionSummary[]
     api: ApiClient | null
     accountId: number
+
     retryLabel: string
     failedMessage: string
 }): ReactNode {
@@ -174,12 +178,20 @@ function CardSlot(props: {
         getSessionTitle,
         (session) => session.metadata?.host ?? session.metadata?.machineId ?? '',
     ) : null, [mapQuery.data, props.sessions, workModel])
+    const bench = useMemo(() => deriveWorkbench(
+        props.sessions,
+        mapQuery.data ?? null,
+        getSessionTitle,
+        (session) => session.metadata?.host ?? session.metadata?.machineId ?? '',
+    ), [mapQuery.data, props.sessions])
     const ctx: WorkCardContext = {
         sessions: props.sessions,
         surface: props.surface,
         view: props.view,
         slot: props.slot,
         model,
+        bench,
+        map: mapQuery.data ?? null,
         query: {
             data: active.data,
             error: active.error instanceof Error ? active.error.message : null,

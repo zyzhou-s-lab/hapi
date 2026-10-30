@@ -1,6 +1,7 @@
 import { createContext, useContext, useMemo, useState, type ReactNode } from 'react'
 import { useAppContext } from '@/lib/app-context'
 import { useTranslation } from '@/lib/use-translation'
+import { Link } from '@tanstack/react-router'
 import type { SessionSummary } from '@/types/api'
 import './cards'
 import { WorkCardHost } from './WorkCardHost'
@@ -44,7 +45,10 @@ export function WorkOverview(props: { sessions: SessionSummary[] }): ReactNode {
         <div className="flex h-full min-h-0 flex-col">
             <header className="flex items-center justify-between px-4 py-3">
                 <h2 className="text-base font-semibold text-[var(--app-fg)]">{t('work.overviewTitle')}</h2>
-                <PhoneWorkToggle />
+                <div className="flex items-center gap-3">
+                    <Link to="/work" className="text-sm text-[var(--app-link)]">{t('work.openWorkbench')}</Link>
+                    <PhoneWorkToggle />
+                </div>
             </header>
             <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-4">
                 <WorkCardHost surface="overview" view={{ kind: 'overview' }} sessions={props.sessions} api={api} />
