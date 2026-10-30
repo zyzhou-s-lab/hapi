@@ -102,6 +102,7 @@ export function createMultiUserGatewayRoutes(deps: {
     jwtSecret: Uint8Array
     coreUserId: number
     telegram?: TelegramGatewayAdapter
+    onAccountDeleted?: (accountId: number) => void
 }): Hono<GatewayEnv> {
     const app = new Hono<GatewayEnv>()
     const dispatcher = new ExecutionDispatcher(deps.store)
@@ -336,7 +337,9 @@ export function createMultiUserGatewayRoutes(deps: {
         if (c.get('gatewayRole') !== 'admin') return c.json({ error: 'Admin required' }, 403)
         const id = Number(c.req.param('id'))
         if (id === c.get('gatewayAccountId')) return c.json({ error: 'Cannot delete current account' }, 409)
-        return deps.store.deleteAccount(id) ? c.json({ ok: true }) : c.json({ error: 'Not found' }, 404)
+        if (!deps.store.deleteAccount(id)) return c.json({ error: 'Not found' }, 404)
+        deps.onAccountDeleted?.(id)
+        return c.json({ ok: true })
     })
 
     app.get('/tokens', (c) => c.json({ tokens: deps.store.listTokens(c.get('gatewayAccountId')).map(({ tokenHash: _, ...token }) => token) }))

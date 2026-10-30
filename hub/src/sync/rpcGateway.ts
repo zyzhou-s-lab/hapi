@@ -327,6 +327,9 @@ export class RpcGateway {
         return AgentAvailabilityResponseSchema.parse(result)
     }
 
+    async queryTrainingRun(machineId: string): Promise<unknown> {
+        return await this.machineRpc(machineId, RPC_METHODS.QueryWandbRun, {})
+    }
     async createMachineDirectory(machineId: string, parentPath: string, name: string): Promise<MachineCreateDirectoryResponse> {
         const result = await this.machineRpc(
             machineId,

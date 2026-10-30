@@ -4011,6 +4011,14 @@ export class SyncEngine {
         return await this.rpcGateway.listMachineDirectory(machineId, path, includeHidden)
     }
 
+    async queryTrainingRun(machineId: string): Promise<unknown> {
+        return await this.rpcGateway.queryTrainingRun(machineId)
+    }
+
+    getWorkLines() {
+        return this.store.workLines
+    }
+
     async createMachineDirectory(machineId: string, parentPath: string, name: string) {
         return await this.rpcGateway.createMachineDirectory(machineId, parentPath, name)
     }

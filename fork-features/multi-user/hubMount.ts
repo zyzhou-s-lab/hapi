@@ -81,6 +81,7 @@ export function mountMultiUserGateway(app: Hono<WebAppEnv>, deps: {
         store: deps.store,
         jwtSecret: deps.jwtSecret,
         coreUserId: deps.coreUserId,
+        onAccountDeleted: (accountId) => deps.coreStore.workLines.purgeAccount(accountId),
         telegram: createTelegramGatewayAdapter(
             deps.coreStore,
             configuration.telegramEnabled ? configuration.telegramBotToken : null
