@@ -88,6 +88,8 @@
     --app-font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
     --app-font-weight-regular: 400;
     --app-font-weight-medium: 500;
+    /* 580 and 430 are the variable-font targets. A face with only 400/500/600/700
+       snaps 580 to 600 and 430 to 400, which is the static semibold and regular. */
     --app-font-weight-semibold: 580;
     --app-font-weight-bold: 600;
     --app-font-weight-prose: 430;
