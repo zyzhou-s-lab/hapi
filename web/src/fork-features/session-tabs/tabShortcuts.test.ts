@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { isEditableTarget, isTerminalTarget, matchTabShortcut } from './tabShortcuts'
+import { canCloseOpenTab, isEditableTarget, isTerminalTarget, matchTabShortcut } from './tabShortcuts'
 
 const key = (over: Partial<Parameters<typeof matchTabShortcut>[0]>) => ({
     key: '', code: '', ctrlKey: false, metaKey: false, altKey: false, shiftKey: false, repeat: false, isComposing: false, ...over
@@ -69,5 +69,12 @@ describe('matchTabShortcut', () => {
         expect(isTerminalTarget(document.body)).toBe(false)
         expect(isTerminalTarget(null)).toBe(false)
         term.remove()
+    })
+
+    it('claims Ctrl/⌘+W only when that session tab is open', () => {
+        expect(canCloseOpenTab('s1', ['s1', 's2'])).toBe(true)
+        expect(canCloseOpenTab(null, ['s1'])).toBe(false)
+        expect(canCloseOpenTab('s9', ['s1'])).toBe(false)
+        expect(canCloseOpenTab('s1', [])).toBe(false)
     })
 })

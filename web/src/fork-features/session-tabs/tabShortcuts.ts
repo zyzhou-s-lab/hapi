@@ -23,6 +23,14 @@ export function matchTabShortcut(event: KeyLike): TabShortcut | null {
     return null
 }
 
+/**
+ * Ctrl/⌘+W 只在当前会话确实开着标签时才拿走事件。
+ * 否则留给浏览器：PWA 独立窗口靠这个组合关掉窗口。
+ */
+export function canCloseOpenTab(selectedSessionId: string | null, openTabIds: readonly string[]): boolean {
+    return selectedSessionId != null && openTabIds.includes(selectedSessionId)
+}
+
 /** 终端里 Ctrl+W 是删词，焦点在终端时快捷键一律不拦。 */
 export function isTerminalTarget(target: EventTarget | null): boolean {
     return typeof Element !== 'undefined' && target instanceof Element && target.closest('.xterm') !== null

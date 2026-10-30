@@ -25,7 +25,7 @@ import {
     updateSessionTabs,
     useSessionTabsState
 } from './sessionTabsStore'
-import { isEditableTarget, isTerminalTarget, matchTabShortcut } from './tabShortcuts'
+import { canCloseOpenTab, isEditableTarget, isTerminalTarget, matchTabShortcut } from './tabShortcuts'
 import './sessionTabs.css'
 
 /** 标签按 hub + 账号分开存：同一浏览器切账号不会串。 */
@@ -67,7 +67,7 @@ function closeSessionTab(scope: string, id: string, selectedSessionId: string | 
     if (id === selectedSessionId) go(neighbor)
 }
 
-/** 见 matchTabShortcut：关闭当前标签、新建会话。当前会话不在标签里时 Ctrl/⌘+W 交还给浏览器。 */
+/** 见 matchTabShortcut。没有可关的会话标签时不 preventDefault，PWA 独立窗口才能用 Ctrl/⌘+W 关窗口。 */
 function useSessionTabShortcuts(scope: string, selectedSessionId: string | null): void {
     const navigate = useNavigate()
     const { tabs } = useSessionTabsState(scope)
@@ -89,7 +89,7 @@ function useSessionTabShortcuts(scope: string, selectedSessionId: string | null)
                 return
             }
             const { selectedSessionId: current, tabs: open } = latest.current
-            if (!current || !open.some(tab => tab.id === current)) return
+            if (!current || !canCloseOpenTab(current, open.map(tab => tab.id))) return
             event.preventDefault()
             closeSessionTab(scope, current, current, go)
         }
