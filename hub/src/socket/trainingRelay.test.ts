@@ -150,6 +150,9 @@ describe('training relay', () => {
         cliNamespace.add(next, 'machine:gpu')
         cliNamespace.adapter.rooms.get('machine:gpu')!.delete(cli.id)
         viewer.trigger('training:subscribe', { run: 'exp-1' })
+        expect(cli.emitted.filter((event) => event.event === 'training:unsubscribe')).toEqual([
+            { event: 'training:unsubscribe', data: { run: 'exp-1' } }
+        ])
         expect(next.emitted).toEqual([{
             event: 'training:subscribe',
             data: { run: 'exp-1', runDir: '/data/wandb/run-abc', machineId: 'gpu' }

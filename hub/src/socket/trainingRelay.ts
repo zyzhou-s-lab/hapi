@@ -30,16 +30,19 @@ export class TrainingRelay {
         return this.viewers.get(this.key(accountId, run))?.size ?? 0
     }
 
-    /** @returns true when the runner should receive training:subscribe. */
-    addViewer(watch: TrainingWatch, socketId: string): boolean {
+    /**
+     * @returns subscribe when the current runner should start,
+     * and the previous runner socket when this call replaced it.
+     */
+    addViewer(watch: TrainingWatch, socketId: string): { subscribe: boolean; replacedCliSocketId: string | null } {
         const id = this.key(watch.accountId, watch.run)
         const existing = this.watches.get(id)
-        let runnerChanged = false
+        let replacedCliSocketId: string | null = null
         if (existing && existing.cliSocketId !== watch.cliSocketId) {
+            replacedCliSocketId = existing.cliSocketId
             existing.cliSocketId = watch.cliSocketId
             existing.machineId = watch.machineId
             existing.runDir = watch.runDir
-            runnerChanged = true
         } else if (!existing) {
             this.watches.set(id, { ...watch })
         }
@@ -47,7 +50,7 @@ export class TrainingRelay {
         const first = set.size === 0
         set.add(socketId)
         this.viewers.set(id, set)
-        return first || runnerChanged
+        return { subscribe: first || replacedCliSocketId !== null, replacedCliSocketId }
     }
 
     /** @returns the watch when the last viewer left. */

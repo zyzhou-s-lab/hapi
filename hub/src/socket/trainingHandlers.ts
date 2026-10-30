@@ -65,7 +65,7 @@ export function registerTrainingWebHandlers(socket: SocketWithData, deps: Traini
             fail(run, 'Runner is not connected.')
             return
         }
-        const subscribe = deps.relay.addViewer({
+        const added = deps.relay.addViewer({
             accountId,
             run,
             machineId: row.machineId,
@@ -73,7 +73,10 @@ export function registerTrainingWebHandlers(socket: SocketWithData, deps: Traini
             cliSocketId: cliSocket.id
         }, socket.id)
         socket.join(trainingRoom(accountId, run))
-        if (subscribe) {
+        if (added.replacedCliSocketId) {
+            cliNamespace.sockets.get(added.replacedCliSocketId)?.emit('training:unsubscribe', { run })
+        }
+        if (added.subscribe) {
             cliSocket.emit('training:subscribe', { run, runDir: row.runDir, machineId: row.machineId })
         }
     })
