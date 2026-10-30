@@ -110,17 +110,12 @@ describe('chatComposerGridPlacement', () => {
 })
 
 describe('floating dock surface', () => {
-    it('paints one frosted stack behind bars, status, and the input', () => {
+    it('frosts only the composer frame, not a shared stack behind the bars', () => {
         const css = readFileSync('src/index.css', 'utf8')
-        const surface = css.match(/\.composer-floating-frame,\s*\.composer-floating-stack \{[^}]+\}/)?.[0] ?? ''
-        const stack = css.match(/\.composer-floating-stack \{\s*margin-inline:[^}]+\}/)?.[0] ?? ''
-        const shellInStack = css.match(/\.composer-floating-stack \.composer-floating-shell \{[^}]+\}/)?.[0] ?? ''
-        expect(surface).toContain('background-color: var(--app-composer-surface)')
-        expect(surface).toContain('backdrop-filter: blur(12px)')
-        expect(stack).toContain('margin-inline: 0.75rem')
-        expect(stack).not.toContain('overflow: hidden')
-        expect(shellInStack).toContain('padding-top: 0')
-        expect(shellInStack).toContain('padding-inline: 0')
+        const frame = css.match(/\.composer-floating-frame \{[^}]+\}/)?.[0] ?? ''
+        expect(frame).toContain('background-color: var(--app-composer-surface)')
+        expect(frame).toContain('backdrop-filter: blur(12px)')
+        expect(css).not.toContain('.composer-floating-stack')
     })
 })
 

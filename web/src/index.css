@@ -368,30 +368,14 @@ html:has(.chat-scroll-y) #root {
     padding-bottom: 0.5rem;
 }
 
-.composer-floating-frame,
-.composer-floating-stack {
+.composer-floating-frame {
     border: 1px solid var(--app-composer-border);
     background-color: var(--app-secondary-bg);
     background-color: var(--app-composer-surface);
     box-shadow: var(--app-composer-shadow);
+    border-radius: 26px;
     -webkit-backdrop-filter: blur(12px);
     backdrop-filter: blur(12px);
-}
-
-.composer-floating-frame {
-    border-radius: 26px;
-}
-
-/* One surface behind bars, status, and the input so scrolled messages
-   cannot show through the seams. Side inset stays transparent. */
-.composer-floating-stack {
-    margin-inline: 0.75rem;
-    border-radius: 26px;
-}
-
-.composer-floating-stack .composer-floating-shell {
-    padding-top: 0;
-    padding-inline: 0;
 }
 
 @media (hover: hover) and (pointer: fine) {

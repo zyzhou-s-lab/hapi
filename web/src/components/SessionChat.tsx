@@ -1952,7 +1952,6 @@ function SessionChatInner(props: SessionChatProps) {
         composerExpanded,
         outlineOpen,
     })
-    const composerFloating = !terminalShown && !composerExpanded
     const threadBottomInsetPx = measureComposerDockInset(composerDockHeight, {
         expanded: composerExpanded,
         hidden: terminalShown,
@@ -2075,7 +2074,6 @@ function SessionChatInner(props: SessionChatProps) {
                         data-testid="composer-dock"
                         className={composerGrid.dock}
                     >
-                    <div className={composerFloating ? 'composer-floating-stack pointer-events-auto' : undefined}>
                     <div className="pointer-events-auto">
                     {codexCollaborationModeSupported && codexModelsState.error ? (
                         <div className="px-3 pb-2">
@@ -2360,7 +2358,6 @@ function SessionChatInner(props: SessionChatProps) {
                         onSuppressSendErrorRestore={props.onSuppressSendErrorRestore}
                         pendingSendIntentRef={pendingSendIntentRef}
                         />
-                    </div>
                     </div>
                     </div>
                     </div>
