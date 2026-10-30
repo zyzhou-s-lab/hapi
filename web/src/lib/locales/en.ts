@@ -1383,4 +1383,5 @@ export default {
   'work.noDirectory': 'No directory',
   'work.pendingCount': '{count} waiting',
   'work.retry': 'Retry',
+  'work.cardFailed': 'This card failed.',
 } as const

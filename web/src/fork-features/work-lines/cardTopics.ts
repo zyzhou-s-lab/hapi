@@ -21,9 +21,10 @@ export function applyCardInvalidated(queryClient: QueryClient, event: { accountI
     }
 }
 
-export function refetchWatchedCardTopics(queryClient: QueryClient): void {
+export function refetchWatchedCardTopics(queryClient: QueryClient, accountId: number): void {
     const seen = new Set<string>()
     for (const watch of watches) {
+        if (watch.accountId !== accountId) continue
         const key = JSON.stringify(watch.queryKey)
         if (seen.has(key)) continue
         seen.add(key)

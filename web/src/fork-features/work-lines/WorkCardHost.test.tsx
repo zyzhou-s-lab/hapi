@@ -92,14 +92,51 @@ describe('WorkCardHost', () => {
         const error = vi.spyOn(console, 'error').mockImplementation(() => {})
         const { rerender } = render(wrap([session(false)]))
         await waitFor(() => expect(screen.getByText('0')).toBeTruthy())
-        expect(screen.getByText(/boom/)).toBeTruthy()
+        expect(screen.getByText('This card failed.')).toBeTruthy()
+        expect(screen.queryByText(/boom/)).toBeNull()
+        expect(screen.queryByText('test.boom')).toBeNull()
         await waitFor(() => expect(screen.getByText('query broke')).toBeTruthy())
         expect(screen.queryByText('query-body')).toBeNull()
 
         rerender(wrap([session(true)]))
         await waitFor(() => expect(screen.getByText('1')).toBeTruthy())
         expect(getWorkMap).toHaveBeenCalledTimes(1)
-        expect(screen.getByText(/boom/)).toBeTruthy()
+        expect(screen.getByText('This card failed.')).toBeTruthy()
+        error.mockRestore()
+    })
+
+    it('renders card hooks after the map query recovers', async () => {
+        let fail = true
+        const getWorkMap = vi.fn(async () => {
+            if (fail) throw new Error('map down')
+            return map
+        })
+        const api = {
+            getWorkMap,
+            getWorkLayout: async () => ({ source: 'default', layout: null }),
+        } as unknown as ApiClient
+        const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+        const error = vi.spyOn(console, 'error').mockImplementation(() => {})
+        render(
+            <AppContextProvider value={{ api, token: 't', baseUrl: 'http://hub', user: { id: 7 } }}>
+                <QueryClientProvider client={client}>
+                    <I18nProvider>
+                        <WorkCardHost
+                            surface="overview"
+                            view={{ kind: 'overview' }}
+                            sessions={[session(false)]}
+                            api={api}
+                            layoutFor={() => ({ revision: 1, regions: { stats: [{ cardId: 'overview.running-count' }] } })}
+                        />
+                    </I18nProvider>
+                </QueryClientProvider>
+            </AppContextProvider>,
+        )
+        await waitFor(() => expect(screen.getByText('map down')).toBeTruthy())
+        fail = false
+        screen.getByText('Retry').click()
+        await waitFor(() => expect(screen.getByText('0')).toBeTruthy())
+        expect(error.mock.calls.some((call) => String(call[0]).includes('Rendered more hooks'))).toBe(false)
         error.mockRestore()
     })
 })

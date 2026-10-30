@@ -40,7 +40,7 @@ import { useSlashCommands } from '@/hooks/queries/useSlashCommands'
 import { useSkills } from '@/hooks/queries/useSkills'
 import { getSessionTitle } from '@/lib/sessionTitle'
 import { SessionTabsBar, useHasSessionTabs, useSessionTabsSync } from '@/fork-features/session-tabs/SessionTabsBar'
-import { PhoneWorkToggle, usePhoneWorkPane, WorkOverview } from '@/fork-features/work-lines/WorkOverview'
+import { PhoneWorkPaneProvider, PhoneWorkToggle, usePhoneWorkPane, WorkOverview } from '@/fork-features/work-lines/WorkOverview'
 import type { SessionSummary } from '@/types/api'
 import { buildSessionReferenceText, matchSessionsForMention } from '@/lib/sessionReference'
 import type { Suggestion } from '@/hooks/useActiveSuggestions'
@@ -166,6 +166,14 @@ function SettingsIcon(props: { className?: string }) {
 }
 
 function SessionsPage() {
+    return (
+        <PhoneWorkPaneProvider>
+            <SessionsPageContent />
+        </PhoneWorkPaneProvider>
+    )
+}
+
+function SessionsPageContent() {
     const { api, baseUrl, titleSuggestionAvailable = false } = useAppContext()
     const navigate = useNavigate()
     const pathname = useLocation({ select: location => location.pathname })

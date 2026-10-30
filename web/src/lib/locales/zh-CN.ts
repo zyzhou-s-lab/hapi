@@ -1382,4 +1382,5 @@ export default {
   'work.noDirectory': '没有目录',
   'work.pendingCount': '{count} 项待处理',
   'work.retry': '重试',
+  'work.cardFailed': '这张卡加载失败。',
 } as const

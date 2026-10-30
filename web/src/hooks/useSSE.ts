@@ -247,6 +247,7 @@ export function useSSE(options: {
     enabled: boolean
     token: string
     baseUrl: string
+    accountId?: number
     subscription?: SSESubscription
     scope?: SSEScope
     onEvent: (event: SyncEvent) => void
@@ -261,6 +262,8 @@ export function useSSE(options: {
     onToast?: (event: ToastEvent) => void
 }): { subscriptionId: string | null } {
     const queryClient = useQueryClient()
+    const accountIdRef = useRef(options.accountId)
+    accountIdRef.current = options.accountId
     const onEventRef = useRef(options.onEvent)
     const onConnectRef = useRef(options.onConnect)
     const onDisconnectRef = useRef(options.onDisconnect)
@@ -670,7 +673,7 @@ export function useSSE(options: {
                 // the field, which safely reads as a full resync.
                 const resumed = data && typeof data === 'object'
                     && (data as { resume?: unknown }).resume === 'ok'
-                if (lastEventCursorRef.current) refetchWatchedCardTopics(queryClient)
+                if (lastEventCursorRef.current && typeof accountIdRef.current === 'number') refetchWatchedCardTopics(queryClient, accountIdRef.current)
                 onConnectRef.current?.({ resumed: Boolean(resumed) })
             }
 

@@ -1,4 +1,4 @@
-import { useSyncExternalStore, type ReactNode } from 'react'
+import { createContext, useContext, useMemo, useState, type ReactNode } from 'react'
 import { useAppContext } from '@/lib/app-context'
 import { useTranslation } from '@/lib/use-translation'
 import type { SessionSummary } from '@/types/api'
@@ -6,30 +6,32 @@ import './cards'
 import { WorkCardHost } from './WorkCardHost'
 
 type PhonePane = 'sessions' | 'work'
-let phonePane: PhonePane = 'sessions'
-const phonePaneListeners = new Set<() => void>()
 
-export function usePhoneWorkPane(): PhonePane {
-    return useSyncExternalStore(
-        (listener) => {
-            phonePaneListeners.add(listener)
-            return () => phonePaneListeners.delete(listener)
-        },
-        () => phonePane,
-    )
+const PhonePaneContext = createContext<{
+    pane: PhonePane
+    setPane: (pane: PhonePane) => void
+} | null>(null)
+
+export function PhoneWorkPaneProvider(props: { children: ReactNode }): ReactNode {
+    const [pane, setPane] = useState<PhonePane>('sessions')
+    const value = useMemo(() => ({ pane, setPane }), [pane])
+    return <PhonePaneContext.Provider value={value}>{props.children}</PhonePaneContext.Provider>
 }
 
-export function setPhoneWorkPane(next: PhonePane): void {
-    phonePane = next
-    for (const listener of phonePaneListeners) listener()
+export function usePhoneWorkPane(): PhonePane {
+    return useContext(PhonePaneContext)?.pane ?? 'sessions'
 }
 
 export function PhoneWorkToggle(): ReactNode {
+    const context = useContext(PhonePaneContext)
     const { t } = useTranslation()
+    const pane = context?.pane ?? 'sessions'
+    const selected = 'text-sm font-semibold text-[var(--app-fg)]'
+    const idle = 'text-sm text-[var(--app-hint)]'
     return (
         <div className="split:hidden flex gap-2 px-3 py-2">
-            <button type="button" className="text-sm text-[var(--app-fg)]" onClick={() => setPhoneWorkPane('work')}>{t('work.pane.work')}</button>
-            <button type="button" className="text-sm text-[var(--app-fg)]" onClick={() => setPhoneWorkPane('sessions')}>{t('work.pane.sessions')}</button>
+            <button type="button" aria-pressed={pane === 'work'} className={pane === 'work' ? selected : idle} onClick={() => context?.setPane('work')}>{t('work.pane.work')}</button>
+            <button type="button" aria-pressed={pane === 'sessions'} className={pane === 'sessions' ? selected : idle} onClick={() => context?.setPane('sessions')}>{t('work.pane.sessions')}</button>
         </div>
     )
 }
