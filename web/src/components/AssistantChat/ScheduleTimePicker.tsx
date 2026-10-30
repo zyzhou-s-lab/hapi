@@ -233,6 +233,17 @@ export function ScheduleTimePicker({ onSchedule, onClose, anchorRef, pendingSche
         return () => document.removeEventListener('pointerdown', handlePointerDown)
     }, [onClose, anchorRef])
 
+    useEffect(() => {
+        function handleKeyDown(event: globalThis.KeyboardEvent) {
+            if (event.key !== 'Escape') return
+            event.preventDefault()
+            event.stopPropagation()
+            onClose()
+        }
+        document.addEventListener('keydown', handleKeyDown, true)
+        return () => document.removeEventListener('keydown', handleKeyDown, true)
+    }, [onClose])
+
     // Compute max value for datetime-local input (7 days from now)
     const maxDatetimeLocal = (() => {
         const now = new Date()

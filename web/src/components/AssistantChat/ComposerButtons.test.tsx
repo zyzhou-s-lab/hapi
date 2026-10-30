@@ -256,6 +256,11 @@ describe('ComposerButtons responsive toolbar', () => {
         expect(screen.getByRole('button', { name: 'Attach file' })).toBeInTheDocument()
         fireEvent.click(screen.getByRole('button', { name: 'Terminal' }))
         expect(screen.queryByRole('menu')).toBeNull()
+        fireEvent.click(screen.getByTestId('composer-more'))
+        fireEvent.click(screen.getByRole('button', { name: /schedule/i }))
+        fireEvent.click(screen.getByTestId('composer-more'))
+        expect(screen.queryByRole('dialog', { name: /schedule/i })).toBeNull()
+        expect(screen.getByRole('button', { name: 'Terminal' })).toBeInTheDocument()
         for (const button of within(toolbar).getAllByRole('button')) {
             expect(button.closest('.shrink-0')).not.toBeNull()
         }

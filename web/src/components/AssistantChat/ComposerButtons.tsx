@@ -57,7 +57,7 @@ function placeComposerMoreMenu(anchor: DOMRect, menu: DOMRect): { top: number; l
     return { top, left }
 }
 
-function ComposerMoreMenu(props: { children: ReactNode }) {
+function ComposerMoreMenu(props: { children: ReactNode; onOpen?: () => void }) {
     const { t } = useTranslation()
     const [open, setOpen] = useState(false)
     const [pos, setPos] = useState<{ top: number; left: number } | null>(null)
@@ -103,7 +103,10 @@ function ComposerMoreMenu(props: { children: ReactNode }) {
                 aria-haspopup="menu"
                 aria-label={t('composer.more')}
                 className="flex h-8 w-8 items-center justify-center rounded-full text-[var(--app-fg)]/60 transition-colors hover:bg-[var(--app-bg)] hover:text-[var(--app-fg)]"
-                onClick={() => setOpen((value) => !value)}
+                onClick={() => {
+                    if (!open) props.onOpen?.()
+                    setOpen((value) => !value)
+                }}
             >
                 <MoreIcon />
             </button>
@@ -127,7 +130,7 @@ function ComposerMoreMenu(props: { children: ReactNode }) {
     )
 }
 
-function OrderedToolbarItems(props: { layout: ComposerToolbarLayout; children: ReactNode }) {
+function OrderedToolbarItems(props: { layout: ComposerToolbarLayout; children: ReactNode; onMoreMenuOpen?: () => void }) {
     const slots = Children.toArray(props.children).filter(
         (child): child is ReactElement<{ item: ComposerToolbarItemId; children: ReactNode }> => isValidElement(child),
     )
@@ -147,7 +150,7 @@ function OrderedToolbarItems(props: { layout: ComposerToolbarLayout; children: R
     return (
         <>
             {stripNodes}
-            {menu.length > 0 ? <ComposerMoreMenu>{renderItems(menu)}</ComposerMoreMenu> : null}
+            {menu.length > 0 ? <ComposerMoreMenu onOpen={props.onMoreMenuOpen}>{renderItems(menu)}</ComposerMoreMenu> : null}
         </>
     )
 }
@@ -802,7 +805,7 @@ export function ComposerButtons(props: {
                 className="flex min-w-0 flex-1 items-center gap-1"
                 style={{ justifyContent: toolbarJustifyContent }}
             >
-                <OrderedToolbarItems layout={effectiveLayout}>
+                <OrderedToolbarItems layout={effectiveLayout} onMoreMenuOpen={() => setShowSchedulePicker(false)}>
                 <ToolbarItemSlot item="attachment">
                 <ComposerPrimitive.AddAttachment
                     aria-label={t('composer.attach')}
