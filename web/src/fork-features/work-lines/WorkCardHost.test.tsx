@@ -10,15 +10,15 @@ import { registerWorkCards, WorkCardHost } from './WorkCardHost'
 import type { WorkMapData } from './deriveWork'
 
 const loader = vi.hoisted(() => ({
-    impl: null as null | ((api: { getWorkMap: () => Promise<WorkMapData> }, cardId: string) => Promise<WorkMapData>),
+    impl: null as null | ((api: { getWorkMap: () => Promise<WorkMapData> }, queryClient: QueryClient) => Promise<WorkMapData>),
 }))
 
 vi.mock('./useWorkMap', async () => {
     const actual = await vi.importActual<typeof import('./useWorkMap')>('./useWorkMap')
     return {
         ...actual,
-        loadWorkCardMap: (api: { getWorkMap: () => Promise<WorkMapData> }, cardId: string) =>
-            loader.impl ? loader.impl(api, cardId) : actual.loadWorkCardMap(api as ApiClient, cardId),
+        loadWorkCardMap: (api: { getWorkMap: () => Promise<WorkMapData> }, queryClient: QueryClient) =>
+            loader.impl ? loader.impl(api, queryClient) : actual.loadWorkCardMap(api as ApiClient, queryClient),
     }
 })
 
@@ -118,7 +118,7 @@ describe('WorkCardHost', () => {
 
         rerender(wrap([session(true)]))
         await waitFor(() => expect(screen.getByText('1')).toBeTruthy())
-        expect(getWorkMap).toHaveBeenCalledTimes(2)
+        expect(getWorkMap).toHaveBeenCalledTimes(1)
         expect(screen.getAllByText('This card failed.').length).toBeGreaterThan(0)
         error.mockRestore()
     })
@@ -159,14 +159,14 @@ describe('WorkCardHost', () => {
         error.mockRestore()
     })
 
-    it('does not fail a sibling when one card map query fails', async () => {
-        const getWorkMap = vi.fn(async () => map)
+    it('loads the map once and retries only the card that asks', async () => {
+        let fail = true
+        const getWorkMap = vi.fn(async () => {
+            if (fail) throw new Error('secret map failure')
+            return map
+        })
         const api = {
             getWorkMap,
-            getWorkCardMap: async (cardId: string) => {
-                if (cardId === 'overview.line-count') throw new Error('secret map failure')
-                return map
-            },
             getWorkLayout: async () => ({ source: 'default', layout: null }),
         } as unknown as ApiClient
         const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
@@ -185,11 +185,14 @@ describe('WorkCardHost', () => {
                 </QueryClientProvider>
             </AppContextProvider>,
         )
-        await waitFor(() => {
-            expect(screen.getByText('1')).toBeTruthy()
-            expect(screen.getByText('This card failed.')).toBeTruthy()
-        })
+        await waitFor(() => expect(screen.getAllByText('This card failed.')).toHaveLength(2))
+        expect(getWorkMap).toHaveBeenCalledTimes(1)
         expect(screen.queryByText('secret map failure')).toBeNull()
+        fail = false
+        screen.getAllByText('Retry')[0]?.click()
+        await waitFor(() => expect(screen.getByText('1')).toBeTruthy())
+        expect(screen.getAllByText('This card failed.')).toHaveLength(1)
+        expect(getWorkMap).toHaveBeenCalledTimes(2)
     })
 
     it('refetches the card query before showing it again after bad data', async () => {

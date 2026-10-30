@@ -1,5 +1,5 @@
 import { Component, useEffect, useMemo, useState, type ReactNode } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import type { ApiClient } from '@/api/client'
 import type { SessionSummary } from '@/types/api'
 import { useAppContext } from '@/lib/app-context'
@@ -136,13 +136,14 @@ function CardSlot(props: {
     failedMessage: string
 }): ReactNode {
     const { t } = useTranslation()
+    const queryClient = useQueryClient()
     const [renderAttempt, setRenderAttempt] = useState(0)
     const workModel = props.card.source.kind === 'work-model'
     const querySource = props.card.source.kind === 'query' ? props.card.source : null
     const mapKey = useMemo(() => workCardMapKey(props.card.id), [props.card.id])
     const mapQuery = useQuery({
         queryKey: mapKey,
-        queryFn: () => loadWorkCardMap(props.api!, props.card.id),
+        queryFn: () => loadWorkCardMap(props.api!, queryClient),
         enabled: workModel && Boolean(props.api),
     })
     const polled = useQuery({
