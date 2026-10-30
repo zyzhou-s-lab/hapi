@@ -9,3 +9,10 @@ export function parseWorkSearch(search: Record<string, unknown>): WorkSearch {
     if (search.inbox === '1' || search.inbox === 1 || search.inbox === true) return { inbox: true }
     return {}
 }
+
+export function defaultWorkSearch(search: WorkSearch, lineIds: readonly string[]): WorkSearch | null {
+    if (search.line || search.inbox) return null
+    const first = lineIds[0]
+    if (first) return { line: first }
+    return { inbox: true }
+}

@@ -3,15 +3,13 @@ import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from '@tanstack/react-router'
 import { useAppContext } from '@/lib/app-context'
 import { getSessionListSelectionNavigation } from '@/lib/sessionNavigation'
-import { getSessionTitle } from '@/lib/sessionTitle'
 import { useTranslation } from '@/lib/use-translation'
 import { useMachines } from '@/hooks/queries/useMachines'
 import { CardFrame, registerWorkCards, type WorkCardContext, type WorkCardDefinition } from './WorkCardHost'
-import { deriveWorkbench } from './deriveWork'
 import { workMapKey } from './useWorkMap'
 
 function useBench(ctx: WorkCardContext) {
-    return deriveWorkbench(ctx.sessions, ctx.map, getSessionTitle, (session) => session.metadata?.host ?? session.metadata?.machineId ?? '')
+    return ctx.bench
 }
 
 function lineIdOf(ctx: WorkCardContext): string {
@@ -41,14 +39,23 @@ function LineList(props: { ctx: WorkCardContext }): ReactNode {
     const bench = useBench(props.ctx)
     const refresh = useMapRefresh()
     const [name, setName] = useState('')
+    const [goal, setGoal] = useState('')
     const [path, setPath] = useState('')
     const [machineId, setMachineId] = useState('')
     const create = useMutation({
         mutationFn: async () => {
             if (!api) throw new Error('API unavailable')
-            await api.createWorkLine({ name, primaryMachineId: machineId, primaryPath: path })
+            const created = await api.createWorkLine({ name, goal: goal.trim() || null, primaryMachineId: machineId, primaryPath: path })
+            return created.line.id
         },
-        onSuccess: refresh,
+        onSuccess: async (id) => {
+            setName('')
+            setGoal('')
+            setPath('')
+            setMachineId('')
+            await refresh()
+            await navigate({ to: '/work', search: { line: id } })
+        },
     })
     const selected = lineIdOf(props.ctx)
     return (
@@ -68,12 +75,13 @@ function LineList(props: { ctx: WorkCardContext }): ReactNode {
             {machines.length === 0 ? <p className="mt-3 text-xs text-[var(--app-hint)]">{t('work.noMachines')}</p> : (
                 <form className="mt-3 flex flex-col gap-2" onSubmit={(event) => { event.preventDefault(); create.mutate() }}>
                     <input className="rounded border border-[var(--app-divider)] bg-transparent px-2 py-1 text-sm" value={name} onChange={(event) => setName(event.target.value)} placeholder={t('work.lineName')} />
+                    <input className="rounded border border-[var(--app-divider)] bg-transparent px-2 py-1 text-sm" value={goal} onChange={(event) => setGoal(event.target.value)} placeholder={t('work.lineGoal')} />
                     <select className="rounded border border-[var(--app-divider)] bg-transparent px-2 py-1 text-sm" value={machineId} onChange={(event) => setMachineId(event.target.value)}>
                         <option value="">{t('work.pickMachine')}</option>
                         {machines.map((machine) => <option key={machine.id} value={machine.id}>{machine.metadata?.displayName || machine.id}</option>)}
                     </select>
                     <input className="rounded border border-[var(--app-divider)] bg-transparent px-2 py-1 text-sm" value={path} onChange={(event) => setPath(event.target.value)} placeholder={t('work.primaryPath')} />
-                    <button type="submit" className="text-sm text-[var(--app-link)]" disabled={!name || !machineId || !path}>{t('work.createLine')}</button>
+                    <button type="submit" className="text-sm text-[var(--app-link)]" disabled={create.isPending || !name || !machineId || !path}>{t('work.createLine')}</button>
                 </form>
             )}
         </CardFrame>
@@ -111,7 +119,7 @@ function LineHeader(props: { ctx: WorkCardContext }): ReactNode {
         <CardFrame title={line.name}>
             {line.goal ? <p className="text-sm text-[var(--app-fg)]">{line.goal}</p> : null}
             <p className="text-xs text-[var(--app-hint)]">{line.primaryMachineId} · {line.primaryPath}</p>
-            <button type="button" className="mt-2 text-xs text-[var(--app-hint)]" onClick={() => remove.mutate()}>{t('work.deleteLine')}</button>
+            <button type="button" className="mt-2 text-xs text-[var(--app-hint)]" disabled={remove.isPending} onClick={() => { if (!window.confirm(t('work.deleteLineConfirm', { name: line.name }))) return; remove.mutate() }}>{t('work.deleteLine')}</button>
         </CardFrame>
     )
 }
@@ -173,23 +181,43 @@ function Inbox(props: { ctx: WorkCardContext }): ReactNode {
     const { t } = useTranslation()
     const bench = useBench(props.ctx)
     const refresh = useMapRefresh()
-    const assign = useMutation({
+    const assignDirectory = useMutation({
         mutationFn: async (input: { directoryKey: string; lineId: string }) => {
             if (!api) throw new Error('API unavailable')
             await api.putWorkDirectory({ directoryKey: input.directoryKey, mode: 'line', lineId: input.lineId })
         },
         onSuccess: refresh,
     })
+    const assignSession = useMutation({
+        mutationFn: async (input: { sessionId: string; lineId: string }) => {
+            if (!api) throw new Error('API unavailable')
+            await api.putWorkSession({ sessionId: input.sessionId, state: 'line', lineId: input.lineId })
+        },
+        onSuccess: refresh,
+    })
+    const empty = bench.inboxDirectories.length === 0 && bench.inboxSessions.length === 0
     return (
         <CardFrame title={t('work.inbox')}>
-            {bench.inboxDirectories.length === 0 ? <p className="text-sm text-[var(--app-hint)]">{t('work.inboxEmpty')}</p> : (
+            {empty ? <p className="text-sm text-[var(--app-hint)]">{t('work.inboxEmpty')}</p> : (
                 <ul className="flex flex-col gap-2">
                     {bench.inboxDirectories.map((row) => (
                         <li key={row.directoryKey} className="text-sm text-[var(--app-fg)]">
                             <span className="block truncate">{row.path}</span>
                             <span className="flex flex-wrap gap-2">
                                 {bench.lines.map((line) => (
-                                    <button key={line.id} type="button" className="text-xs text-[var(--app-link)]" onClick={() => assign.mutate({ directoryKey: row.directoryKey, lineId: line.id })}>
+                                    <button key={line.id} type="button" className="text-xs text-[var(--app-link)]" disabled={assignDirectory.isPending} onClick={() => assignDirectory.mutate({ directoryKey: row.directoryKey, lineId: line.id })}>
+                                        {t('work.assignTo', { name: line.name })}
+                                    </button>
+                                ))}
+                            </span>
+                        </li>
+                    ))}
+                    {bench.inboxSessions.map((row) => (
+                        <li key={row.id} className="text-sm text-[var(--app-fg)]">
+                            <span className="block truncate">{row.title}</span>
+                            <span className="flex flex-wrap gap-2">
+                                {bench.lines.map((line) => (
+                                    <button key={line.id} type="button" className="text-xs text-[var(--app-link)]" disabled={assignSession.isPending} onClick={() => assignSession.mutate({ sessionId: row.id, lineId: line.id })}>
                                         {t('work.assignTo', { name: line.name })}
                                     </button>
                                 ))}

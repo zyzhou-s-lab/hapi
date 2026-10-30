@@ -58,6 +58,7 @@ export function WorkCardHost(props: {
 }): ReactNode {
     const { user } = useAppContext()
     const { t } = useTranslation()
+
     const saved = useQuery({
         queryKey: ['work', 'layout', props.surface],
         queryFn: async () => {
@@ -82,6 +83,7 @@ export function WorkCardHost(props: {
                     sessions={props.sessions}
                     api={props.api}
                     accountId={user.id}
+
                     retryLabel={t('work.retry')}
                     failedMessage={t('work.cardFailed')}
                 />
