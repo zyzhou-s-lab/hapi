@@ -34,8 +34,6 @@ function isOverflowMenuItem(item: ComposerToolbarItemId): boolean {
     return OVERFLOW_MENU_ITEMS[item]
 }
 
-
-
 function MoreIcon() {
     return (
         <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">

@@ -253,7 +253,6 @@ export function StatusBar(props: {
         [props.active, props.thinking, props.agentState, props.voiceStatus, props.backgroundTaskCount, t]
     )
 
-
     const contextHeuristicModel = props.contextModel ?? props.model
     const contextWarning = useMemo(
         () => {

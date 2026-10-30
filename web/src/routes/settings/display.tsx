@@ -178,7 +178,6 @@ export default function SettingsDisplayPage() {
                 <SettingsSwitch label={t('settings.display.activeSessionsOnly')} description={t('settings.display.activeSessionsOnly.desc')} checked={showActiveSessionsOnly} onChange={setShowActiveSessionsOnly} />
                 <SettingsSwitch label={t('settings.display.pinInProgressSessions')} description={t('settings.display.pinInProgressSessions.desc')} checked={pinInProgressSessions} onChange={setPinInProgressSessions} />
                 <SettingsSwitch label={t('settings.display.statusVibing')} description={t('settings.display.statusVibing.desc')} checked={statusVibing} onChange={setStatusVibing} />
-
                 <SettingsChoiceGroup
                     label={t('settings.display.sessionListStatus')}
                     description={t('settings.display.sessionListStatus.detailedDescription')}
