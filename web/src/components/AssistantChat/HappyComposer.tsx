@@ -1961,7 +1961,7 @@ export function HappyComposer(props: {
                                     <div
                                         className={`mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded border-2 ${
                                             resumeWithSessionModel
-                                                ? 'border-[var(--app-link)] bg-[var(--app-link)] text-white'
+                                                ? 'border-[var(--app-link)] bg-[var(--app-link)] text-[var(--app-bg)]'
                                                 : 'border-[var(--app-hint)]'
                                         }`}
                                     >
