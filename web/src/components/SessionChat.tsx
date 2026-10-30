@@ -1952,6 +1952,7 @@ function SessionChatInner(props: SessionChatProps) {
         composerExpanded,
         outlineOpen,
     })
+    const composerFloating = !terminalShown && !composerExpanded
     const threadBottomInsetPx = measureComposerDockInset(composerDockHeight, {
         expanded: composerExpanded,
         hidden: terminalShown,
@@ -2076,7 +2077,7 @@ function SessionChatInner(props: SessionChatProps) {
                     >
                     <div className="pointer-events-auto">
                     {codexCollaborationModeSupported && codexModelsState.error ? (
-                        <div className="px-3 pb-2">
+                        <div className={composerFloating ? 'composer-floating-chrome px-3 pb-2' : 'px-3 pb-2'}>
                             <div className="mx-auto w-full max-w-content rounded-md bg-[var(--app-subtle-bg)] p-3 text-sm text-red-600">
                                 {t('session.codexModelsLoadFailed')}: {codexModelsState.error}
                             </div>
@@ -2092,7 +2093,7 @@ function SessionChatInner(props: SessionChatProps) {
                         onDismiss={scratchlist.dismissMigrationBanner}
                     />
 
-                    <div className="px-3">
+                    <div className={composerFloating ? 'composer-floating-chrome px-3' : 'px-3'}>
                         <TodoPanel sessionId={props.session.id} todos={props.session.todos} />
                         {/*
                          * Scratchlist drawer - composer-controlled. Only

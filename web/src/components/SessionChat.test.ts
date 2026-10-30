@@ -110,12 +110,21 @@ describe('chatComposerGridPlacement', () => {
 })
 
 describe('floating dock surface', () => {
-    it('frosts only the composer frame, not a shared stack behind the bars', () => {
+    it('frosts each dock bar on its own chrome, not one shared stack', () => {
         const css = readFileSync('src/index.css', 'utf8')
-        const frame = css.match(/\.composer-floating-frame \{[^}]+\}/)?.[0] ?? ''
-        expect(frame).toContain('background-color: var(--app-composer-surface)')
-        expect(frame).toContain('backdrop-filter: blur(12px)')
+        const surface = css.match(/\.composer-floating-frame,\s*\.composer-floating-chrome \{[^}]+\}/)?.[0] ?? ''
+        const chrome = css.match(/\.composer-floating-chrome \{\s*margin-inline:[^}]+\}/)?.[0] ?? ''
+        const source = readFileSync('src/components/SessionChat.tsx', 'utf8')
+        const composer = readFileSync('src/components/AssistantChat/HappyComposer.tsx', 'utf8')
+        expect(surface).toContain('background-color: var(--app-composer-surface)')
+        expect(surface).toContain('backdrop-filter: blur(12px)')
+        expect(chrome).toContain('margin-inline: 0.75rem')
+        expect(chrome).toContain('border-radius: 20px')
+        expect(css).toContain('.composer-floating-chrome:not(:has(*))')
         expect(css).not.toContain('.composer-floating-stack')
+        expect(source).toContain("composerFloating ? 'composer-floating-chrome px-3 pb-2'")
+        expect(source).toContain("composerFloating ? 'composer-floating-chrome px-3'")
+        expect(composer).toContain("isExpanded ? undefined : 'composer-floating-chrome'")
     })
 })
 
