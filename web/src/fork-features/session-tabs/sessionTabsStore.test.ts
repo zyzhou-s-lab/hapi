@@ -9,6 +9,7 @@ import {
     openTab,
     pruneTabs,
     togglePinTab,
+    getSessionTabsSnapshot,
     updateSessionTabs,
     type SessionTabsState
 } from './sessionTabsStore'
@@ -79,5 +80,16 @@ describe('session tabs', () => {
         updateSessionTabs('hub|2', state => openTab(state, 'y', 1))
         expect(JSON.parse(localStorage.getItem('hapi-session-tabs:hub|1')!).tabs.map((tab: { id: string }) => tab.id)).toEqual(['x'])
         expect(JSON.parse(localStorage.getItem('hapi-session-tabs:hub|2')!).tabs.map((tab: { id: string }) => tab.id)).toEqual(['y'])
+    })
+
+    it('replaces in-memory tabs when another window writes the same key', () => {
+        updateSessionTabs('hub|1', state => openTab(state, 'x', 1))
+        const raw = JSON.stringify({ tabs: [{ id: 'y', pinned: false, activatedAt: 4 }] })
+        localStorage.setItem('hapi-session-tabs:hub|1', raw)
+        window.dispatchEvent(new StorageEvent('storage', { key: 'hapi-session-tabs:hub|1', newValue: raw }))
+        expect(getSessionTabsSnapshot('hub|1').tabs.map(tab => tab.id)).toEqual(['y'])
+
+        window.dispatchEvent(new StorageEvent('storage', { key: 'hapi-session-tabs:hub|2', newValue: raw }))
+        expect(getSessionTabsSnapshot('hub|1').tabs.map(tab => tab.id)).toEqual(['y'])
     })
 })

@@ -98,24 +98,54 @@ function parse(raw: string | null): SessionTabsState {
         return EMPTY
     }
 }
+function sameState(left: SessionTabsState, right: SessionTabsState): boolean {
+    if (left.tabs.length !== right.tabs.length) return false
+    return left.tabs.every((tab, index) => {
+        const other = right.tabs[index]
+        return other !== undefined && tab.id === other.id && tab.pinned === other.pinned && tab.activatedAt === other.activatedAt
+    })
+}
 
 type Store = { state: SessionTabsState; listeners: Set<() => void>; key: string }
 const stores = new Map<string, Store>()
+let storageListenerInstalled = false
+
+function readStored(key: string): string | null {
+    try {
+        return typeof localStorage !== 'undefined' ? localStorage.getItem(key) : null
+    } catch {
+        return null
+    }
+}
+
+/** 别的窗口写入 localStorage 时，本窗口的 storage 事件把内存状态换成那份。同窗口的写入不会触发。 */
+function installStorageListener(): void {
+    if (storageListenerInstalled || typeof window === 'undefined') return
+    storageListenerInstalled = true
+    window.addEventListener('storage', (event: StorageEvent) => {
+        for (const store of stores.values()) {
+            if (event.key !== null && event.key !== store.key) continue
+            const next = parse(readStored(store.key))
+            if (sameState(store.state, next)) continue
+            store.state = next
+            for (const listener of store.listeners) listener()
+        }
+    })
+}
 
 function storeFor(scope: string): Store {
+    installStorageListener()
     let store = stores.get(scope)
     if (!store) {
         const key = `hapi-session-tabs:${scope}`
-        let raw: string | null = null
-        try {
-            raw = typeof localStorage !== 'undefined' ? localStorage.getItem(key) : null
-        } catch {
-            raw = null
-        }
-        store = { state: parse(raw), listeners: new Set(), key }
+        store = { state: parse(readStored(key)), listeners: new Set(), key }
         stores.set(scope, store)
     }
     return store
+}
+
+export function getSessionTabsSnapshot(scope: string): SessionTabsState {
+    return storeFor(scope).state
 }
 
 export function updateSessionTabs(scope: string, update: (state: SessionTabsState) => SessionTabsState): void {
@@ -132,14 +162,14 @@ export function updateSessionTabs(scope: string, update: (state: SessionTabsStat
 }
 
 export function useSessionTabsState(scope: string): SessionTabsState {
-    const store = storeFor(scope)
     return useSyncExternalStore(
         listener => {
+            const store = storeFor(scope)
             store.listeners.add(listener)
             return () => store.listeners.delete(listener)
         },
-        () => store.state,
-        () => store.state
+        () => getSessionTabsSnapshot(scope),
+        () => getSessionTabsSnapshot(scope)
     )
 }
 
