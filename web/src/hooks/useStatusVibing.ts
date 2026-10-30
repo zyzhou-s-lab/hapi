@@ -1,6 +1,7 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 
 const STORAGE_KEY = 'hapi-status-vibing'
+const listeners = new Set<() => void>()
 
 function readStatusVibing(): boolean {
     try {
@@ -10,17 +11,27 @@ function readStatusVibing(): boolean {
     }
 }
 
+function writeStatusVibing(enabled: boolean) {
+    try {
+        localStorage.setItem(STORAGE_KEY, enabled ? '1' : '0')
+    } catch {
+        // Ignore storage errors.
+    }
+    for (const listener of listeners) listener()
+}
+
 export function useStatusVibing(): { enabled: boolean; setEnabled: (enabled: boolean) => void } {
     const [enabled, setEnabledState] = useState(readStatusVibing)
 
-    const setEnabled = (next: boolean) => {
-        setEnabledState(next)
-        try {
-            localStorage.setItem(STORAGE_KEY, next ? '1' : '0')
-        } catch {
-            // Ignore storage errors.
+    useEffect(() => {
+        const sync = () => setEnabledState(readStatusVibing())
+        listeners.add(sync)
+        window.addEventListener('storage', sync)
+        return () => {
+            listeners.delete(sync)
+            window.removeEventListener('storage', sync)
         }
-    }
+    }, [])
 
-    return { enabled, setEnabled }
+    return { enabled, setEnabled: writeStatusVibing }
 }
