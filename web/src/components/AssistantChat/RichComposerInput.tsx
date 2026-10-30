@@ -108,7 +108,7 @@ function createMentionSpan(
 const BLOCK_TAGS = new Set(['DIV', 'P', 'LI', 'TR', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'PRE'])
 /** Zero-width pad so a trailing linebreak keeps a caret line-box (pre-wrap / br). */
 const CARET_PAD = '\u200B'
-const PLACEHOLDER_MAX_FONT_SIZE_PX = 16
+const PLACEHOLDER_MAX_FONT_SIZE_PX = 15
 const PLACEHOLDER_FIT_GUTTER_PX = 1
 
 export function fitSingleLineFontSize(
@@ -1032,7 +1032,7 @@ export const RichComposerInput = forwardRef<RichComposerInputHandle, Props>(func
         const fitPlaceholder = () => {
             if (cancelled) return
 
-            // Restore the configured text-base size before measuring. Measuring
+            // Restore the configured input size before measuring. Measuring
             // the already-shrunk text would make successive resizes compound.
             element.style.removeProperty('font-size')
             const baseFontSize = Number.parseFloat(getComputedStyle(element).fontSize)
@@ -1115,7 +1115,7 @@ export const RichComposerInput = forwardRef<RichComposerInputHandle, Props>(func
                     ref={placeholderRef}
                     aria-hidden
                     data-testid="rich-composer-placeholder"
-                    className="pointer-events-none absolute inset-0 overflow-hidden whitespace-nowrap text-base leading-[1.375rem] text-[var(--app-hint)]"
+                    className="app-input-text pointer-events-none absolute inset-0 overflow-hidden whitespace-nowrap text-[var(--app-hint)]"
                 >
                     {placeholder}
                 </div>

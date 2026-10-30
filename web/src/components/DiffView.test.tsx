@@ -66,7 +66,7 @@ describe('DiffView', () => {
             </I18nProvider>
         )
 
-        expect(container.querySelector('.leading-6')).not.toBeNull()
+        expect(container.querySelector('.app-code-text')).not.toBeNull()
         const row = container.querySelector('[style*="grid-template-columns: 3ch 3ch max-content"]')
         expect(row).not.toBeNull()
         expect(row?.children[0]).toHaveClass('text-left')

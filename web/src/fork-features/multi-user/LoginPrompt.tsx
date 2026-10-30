@@ -152,7 +152,7 @@ export function LoginPrompt(props: LoginPromptProps) {
             <div className="w-full max-w-sm space-y-6">
                 {/* Header */}
                 <div className="text-center space-y-2">
-                    <div className="text-2xl font-semibold">{title}</div>
+                    <div className="app-h1">{title}</div>
                     <div className="text-sm text-[var(--app-hint)]">
                         {subtitle}
                     </div>

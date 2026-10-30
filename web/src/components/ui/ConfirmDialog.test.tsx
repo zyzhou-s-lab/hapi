@@ -30,7 +30,7 @@ describe('ConfirmDialog', () => {
         const description = within(dialog).getByText('Archive this session?')
 
         expect(title.parentElement).toHaveClass('pr-0')
-        expect(title).toHaveClass('min-h-6', 'px-10', 'text-center', 'leading-6')
+        expect(title).toHaveClass('app-dialog-title', 'min-h-7', 'px-10', 'text-center')
         expect(description).toHaveClass('mt-2', 'text-left')
         expect(within(dialog).getByRole('button', { name: 'Close' })).toHaveClass('top-3', 'h-8')
     })
@@ -41,6 +41,6 @@ describe('ConfirmDialog', () => {
         const title = screen.getByRole('heading', { name: 'Archive Session' })
 
         expect(title.parentElement).toHaveClass('pr-12')
-        expect(title).not.toHaveClass('min-h-6', 'px-10', 'leading-6')
+        expect(title).not.toHaveClass('min-h-7', 'px-10', 'text-center')
     })
 })

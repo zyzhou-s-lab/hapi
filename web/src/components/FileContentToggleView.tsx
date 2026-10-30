@@ -135,7 +135,7 @@ export function FileContentToggleView(props: {
                     <pre
                         data-testid="file-raw-pre"
                         data-word-wrap={wordWrap ? 'on' : 'off'}
-                        className={`shiki rounded-md bg-[var(--app-code-bg)] p-3 pr-8 text-xs font-mono ${wordWrap ? 'overflow-x-hidden whitespace-pre-wrap break-words' : 'overflow-auto'}`}
+                        className={`app-code-text shiki rounded-md bg-[var(--app-code-bg)] p-3 pr-8 font-mono ${wordWrap ? 'overflow-x-hidden whitespace-pre-wrap break-words' : 'overflow-auto'}`}
                     >
                         <code>{highlighted ?? content}</code>
                     </pre>

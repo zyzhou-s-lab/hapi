@@ -214,7 +214,7 @@ function DiffInlineView(props: {
         >
             <div className={cn(
                 'font-mono',
-                isComfortable ? 'text-sm leading-6' : 'text-xs',
+                'app-code-text',
                 codeWrap ? 'w-full' : 'w-max min-w-full'
             )}>
                 {diff.map((part, i) => {
@@ -236,8 +236,8 @@ function DiffInlineView(props: {
 
                                 return (
                                     <div key={j} className={rowClass} style={rowStyle}>
-                                        <div className={cn('text-left text-[var(--app-hint)]/80', isComfortable ? 'text-xs leading-6' : 'text-[10px]')}>{leftNumber}</div>
-                                        <div className={cn('text-left text-[var(--app-hint)]/80', isComfortable ? 'text-xs leading-6' : 'text-[10px]')}>{rightNumber}</div>
+                                        <div className="app-code-text text-left text-[var(--app-hint)]/80">{leftNumber}</div>
+                                        <div className="app-code-text text-left text-[var(--app-hint)]/80">{rightNumber}</div>
                                         <div className={cn(
                                             codeWrap ? 'min-w-0 whitespace-pre-wrap break-words' : 'whitespace-pre'
                                         )}>

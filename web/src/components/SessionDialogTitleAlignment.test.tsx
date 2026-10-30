@@ -21,7 +21,7 @@ function expectCenteredTitle(name: string) {
     const title = within(dialog).getByRole('heading', { name })
 
     expect(title.parentElement).toHaveClass('pr-0')
-    expect(title).toHaveClass('min-h-6', 'px-10', 'text-center', 'leading-6')
+    expect(title).toHaveClass('app-dialog-title', 'min-h-7', 'px-10', 'text-center')
     expect(within(dialog).getByRole('button', { name: 'Close' })).toHaveClass('top-3', 'h-8')
 }
 

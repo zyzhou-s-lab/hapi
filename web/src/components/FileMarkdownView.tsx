@@ -56,7 +56,7 @@ function CodeBlock(props: ComponentPropsWithoutRef<'code'>) {
     }
 
     return (
-        <code className="aui-md-code break-words rounded-md border border-[var(--app-inline-code-border)] bg-[var(--app-inline-code-bg)] px-[0.38em] py-[0.14em] font-mono text-[0.88em] text-[var(--app-inline-code-fg)]">
+        <code className="aui-md-code break-words rounded-md border border-[var(--app-inline-code-border)] bg-[var(--app-inline-code-bg)] px-[0.38em] py-[0.14em] font-mono text-[var(--app-inline-code-fg)]">
             {children}
         </code>
     )
@@ -83,7 +83,7 @@ const components: Components = {
         <img {...rest} className={cn('aui-md-img my-3 max-w-full rounded-xl', className)} />
     ),
     p: ({ className, ...rest }) => <p {...rest} className={cn('aui-md-p my-2.5 leading-7 first:mt-0 last:mb-0', className)} />,
-    h1: ({ className, ...rest }) => <h1 {...rest} className={cn('aui-md-h1 mt-4 text-[1.05rem] font-semibold tracking-[-0.01em] first:mt-0', className)} />,
+    h1: ({ className, ...rest }) => <h1 {...rest} className={cn('aui-md-h1 mt-4 tracking-[-0.01em] first:mt-0', className)} />,
     h2: ({ className, ...rest }) => <h2 {...rest} className={cn('aui-md-h2 mt-4 text-base font-semibold tracking-[-0.01em] first:mt-0', className)} />,
     h3: ({ className, ...rest }) => <h3 {...rest} className={cn('aui-md-h3 mt-3 text-[0.95rem] font-semibold first:mt-0', className)} />,
     h4: ({ className, ...rest }) => <h4 {...rest} className={cn('aui-md-h4 mt-3 text-[0.92rem] font-semibold first:mt-0', className)} />,
