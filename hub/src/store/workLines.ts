@@ -1,4 +1,5 @@
 import type { Database } from 'bun:sqlite'
+import { workbenchDefaultRegions } from '@hapi/protocol'
 import { randomUUID } from 'node:crypto'
 import { z } from 'zod'
 
@@ -358,26 +359,18 @@ export class WorkLinesStore {
     bindTrainingLine(accountId: number, lineId: string, run: string): WorkLayout {
         const cleanLine = cleanRequired(lineId, 'lineId', LAYOUT_VALUE_MAX)
         const cleanRun = cleanRequired(run, 'run', LAYOUT_VALUE_MAX)
-        this.requireLine(accountId, cleanLine)
-        if (!this.getTrainingRun(accountId, cleanRun)) throw new WorkMapError('训练不存在', 404)
-        const defaults: WorkLayout = {
-            revision: 1,
-            regions: {
-                rail: [{ cardId: 'workbench.line-list' }],
-                main: [
-                    { cardId: 'workbench.line-header' },
-                    { cardId: 'workbench.focus' },
-                    { cardId: 'workbench.directories' },
-                    { cardId: 'workbench.inbox' },
-                ],
-                side: [
-                    { cardId: 'workbench.sessions' },
-                    { cardId: 'workbench.continue' },
-                ],
-            },
-        }
         return this.db.transaction(() => {
-            const current = this.getLayout(accountId, 'workbench') ?? defaults
+            this.requireLine(accountId, cleanLine)
+            if (!this.getTrainingRun(accountId, cleanRun)) throw new WorkMapError('训练不存在', 404)
+            // revision stays below the client LAYOUT_REVISION so a later default card can still be merged.
+            const current = this.getLayout(accountId, 'workbench') ?? {
+                revision: 1,
+                regions: {
+                    rail: [...workbenchDefaultRegions.rail],
+                    main: [...workbenchDefaultRegions.main],
+                    side: [...workbenchDefaultRegions.side],
+                },
+            }
             const main = [...(current.regions.main ?? [])]
             const slot = { cardId: 'example.training-curves', args: { run: cleanRun, lineId: cleanLine } }
             const index = main.findIndex((item) => item.cardId === slot.cardId && item.args?.lineId === cleanLine)
