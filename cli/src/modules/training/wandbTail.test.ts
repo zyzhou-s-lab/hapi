@@ -89,6 +89,7 @@ describe('training pump', () => {
         expect(batches.reduce((sum, batch) => sum + batch.length, 0)).toBe(4500)
         expect(frames[0]?.reset).toBe(true)
         expect(frames.slice(1).every((frame) => !('reset' in frame))).toBe(true)
+        expect(frames.at(-1)?.finished).toBe(true)
         expect(batches.flat().map((point) => point.step)).toEqual(Array.from({ length: 4500 }, (_, step) => step))
     })
 
@@ -415,6 +416,8 @@ write_file(path, payloads)
         try {
             const file = await writeRun(dir, 'dense')
             const bytes = readFileSync(file)
+            const total = 4000
+            const pointsPerBlock = Math.ceil(32768 / (bytes.length / total))
             expect(bytes.length).toBeGreaterThan(80_000)
             bytes[40_000] ^= 0xff
             writeFileSync(file, bytes)
@@ -423,8 +426,8 @@ write_file(path, payloads)
             const skips = flipped.lines.filter((line) => line.kind === 'skip')
             expect(flipped.code).toBe(0)
             expect(flipped.lines.at(-1)?.kind).toBe('exit')
-            expect(points.length).toBeGreaterThan(3_000)
-            expect(skips.length).toBeLessThan(5)
+            expect(skips).toHaveLength(1)
+            expect(points.length).toBeGreaterThanOrEqual(total - pointsPerBlock)
         } finally {
             rmSync(dir, { recursive: true, force: true })
         }
