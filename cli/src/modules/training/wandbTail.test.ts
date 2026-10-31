@@ -301,6 +301,14 @@ elif mode == "span":
 elif mode == "dense":
     payloads = [history([history_item("loss", value=step / 10)], step=step) for step in range(4000)]
     payloads.append(exit_record)
+elif mode == "axes":
+    payloads = [history([
+        history_item("_step", value=2),
+        history_item("_runtime", value=1.5),
+        history_item("_timestamp", value=1700000000),
+        history_item("loss", value=0.2),
+        history_item("epoch", value=3),
+    ]), exit_record]
 else:
     raise SystemExit(2)
 write_file(path, payloads)
@@ -345,6 +353,22 @@ write_file(path, payloads)
             expect(nested.lines).toEqual([
                 { kind: 'point', step: 3, metric: 'train/loss', value: 0.5 },
                 { kind: 'exit' },
+            ])
+        } finally {
+            rmSync(dir, { recursive: true, force: true })
+        }
+    })
+
+    it('reads runtime, wall time, and a custom numeric axis', async () => {
+        const dir = mkdtempSync(join(tmpdir(), 'wandb-axes-'))
+        try {
+            const read = await readFile(await writeRun(dir, 'axes'))
+            expect(read.code).toBe(0)
+            expect(read.lines.filter((line) => line.kind === 'point')).toEqual([
+                { kind: 'point', step: 2, metric: '_runtime', value: 1.5 },
+                { kind: 'point', step: 2, metric: '_timestamp', value: 1700000000 },
+                { kind: 'point', step: 2, metric: 'loss', value: 0.2 },
+                { kind: 'point', step: 2, metric: 'epoch', value: 3 },
             ])
         } finally {
             rmSync(dir, { recursive: true, force: true })

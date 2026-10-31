@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { applyTrainingBatch, filterTrainingSeries, prepareTrainingPlot, smoothPoints, trainingMetricsFromArgs, type TrainingSeries } from './trainingSeries'
+import { applyTrainingBatch, filterTrainingSeries, prepareTrainingPlot, smoothPoints, trainingCustomXAxes, trainingMetricsFromArgs, type TrainingSeries } from './trainingSeries'
 import { reduceTrainingDisconnect, reduceTrainingError, reduceTrainingFrame, emptyTrainingState, nextSubscribeDelay, trainingMessageKey } from '@/hooks/useTrainingSocket'
 import { pushTrainingChartData } from './charts/chartUpdate'
 
@@ -56,6 +56,29 @@ describe('training series', () => {
         expect(plot.dropped).toBe(1)
         expect(plot.drawable).toEqual([{ id: 'loss', name: 'loss', values: [1] }])
         expect(plot.steps).toEqual([1])
+    })
+
+    it('uses a logged numeric metric as the x axis', () => {
+        const plot = prepareTrainingPlot([
+            { id: 'loss', name: 'loss', points: [{ step: 1, value: 0.5 }, { step: 2, value: 0.2 }] },
+        ], {
+            hidden: new Set(),
+            smooth: false,
+            log: false,
+            alpha: 0.6,
+            xAxis: 'epoch',
+            xSource: [
+                { id: 'loss', name: 'loss', points: [{ step: 1, value: 0.5 }, { step: 2, value: 0.2 }] },
+                { id: 'epoch', name: 'epoch', points: [{ step: 1, value: 0 }, { step: 2, value: 1 }] },
+                { id: '_runtime', name: '_runtime', points: [{ step: 1, value: 3 }, { step: 2, value: 9 }] },
+            ],
+        })
+        expect(plot.steps).toEqual([0, 1])
+        expect(plot.drawable).toEqual([{ id: 'loss', name: 'loss', values: [0.5, 0.2] }])
+        expect(trainingCustomXAxes([
+            { id: '_runtime', name: '_runtime', points: [{ step: 1, value: 3 }] },
+            { id: 'epoch', name: 'epoch', points: [{ step: 1, value: 0 }] },
+        ])).toEqual(['epoch'])
     })
 
     it('auto-scales until the user zooms', () => {

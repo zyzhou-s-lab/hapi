@@ -209,7 +209,7 @@ export async function listWandbMetrics(runDir: string, policy?: Pick<MachinePath
                 buffer = buffer.slice(newline + 1)
                 if (line) {
                     const parsed = parseTailLine(line)
-                    if (parsed.kind === 'point') names.add(parsed.metric)
+                    if (parsed.kind === 'point' && !parsed.metric.startsWith('_')) names.add(parsed.metric)
                     if (parsed.kind === 'exit') finish()
                     if (parsed.kind === 'fatal') finish(new Error(parsed.message))
                 }

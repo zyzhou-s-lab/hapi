@@ -53,16 +53,36 @@ export function smoothPoints(points: readonly TrainingPoint[], alpha: number): T
     })
 }
 
+export const TRAINING_X_STEP = '_step'
+export const TRAINING_X_RUNTIME = '_runtime'
+export const TRAINING_X_WALL = '_timestamp'
+
+export function trainingCustomXAxes(series: readonly TrainingSeries[]): string[] {
+    return series
+        .filter((row) => row.id.length > 0 && !row.id.startsWith('_') && row.points.length > 0)
+        .map((row) => row.id)
+}
+
 export function prepareTrainingPlot(series: readonly TrainingSeries[], options: {
     hidden: ReadonlySet<string>
     smooth: boolean
     log: boolean
     alpha: number
+    xAxis?: string
+    xSource?: readonly TrainingSeries[]
 }): {
     steps: number[]
     drawable: { id: string; name: string; values: (number | null)[] }[]
     dropped: number
 } {
+    const xAxis = options.xAxis && options.xAxis.length > 0 ? options.xAxis : TRAINING_X_STEP
+    const xByStep = new Map<number, number>()
+    if (xAxis !== TRAINING_X_STEP) {
+        const source = options.xSource ?? series
+        for (const point of source.find((row) => row.id === xAxis)?.points ?? []) {
+            if (Number.isFinite(point.value)) xByStep.set(point.step, point.value)
+        }
+    }
     let dropped = 0
     const visible = series.filter((row) => !options.hidden.has(row.id)).map((row) => {
         let points = row.points
@@ -75,7 +95,11 @@ export function prepareTrainingPlot(series: readonly TrainingSeries[], options: 
             }
             points = kept
         }
-        return { id: row.id, name: row.name, points }
+        const plotted = points.flatMap((point) => {
+            const x = xAxis === TRAINING_X_STEP ? point.step : xByStep.get(point.step)
+            return x == null || !Number.isFinite(x) ? [] : [{ step: x, value: point.value }]
+        })
+        return { id: row.id, name: row.name, points: plotted }
     })
     const steps = [...new Set(visible.flatMap((row) => row.points.map((point) => point.step)))].sort((left, right) => left - right)
     return {

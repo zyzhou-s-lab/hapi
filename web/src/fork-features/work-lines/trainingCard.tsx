@@ -7,7 +7,7 @@ import { filterTrainingSeries, trainingMetricsFromArgs, type TrainingSeries } fr
 
 const TrainingChart = lazy(() => import('./charts/TrainingChart').then((mod) => ({ default: mod.TrainingChart })))
 
-export function TrainingCurvesBody(props: { state: TrainingSocketState }): ReactNode {
+export function TrainingCurvesBody(props: { state: TrainingSocketState, xSource?: TrainingSeries[] }): ReactNode {
     const { t } = useTranslation()
     const statusKey = props.state.status === 'reconnecting' && !props.state.message
         ? 'work.trainingReconnecting'
@@ -21,7 +21,7 @@ export function TrainingCurvesBody(props: { state: TrainingSocketState }): React
             {props.state.finished ? <p className="text-xs text-[var(--app-hint)]">{t('work.trainingFinished')}</p> : null}
             {props.state.series.length === 0 ? <p className="text-sm text-[var(--app-hint)]">{t('work.trainingEmpty')}</p> : (
                 <Suspense fallback={<p className="text-sm text-[var(--app-hint)]">{t('work.trainingEmpty')}</p>}>
-                    <TrainingChart series={props.state.series} />
+                    <TrainingChart series={props.state.series} xSource={props.xSource} />
                 </Suspense>
             )}
         </>
@@ -48,11 +48,11 @@ function TrainingCurvesCard(props: { ctx: WorkCardContext }): ReactNode {
     const state = useTrainingSocket({ baseUrl, token, run })
     const shown = {
         ...state,
-        series: filterTrainingSeries(state.series, metrics).map((row) => ({ ...row, name: `${run} · ${row.name}` })),
+        series: filterTrainingSeries(state.series, metrics).filter((row) => !row.id.startsWith('_')).map((row) => ({ ...row, name: `${run} · ${row.name}` })),
     }
     return (
         <CardFrame title={t('work.trainingCurves')}>
-            {bound ? <TrainingCurvesBody state={shown} /> : <p className="text-sm text-[var(--app-hint)]">{t('work.trainingUnbound')}</p>}
+            {bound ? <TrainingCurvesBody state={shown} xSource={state.series} /> : <p className="text-sm text-[var(--app-hint)]">{t('work.trainingUnbound')}</p>}
         </CardFrame>
     )
 }

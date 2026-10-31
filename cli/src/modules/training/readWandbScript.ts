@@ -86,6 +86,8 @@ def history_points(blob):
             continue
         if key == "_step" and finite(parsed):
             step = parsed
+        elif key in ("_runtime", "_timestamp") and finite(parsed):
+            points.append({"metric": key, "value": float(parsed)})
         elif key and not key.startswith("_") and finite(parsed):
             points.append({"metric": key, "value": float(parsed)})
     if step is None:

@@ -360,9 +360,17 @@ export class RpcGateway {
         const outsideWorkspaceRoots = Array.isArray((result as RpcPathExistsResponse).outsideWorkspaceRoots)
             ? (result as RpcPathExistsResponse).outsideWorkspaceRoots?.filter((path): path is string => typeof path === 'string')
             : undefined
+        const resolvedValue = (result as RpcPathExistsResponse).resolved
+        const resolved: Record<string, string> = {}
+        if (resolvedValue && typeof resolvedValue === 'object') {
+            for (const [key, value] of Object.entries(resolvedValue)) {
+                if (typeof value === 'string' && value.length > 0 && value !== key) resolved[key] = value
+            }
+        }
         return {
             exists,
             ...(outsideWorkspaceRoots?.length ? { outsideWorkspaceRoots } : {}),
+            ...(Object.keys(resolved).length > 0 ? { resolved } : {}),
         }
     }
 

@@ -196,19 +196,21 @@ export class ApiMachineClient {
             const rawPaths = Array.isArray(params?.paths) ? params.paths : []
             const uniquePaths = Array.from(new Set(rawPaths.filter((path): path is string => typeof path === 'string')))
             const exists: Record<string, boolean> = {}
+            const resolved: Record<string, string> = {}
             const outsideWorkspaceRoots: string[] = []
 
             await Promise.all(uniquePaths.map(async (path) => {
                 const trimmed = path.trim()
                 if (!trimmed) return
-                const resolved = await this.pathPolicy.resolveForCheck(trimmed)
-                if (!this.pathPolicy.isWithinSpawnRoots(resolved)) {
+                const canonical = await this.pathPolicy.resolveForCheck(trimmed)
+                if (canonical !== trimmed) resolved[trimmed] = canonical
+                if (!this.pathPolicy.isWithinSpawnRoots(canonical)) {
                     exists[trimmed] = false
                     outsideWorkspaceRoots.push(trimmed)
                     return
                 }
                 try {
-                    const stats = await stat(resolved)
+                    const stats = await stat(canonical)
                     exists[trimmed] = stats.isDirectory()
                 } catch {
                     exists[trimmed] = false
@@ -217,6 +219,7 @@ export class ApiMachineClient {
 
             return {
                 exists,
+                ...(Object.keys(resolved).length > 0 ? { resolved } : {}),
                 ...(outsideWorkspaceRoots.length > 0 ? { outsideWorkspaceRoots } : {}),
             }
         })

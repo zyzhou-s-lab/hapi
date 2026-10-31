@@ -46,7 +46,11 @@ describe('work line routes', () => {
         queryTrainingRun: async (machineId: string, query: { run: string; runDir: string }) => {
             rpcCalls.push({ machineId, run: query.run, runDir: query.runDir })
             throw new Error('runner missing')
-        }
+        },
+        checkPathsExist: async (_machineId: string, paths: string[]) => ({
+            exists: Object.fromEntries(paths.map((path) => [path, true])),
+            resolved: Object.fromEntries(paths.flatMap((path) => path === '/tmp/proj' ? [['/tmp/proj', '/private/tmp/proj']] : [])),
+        }),
     } as unknown as SyncEngine
 
     const app = new Hono<WebAppEnv>()
@@ -232,5 +236,26 @@ describe('work line routes', () => {
         })
         expect(response.status).toBe(500)
         expect(await response.json()).toEqual({ error: 'Work request failed' })
+    })
+
+    it('stores a symlink primary path as the machine realpath', async () => {
+        const auth = { authorization: `Bearer ${await token()}`, 'content-type': 'application/json' }
+        const created = await app.request('/api/work/lines', {
+            method: 'POST',
+            headers: auth,
+            body: JSON.stringify({ name: '链接', primaryMachineId: 'gpu', primaryPath: '/tmp/proj' }),
+        })
+        expect(created.status).toBe(200)
+        const line = await created.json() as { line: { id: string, primaryPath: string } }
+        expect(line.line.primaryPath).toBe('/private/tmp/proj')
+        const map = await app.request('/api/work/map', { headers: { authorization: `Bearer ${await token()}` } })
+        const body = await map.json() as { canonicalPaths?: Record<string, string>, lines: { primaryPath: string }[] }
+        expect(body.lines.some((row) => row.primaryPath === '/private/tmp/proj')).toBe(true)
+        const duplicate = await app.request('/api/work/lines', {
+            method: 'POST',
+            headers: auth,
+            body: JSON.stringify({ name: '同一目录', primaryMachineId: 'gpu', primaryPath: '/private/tmp/proj' }),
+        })
+        expect(duplicate.status).toBe(400)
     })
 })
