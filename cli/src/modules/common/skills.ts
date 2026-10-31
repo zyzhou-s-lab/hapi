@@ -106,9 +106,11 @@ function getProjectSkillsRoots(directory: string, flavor?: string): string[] {
     }
     return roots;
 }
+export type SkillWriteRoot = { root: string, anchor?: string }
+
 /** Roots a toggle may write for this skill's own source. User and project roots stay separate. */
-export function skillWriteRoots(workingDirectory: string | undefined, source: 'user' | 'project'): string[] {
-    if (source === 'user') return userSkillWriteRoots();
+export function skillWriteRoots(workingDirectory: string | undefined, source: 'user' | 'project'): SkillWriteRoot[] {
+    if (source === 'user') return userSkillWriteRoots().map((root) => ({ root }));
     return projectWriteRoots(workingDirectory);
 }
 
@@ -125,7 +127,7 @@ function userSkillWriteRoots(): string[] {
     ];
 }
 
-function projectWriteRoots(workingDirectory: string | undefined): string[] {
+function projectWriteRoots(workingDirectory: string | undefined): SkillWriteRoot[] {
     if (!workingDirectory) return [];
     const start = resolve(workingDirectory);
     const directories = [start];
@@ -139,7 +141,7 @@ function projectWriteRoots(workingDirectory: string | undefined): string[] {
     return directories.flatMap(projectSkillRoots);
 }
 
-function projectSkillRoots(directory: string): string[] {
+function projectSkillRoots(directory: string): SkillWriteRoot[] {
     return [
         join(directory, '.agents', 'skills'),
         join(directory, '.omp', 'skills'),
@@ -149,7 +151,7 @@ function projectSkillRoots(directory: string): string[] {
         join(directory, '.grok', 'skills'),
         join(directory, '.copilot', 'skills'),
         join(directory, '.github', 'skills'),
-    ];
+    ].map((root) => ({ root, anchor: directory }));
 }
 
 

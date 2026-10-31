@@ -237,6 +237,21 @@ describe('session config detail', () => {
             expect(rooted).toEqual({ error: 'Only a SKILL.md frontmatter disabled field can be changed' })
             expect(readFileSync(rootedFile, 'utf8')).not.toContain('disabled:')
 
+            rmSync(join(cwd, '.agents'), { recursive: true, force: true })
+            const parentOutside = join(home, 'agents-link')
+            mkdirSync(join(parentOutside, 'skills', 'escaped'), { recursive: true })
+            const escapedFile = join(parentOutside, 'skills', 'escaped', 'SKILL.md')
+            writeFileSync(escapedFile, '---\nname: escaped\ndescription: Escaped\n---\n# Escaped\n')
+            symlinkSync(parentOutside, join(cwd, '.agents'))
+            const escaped = await writeSessionConfigEnabled({
+                cwd,
+                flavor: 'omp',
+                enabled: false,
+                selector: { kind: 'skill', name: 'escaped', source: 'project' },
+            })
+            expect(escaped).toEqual({ error: 'Only a SKILL.md frontmatter disabled field can be changed' })
+            expect(readFileSync(escapedFile, 'utf8')).not.toContain('disabled:')
+
             const system = await writeSessionConfigEnabled({
                 cwd,
                 flavor: 'omp',

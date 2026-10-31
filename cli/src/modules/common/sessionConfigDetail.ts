@@ -2,7 +2,7 @@ import { existsSync, lstatSync, readFileSync, realpathSync, statSync } from 'nod
 import { homedir } from 'node:os'
 import { basename, extname, isAbsolute, join, resolve, sep } from 'node:path'
 import { redactConfigSecrets, sessionConfigLock, type SessionConfigDetail, type SessionConfigItemSelector } from '@hapi/protocol/schemas'
-import { findSkill, skillWriteRoots } from '@/modules/common/skills'
+import { findSkill, skillWriteRoots, type SkillWriteRoot } from '@/modules/common/skills'
 import { commandBasename } from './sessionInventory'
 import { readSessionPromptDetail, type SessionPromptLive } from './sessionPrompts'
 import {
@@ -38,18 +38,22 @@ function lockError(flavor: string, kind: 'mcp' | 'skill' | 'hook' | 'prompt', so
     if (lock === 'unsupported') return UNSUPPORTED
     return null
 }
-function skillMarkdownPath(path: string, roots: readonly string[]): string | null {
+function skillMarkdownPath(path: string, roots: readonly SkillWriteRoot[]): string | null {
     try {
         if (lstatSync(path).isSymbolicLink()) return null
         const real = realpathSync(path)
         if (basename(real) !== 'SKILL.md' || !statSync(real).isFile()) return null
-        const allowed = roots.some((root) => {
+        const allowed = roots.some(({ root, anchor }) => {
             try {
                 const rootInfo = lstatSync(root)
                 if (rootInfo.isSymbolicLink() || !rootInfo.isDirectory()) return false
                 const realRoot = realpathSync(root)
                 const prefix = realRoot.endsWith(sep) ? realRoot : `${realRoot}${sep}`
-                return real.startsWith(prefix)
+                if (!real.startsWith(prefix)) return false
+                if (!anchor) return true
+                const realAnchor = realpathSync(anchor)
+                const anchorPrefix = realAnchor.endsWith(sep) ? realAnchor : `${realAnchor}${sep}`
+                return realRoot.startsWith(anchorPrefix)
             } catch {
                 return false
             }
