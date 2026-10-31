@@ -342,7 +342,11 @@ export class WorkLinesStore {
             'SELECT json FROM work_layouts WHERE account_id = ? AND surface = ?'
         ).get(accountId, surface) as { json: string } | null
         if (!row) return null
-        return normalizeStoredLayout(surface, row.json)
+        const normalized = normalizeStoredLayout(surface, row.json)
+        if (surface !== 'workbench') return normalized
+        const migrated = migrateTrainingInstanceIds(normalized)
+        if (!migrated.changed) return normalized
+        return this.putLayout(accountId, surface, migrated.layout)
     }
 
     putLayout(accountId: number, surface: string, layout: unknown): WorkLayout {
@@ -355,18 +359,24 @@ export class WorkLinesStore {
         `).run(accountId, surface, JSON.stringify(normalized), Date.now())
         return normalized
     }
-    bindTrainingLine(accountId: number, lineId: string, run: string, metrics: string[] = []): WorkLayout {
-        const cleanLine = cleanRequired(lineId, 'lineId', LAYOUT_VALUE_MAX)
-        const cleanRun = cleanRequired(run, 'run', LAYOUT_VALUE_MAX)
-        const cleanMetrics = [...new Set(metrics.map((metric) => metric.trim()).filter((metric) => metric.length > 0))]
+    bindTrainingLine(accountId: number, input: { lineId: string; run: string; metrics?: string[]; instanceId?: string; xAxis?: string }): { layout: WorkLayout; instanceId: string } {
+        const cleanLine = cleanRequired(input.lineId, 'lineId', LAYOUT_VALUE_MAX)
+        const cleanRun = cleanRequired(input.run, 'run', LAYOUT_VALUE_MAX)
+        const cleanMetrics = [...new Set((input.metrics ?? []).map((metric) => metric.trim()).filter((metric) => metric.length > 0))]
         if (cleanMetrics.length > 32 || cleanMetrics.some((metric) => metric.length > LAYOUT_VALUE_MAX)) {
             throw new WorkMapError('metrics 不合法')
         }
+        const requestedId = input.instanceId?.trim() ?? ''
+        if (requestedId.length > LAYOUT_VALUE_MAX) throw new WorkMapError('instanceId 不合法')
+        const axisProvided = input.xAxis !== undefined
+        const cleanAxis = input.xAxis?.trim() ?? ''
+        if (cleanAxis.length > LAYOUT_VALUE_MAX) throw new WorkMapError('xAxis 不合法')
         return this.db.transaction(() => {
             this.requireLine(accountId, cleanLine)
             if (!this.getTrainingRun(accountId, cleanRun)) throw new WorkMapError('训练不存在', 404)
-            // revision stays below the client LAYOUT_REVISION so a later default card can still be merged.
-            const current = this.getLayout(accountId, 'workbench') ?? {
+            const loaded = this.getLayout(accountId, 'workbench')
+            const migrated = loaded ? migrateTrainingInstanceIds(loaded) : null
+            const current = migrated?.layout ?? {
                 revision: 1,
                 regions: {
                     rail: [...workbenchDefaultRegions.rail],
@@ -375,14 +385,71 @@ export class WorkLinesStore {
                 },
             }
             const main = [...(current.regions.main ?? [])]
-            const args: Record<string, string> = { run: cleanRun, lineId: cleanLine }
+            const wantedAxis = axisProvided ? cleanAxis : null
+            const index = requestedId.length > 0
+                ? main.findIndex((item) => item.cardId === 'example.training-curves' && item.args?.instanceId === requestedId)
+                : main.findIndex((item) => sameTrainingCard(item, cleanLine, cleanRun, cleanMetrics, wantedAxis))
+            if (requestedId.length > 0 && (index < 0 || main[index]?.args?.lineId !== cleanLine)) {
+                throw new WorkMapError('卡片不存在', 404)
+            }
+            if (requestedId.length === 0 && index >= 0) {
+                const existingId = main[index]?.args?.instanceId ?? ''
+                if (existingId.length > 0) {
+                    const layout = migrated?.changed
+                        ? this.putLayout(accountId, 'workbench', current)
+                        : current
+                    return { layout, instanceId: existingId }
+                }
+            }
+            const id = requestedId.length > 0 ? requestedId : randomUUID()
+            const previous = index >= 0 ? main[index]?.args ?? {} : {}
+            const args: Record<string, string> = { ...previous, run: cleanRun, lineId: cleanLine, instanceId: id }
             if (cleanMetrics.length > 0) args.metrics = JSON.stringify(cleanMetrics)
+            else delete args.metrics
+            if (axisProvided) {
+                if (cleanAxis.length > 0) args.xAxis = cleanAxis
+                else delete args.xAxis
+            }
+            if (index < 0 && main.length >= LAYOUT_REGION_MAX) throw new WorkMapError(`工作台主区域最多 ${LAYOUT_REGION_MAX} 张卡`)
             const slot = { cardId: 'example.training-curves', args }
-            const index = main.findIndex((item) => item.cardId === slot.cardId && item.args?.lineId === cleanLine)
             if (index >= 0) main[index] = slot
             else main.push(slot)
+            const layout = this.putLayout(accountId, 'workbench', { revision: current.revision, regions: { ...current.regions, main } })
+            return { layout, instanceId: id }
+        })()
+    }
+
+    unbindTrainingCard(accountId: number, instanceId: string): WorkLayout {
+        const id = cleanRequired(instanceId, 'instanceId', LAYOUT_VALUE_MAX)
+        return this.db.transaction(() => {
+            const current = this.getLayout(accountId, 'workbench')
+            const main = [...(current?.regions.main ?? [])]
+            const index = main.findIndex((item) => item.cardId === 'example.training-curves' && item.args?.instanceId === id)
+            if (!current || index < 0) throw new WorkMapError('卡片不存在', 404)
+            main.splice(index, 1)
             return this.putLayout(accountId, 'workbench', { revision: current.revision, regions: { ...current.regions, main } })
         })()
+    }
+
+    listTrainingCards(accountId: number, run: string): { instanceId: string; lineId: string; metrics: string[]; xAxis?: string }[] {
+        const wanted = run.trim()
+        const layout = this.getLayout(accountId, 'workbench')
+        if (!layout || wanted.length === 0) return []
+        const cards: { instanceId: string; lineId: string; metrics: string[]; xAxis?: string }[] = []
+        for (const slot of layout.regions.main ?? []) {
+            if (slot.cardId !== 'example.training-curves' || slot.args?.run !== wanted) continue
+            const instanceId = slot.args.instanceId?.trim() ?? ''
+            const lineId = slot.args.lineId?.trim() ?? ''
+            if (instanceId.length === 0 || lineId.length === 0) continue
+            const xAxis = slot.args.xAxis?.trim() ?? ''
+            cards.push({
+                instanceId,
+                lineId,
+                metrics: trainingMetricList(slot.args.metrics),
+                ...(xAxis.length > 0 ? { xAxis } : {}),
+            })
+        }
+        return cards
     }
 
     registerTrainingRun(accountId: number, input: { run: string; machineId: string; runDir: string }): WorkTrainingRun {
@@ -534,4 +601,45 @@ function validateLayout(surface: WorkSurface, layout: unknown): WorkLayout {
         })
     }
     return { revision: parsed.data.revision, regions }
+}
+
+function migrateTrainingInstanceIds(layout: WorkLayout): { layout: WorkLayout; changed: boolean } {
+    let changed = false
+    const main = (layout.regions.main ?? []).map((slot) => {
+        if (slot.cardId !== 'example.training-curves') return slot
+        if ((slot.args?.instanceId?.trim() ?? '').length > 0) return slot
+        changed = true
+        return { cardId: slot.cardId, args: { ...(slot.args ?? {}), instanceId: randomUUID() } }
+    })
+    if (!changed) return { layout, changed: false }
+    return { layout: { ...layout, regions: { ...layout.regions, main } }, changed: true }
+}
+
+export function trainingMetricList(raw: string | undefined): string[] {
+    if (!raw) return []
+    try {
+        const parsed = JSON.parse(raw) as unknown
+        if (!Array.isArray(parsed)) return []
+        const seen = new Set<string>()
+        const metrics: string[] = []
+        for (const item of parsed) {
+            if (typeof item !== 'string') continue
+            const metric = item.trim()
+            if (metric.length === 0 || seen.has(metric)) continue
+            seen.add(metric)
+            metrics.push(metric)
+        }
+        return metrics
+    } catch {
+        return []
+    }
+}
+
+function sameTrainingCard(slot: WorkLayoutSlot, lineId: string, run: string, metrics: readonly string[], xAxis: string | null): boolean {
+    if (slot.cardId !== 'example.training-curves') return false
+    if (slot.args?.lineId !== lineId || slot.args.run !== run) return false
+    if (xAxis !== null && (slot.args.xAxis?.trim() ?? '') !== xAxis) return false
+    const stored = trainingMetricList(slot.args.metrics).sort()
+    const wanted = [...metrics].sort()
+    return stored.length === wanted.length && stored.every((metric, index) => metric === wanted[index])
 }

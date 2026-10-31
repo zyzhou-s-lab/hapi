@@ -365,11 +365,16 @@ export async function runHappyMcpStdioBridge(argv: string[]): Promise<void> {
       runDir: z.string(),
       machineId: z.string().optional(),
     }));
-    forward('query_training_run', 'Query metric names for a registered W&B run.', z.object({ run: z.string() }));
-    forward('bind_training_card', 'Bind a registered run and optional metrics onto a work-line training card.', z.object({
+    forward('query_training_run', 'Query metric names for a registered W&B run, plus cards already bound to it.', z.object({ run: z.string() }));
+    forward('bind_training_card', 'Add a training card, or update the card when instanceId is set. The same line, run, and metrics reuses the existing card; omit xAxis to match any axis.', z.object({
       lineId: z.string(),
       run: z.string(),
       metrics: z.array(z.string()).optional(),
+      instanceId: z.string().optional(),
+      xAxis: z.string().optional(),
+    }));
+    forward('unbind_training_card', 'Remove one training card by instanceId.', z.object({
+      instanceId: z.string(),
     }));
 
     // Start STDIO transport

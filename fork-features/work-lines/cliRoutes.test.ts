@@ -61,7 +61,7 @@ describe('cli work routes', () => {
 
         const summary = await app.request('/cli/work/training-runs/exp-1', { headers: ownerAuth })
         expect(summary.status).toBe(200)
-        expect(await summary.json()).toEqual({ metrics: ['loss'], partial: true })
+        expect(await summary.json()).toEqual({ metrics: ['loss'], partial: true, cards: [] })
         expect(rpcCalls).toEqual([{ machineId: 'gpu', run: 'exp-1', runDir: '/data/wandb/offline-run-1' }])
 
         const hidden = await app.request('/cli/work/training-runs/exp-1', {
@@ -76,10 +76,12 @@ describe('cli work routes', () => {
             body: JSON.stringify({ lineId: line.id, run: 'exp-1', metrics: ['loss', ' loss', 'loss'], accountId: other.id }),
         })
         expect(bound.status).toBe(200)
-        expect(pushed).toEqual([{ lineId: line.id, run: 'exp-1', metrics: ['loss'] }])
+        const boundBody = await bound.json() as { instanceId?: string }
+        expect(pushed).toEqual([{ lineId: line.id, run: 'exp-1', metrics: ['loss'], instanceId: boundBody.instanceId }])
         const layout = core.workLines.getLayout(owner.id, 'workbench')
         const slot = layout?.regions.main.find((item) => item.args?.run === 'exp-1')
         expect(slot?.args?.lineId).toBe(line.id)
+        expect(slot?.args?.instanceId).toBe(boundBody.instanceId)
     })
 
     it('rejects a web JWT on the CLI training route', async () => {

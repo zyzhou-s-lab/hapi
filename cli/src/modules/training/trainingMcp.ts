@@ -10,8 +10,12 @@ export async function queryTrainingRun(hub: WorkHub, run: string): Promise<{ sta
     return hub.request(`/cli/work/training-runs/${encodeURIComponent(run)}`)
 }
 
-export async function bindTrainingCard(hub: WorkHub, input: { lineId: string; run: string; metrics?: string[] }): Promise<{ status: number; body: unknown }> {
+export async function bindTrainingCard(hub: WorkHub, input: { lineId: string; run: string; metrics?: string[]; instanceId?: string; xAxis?: string }): Promise<{ status: number; body: unknown }> {
     return hub.request('/cli/work/training-card', { method: 'PUT', body: input })
+}
+
+export async function unbindTrainingCard(hub: WorkHub, instanceId: string): Promise<{ status: number; body: unknown }> {
+    return hub.request(`/cli/work/training-card/${encodeURIComponent(instanceId)}`, { method: 'DELETE' })
 }
 
 export function formatWorkResult(status: number, body: unknown): { text: string; isError: boolean } {

@@ -116,6 +116,7 @@ export async function buildHapiMcpBridge(
     // Own-account writes only: the hub maps this CLI token to one account.
     tools.register_training_run = { approval_mode: 'approve' };
     tools.bind_training_card = { approval_mode: 'approve' };
+    tools.unbind_training_card = { approval_mode: 'approve' };
     // ping_peer / inspect_peer are registered on the HTTP MCP server / stdio
     // bridge, but are not auto-approved: they target another session (resume +
     // inject, or read peer histories).

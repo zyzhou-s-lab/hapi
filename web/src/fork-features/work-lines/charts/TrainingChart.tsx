@@ -14,18 +14,19 @@ function span(min: number, max: number, log: boolean): { min: number; max: numbe
     return log ? { min: min / 2, max: min * 2 } : { min: min - 1, max: max + 1 }
 }
 
-export function TrainingChart(props: { series: TrainingSeries[], xSource?: readonly TrainingSeries[], run?: string, lineId?: string }): ReactNode {
+export function TrainingChart(props: { series: TrainingSeries[], xSource?: readonly TrainingSeries[], instanceId?: string, xAxisDefault?: string }): ReactNode {
     const { t } = useTranslation()
-    const prefId = trainingPrefId(props.lineId ?? '', props.run ?? '')
+    const prefId = trainingPrefId(props.instanceId ?? '')
+    const baseline = props.xAxisDefault && props.xAxisDefault.length > 0 ? props.xAxisDefault : TRAINING_X_STEP
     const [prefsId, setPrefsId] = useState(prefId)
     const [hidden, setHidden] = useState<ReadonlySet<string>>(() => readTrainingHidden(prefId, trainingBrowserStore()))
     const [smooth, setSmooth] = useState(false)
     const [log, setLog] = useState(false)
-    const [xAxis, setXAxis] = useState(() => readTrainingXAxis(prefId, trainingBrowserStore()))
+    const [xAxis, setXAxis] = useState(() => readTrainingXAxis(prefId, trainingBrowserStore()) ?? baseline)
     if (prefsId !== prefId) {
         setPrefsId(prefId)
         setHidden(readTrainingHidden(prefId, trainingBrowserStore()))
-        setXAxis(readTrainingXAxis(prefId, trainingBrowserStore()))
+        setXAxis(readTrainingXAxis(prefId, trainingBrowserStore()) ?? baseline)
     }
     const host = useRef<HTMLDivElement>(null)
     const metricsRef = useRef<HTMLDivElement>(null)
@@ -147,7 +148,7 @@ export function TrainingChart(props: { series: TrainingSeries[], xSource?: reado
                         onChange={(event) => {
                             const value = event.target.value
                             setXAxis(value)
-                            writeTrainingXAxis(prefId, value, trainingBrowserStore())
+                            writeTrainingXAxis(prefId, value, trainingBrowserStore(), Date.now(), baseline)
                         }}
                     >
                         <option value={TRAINING_X_STEP}>{t('work.trainingXStep')}</option>

@@ -78,7 +78,7 @@ describe('work line routes', () => {
 
         const summary = await app.request('/api/work/training-runs/exp-1', { headers: auth })
         expect(summary.status).toBe(200)
-        expect(await summary.json()).toEqual({ unavailable: true })
+        expect(await summary.json()).toEqual({ unavailable: true, cards: [] })
         expect(rpcCalls).toEqual([{ machineId: 'gpu', run: 'exp-1', runDir: '/data/wandb/offline-run-1' }])
 
 
@@ -133,11 +133,15 @@ describe('work line routes', () => {
         })
         expect(second.status).toBe(200)
         const saved = await app.request('/api/work/layout/workbench', { headers: { authorization: `Bearer ${await token()}` } })
-        const body = await saved.json() as { layout: { regions: { main: { cardId: string; args?: { run: string; lineId: string } }[] } } }
-        expect(body.layout.regions.main.filter((slot) => slot.cardId === 'example.training-curves').map((slot) => slot.args)).toEqual([
+        const body = await saved.json() as { layout: { regions: { main: { cardId: string; args?: { run?: string; lineId?: string; instanceId?: string } }[] } } }
+        const cards = body.layout.regions.main.filter((slot) => slot.cardId === 'example.training-curves')
+        expect(cards.map((slot) => ({ run: slot.args?.run, lineId: slot.args?.lineId }))).toEqual([
             { run: 'exp-1', lineId: createdLines[0] },
             { run: 'exp-2', lineId: createdLines[1] },
         ])
+        expect(cards[0]?.args?.instanceId).toEqual(expect.any(String))
+        expect(cards[1]?.args?.instanceId).toEqual(expect.any(String))
+        expect(cards[0]?.args?.instanceId).not.toBe(cards[1]?.args?.instanceId)
         const hyphen = await app.request('/api/work/layout/overview', {
             method: 'PUT',
             headers: auth,
@@ -165,8 +169,100 @@ describe('work line routes', () => {
         const saved = await app.request('/api/work/layout/workbench', { headers: { authorization: `Bearer ${await token()}` } })
         const body = await saved.json() as { layout: { regions: { main: { args?: { metrics?: string } }[] } } }
         expect(body.layout.regions.main.find((slot) => slot.args?.metrics)?.args?.metrics).toBe('["loss"]')
-        expect(pushed).toEqual([{ accountId: account.id, update: { lineId, run: 'exp-1', metrics: ['loss', 'loss'] } }])
+        expect(pushed).toEqual([{ accountId: account.id, update: { lineId, run: 'exp-1', metrics: ['loss'], instanceId: expect.any(String) } }])
         setTrainingCardPush(null)
+    })
+
+    it('reuses an identical card and lists its instance on the run query', async () => {
+        const auth = { authorization: `Bearer ${await token()}`, 'content-type': 'application/json' }
+        await app.request('/api/work/training-runs', {
+            method: 'POST',
+            headers: auth,
+            body: JSON.stringify({ run: 'exp-reuse', machineId: 'gpu', runDir: '/data/wandb/offline-run-reuse' }),
+        })
+        const created = await app.request('/api/work/lines', {
+            method: 'POST',
+            headers: auth,
+            body: JSON.stringify({ name: '复用', primaryMachineId: 'gpu', primaryPath: '/data/reuse' }),
+        })
+        const lineId = (await created.json() as { line: { id: string } }).line.id
+        const first = await app.request('/api/work/layout/workbench/training', {
+            method: 'PUT',
+            headers: auth,
+            body: JSON.stringify({ lineId, run: 'exp-reuse', metrics: ['loss', 'acc'] }),
+        })
+        const second = await app.request('/api/work/layout/workbench/training', {
+            method: 'PUT',
+            headers: auth,
+            body: JSON.stringify({ lineId, run: 'exp-reuse', metrics: ['acc', 'loss'] }),
+        })
+        const firstId = (await first.json() as { instanceId: string }).instanceId
+        expect((await second.json() as { instanceId: string }).instanceId).toBe(firstId)
+        const third = await app.request('/api/work/layout/workbench/training', {
+            method: 'PUT',
+            headers: auth,
+            body: JSON.stringify({ lineId, run: 'exp-reuse', metrics: ['loss'], xAxis: 'loss' }),
+        })
+        const thirdId = (await third.json() as { instanceId: string }).instanceId
+        expect(thirdId).not.toBe(firstId)
+        const summary = await app.request('/api/work/training-runs/exp-reuse', { headers: { authorization: `Bearer ${await token()}` } })
+        expect(await summary.json()).toEqual({
+            unavailable: true,
+            cards: [
+                { instanceId: firstId, lineId, metrics: ['loss', 'acc'] },
+                { instanceId: thirdId, lineId, metrics: ['loss'], xAxis: 'loss' },
+            ],
+        })
+    })
+
+    it('keeps two cards for one run and unbinds only the named card', async () => {
+        const auth = { authorization: `Bearer ${await token()}`, 'content-type': 'application/json' }
+        await app.request('/api/work/training-runs', {
+            method: 'POST',
+            headers: auth,
+            body: JSON.stringify({ run: 'exp-1', machineId: 'gpu', runDir: '/data/wandb/run-same' }),
+        })
+        const created = await app.request('/api/work/lines', {
+            method: 'POST',
+            headers: auth,
+            body: JSON.stringify({ name: '同 run', primaryMachineId: 'gpu', primaryPath: '/data/same' }),
+        })
+        const lineId = (await created.json() as { line: { id: string } }).line.id
+        const loss = await app.request('/api/work/layout/workbench/training', {
+            method: 'PUT',
+            headers: auth,
+            body: JSON.stringify({ lineId, run: 'exp-1', metrics: ['loss'], xAxis: '_step' }),
+        })
+        const lr = await app.request('/api/work/layout/workbench/training', {
+            method: 'PUT',
+            headers: auth,
+            body: JSON.stringify({ lineId, run: 'exp-1', metrics: ['lr'], xAxis: 'lr' }),
+        })
+        expect(loss.status).toBe(200)
+        expect(lr.status).toBe(200)
+        const lossId = (await loss.json() as { instanceId: string }).instanceId
+        const lrId = (await lr.json() as { instanceId: string }).instanceId
+        expect(lossId).not.toBe(lrId)
+        const updated = await app.request('/api/work/layout/workbench/training', {
+            method: 'PUT',
+            headers: auth,
+            body: JSON.stringify({ lineId, run: 'exp-1', instanceId: lossId, metrics: ['loss', 'acc'] }),
+        })
+        expect(updated.status).toBe(200)
+        expect((await updated.json() as { instanceId: string }).instanceId).toBe(lossId)
+        const missing = await app.request('/api/work/layout/workbench/training', {
+            method: 'PUT',
+            headers: auth,
+            body: JSON.stringify({ lineId, run: 'exp-1', instanceId: 'missing-card' }),
+        })
+        expect(missing.status).toBe(404)
+        const removed = await app.request(`/api/work/layout/workbench/training/${lossId}`, { method: 'DELETE', headers: auth })
+        expect(removed.status).toBe(200)
+        const saved = await app.request('/api/work/layout/workbench', { headers: { authorization: `Bearer ${await token()}` } })
+        const cards = (await saved.json() as { layout: { regions: { main: { args?: { run?: string; lineId?: string; instanceId?: string; metrics?: string; xAxis?: string } }[] } } }).layout.regions.main.filter((slot) => slot.args?.lineId === lineId)
+        expect(cards.map((slot) => slot.args)).toEqual([
+            { run: 'exp-1', lineId, instanceId: lrId, metrics: '["lr"]', xAxis: 'lr' },
+        ])
     })
     it('broadcasts card-invalidated without curve points when a line is created', async () => {
         const auth = { authorization: `Bearer ${await token()}`, 'content-type': 'application/json' }

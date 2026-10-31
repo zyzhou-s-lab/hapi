@@ -8,9 +8,9 @@ const INDEX_KEY = 'hapi.training.prefs'
 export const TRAINING_PREF_LIMIT = 32
 export const TRAINING_PREF_TTL_MS = 90 * 24 * 60 * 60 * 1000
 
-export function trainingPrefId(lineId: string, run: string): string {
-    if (lineId.length === 0 || run.length === 0) return ''
-    return `${encodeURIComponent(lineId)}:${encodeURIComponent(run)}`
+export function trainingPrefId(instanceId: string): string {
+    if (instanceId.length === 0) return ''
+    return encodeURIComponent(instanceId)
 }
 
 export function trainingXAxisStorageKey(prefId: string): string {
@@ -49,24 +49,30 @@ export function trainingBrowserStore(): TrainingPrefStore | null {
     }
 }
 
-export function readTrainingXAxis(prefId: string, store: TrainingPrefStore | null): string {
-    if (!store || prefId.length === 0) return TRAINING_X_STEP
+export function readTrainingXAxis(prefId: string, store: TrainingPrefStore | null): string | null {
+    if (!store || prefId.length === 0) return null
     try {
         const value = store.getItem(trainingXAxisStorageKey(prefId))
-        return value && value.length > 0 ? value : TRAINING_X_STEP
+        return value && value.length > 0 ? value : null
     } catch {
-        return TRAINING_X_STEP
+        return null
     }
 }
 
-export function writeTrainingXAxis(prefId: string, value: string, store: TrainingPrefStore | null, now = Date.now()): void {
+export function writeTrainingXAxis(prefId: string, value: string, store: TrainingPrefStore | null, now = Date.now(), baseline = TRAINING_X_STEP): void {
     if (!store || prefId.length === 0) return
     try {
         const next = value.length > 0 ? value : TRAINING_X_STEP
-        if (readTrainingXAxis(prefId, store) === next) return
-        const key = trainingXAxisStorageKey(prefId)
-        if (next === TRAINING_X_STEP) store.removeItem(key)
-        else store.setItem(key, next)
+        const floor = baseline.length > 0 ? baseline : TRAINING_X_STEP
+        const stored = readTrainingXAxis(prefId, store)
+        if (next === floor) {
+            if (stored == null) return
+            store.removeItem(trainingXAxisStorageKey(prefId))
+            touchTrainingPref(store, prefId, now)
+            return
+        }
+        if (stored === next) return
+        store.setItem(trainingXAxisStorageKey(prefId), next)
         touchTrainingPref(store, prefId, now)
     } catch {
         // Private mode or a full quota. The in-memory choice still applies.

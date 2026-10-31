@@ -37,17 +37,17 @@ describe('work layout', () => {
         expect(mergeLayout(saved, defaults).regions.body.map((slot) => slot.cardId)).toEqual(['overview.needs-you-list'])
     })
 
-    it('binds a run per line without using a dead default slot', () => {
+    it('keeps two cards for one run and updates only the named instance', () => {
         expect(workbenchLayout.regions.main.some((slot) => slot.cardId === 'example.training-curves')).toBe(false)
         const saved: WorkLayout = { revision: 1, regions: { main: [{ cardId: 'workbench.line-header' }] } }
         const merged = mergeLayout(saved, workbenchLayout)
-        expect(merged.regions.main.map((slot) => slot.cardId)).not.toContain('example.training-curves')
-        const bound = bindTrainingSlot(merged, 'line-1', 'exp-1')
-        const both = bindTrainingSlot(bound, 'line-2', 'exp-2')
-        expect(both.revision).toBe(LAYOUT_REVISION)
-        expect(both.regions.main.filter((slot) => slot.cardId === 'example.training-curves' && slot.args?.lineId).map((slot) => slot.args)).toEqual([
-            { run: 'exp-1', lineId: 'line-1' },
-            { run: 'exp-2', lineId: 'line-2' },
+        const loss = bindTrainingSlot(merged, { lineId: 'line-1', run: 'exp-1', instanceId: 'card-loss', metrics: '["loss"]' })
+        const both = bindTrainingSlot(loss, { lineId: 'line-1', run: 'exp-1', instanceId: 'card-lr', xAxis: 'lr' })
+        const updated = bindTrainingSlot(both, { lineId: 'line-1', run: 'exp-1', instanceId: 'card-loss', metrics: '["loss","acc"]' })
+        expect(updated.revision).toBe(LAYOUT_REVISION)
+        expect(updated.regions.main.filter((slot) => slot.cardId === 'example.training-curves').map((slot) => slot.args)).toEqual([
+            { run: 'exp-1', lineId: 'line-1', instanceId: 'card-loss', metrics: '["loss","acc"]' },
+            { run: 'exp-1', lineId: 'line-1', instanceId: 'card-lr', xAxis: 'lr' },
         ])
     })
 

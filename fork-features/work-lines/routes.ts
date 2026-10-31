@@ -5,7 +5,7 @@ import type { SSEManager } from '../../hub/src/sse/sseManager'
 import type { WebAppEnv } from '../../hub/src/web/middleware/auth'
 import type { MultiUserGatewayStore } from '../multi-user/gatewayStore'
 import { gatewayAccountId } from '../multi-user/executionMount'
-import { WorkMapError } from '../../hub/src/store/workLines'
+import { WorkMapError, trainingMetricList } from '../../hub/src/store/workLines'
 import { pushTrainingCard } from '../../hub/src/socket/trainingCardPush'
 const lineCreateSchema = z.object({
     name: z.string(),
@@ -230,16 +230,42 @@ export function mountWorkLineRoutes(app: Hono<WebAppEnv>, deps: {
         const ready = await open(c)
         if (ready instanceof Response) return ready
         if (c.req.param('surface') !== 'workbench') return c.json({ error: 'Not found' }, 404)
-        const body = await c.req.json().catch(() => null) as { lineId?: unknown; run?: unknown; metrics?: unknown } | null
+        const body = await c.req.json().catch(() => null) as { lineId?: unknown; run?: unknown; metrics?: unknown; instanceId?: unknown; xAxis?: unknown } | null
         if (!body || typeof body.lineId !== 'string' || typeof body.run !== 'string') return c.json({ error: 'Invalid body' }, 400)
         if (body.metrics !== undefined && (!Array.isArray(body.metrics) || body.metrics.some((metric) => typeof metric !== 'string'))) {
             return c.json({ error: 'Invalid body' }, 400)
         }
+        if (body.instanceId !== undefined && typeof body.instanceId !== 'string') return c.json({ error: 'Invalid body' }, 400)
+        if (body.xAxis !== undefined && typeof body.xAxis !== 'string') return c.json({ error: 'Invalid body' }, 400)
         try {
             const metrics = Array.isArray(body.metrics) ? body.metrics : []
-            const layout = ready.engine.getWorkLines().bindTrainingLine(ready.account.id, body.lineId, body.run, metrics)
+            const bound = ready.engine.getWorkLines().bindTrainingLine(ready.account.id, {
+                lineId: body.lineId,
+                run: body.run,
+                metrics,
+                instanceId: body.instanceId,
+                xAxis: body.xAxis,
+            })
             invalidate(ready.account.defaultNamespace, ready.account.id, 'work-layout')
-            pushTrainingCard(ready.account.id, { lineId: body.lineId, run: body.run, metrics })
+            pushTrainingCard(ready.account.id, {
+                lineId: body.lineId,
+                run: body.run,
+                metrics: storedTrainingMetrics(bound.layout, bound.instanceId),
+                instanceId: bound.instanceId,
+            })
+            return c.json({ layout: bound.layout, instanceId: bound.instanceId })
+        } catch (error) {
+            return mapError(c, error)
+        }
+    })
+
+    routes.delete('/layout/:surface/training/:instanceId', async (c) => {
+        const ready = await open(c)
+        if (ready instanceof Response) return ready
+        if (c.req.param('surface') !== 'workbench') return c.json({ error: 'Not found' }, 404)
+        try {
+            const layout = ready.engine.getWorkLines().unbindTrainingCard(ready.account.id, c.req.param('instanceId'))
+            invalidate(ready.account.defaultNamespace, ready.account.id, 'work-layout')
             return c.json({ layout })
         } catch (error) {
             return mapError(c, error)
@@ -289,12 +315,12 @@ export function mountWorkLineRoutes(app: Hono<WebAppEnv>, deps: {
         if (ready instanceof Response) return ready
         const row = ready.engine.getWorkLines().getTrainingRun(ready.account.id, c.req.param('run'))
         if (!row || !canSeeMachine(ready.account.id, row.machineId)) return c.json({ error: 'Not found' }, 404)
+        const cards = ready.engine.getWorkLines().listTrainingCards(ready.account.id, row.run)
         try {
             const summary = await ready.engine.queryTrainingRun(row.machineId, { run: row.run, runDir: row.runDir })
-            if (!summary || typeof summary !== 'object') return c.json({ unavailable: true })
-            return c.json(summary)
+            return c.json(trainingQueryBody(summary, cards))
         } catch {
-            return c.json({ unavailable: true })
+            return c.json({ unavailable: true, cards })
         }
     })
 
@@ -305,6 +331,16 @@ function mapError(c: { json: (body: unknown, status?: number) => Response }, err
     if (error instanceof WorkMapError) return c.json({ error: error.message }, error.status)
     console.error('[work-lines] request failed', error)
     return c.json({ error: 'Work request failed' }, 500)
+}
+
+function storedTrainingMetrics(layout: { regions: { main?: { cardId: string; args?: { instanceId?: string; metrics?: string } }[] } }, instanceId: string): string[] {
+    const slot = layout.regions.main?.find((item) => item.cardId === 'example.training-curves' && item.args?.instanceId === instanceId)
+    return trainingMetricList(slot?.args?.metrics)
+}
+
+function trainingQueryBody(summary: unknown, cards: unknown): unknown {
+    if (!summary || typeof summary !== 'object' || Array.isArray(summary)) return { unavailable: true, cards }
+    return { ...summary, cards }
 }
 
 function machineIdFromDirectoryKey(key: string): string {

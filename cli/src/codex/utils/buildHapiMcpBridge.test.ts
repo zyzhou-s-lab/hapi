@@ -83,6 +83,7 @@ describe('buildHapiMcpBridge skill lookup config', () => {
             register_training_run: { approval_mode: 'approve' },
             query_training_run: { approval_mode: 'approve' },
             bind_training_card: { approval_mode: 'approve' },
+            unbind_training_card: { approval_mode: 'approve' },
             skill_lookup: { approval_mode: 'approve' }
         })
     })
@@ -100,7 +101,8 @@ describe('buildHapiMcpBridge skill lookup config', () => {
             list_peers: { approval_mode: 'approve' },
             register_training_run: { approval_mode: 'approve' },
             query_training_run: { approval_mode: 'approve' },
-            bind_training_card: { approval_mode: 'approve' }
+            bind_training_card: { approval_mode: 'approve' },
+            unbind_training_card: { approval_mode: 'approve' }
         })
     })
 

@@ -111,6 +111,13 @@ export function WorkCardHost(props: {
     )
 }
 
+function trainingSlotKey(slot: { cardId: string; args?: Record<string, string> }): string {
+    const instanceId = slot.args?.instanceId
+    if (instanceId) return `${slot.cardId}:${instanceId}`
+    if (slot.args?.lineId) return `${slot.cardId}:${slot.args.lineId}:${slot.args.run ?? ''}`
+    return slot.cardId
+}
+
 function WorkRegion(props: {
     region: string
     slots: WorkLayoutSlot[]
@@ -134,7 +141,7 @@ function WorkRegion(props: {
                 if (!card) return null
                 return (
                     <CardSlot
-                        key={slot.args?.lineId ? `${slot.cardId}:${slot.args.lineId}` : slot.cardId}
+                        key={trainingSlotKey(slot)}
                         card={card}
                         slot={slot}
                         surface={props.surface}
