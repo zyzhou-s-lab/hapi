@@ -106,7 +106,7 @@ describe('SessionConfigPage', () => {
         expect(screen.getByText('Injected')).toBeTruthy()
         expect(screen.getByText('PreToolUse')).toBeTruthy()
         expect(screen.getByText('Bash · my-hook')).toBeTruthy()
-        expect(screen.getByText('None')).toBeTruthy()
+        expect(screen.getByText('No skills configured')).toBeTruthy()
         expect(screen.queryByText('This agent does not honor a per-item switch, so turning it off here would not stop it.')).toBeNull()
         expect(screen.queryByText('Injected, system, tool, and plugin items cannot be changed here.')).toBeNull()
         expect(screen.queryByText('Changes apply the next time you start a session or restart the agent.')).toBeNull()
@@ -120,6 +120,33 @@ describe('SessionConfigPage', () => {
             to: '/sessions/$sessionId',
             params: { sessionId: 'session-1' },
         }))
+    })
+
+    it('labels loaded MCP servers and explains an empty section', async () => {
+        mocks.getSessionConfig.mockResolvedValue({
+            success: true,
+            mcp: {
+                kind: 'servers',
+                servers: [
+                    { name: 'notion', source: 'user', loaded: true },
+                    { name: 'idle', source: 'user', loaded: false },
+                ],
+            },
+            skills: { items: [] },
+            hooks: { availability: 'listed', items: [] },
+            prompts: {
+                system: { availability: 'none', items: [] },
+                user: { availability: 'none', items: [] },
+            },
+        })
+        renderPage()
+        expect(await screen.findByText('Loaded')).toBeTruthy()
+        expect(screen.getByText('Not loaded')).toBeTruthy()
+        expect(screen.getByText('No skills configured')).toBeTruthy()
+        expect(screen.getByText('No hooks configured')).toBeTruthy()
+        expect(screen.getByText('No system prompt')).toBeTruthy()
+        expect(screen.getByText('No user prompt')).toBeTruthy()
+        expect(screen.queryByText('未配置 MCP')).toBeNull()
     })
 
     it('shows why the runner is offline and retries', async () => {

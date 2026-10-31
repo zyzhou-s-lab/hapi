@@ -13,6 +13,7 @@ import { useTranslation } from '@/lib/use-translation'
 import { formatSessionConfigError } from '@/lib/sessionConfigError'
 import { encodeBase64 } from '@/lib/utils'
 import {
+    agentsSection,
     hooksSection,
     mcpSection,
     promptSection,
@@ -53,12 +54,12 @@ function promptTitle(title: string, t: (key: string) => string): string {
     return translated === key ? title : translated
 }
 
-function sectionMessage(section: InventorySection, t: (key: string) => string): string | null {
+function sectionMessage(section: InventorySection, t: (key: string) => string, emptyKey: string): string | null {
     switch (section.status) {
         case 'unreported':
             return t('session.config.unreported')
         case 'empty':
-            return t('session.config.empty')
+            return t(emptyKey)
         case 'none':
             return section.note ? promptCopy(section.note, t) : t('session.config.hooks.none')
         case 'catalogUnavailable':
@@ -122,6 +123,7 @@ function RowText(props: { item: InventoryRow }) {
 
 function ConfigSection(props: {
     title: string
+    emptyKey: string
     section: InventorySection
     pendingKey: string | null
     onOpen: (row: InventoryRow) => void
@@ -129,7 +131,7 @@ function ConfigSection(props: {
     onToggle: (row: InventoryRow, enabled: boolean) => void
 }) {
     const { t } = useTranslation()
-    const message = sectionMessage(props.section, t)
+    const message = sectionMessage(props.section, t, props.emptyKey)
     return (
         <section>
             <h2 className="mb-2 text-base font-semibold text-[var(--app-fg)]">{props.title}</h2>
@@ -168,6 +170,11 @@ function ConfigSection(props: {
                                         onToggle={(enabled) => props.onToggle(item, enabled)}
                                     />
                                 ) : null}
+                                {item.loaded === undefined ? null : (
+                                    <span className="shrink-0 rounded-full bg-[var(--app-subtle-bg)] px-2 py-0.5 text-[11px] text-[var(--app-hint)]">
+                                        {t(item.loaded ? 'session.config.mcp.loaded' : 'session.config.mcp.notLoaded')}
+                                    </span>
+                                )}
                                 {item.source ? (
                                     <span className="shrink-0 rounded-full bg-[var(--app-subtle-bg)] px-2 py-0.5 text-[11px] text-[var(--app-hint)]">
                                         {t(`session.config.source.${item.source}`)}
@@ -212,6 +219,7 @@ export default function SessionConfigPage() {
     const systemPrompt = promptSection(config, 'system')
     const userPrompt = promptSection(config, 'user')
     const mcp = mcpSection(config, flavor)
+    const agents = agentsSection(config, flavor)
     const skills = skillsSection(config, flavor)
     const hooks = hooksSection(config, flavor)
 
@@ -309,11 +317,12 @@ export default function SessionConfigPage() {
                     />
                 ) : (
                     <div className="mx-auto flex w-full max-w-content flex-col gap-6 p-4">
-                        <ConfigSection title={t('session.config.systemPrompt')} section={systemPrompt} pendingKey={pendingKey} onOpen={openRow} onOpenScript={openScript} onToggle={(row, enabled) => { void toggle(row, enabled) }} />
-                        <ConfigSection title={t('session.config.userPrompt')} section={userPrompt} pendingKey={pendingKey} onOpen={openRow} onOpenScript={openScript} onToggle={(row, enabled) => { void toggle(row, enabled) }} />
-                        <ConfigSection title={t('session.config.mcp')} section={mcp} pendingKey={pendingKey} onOpen={openRow} onOpenScript={openScript} onToggle={(row, enabled) => { void toggle(row, enabled) }} />
-                        <ConfigSection title={t('session.config.skills')} section={skills} pendingKey={pendingKey} onOpen={openRow} onOpenScript={openScript} onToggle={(row, enabled) => { void toggle(row, enabled) }} />
-                        <ConfigSection title={t('session.config.hooks')} section={hooks} pendingKey={pendingKey} onOpen={openRow} onOpenScript={openScript} onToggle={(row, enabled) => { void toggle(row, enabled) }} />
+                        <ConfigSection title={t('session.config.systemPrompt')} emptyKey="session.config.systemPrompt.empty" section={systemPrompt} pendingKey={pendingKey} onOpen={openRow} onOpenScript={openScript} onToggle={(row, enabled) => { void toggle(row, enabled) }} />
+                        <ConfigSection title={t('session.config.userPrompt')} emptyKey="session.config.userPrompt.empty" section={userPrompt} pendingKey={pendingKey} onOpen={openRow} onOpenScript={openScript} onToggle={(row, enabled) => { void toggle(row, enabled) }} />
+                        <ConfigSection title={t('session.config.mcp')} emptyKey="session.config.mcp.empty" section={mcp} pendingKey={pendingKey} onOpen={openRow} onOpenScript={openScript} onToggle={(row, enabled) => { void toggle(row, enabled) }} />
+                        <ConfigSection title={t('session.config.agents')} emptyKey="session.config.agents.empty" section={agents} pendingKey={pendingKey} onOpen={openRow} onOpenScript={openScript} onToggle={(row, enabled) => { void toggle(row, enabled) }} />
+                        <ConfigSection title={t('session.config.skills')} emptyKey="session.config.skills.empty" section={skills} pendingKey={pendingKey} onOpen={openRow} onOpenScript={openScript} onToggle={(row, enabled) => { void toggle(row, enabled) }} />
+                        <ConfigSection title={t('session.config.hooks')} emptyKey="session.config.hooks.empty" section={hooks} pendingKey={pendingKey} onOpen={openRow} onOpenScript={openScript} onToggle={(row, enabled) => { void toggle(row, enabled) }} />
                     </div>
                 )}
             </div>

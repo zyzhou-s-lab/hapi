@@ -14,6 +14,8 @@ export const SessionInventoryMcpServerSchema = z.object({
     name: z.string().min(1).max(200),
     source: SessionInventorySourceSchema,
     enabled: z.boolean().optional(),
+    /** True when the live session tool list includes this server. Omitted when no tool list was reported. */
+    loaded: z.boolean().optional(),
     filePath: z.string().min(1).max(4096).optional(),
     line: z.number().int().min(1).max(1_000_000).optional(),
 })
@@ -36,6 +38,14 @@ export const SessionInventorySkillSchema = z.object({
     source: SessionInventorySourceSchema.optional(),
     enabled: z.boolean().optional(),
     filePath: z.string().min(1).max(4096).optional(),
+})
+
+export const SessionInventoryAgentSchema = z.object({
+    name: z.string().min(1).max(200),
+    description: z.string().max(500).optional(),
+    source: SessionInventorySourceSchema,
+    filePath: z.string().min(1).max(4096).optional(),
+    line: z.number().int().min(1).max(1_000_000).optional(),
 })
 
 export const SessionPromptScopeSchema = z.enum(['injected', 'user', 'project', 'managed'])
@@ -81,6 +91,9 @@ export const SessionInventorySchema = z.object({
         catalogUnavailable: z.boolean().optional(),
         items: z.array(SessionInventorySkillSchema).max(400),
     }).optional(),
+    agents: z.object({
+        items: z.array(SessionInventoryAgentSchema).max(200),
+    }).optional(),
     prompts: z.object({
         system: SessionPromptBlockSchema.optional(),
         user: SessionPromptBlockSchema.optional(),
@@ -91,6 +104,7 @@ export type SessionInventorySource = z.infer<typeof SessionInventorySourceSchema
 export type SessionInventoryMcpServer = z.infer<typeof SessionInventoryMcpServerSchema>
 export type SessionInventoryHook = z.infer<typeof SessionInventoryHookSchema>
 export type SessionInventorySkill = z.infer<typeof SessionInventorySkillSchema>
+export type SessionInventoryAgent = z.infer<typeof SessionInventoryAgentSchema>
 export type SessionInventory = z.infer<typeof SessionInventorySchema>
 export type SessionPromptItem = z.infer<typeof SessionPromptItemSchema>
 export type SessionPromptLoad = z.infer<typeof SessionPromptLoadSchema>

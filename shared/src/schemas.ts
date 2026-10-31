@@ -17,6 +17,7 @@ export {
     type SessionInventory,
     type SessionInventoryHook,
     type SessionInventoryMcpServer,
+    type SessionInventoryAgent,
     type SessionInventorySkill,
     type SessionInventorySource,
     type SessionPromptItem,
