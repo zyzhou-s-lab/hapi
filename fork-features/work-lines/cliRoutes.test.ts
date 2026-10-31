@@ -3,6 +3,7 @@ import { Hono } from 'hono'
 import { SignJWT } from 'jose'
 import { mountCliWorkRoutes } from './cliRoutes'
 import { Store } from '../../hub/src/store'
+import { createConfiguration } from '../../hub/src/configuration'
 import { MultiUserGatewayStore } from '../multi-user/gatewayStore'
 import { createApiToken } from '../multi-user/token'
 import type { SyncEngine } from '../../hub/src/sync/syncEngine'
@@ -72,7 +73,7 @@ describe('cli work routes', () => {
         const bound = await app.request('/cli/work/training-card', {
             method: 'PUT',
             headers: ownerAuth,
-            body: JSON.stringify({ lineId: line.id, run: 'exp-1', metrics: ['loss'], accountId: other.id }),
+            body: JSON.stringify({ lineId: line.id, run: 'exp-1', metrics: ['loss', ' loss', 'loss'], accountId: other.id }),
         })
         expect(bound.status).toBe(200)
         expect(pushed).toEqual([{ lineId: line.id, run: 'exp-1', metrics: ['loss'] }])
@@ -89,5 +90,43 @@ describe('cli work routes', () => {
             body: JSON.stringify({ run: 'exp-jwt', machineId: 'gpu', runDir: '/data/wandb/jwt' }),
         })
         expect(response.status).toBe(401)
+    })
+
+    it('does not bind another account line and does not push', async () => {
+        pushed.length = 0
+        const line = core.workLines.createLine(owner.id, { name: '别人的主线', primaryMachineId: 'gpu', primaryPath: '/data/other-line' })
+        const response = await app.request('/cli/work/training-card', {
+            method: 'PUT',
+            headers: { authorization: `Bearer ${otherToken.plaintext}`, 'content-type': 'application/json' },
+            body: JSON.stringify({ lineId: line.id, run: 'exp-1', metrics: ['loss'] }),
+        })
+        expect(response.status).toBe(404)
+        expect(pushed).toEqual([])
+        const slot = core.workLines.getLayout(owner.id, 'workbench')?.regions.main.find((item) => item.args?.lineId === line.id)
+        expect(slot).toBeUndefined()
+    })
+
+    it('tells a hub base token that is not a gateway token to use one', async () => {
+        const config = await createConfiguration()
+        config._setCliApiToken('hub-base-token', 'env', false)
+        const response = await app.request('/cli/work/training-runs', {
+            method: 'POST',
+            headers: { authorization: 'Bearer hub-base-token', 'content-type': 'application/json' },
+            body: JSON.stringify({ run: 'exp-base', machineId: 'gpu', runDir: '/data/wandb/offline-run-base' }),
+        })
+        expect(response.status).toBe(401)
+        expect(await response.json()).toEqual({ error: 'training tools need a gateway CLI token' })
+    })
+
+    it('accepts the hub base token when that token is already the gateway token', async () => {
+        const config = await createConfiguration()
+        config._setCliApiToken(ownerToken.plaintext, 'env', false)
+        const response = await app.request('/cli/work/training-runs', {
+            method: 'POST',
+            headers: ownerAuth,
+            body: JSON.stringify({ run: 'exp-seed', machineId: 'gpu', runDir: '/data/wandb/offline-run-seed' }),
+        })
+        expect(response.status).toBe(200)
+        expect(core.workLines.getTrainingRun(owner.id, 'exp-seed')?.run).toBe('exp-seed')
     })
 })
