@@ -136,22 +136,37 @@ function readCache(key: string): boolean | undefined {
     if (!row) return undefined
     if (Date.now() - row.at > PROBE_TTL_MS) {
         probeCache.delete(key)
+        writtenGen.delete(key)
         return undefined
     }
     return row.ok
 }
 
+function trimGenerations(): void {
+    for (const key of writtenGen.keys()) {
+        if (writtenGen.size <= PROBE_CACHE_MAX) return
+        if (!probeCache.has(key)) writtenGen.delete(key)
+    }
+    while (writtenGen.size > PROBE_CACHE_MAX) {
+        const oldest = writtenGen.keys().next().value
+        if (oldest === undefined) break
+        writtenGen.delete(oldest)
+    }
+}
+
 function remember(key: string, gen: number, result: ProbeHit): void {
     if (gen < (writtenGen.get(key) ?? 0)) return
+    writtenGen.delete(key)
     writtenGen.set(key, gen)
     probeCache.delete(key)
-    if (result.timedOut) return
-    probeCache.set(key, { ok: result.ok, at: Date.now() })
+    if (!result.timedOut) probeCache.set(key, { ok: result.ok, at: Date.now() })
     while (probeCache.size > PROBE_CACHE_MAX) {
         const oldest = probeCache.keys().next().value
         if (oldest === undefined) break
         probeCache.delete(oldest)
+        writtenGen.delete(oldest)
     }
+    trimGenerations()
 }
 
 export function cachedProbe(target: McpProbeTarget): boolean | undefined {
@@ -160,6 +175,10 @@ export function cachedProbe(target: McpProbeTarget): boolean | undefined {
 
 export function probeCacheSize(): number {
     return probeCache.size
+}
+
+export function probeGenerationSize(): number {
+    return writtenGen.size
 }
 
 export function clearProbeCache(): void {
@@ -208,9 +227,9 @@ function probeShared(target: McpProbeTarget, fresh: boolean): Promise<ProbeHit> 
 
 async function checkStdio(target: McpProbeTarget): Promise<ProbeHit> {
     if (!target.command) return down()
-    // The session directory is filled in when the config omits cwd. An explicit
-    // cwd is kept. Magpie pins HOME because its own cwd is often unusable; omp
-    // starts the server in the session directory, so that is the default here.
+    // cwd is already absolute: the session directory, or the config path
+    // resolved against it. Magpie pins HOME because its own cwd is often
+    // unusable; omp starts the server in the session directory.
     const group = process.platform !== 'win32'
     const child = spawn(target.command, target.args ?? [], {
         cwd: target.cwd,

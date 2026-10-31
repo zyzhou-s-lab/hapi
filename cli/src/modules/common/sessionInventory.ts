@@ -451,7 +451,7 @@ function ompProbeTargets(cwd: string): McpProbeTarget[] {
         for (const target of probeTargetsFromConfig(parsed)) {
             if (seen.has(target.name)) continue;
             seen.add(target.name);
-            targets.push(target.cwd ? target : { ...target, cwd: resolve(cwd) });
+            targets.push({ ...target, cwd: resolve(cwd, target.cwd ?? '.') });
         }
     }
     return targets;

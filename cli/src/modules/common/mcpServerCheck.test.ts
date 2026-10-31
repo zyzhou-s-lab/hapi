@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { AddressInfo } from 'node:net'
 import { describe, expect, it, vi } from 'vitest'
-import { cachedProbe, checkMcpServer, checkMcpServers, clearProbeCache, probeCacheSize } from './mcpServerCheck'
+import { cachedProbe, checkMcpServer, checkMcpServers, clearProbeCache, probeCacheSize, probeGenerationSize } from './mcpServerCheck'
 
 const HAPI_VERSION = (JSON.parse(readFileSync(new URL('../../../package.json', import.meta.url), 'utf8')) as { version: string }).version
 
@@ -277,6 +277,33 @@ describe('mcp server probe', () => {
         expect(probeCacheSize()).toBe(200)
         clearProbeCache()
     })
+
+    it('drops a generation when its cached probe is evicted or expires', async () => {
+        clearProbeCache()
+        const targets = Array.from({ length: 205 }, (_, index) => ({
+            name: `gen-${index}`,
+            transport: 'stdio' as const,
+            command: `/nonexistent/hapi-gen-${index}`,
+        }))
+        await checkMcpServers(targets)
+        expect(probeCacheSize()).toBe(200)
+        expect(probeGenerationSize()).toBe(200)
+        const kept = { name: 'kept', transport: 'stdio' as const, command: '/nonexistent/hapi-gen-kept' }
+        await checkMcpServers([kept])
+        expect(probeGenerationSize()).toBe(200)
+        const realNow = Date.now()
+        vi.useFakeTimers()
+        try {
+            vi.setSystemTime(realNow + 11 * 60 * 1000)
+            expect(cachedProbe(kept)).toBeUndefined()
+            expect(probeGenerationSize()).toBe(199)
+        } finally {
+            vi.useRealTimers()
+            clearProbeCache()
+            expect(probeGenerationSize()).toBe(0)
+        }
+    })
+
 
 
 })

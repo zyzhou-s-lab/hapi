@@ -386,6 +386,46 @@ command = "my-hook --token abc"
         }
     })
 
+    it('resolves a relative server cwd against the session directory', async () => {
+        clearProbeCache()
+        const workspace = mkdtempSync(join(tmpdir(), 'hapi-rel-cwd-'))
+        const tools = join(workspace, 'tools')
+        const agent = mkdtempSync(join(tmpdir(), 'hapi-rel-cwd-agent-'))
+        const previous = process.env.PI_CODING_AGENT_DIR
+        process.env.PI_CODING_AGENT_DIR = agent
+        mkdirSync(join(workspace, '.git'))
+        mkdirSync(tools)
+        const log = join(agent, 'cwd.txt')
+        const script = join(agent, 'cwd.cjs')
+        writeFileSync(script, `
+            const fs = require('node:fs')
+            const readline = require('node:readline')
+            fs.appendFileSync(${JSON.stringify(log)}, process.cwd() + '\\n')
+            const rl = readline.createInterface({ input: process.stdin })
+            rl.on('line', (line) => {
+                let msg
+                try { msg = JSON.parse(line) } catch { return }
+                if (!msg || !msg.id) return
+                const result = msg.method === 'tools/list' ? { tools: [] } : { protocolVersion: '2025-06-18', capabilities: {} }
+                process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result }) + '\\n')
+            })
+        `)
+        writeFileSync(join(agent, 'mcp.json'), JSON.stringify({
+            mcpServers: { local: { command: process.execPath, args: [script], cwd: './tools' } },
+        }))
+        try {
+            await readLiveSessionConfig({ flavor: 'omp', cwd: workspace, tools: [] })
+            expect(realpathSync(readFileSync(log, 'utf8').trim())).toBe(realpathSync(tools))
+        } finally {
+            if (previous === undefined) delete process.env.PI_CODING_AGENT_DIR
+            else process.env.PI_CODING_AGENT_DIR = previous
+            rmSync(workspace, { recursive: true, force: true })
+            rmSync(agent, { recursive: true, force: true })
+            clearProbeCache()
+        }
+    })
+
+
     it('shows and checks the user server when a root .mcp.json repeats its name', async () => {
         clearProbeCache()
         const workspace = mkdtempSync(join(tmpdir(), 'hapi-user-wins-'))
