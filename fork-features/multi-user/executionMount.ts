@@ -25,6 +25,19 @@ export async function gatewayAccountId(request: Request, secret: Uint8Array): Pr
     }
 }
 
+const loggedMissingMachines = new Set<string>()
+
+function warnMissingMachine(accountId: number, machineId: string): void {
+    const key = `${accountId}:${machineId}`
+    if (loggedMissingMachines.has(key)) return
+    loggedMissingMachines.add(key)
+    console.warn('[gateway] machine binding has no core row', { accountId, machineId })
+}
+
+function noteMachinePresent(accountId: number, machineId: string): void {
+    loggedMissingMachines.delete(`${accountId}:${machineId}`)
+}
+
 const resourceFromPath = (path: string): { type: ResourceType; id: string } | null => {
     const match = path.match(/^\/api\/(sessions|machines)\/([^/]+)/)
     if (!match?.[1] || !match[2]) return null
@@ -155,11 +168,20 @@ export function mountExecutionRoutes(app: Hono<WebAppEnv>, deps: {
         const engine = deps.getSyncEngine()
         if (!account || !engine) return c.json({ error: 'Not connected' }, account ? 503 : 401)
         for (const machine of engine.getOnlineMachinesByNamespace(account.defaultNamespace)) {
-            if (!deps.store.getResource('machine', machine.id)) deps.store.bindResource({ resourceType: 'machine', resourceId: machine.id, ownerAccountId: account.id, coreNamespace: account.defaultNamespace })
+            if (!machine?.id) continue
+            noteMachinePresent(account.id, machine.id)
+            if (deps.store.getResource('machine', machine.id)) continue
+            deps.store.bindResource({ resourceType: 'machine', resourceId: machine.id, ownerAccountId: account.id, coreNamespace: account.defaultNamespace })
         }
-        const machines = deps.store.listAccessibleResources('machine', account.id)
-            .map(binding => engine.getMachine(binding.resourceId))
-            .filter(machine => machine !== null)
+        const machines = deps.store.listAccessibleResources('machine', account.id).flatMap((binding) => {
+            const machine = engine.getMachine(binding.resourceId)
+            if (machine != null) {
+                noteMachinePresent(account.id, binding.resourceId)
+                return [machine]
+            }
+            warnMissingMachine(account.id, binding.resourceId)
+            return []
+        })
         return c.json({ machines })
     })
 

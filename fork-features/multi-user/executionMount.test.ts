@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { Hono } from 'hono'
 import { SignJWT } from 'jose'
 import { createExecutionMiddleware, mountExecutionRoutes } from './executionMount'
@@ -65,6 +65,48 @@ describe('createExecutionMiddleware', () => {
         expect(await refreshResponse.json()).toEqual({ refreshed: true })
         expect(spawnResponse.status).toBe(403)
         expect(deleteResponse.status).toBe(403)
+        store.close()
+    })
+
+    it('omits a machine binding whose core row is gone', async () => {
+        const store = new MultiUserGatewayStore(':memory:')
+        const owner = store.createAccount('owner', 'user', 'owner-namespace', null)
+        store.bindResource({
+            resourceType: 'machine',
+            resourceId: 'gone',
+            ownerAccountId: owner.id,
+            coreNamespace: owner.defaultNamespace,
+        })
+        const jwtSecret = new TextEncoder().encode('test-secret-test-secret-test-secret')
+        const token = await new SignJWT({ gaid: owner.id }).setProtectedHeader({ alg: 'HS256' }).sign(jwtSecret)
+        let present = false
+        const engine = {
+            getOnlineMachinesByNamespace: () => [],
+            getMachine: () => present ? { id: 'gone' } : undefined,
+        } as unknown as SyncEngine
+        const app = new Hono<WebAppEnv>()
+        mountExecutionRoutes(app, {
+            store,
+            jwtSecret,
+            getSyncEngine: () => engine,
+            getSseManager: () => null,
+        })
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+        const headers = { authorization: `Bearer ${token}` }
+        const response = await app.request('/api/machines', { headers })
+        const again = await app.request('/api/machines', { headers })
+        expect(response.status).toBe(200)
+        expect(await response.json()).toEqual({ machines: [] })
+        expect(await again.json()).toEqual({ machines: [] })
+        expect(warn).toHaveBeenCalledTimes(1)
+        present = true
+        const returned = await (await app.request('/api/machines', { headers })).json() as { machines: { id: string }[] }
+        expect(returned.machines).toEqual([{ id: 'gone' }])
+        present = false
+        await app.request('/api/machines', { headers })
+        expect(warn).toHaveBeenCalledTimes(2)
+        expect(store.getResource('machine', 'gone')).toMatchObject({ resourceId: 'gone', ownerAccountId: owner.id })
+        warn.mockRestore()
         store.close()
     })
 
