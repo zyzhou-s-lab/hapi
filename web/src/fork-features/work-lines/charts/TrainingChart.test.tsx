@@ -3,7 +3,7 @@ import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import { I18nProvider } from '@/lib/i18n-context'
 import type { TrainingSeries } from '../trainingSeries'
 import { TrainingChart } from './TrainingChart'
-import { trainingPrefId, trainingXAxisStorageKey } from './trainingPrefs'
+import { trainingHiddenStorageKey, trainingPrefId, trainingXAxisStorageKey } from './trainingPrefs'
 
 type PointShow = (chart: { data: ArrayLike<ArrayLike<number | null | undefined> | undefined> }, seriesIdx: number, idx0: number, idx1: number) => boolean | undefined
 
@@ -76,6 +76,23 @@ describe('TrainingChart', () => {
         expect(call?.series?.[2]).toMatchObject({ spanGaps: true, label: 'eval' })
         expect(showPoints(call?.series?.[1]?.points?.show, call?.data, 1)).toBe(false)
         expect(showPoints(call?.series?.[2]?.points?.show, call?.data, 2)).toBe(true)
+    })
+
+    it('does not write storage when opened and clears the legacy axis key on a change', () => {
+        localStorage.setItem('hapi.training.xAxis', 'epoch')
+        const opened = renderChart()
+        expect(localStorage.getItem('hapi.training.prefs')).toBeNull()
+        expect(localStorage.getItem(trainingHiddenStorageKey(trainingPrefId('line-1', 'exp-1')))).toBeNull()
+        expect(localStorage.getItem('hapi.training.xAxis')).toBe('epoch')
+        opened.unmount()
+        renderChart()
+        expect(localStorage.getItem('hapi.training.xAxis')).toBe('epoch')
+        fireEvent.change(screen.getByRole('combobox'), { target: { value: '_runtime' } })
+        expect(localStorage.getItem('hapi.training.xAxis')).toBeNull()
+        expect(localStorage.getItem(trainingXAxisStorageKey(trainingPrefId('line-1', 'exp-1')))).toBe('_runtime')
+        fireEvent.change(screen.getByRole('combobox'), { target: { value: '_step' } })
+        expect(localStorage.getItem(trainingXAxisStorageKey(trainingPrefId('line-1', 'exp-1')))).toBeNull()
+        expect(localStorage.getItem('hapi.training.prefs')).toBeNull()
     })
 
     it('asks for a metric when every series is hidden', () => {

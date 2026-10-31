@@ -2,6 +2,7 @@ import { TRAINING_X_STEP } from '../trainingSeries'
 
 const AXIS_PREFIX = 'hapi.training.xAxis:'
 const HIDDEN_PREFIX = 'hapi.training.hidden:'
+const LEGACY_X_AXIS_KEY = 'hapi.training.xAxis'
 const INDEX_KEY = 'hapi.training.prefs'
 
 export const TRAINING_PREF_LIMIT = 32
@@ -61,8 +62,12 @@ export function readTrainingXAxis(prefId: string, store: TrainingPrefStore | nul
 export function writeTrainingXAxis(prefId: string, value: string, store: TrainingPrefStore | null, now = Date.now()): void {
     if (!store || prefId.length === 0) return
     try {
-        store.setItem(trainingXAxisStorageKey(prefId), value)
-        pruneTrainingPrefs(store, prefId, now)
+        const next = value.length > 0 ? value : TRAINING_X_STEP
+        if (readTrainingXAxis(prefId, store) === next) return
+        const key = trainingXAxisStorageKey(prefId)
+        if (next === TRAINING_X_STEP) store.removeItem(key)
+        else store.setItem(key, next)
+        touchTrainingPref(store, prefId, now)
     } catch {
         // Private mode or a full quota. The in-memory choice still applies.
     }
@@ -84,11 +89,27 @@ export function readTrainingHidden(prefId: string, store: TrainingPrefStore | nu
 export function writeTrainingHidden(prefId: string, hidden: ReadonlySet<string>, store: TrainingPrefStore | null, now = Date.now()): void {
     if (!store || prefId.length === 0) return
     try {
-        store.setItem(trainingHiddenStorageKey(prefId), JSON.stringify([...hidden].sort()))
-        pruneTrainingPrefs(store, prefId, now)
+        if (sameHidden(readTrainingHidden(prefId, store), hidden)) return
+        const key = trainingHiddenStorageKey(prefId)
+        if (hidden.size === 0) store.removeItem(key)
+        else store.setItem(key, JSON.stringify([...hidden].sort()))
+        touchTrainingPref(store, prefId, now)
     } catch {
         // Private mode or a full quota. The in-memory choice still applies.
     }
+}
+
+function sameHidden(left: ReadonlySet<string>, right: ReadonlySet<string>): boolean {
+    if (left.size !== right.size) return false
+    for (const id of left) if (!right.has(id)) return false
+    return true
+}
+
+function prefStillStored(store: TrainingPrefStore, prefId: string): boolean {
+    const axis = store.getItem(trainingXAxisStorageKey(prefId))
+    if (axis && axis !== TRAINING_X_STEP) return true
+    const hidden = store.getItem(trainingHiddenStorageKey(prefId))
+    return hidden != null && hidden !== '[]'
 }
 
 function prefIdFromStorageKey(key: string): string | null {
@@ -118,12 +139,13 @@ function prefTouch(item: unknown): { id: string; at: number } | null {
     return { id, at }
 }
 
-function pruneTrainingPrefs(store: TrainingPrefStore, touchedId: string, now: number): void {
+function touchTrainingPref(store: TrainingPrefStore, touchedId: string, now: number): void {
+    store.removeItem(LEGACY_X_AXIS_KEY)
     const index = readPrefIndex(store)
     const kept = index.ok
         ? index.rows.filter((row) => row.id !== touchedId && now - row.at <= TRAINING_PREF_TTL_MS)
         : []
-    kept.push({ id: touchedId, at: now })
+    if (prefStillStored(store, touchedId)) kept.push({ id: touchedId, at: now })
     kept.sort((left, right) => left.at - right.at)
     if (kept.length > TRAINING_PREF_LIMIT) kept.splice(0, kept.length - TRAINING_PREF_LIMIT)
     if (index.ok) {
@@ -133,5 +155,6 @@ function pruneTrainingPrefs(store: TrainingPrefStore, touchedId: string, now: nu
             if (id != null && id.length > 0 && !live.has(id)) store.removeItem(key)
         }
     }
-    store.setItem(INDEX_KEY, JSON.stringify(kept))
+    if (kept.length === 0) store.removeItem(INDEX_KEY)
+    else store.setItem(INDEX_KEY, JSON.stringify(kept))
 }

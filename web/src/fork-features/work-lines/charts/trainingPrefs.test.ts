@@ -43,7 +43,7 @@ describe('training chart prefs', () => {
         writeTrainingXAxis(stale, 'epoch', store, 0)
         writeTrainingHidden(stale, new Set(['loss']), store, 0)
         for (let index = 0; index < TRAINING_PREF_LIMIT; index += 1) {
-            writeTrainingXAxis(trainingPrefId('line', `run-${index}`), '_step', store, TRAINING_PREF_TTL_MS + 1 + index)
+            writeTrainingXAxis(trainingPrefId('line', `run-${index}`), 'epoch', store, TRAINING_PREF_TTL_MS + 1 + index)
         }
         expect(store.map.has('hapi.training.xAxis:exp-old')).toBe(false)
         expect(store.map.has('hapi.training.hidden:exp-old')).toBe(false)
@@ -51,12 +51,12 @@ describe('training chart prefs', () => {
         expect(readTrainingHidden(stale, store)).toEqual(new Set())
         expect(store.map.has(trainingXAxisStorageKey(stale))).toBe(false)
         const oldest = trainingPrefId('line', 'run-0')
-        expect(readTrainingXAxis(oldest, store)).toBe('_step')
-        writeTrainingXAxis(trainingPrefId('line', 'run-new'), 'epoch', store, TRAINING_PREF_TTL_MS + TRAINING_PREF_LIMIT + 2)
+        expect(readTrainingXAxis(oldest, store)).toBe('epoch')
+        writeTrainingXAxis(trainingPrefId('line', 'run-new'), '_runtime', store, TRAINING_PREF_TTL_MS + TRAINING_PREF_LIMIT + 2)
         expect(readTrainingXAxis(oldest, store)).toBe(TRAINING_X_STEP)
         expect(store.map.has(trainingXAxisStorageKey(oldest))).toBe(false)
-        expect(readTrainingXAxis(trainingPrefId('line', 'run-1'), store)).toBe('_step')
-        expect(readTrainingXAxis(trainingPrefId('line', 'run-new'), store)).toBe('epoch')
+        expect(readTrainingXAxis(trainingPrefId('line', 'run-1'), store)).toBe('epoch')
+        expect(readTrainingXAxis(trainingPrefId('line', 'run-new'), store)).toBe('_runtime')
     })
 
     it('ignores an incomplete id and falls back when storage throws or is corrupt', () => {
@@ -107,6 +107,39 @@ describe('training chart prefs', () => {
         expect(() => writeTrainingXAxis(id, 'epoch', store)).not.toThrow()
         expect(readTrainingXAxis(id, store)).toBe('epoch')
         expect(store.map.get('hapi.training.xAxis:exp-old')).toBe('_runtime')
+    })
+
+    it('leaves storage alone when the choice already matches and drops an empty selection', () => {
+        let scans = 0
+        const map = new Map<string, string>()
+        const store: TrainingPrefStore = {
+            getItem: (key) => map.get(key) ?? null,
+            setItem: (key, value) => { map.set(key, value) },
+            removeItem: (key) => { map.delete(key) },
+            keys: () => {
+                scans += 1
+                return [...map.keys()]
+            },
+        }
+        const id = trainingPrefId('line-1', 'exp-1')
+        writeTrainingXAxis(id, TRAINING_X_STEP, store)
+        writeTrainingHidden(id, new Set(), store)
+        expect(scans).toBe(0)
+        expect(map.size).toBe(0)
+        map.set('hapi.training.xAxis', 'epoch')
+        writeTrainingHidden(id, new Set(['eval']), store)
+        expect(map.has('hapi.training.xAxis')).toBe(false)
+        expect(map.get(trainingHiddenStorageKey(id))).toBe('["eval"]')
+        expect(scans).toBe(1)
+        writeTrainingHidden(id, new Set(['eval']), store)
+        expect(scans).toBe(1)
+        writeTrainingHidden(id, new Set(), store)
+        expect(map.has(trainingHiddenStorageKey(id))).toBe(false)
+        expect(map.has('hapi.training.prefs')).toBe(false)
+        writeTrainingXAxis(id, '_runtime', store)
+        writeTrainingXAxis(id, TRAINING_X_STEP, store)
+        expect(map.has(trainingXAxisStorageKey(id))).toBe(false)
+        expect(map.has('hapi.training.prefs')).toBe(false)
     })
 
     it('returns null when the browser storage getter throws', () => {

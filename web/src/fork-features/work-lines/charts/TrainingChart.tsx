@@ -130,13 +130,10 @@ export function TrainingChart(props: { series: TrainingSeries[], xSource?: reado
             const next = new Set(current)
             if (next.has(id)) next.delete(id)
             else next.add(id)
+            writeTrainingHidden(prefId, next, trainingBrowserStore())
             return next
         })
     }
-
-    useEffect(() => {
-        writeTrainingHidden(prefId, hidden, trainingBrowserStore())
-    }, [prefId, hidden])
 
     return (
         <div>
