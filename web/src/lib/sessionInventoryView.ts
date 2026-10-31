@@ -1,4 +1,4 @@
-import { sessionConfigLock, type SessionConfigItemSelector, type SessionInventory, type SessionInventorySource, type SessionPromptItem, type SessionPromptLoad } from '@hapi/protocol/schemas'
+import { redactConfigSecrets, sessionConfigLock, type SessionConfigItemSelector, type SessionInventory, type SessionInventorySource, type SessionPromptItem, type SessionPromptLoad } from '@hapi/protocol/schemas'
 
 export type InventoryRow = {
     key: string
@@ -26,7 +26,7 @@ export type InventorySection =
     | { status: 'catalogUnavailable' }
     | { status: 'list'; rows: InventoryRow[]; tools?: boolean; note?: string }
 
-const SECRET_TEXT = /token|api[_-]?key|secret|password|bearer|authorization/i
+
 
 function asSource(value: string | undefined): SessionInventorySource | undefined {
     if (
@@ -44,12 +44,11 @@ function asSource(value: string | undefined): SessionInventorySource | undefined
 
 export function visibleInventoryText(value: string | undefined): string | undefined {
     if (!value) return undefined
-    const text = value
+    const text = redactConfigSecrets(value)
         .replace(/https?:\/\/\S+/gi, '')
-        .replace(/\b(?:token|api[_-]?key|secret|password|bearer)\b\s*[:=]\s*\S+/gi, '')
         .replace(/\s+/g, ' ')
         .trim()
-    if (!text || /:\/\//.test(text) || SECRET_TEXT.test(text)) return undefined
+    if (!text || /:\/\//.test(text)) return undefined
     return text
 }
 

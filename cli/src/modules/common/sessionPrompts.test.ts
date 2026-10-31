@@ -37,7 +37,7 @@ describe('session prompts', () => {
         expect(rule?.load).toBe('path')
         expect(rule?.match).toBe('src/**/*.ts')
         const claude = user.find((item) => item.title === 'CLAUDE.md')
-        expect(claude?.preview).toContain('OPENAI_API_KEY=***')
+        expect(claude?.preview).toContain('OPENAI_API_KEY=`***`')
         expect(claude?.preview).not.toContain('zzsecret')
         expect(prompts?.system?.items[0]?.title).toBe('append-system-prompt')
         expect(prompts?.system?.note).toBe('claude-builtin')
@@ -96,6 +96,24 @@ describe('session prompts', () => {
             expect('markdown' in detail ? detail.markdown : '').toContain('# Stay')
             expect('frontmatter' in detail ? detail.frontmatter : undefined).toBeUndefined()
         }
+    })
+
+    it('strips an empty frontmatter fence from a rule file', () => {
+        const home = tempDir()
+        const cwd = tempDir()
+        mkdirSync(join(cwd, '.claude', 'rules'), { recursive: true })
+        writeFileSync(join(cwd, '.claude', 'rules', 'empty.md'), '---\n---\nVisible after empty frontmatter.\n')
+        writeFileSync(join(cwd, 'CLAUDE.md'), '---\n---\nkept in claude\n')
+        const prompts = titles(cwd, home, 'claude', { flavor: 'claude', cwd, home, env: {} })
+        const rule = prompts?.user?.items.find((item) => item.title === 'empty.md')
+        expect(rule?.preview).toBe('Visible after empty frontmatter.')
+        expect(rule?.preview).not.toContain('---')
+        const detail = readSessionPromptDetail({ flavor: 'claude', cwd, home, env: {}, id: rule?.id ?? '' })
+        expect('markdown' in detail ? detail.markdown : '').toBe('Visible after empty frontmatter.\n')
+        expect('frontmatter' in detail ? detail.frontmatter : undefined).toBeUndefined()
+        const claude = prompts?.user?.items.find((item) => item.title === 'CLAUDE.md' && item.scope === 'project')
+        const claudeDetail = readSessionPromptDetail({ flavor: 'claude', cwd, home, env: {}, id: claude?.id ?? '' })
+        expect('markdown' in claudeDetail ? claudeDetail.markdown : '').toBe('---\n---\nkept in claude\n')
     })
 
     it('does not follow a symlinked instruction file', () => {

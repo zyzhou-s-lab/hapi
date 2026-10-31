@@ -181,17 +181,34 @@ export type SessionConfigDetailResult =
 export type SessionConfigToggleResult =
     | { success: true; enabled: boolean }
     | { success: false; error: string }
+/** Inline code so a redacted line is not eaten as Markdown emphasis. */
+const REDACTED = '`***`'
+const NON_SECRET_VALUE = /^(?:true|false|yes|no|on|off|null|none|undefined|0|1)$/i
+
+function isSecretAssignment(value: string): boolean {
+    const quoted = /^(['"])([\s\S]*)\1$/.exec(value.trim())
+    const inner = (quoted ? quoted[2] : value).trim()
+    return !NON_SECRET_VALUE.test(inner)
+}
 
 export function redactConfigSecrets(value: string): string {
     return value
-        .replace(/([a-z][a-z0-9+.-]*:\/\/)[^\s/@]+:[^\s/@]+@/gi, '$1***@')
-        .replace(/\b(bearer)\s+[^\s"']+/gi, '$1 ***')
-        .replace(/\b(sk-|ghp_|github_pat_|xox[baprs]-)[A-Za-z0-9_-]{8,}/g, '***')
-        .replace(/\bhapi_mu_[A-Za-z0-9_-]{20,}/g, '***')
-        .replace(/(^|[^A-Za-z0-9])([A-Za-z][A-Za-z0-9_]*(?:API_KEY|ACCESS_KEY|SECRET|TOKEN|PASSWORD))\s*=\s*[^\s"']+/g, '$1$2=***')
-        .replace(/(--(?:api[-_]?key|token|secret|password|passwd|key))(=|\s+)\S+/gi, '$1$2***')
-        .replace(/(^|[^A-Za-z0-9_])(token|api[_-]?key|secret|password|passwd|key)(\s*[:=]\s*)[^\s"']+/gi, '$1$2$3***')
-        .replace(/(^|[^A-Za-z0-9])([A-Za-z0-9_]*(?:Token|Secret|ApiKey|Password|API_KEY|ACCESS_KEY|SECRET|TOKEN|PASSWORD)"?\s*[:=]\s*)(?:"[^"]*"|'[^']*'|[^\s,}"']+)/g, '$1$2***')
+        .replace(/([a-z][a-z0-9+.-]*:\/\/)[^\s/@]+:[^\s/@]+@/gi, `$1${REDACTED}@`)
+        .replace(/\b(bearer)\s+[^\s"']+/gi, `$1 ${REDACTED}`)
+        .replace(/\b(sk-|ghp_|github_pat_|xox[baprs]-)[A-Za-z0-9_-]{8,}/g, REDACTED)
+        .replace(/\bhapi_mu_[A-Za-z0-9_-]{20,}/g, REDACTED)
+        .replace(/(^|[^A-Za-z0-9])([A-Za-z][A-Za-z0-9_]*(?:API_KEY|ACCESS_KEY|SECRET|TOKEN|PASSWORD))\s*=\s*([^\s"']+)/g, (match, prefix: string, key: string, secret: string) => (
+            isSecretAssignment(secret) ? `${prefix}${key}=${REDACTED}` : match
+        ))
+        .replace(/(--(?:api[-_]?key|token|secret|password|passwd|key))(=|\s+)(\S+)/gi, (match, flag: string, gap: string, secret: string) => (
+            isSecretAssignment(secret) ? `${flag}${gap}${REDACTED}` : match
+        ))
+        .replace(/(^|[^A-Za-z0-9_])(token|api[_-]?key|secret|password|passwd|key)(\s*[:=]\s*)([^\s"']+)/gi, (match, prefix: string, key: string, gap: string, secret: string) => (
+            isSecretAssignment(secret) ? `${prefix}${key}${gap}${REDACTED}` : match
+        ))
+        .replace(/(^|[^A-Za-z0-9])([A-Za-z0-9_]*(?:Token|Secret|ApiKey|Password|API_KEY|ACCESS_KEY|SECRET|TOKEN|PASSWORD)"?\s*[:=]\s*)("[^"]*"|'[^']*'|[^\s,}"']+)/g, (match, prefix: string, key: string, secret: string) => (
+            isSecretAssignment(secret) ? `${prefix}${key}${REDACTED}` : match
+        ))
 }
 
 /** null when that agent honors a per-item boolean. Otherwise the switch stays disabled. */

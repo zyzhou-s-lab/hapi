@@ -25,8 +25,15 @@ const reported: SessionInventory = {
 }
 
 describe('session inventory view', () => {
-    it('hides urls and tokens', () => {
-        expect(visibleInventoryText('see https://example.test token=abc')).toBe('see')
+    it('redacts secrets in a preview instead of dropping the line', () => {
+        const hidden = '`***`'
+        expect(visibleInventoryText('see https://example.test token=abc')).toBe(`see token=${hidden}`)
+        const secret = ['plain', 'value'].join('-')
+        const preview = visibleInventoryText(`hapi_session_config_detail useToken = true CLI_API_TOKEN=${secret}`)
+        expect(preview).toContain('hapi_session_config_detail')
+        expect(preview).toContain('useToken = true')
+        expect(preview).toContain(`CLI_API_TOKEN=${hidden}`)
+        expect(preview).not.toContain(secret)
         expect(mcpSection(reported)).toMatchObject({
             status: 'list',
             rows: [{ title: 'hapi', source: 'injected' }],

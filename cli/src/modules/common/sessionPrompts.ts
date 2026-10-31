@@ -75,7 +75,7 @@ function clip(value: string, max: number): string {
 
 function previewOf(text: string, stripFrontmatter = false): string | undefined {
     const parsed = stripFrontmatter ? matter(text) : undefined
-    const source = parsed?.raw ? parsed.body : text
+    const source = parsed?.fenced ? parsed.body : text
     const flat = redactConfigSecrets(source).replace(/\s+/g, ' ').trim()
     if (!flat) return undefined
     return clip(flat, PREVIEW_LIMIT)
@@ -221,16 +221,16 @@ function listFiles(dir: string, accept: (name: string) => boolean, recursive: bo
     return out
 }
 
-type Matter = { values: Record<string, string>; lists: Record<string, string[]>; body: string; raw: string }
+type Matter = { values: Record<string, string>; lists: Record<string, string[]>; body: string; raw: string; fenced: boolean }
 
 function matter(text: string): Matter {
     const values: Record<string, string> = {}
     const lists: Record<string, string[]> = {}
     const open = /^---\r?\n/.exec(text)
-    if (!open) return { values, lists, body: text, raw: '' }
+    if (!open) return { values, lists, body: text, raw: '', fenced: false }
     const rest = text.slice(open[0].length)
-    const close = /\r?\n---\r?(?:\n|$)/.exec(rest)
-    if (!close) return { values, lists, body: text, raw: '' }
+    const close = /^(?:---\r?(?:\n|$))|(?:\r?\n---\r?(?:\n|$))/.exec(rest)
+    if (!close || close.index === undefined) return { values, lists, body: text, raw: '', fenced: false }
     const raw = rest.slice(0, close.index)
     let listKey: string | null = null
     for (const line of raw.split(/\r?\n/)) {
@@ -255,7 +255,7 @@ function matter(text: string): Matter {
         listKey = null
         values[key] = value
     }
-    return { values, lists, body: rest.slice(close.index + close[0].length), raw }
+    return { values, lists, body: rest.slice(close.index + close[0].length), raw, fenced: true }
 }
 
 function fieldList(parsed: Matter, key: string): string[] {
@@ -945,11 +945,11 @@ export function readSessionPromptDetail(input: CollectInput & { id: string }): {
     const found = collectSessionPrompts(input).body(input.id)
     if (!found) return { error: 'Config entry not found' }
     const parsed = found.stripFrontmatter ? matter(found.text) : undefined
-    const frontmatter = parsed?.raw.trim() ?? ''
+    const frontmatter = parsed?.fenced ? parsed.raw.trim() : ''
     return {
         id: input.id,
         title: found.title,
-        markdown: frontmatter ? parsed?.body ?? found.text : found.text,
+        markdown: parsed?.fenced ? parsed.body : found.text,
         truncated: found.truncated,
         ...(found.load ? { load: found.load } : {}),
         ...(found.match ? { match: found.match } : {}),
