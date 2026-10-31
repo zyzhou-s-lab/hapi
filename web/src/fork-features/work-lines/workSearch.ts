@@ -16,3 +16,7 @@ export function defaultWorkSearch(search: WorkSearch, lineIds: readonly string[]
     if (first) return { line: first }
     return { inbox: true }
 }
+
+export function missingWorkLine(search: WorkSearch, lineIds: readonly string[]): boolean {
+    return typeof search.line === 'string' && !lineIds.includes(search.line)
+}

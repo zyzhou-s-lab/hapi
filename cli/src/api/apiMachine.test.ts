@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { existsSync, mkdtempSync, rmSync, mkdirSync, realpathSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, rmSync, mkdirSync, realpathSync, symlinkSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -103,6 +103,29 @@ describe('ApiMachineClient create-directory handler', () => {
             const result = await callCreateDirectory(client, machine.id, workspaceRoot, 'new-project')
             expect(result).toEqual({ success: true, path: join(realpathSync(workspaceRoot), 'new-project') })
             expect(realpathSync(join(workspaceRoot, 'new-project'))).toBe(join(realpathSync(workspaceRoot), 'new-project'))
+        } finally {
+            client.shutdown()
+            rmSync(workspaceRoot, { recursive: true, force: true })
+        }
+    })
+
+    it('returns the realpath of a symlink inside the workspace', async () => {
+        const workspaceRoot = mkdtempSync(join(tmpdir(), 'hapi-path-exists-'))
+        const real = join(workspaceRoot, 'real')
+        const link = join(workspaceRoot, 'link')
+        mkdirSync(real)
+        symlinkSync(real, link)
+        const machine = makeMachine('machine-path-exists')
+        const client = new ApiMachineClient('cli-token', machine, [workspaceRoot])
+        try {
+            const manager = (client as unknown as { rpcHandlerManager: { handleRequest: (req: { method: string; params: string }) => Promise<string> } }).rpcHandlerManager
+            const raw = await manager.handleRequest({
+                method: `${machine.id}:path-exists`,
+                params: JSON.stringify({ paths: [link] }),
+            })
+            const body = JSON.parse(raw) as { exists: Record<string, boolean>, resolved?: Record<string, string> }
+            expect(body.exists[link]).toBe(true)
+            expect(body.resolved?.[link]).toBe(realpathSync(real))
         } finally {
             client.shutdown()
             rmSync(workspaceRoot, { recursive: true, force: true })

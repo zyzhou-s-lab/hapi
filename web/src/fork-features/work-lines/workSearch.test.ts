@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { defaultWorkSearch, parseWorkSearch } from './workSearch'
+import { defaultWorkSearch, missingWorkLine, parseWorkSearch } from './workSearch'
 
 describe('parseWorkSearch', () => {
     it('keeps a line and drops unknown keys', () => {
@@ -16,5 +16,11 @@ describe('parseWorkSearch', () => {
         expect(defaultWorkSearch({}, [])).toEqual({ inbox: true })
         expect(defaultWorkSearch({ line: 'kept' }, ['line-1'])).toBeNull()
         expect(defaultWorkSearch({ inbox: true }, ['line-1'])).toBeNull()
+    })
+
+    it('flags a line id that is not in the map', () => {
+        expect(missingWorkLine({ line: 'no-such-line' }, ['line-1'])).toBe(true)
+        expect(missingWorkLine({ line: 'line-1' }, ['line-1'])).toBe(false)
+        expect(missingWorkLine({ inbox: true }, [])).toBe(false)
     })
 })

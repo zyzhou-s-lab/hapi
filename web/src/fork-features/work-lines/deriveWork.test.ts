@@ -77,4 +77,20 @@ describe('deriveWork', () => {
         expect(bench.inboxDirectoryCount).toBe(1)
         expect(bench.lines[0]?.sessionCount).toBe(2)
     })
+
+    it('matches a realpath session to a line stored through a symlink', () => {
+        const map: WorkMapData = {
+            lines: [{ id: 'line-1', name: '主线', goal: null, sort: 0, primaryMachineId: 'mac', primaryPath: '/tmp/proj' }],
+            directories: [{ directoryKey: 'mac::/tmp/proj', mode: 'line', lineId: 'line-1' }],
+            sessions: [],
+            dismissed: [],
+            canonicalPaths: { '/tmp/proj': '/private/tmp/proj' },
+        }
+        const bench = deriveWorkbench([
+            session({ id: 'live', metadata: { path: '/private/tmp/proj', machineId: 'mac' } }),
+        ], map, (item) => item.id, () => 'mac')
+        expect(bench.lines[0]?.sessionCount).toBe(1)
+        expect(bench.inboxDirectoryCount).toBe(0)
+        expect(bench.lineDirectories('line-1').map((row) => row.path)).toEqual(['/private/tmp/proj'])
+    })
 })
