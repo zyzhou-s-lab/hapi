@@ -755,6 +755,11 @@ export const SyncEventSchema = z.discriminatedUnion('type', [
              */
             resume: z.enum(['ok', 'gap']).optional()
         }).optional()
+    }),
+    SessionEventBaseSchema.extend({
+        type: z.literal('card-invalidated'),
+        accountId: z.number(),
+        topic: z.enum(['work-map', 'work-layout'])
     })
 ])
 

@@ -327,6 +327,9 @@ export class RpcGateway {
         return AgentAvailabilityResponseSchema.parse(result)
     }
 
+    async queryTrainingRun(machineId: string, query: { run: string; runDir: string }): Promise<unknown> {
+        return await this.machineRpc(machineId, RPC_METHODS.QueryWandbRun, { run: query.run, runDir: query.runDir })
+    }
     async createMachineDirectory(machineId: string, parentPath: string, name: string): Promise<MachineCreateDirectoryResponse> {
         const result = await this.machineRpc(
             machineId,
@@ -339,8 +342,8 @@ export class RpcGateway {
         return result as MachineCreateDirectoryResponse
     }
 
-    async checkPathsExist(machineId: string, paths: string[]): Promise<PathExistsResponse> {
-        const result = await this.machineRpc(machineId, RPC_METHODS.PathExists, { paths }) as RpcPathExistsResponse | unknown
+    async checkPathsExist(machineId: string, paths: string[], timeoutMs?: number): Promise<PathExistsResponse> {
+        const result = await this.machineRpc(machineId, RPC_METHODS.PathExists, { paths }, timeoutMs) as RpcPathExistsResponse | unknown
         if (!result || typeof result !== 'object') {
             throw new Error('Unexpected path-exists result')
         }
@@ -357,9 +360,17 @@ export class RpcGateway {
         const outsideWorkspaceRoots = Array.isArray((result as RpcPathExistsResponse).outsideWorkspaceRoots)
             ? (result as RpcPathExistsResponse).outsideWorkspaceRoots?.filter((path): path is string => typeof path === 'string')
             : undefined
+        const resolvedValue = (result as RpcPathExistsResponse).resolved
+        const resolved: Record<string, string> = {}
+        if (resolvedValue && typeof resolvedValue === 'object') {
+            for (const [key, value] of Object.entries(resolvedValue)) {
+                if (typeof value === 'string' && value.length > 0 && value !== key) resolved[key] = value
+            }
+        }
         return {
             exists,
             ...(outsideWorkspaceRoots?.length ? { outsideWorkspaceRoots } : {}),
+            ...(Object.keys(resolved).length > 0 ? { resolved } : {}),
         }
     }
 

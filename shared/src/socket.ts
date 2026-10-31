@@ -99,6 +99,58 @@ export const TerminalErrorPayloadSchema = z.object({
 })
 
 export type TerminalErrorPayload = z.infer<typeof TerminalErrorPayloadSchema>
+
+export const TrainingSubscribePayloadSchema = z.object({
+    run: z.string().min(1),
+    runDir: z.string().min(1),
+    machineId: z.string().min(1)
+})
+export type TrainingSubscribePayload = z.infer<typeof TrainingSubscribePayloadSchema>
+
+export const TrainingUnsubscribePayloadSchema = z.object({
+    run: z.string().min(1)
+})
+export type TrainingUnsubscribePayload = z.infer<typeof TrainingUnsubscribePayloadSchema>
+
+const trainingPointSchema = z.object({
+    step: z.number(),
+    metric: z.string().min(1),
+    value: z.number().finite()
+})
+
+export const TrainingHistoryPayloadSchema = z.object({
+    run: z.string().min(1),
+    machineId: z.string().min(1),
+    reset: z.boolean().optional(),
+    finished: z.boolean().optional(),
+    lastError: z.string().optional(),
+    batch: z.array(trainingPointSchema).optional()
+})
+export type TrainingHistoryPayload = z.infer<typeof TrainingHistoryPayloadSchema>
+
+export const TrainingPointsPayloadSchema = TrainingHistoryPayloadSchema
+export type TrainingPointsPayload = TrainingHistoryPayload
+
+export const TrainingErrorPayloadSchema = z.object({
+    run: z.string().min(1),
+    machineId: z.string().min(1),
+    message: z.string()
+})
+export type TrainingErrorPayload = z.infer<typeof TrainingErrorPayloadSchema>
+
+/** Webpage ↔ hub on the existing `/terminal` namespace. Not part of `/cli`. */
+export interface TerminalServerToClientEvents {
+    'training:history': (data: Omit<TrainingHistoryPayload, 'machineId'>) => void
+    'training:points': (data: Omit<TrainingPointsPayload, 'machineId'>) => void
+    'training:error': (data: { run: string; message: string }) => void
+    'training:card': (data: { lineId: string; run: string; metrics: string[] }) => void
+}
+
+export interface TerminalClientToServerEvents {
+    'training:subscribe': (data: { run: string }) => void
+    'training:unsubscribe': (data: { run: string }) => void
+}
+
 export const UpdateNewMessageBodySchema = z.object({
     t: z.literal('new-message'),
     sid: z.string(),
@@ -248,6 +300,8 @@ export interface ServerToClientEvents {
     // Sent to the CLI when the last agent-terminal viewer leaves, so it stops
     // streaming PTY output to the hub until someone subscribes again.
     'agent-terminal:idle': (data: AgentTerminalRefreshPayload) => void
+    'training:subscribe': (data: TrainingSubscribePayload) => void
+    'training:unsubscribe': (data: TrainingUnsubscribePayload) => void
     error: (data: { message: string; code?: SocketErrorReason; scope?: 'session' | 'machine'; id?: string }) => void
 }
 
@@ -293,4 +347,7 @@ export interface ClientToServerEvents {
     'agent-terminal:reset': (data: { sessionId: string }) => void
     ping: (callback: () => void) => void
     'usage-report': (data: unknown) => void
+    'training:history': (data: TrainingHistoryPayload) => void
+    'training:points': (data: TrainingPointsPayload) => void
+    'training:error': (data: TrainingErrorPayload) => void
 }

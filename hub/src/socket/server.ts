@@ -8,10 +8,13 @@ import { constantTimeEquals } from '../utils/crypto'
 import { parseAccessToken } from '../utils/accessToken'
 import { registerCliHandlers } from './handlers/cli'
 import { registerTerminalHandlers } from './handlers/terminal'
+import { registerTrainingWebHandlers } from './trainingHandlers'
 import { RpcRegistry } from './rpcRegistry'
+import { setTrainingCardPush } from './trainingCardPush'
 import { SOCKET_MAX_HTTP_BUFFER_SIZE } from './socketLimits'
 import type { SyncEvent } from '../sync/syncEngine'
 import { TerminalRegistry } from './terminalRegistry'
+import { TrainingRelay } from './trainingRelay'
 import { clearUserTerminalBuffer } from './userTerminalBuffer'
 import type { CliSocketWithData, SocketData, SocketServer } from './socketTypes'
 
@@ -48,6 +51,7 @@ export type SocketServerDeps = {
     onMessagesConsumed?: (sessionId: string) => void
     resolveTerminalNamespace?: (accountId: number, sessionId: string) => string | null
     resolveCliNamespace?: (token: string) => string | null
+    canAccessMachine?: (accountId: number, machineId: string) => string | null
 }
 
 export function createSocketServer(deps: SocketServerDeps): {
@@ -91,6 +95,7 @@ export function createSocketServer(deps: SocketServerDeps): {
     const maxTerminalsPerSession = maxTerminals
     const cliNs = io.of('/cli')
     const terminalNs = io.of('/terminal')
+    const trainingRelay = new TrainingRelay()
     const terminalRegistry = new TerminalRegistry({
         idleTimeoutMs,
         // Release the per-terminal scrollback buffer whenever a terminal is
@@ -131,6 +136,7 @@ export function createSocketServer(deps: SocketServerDeps): {
         store: deps.store,
         rpcRegistry,
         terminalRegistry,
+        trainingRelay,
         onSessionAlive: deps.onSessionAlive,
         onSessionReady: deps.onSessionReady,
         onSessionEnd: deps.onSessionEnd,
@@ -164,19 +170,33 @@ export function createSocketServer(deps: SocketServerDeps): {
             return next(new Error('Invalid token'))
         }
     })
-    terminalNs.on('connection', (socket) => registerTerminalHandlers(socket, {
-        io,
-        getSession: (sessionId) => {
-            return deps.getSession?.(sessionId) ?? deps.store.sessions.getSession(sessionId)
-        },
-        terminalRegistry,
-        maxTerminalsPerSocket,
-        maxTerminalsPerSession,
-        resolveNamespaceForSession: (socket, sessionId) => {
-            const accountId = socket.data.gatewayAccountId
-            return typeof accountId === 'number' ? deps.resolveTerminalNamespace?.(accountId, sessionId) ?? null : socket.data.namespace ?? null
+    terminalNs.on('connection', (socket) => {
+        registerTerminalHandlers(socket, {
+            io,
+            getSession: (sessionId) => {
+                return deps.getSession?.(sessionId) ?? deps.store.sessions.getSession(sessionId)
+            },
+            terminalRegistry,
+            maxTerminalsPerSocket,
+            maxTerminalsPerSession,
+            resolveNamespaceForSession: (socket, sessionId) => {
+                const accountId = socket.data.gatewayAccountId
+                return typeof accountId === 'number' ? deps.resolveTerminalNamespace?.(accountId, sessionId) ?? null : socket.data.namespace ?? null
+            }
+        })
+        registerTrainingWebHandlers(socket, {
+            io,
+            relay: trainingRelay,
+            getRun: (accountId, run) => deps.store.workLines.getTrainingRun(accountId, run),
+            canAccessMachine: (accountId, machineId) => deps.canAccessMachine?.(accountId, machineId) ?? null
+        })
+    })
+
+    setTrainingCardPush((accountId, update) => {
+        for (const socket of terminalNs.sockets.values()) {
+            if (socket.data.gatewayAccountId === accountId) socket.emit('training:card', update)
         }
-    }))
+    })
 
     return { io, engine, rpcRegistry }
 }

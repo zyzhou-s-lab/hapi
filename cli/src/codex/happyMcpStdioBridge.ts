@@ -346,6 +346,32 @@ export async function runHappyMcpStdioBridge(argv: string[]): Promise<void> {
       }
     );
 
+    const forward = (name: string, description: string, inputSchema: z.ZodTypeAny) => {
+      if (!toolNames.has(name)) return;
+      server.registerTool<any, any>(name, { description, title: name, inputSchema }, async (args: Record<string, unknown>) => {
+        try {
+          const client = await ensureHttpClient();
+          return await client.callTool({ name, arguments: args }) as { content: { type: 'text'; text: string }[] };
+        } catch (error) {
+          return {
+            content: [{ type: 'text' as const, text: `${name} failed: ${error instanceof Error ? error.message : String(error)}` }],
+            isError: true,
+          };
+        }
+      });
+    };
+    forward('register_training_run', 'Register a local W&B run with HAPI.', z.object({
+      run: z.string(),
+      runDir: z.string(),
+      machineId: z.string().optional(),
+    }));
+    forward('query_training_run', 'Query metric names for a registered W&B run.', z.object({ run: z.string() }));
+    forward('bind_training_card', 'Bind a registered run and optional metrics onto a work-line training card.', z.object({
+      lineId: z.string(),
+      run: z.string(),
+      metrics: z.array(z.string()).optional(),
+    }));
+
     // Start STDIO transport
     const stdio = new StdioServerTransport();
     await server.connect(stdio);

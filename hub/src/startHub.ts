@@ -221,7 +221,9 @@ export async function startHub(options: StartHubOptions = {}): Promise<HubInstan
             sessionId,
             getCoreSession: (id) => syncEngine?.getSession(id) ?? store.sessions.getSession(id)
         }),
-        resolveCliNamespace: token => resolveGatewayCliNamespace(multiUserGatewayStore, token)
+        resolveCliNamespace: token => resolveGatewayCliNamespace(multiUserGatewayStore, token),
+        canAccessMachine: (accountId, machineId) => multiUserGatewayStore.listAccessibleResources('machine', accountId)
+            .find((binding) => binding.resourceId === machineId)?.coreNamespace ?? null
     })
 
     syncEngine = new SyncEngine(store, socketServer.io, socketServer.rpcRegistry, sseManager, gatewayMemoryDelivery.decorateForCli)

@@ -35,7 +35,7 @@
         "test:relay": "cd relay && bun run test",
         "test:web": "cd web && bun run test",
         "test:shared": "cd shared && bun run test",
-        "test:fork-features": "bun run --cwd cli tools:unpack && bun test fork-features/agent-orchestration fork-features/agent-skill-deploy fork-features/history-import fork-features/session-fork",
+        "test:fork-features": "bun run --cwd cli tools:unpack && bun test --path-ignore-patterns 'web/**' fork-features/agent-orchestration fork-features/agent-skill-deploy fork-features/history-import fork-features/session-fork fork-features/work-lines",
         "test:e2e": "node node_modules/@playwright/test/cli.js test",
         "test:e2e:ui": "node node_modules/@playwright/test/cli.js test --ui",
         "test:mermaid-lightbox:playwright": "timeout 600 node scripts/dev/mermaid-lightbox-playwright.mjs",

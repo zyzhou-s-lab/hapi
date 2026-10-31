@@ -28,7 +28,8 @@ import {
     SESSION_ID_PREFIX_PARAM_DESCRIPTION,
 } from '@hapi/protocol/sessionCitation'
 import { PingPeerError, formatInspectPeerReport, formatPeerSessionsList, inspectPeer, listPeerSessions, peerListFetchLimit, pingPeer } from "@/modules/pingPeer/pingPeer";
-
+import { readSettings } from '@/persistence';
+import { bindTrainingCard, formatWorkResult, queryTrainingRun, registerTrainingRun } from '@/modules/training/trainingMcp';
 type StartHappyServerOptions = {
     emitTitleSummary?: boolean;
     enableChangeTitle?: boolean;
@@ -507,6 +508,48 @@ function createHapiMcpServer(
         });
     }
 
+    const trainingResult = (status: number, body: unknown) => {
+        const result = formatWorkResult(status, body);
+        return { content: [{ type: 'text' as const, text: result.text }], isError: result.isError };
+    };
+    const hub = {
+        request: (path: string, init?: { method?: string; body?: unknown }) => client.workApi(path, init),
+    };
+    mcp.registerTool<any, any>('register_training_run', {
+        description: 'Register a local W&B run with HAPI so it can be shown on a work-line training card. Call this after the run directory exists. machineId defaults to this machine.',
+        title: 'Register Training Run',
+        inputSchema: z.object({
+            run: z.string().describe('Run name'),
+            runDir: z.string().describe('Absolute path of the wandb run directory (…/wandb/run-* or offline-run-*)'),
+            machineId: z.string().optional().describe('Machine id. Defaults to this machine.'),
+        }),
+    }, async (args: { run: string; runDir: string; machineId?: string }) => {
+        const machineId = args.machineId?.trim() || (await readSettings()).machineId;
+        if (!machineId) return trainingResult(400, { error: 'machineId is required' });
+        const response = await registerTrainingRun(hub, { run: args.run, machineId, runDir: args.runDir });
+        return trainingResult(response.status, response.body);
+    });
+    mcp.registerTool<any, any>('query_training_run', {
+        description: 'Query one registered W&B run. Returns metric names when the runner can read the run.',
+        title: 'Query Training Run',
+        inputSchema: z.object({ run: z.string().describe('Registered run name') }),
+    }, async (args: { run: string }) => {
+        const response = await queryTrainingRun(hub, args.run);
+        return trainingResult(response.status, response.body);
+    });
+    mcp.registerTool<any, any>('bind_training_card', {
+        description: 'Show a registered run on a work-line training card. metrics empty means every metric. The open workbench updates immediately.',
+        title: 'Bind Training Card',
+        inputSchema: z.object({
+            lineId: z.string().describe('Work line id'),
+            run: z.string().describe('Registered run name'),
+            metrics: z.array(z.string()).optional().describe('Metric names to draw. Omit or pass [] to draw every metric.'),
+        }),
+    }, async (args: { lineId: string; run: string; metrics?: string[] }) => {
+        const response = await bindTrainingCard(hub, args);
+        return trainingResult(response.status, response.body);
+    });
+
     return mcp;
 }
 
@@ -583,8 +626,8 @@ export async function startHappyServer(client: ApiSessionClient, options: StartH
     }));
 
     const toolNames = enableChangeTitle
-        ? ['change_title', 'display_image', 'display_video', 'display_media', 'list_peers', 'ping_peer', 'inspect_peer', 'send_file']
-        : ['display_image', 'display_video', 'display_media', 'list_peers', 'ping_peer', 'inspect_peer', 'send_file'];
+        ? ['change_title', 'display_image', 'display_video', 'display_media', 'list_peers', 'ping_peer', 'inspect_peer', 'send_file', 'register_training_run', 'query_training_run', 'bind_training_card']
+        : ['display_image', 'display_video', 'display_media', 'list_peers', 'ping_peer', 'inspect_peer', 'send_file', 'register_training_run', 'query_training_run', 'bind_training_card'];
     if (options.skillLookup) {
         toolNames.push('skill_lookup');
     }

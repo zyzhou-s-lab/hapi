@@ -3999,8 +3999,8 @@ export class SyncEngine {
         return false
     }
 
-    async checkPathsExist(machineId: string, paths: string[]): ReturnType<RpcGateway['checkPathsExist']> {
-        return await this.rpcGateway.checkPathsExist(machineId, paths)
+    async checkPathsExist(machineId: string, paths: string[], timeoutMs?: number): ReturnType<RpcGateway['checkPathsExist']> {
+        return await this.rpcGateway.checkPathsExist(machineId, paths, timeoutMs)
     }
 
     async getAgentAvailability(machineId: string): ReturnType<RpcGateway['getAgentAvailability']> {
@@ -4009,6 +4009,14 @@ export class SyncEngine {
 
     async listMachineDirectory(machineId: string, path: string, includeHidden?: boolean): Promise<RpcListDirectoryResponse> {
         return await this.rpcGateway.listMachineDirectory(machineId, path, includeHidden)
+    }
+
+    async queryTrainingRun(machineId: string, query: { run: string; runDir: string }): Promise<unknown> {
+        return await this.rpcGateway.queryTrainingRun(machineId, query)
+    }
+
+    getWorkLines() {
+        return this.store.workLines
     }
 
     async createMachineDirectory(machineId: string, parentPath: string, name: string) {

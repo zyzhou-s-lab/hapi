@@ -66,7 +66,8 @@ export const RPC_METHODS = {
     ListCcSwitchProviders: 'listCcSwitchProviders',
     ValidateCcSwitchProvider: 'validateCcSwitchProvider',
     ListImportableSessions: 'listImportableSessions',
-    ImportProviderSession: 'importProviderSession'
+    ImportProviderSession: 'importProviderSession',
+    QueryWandbRun: 'query-wandb-run'
 } as const
 
 export const RPC_TARGET_MISSING_ERROR_CODE = 'rpc_target_missing' as const
