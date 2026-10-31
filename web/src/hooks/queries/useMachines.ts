@@ -1,3 +1,4 @@
+import { useMemo } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import type { ApiClient } from '@/api/client'
 import type { Machine } from '@/types/api'
@@ -24,8 +25,9 @@ export function useMachines(api: ApiClient | null, enabled: boolean): {
         enabled: Boolean(api && enabled),
     })
 
+    const machines = useMemo(() => presentMachines(query.data?.machines), [query.data?.machines])
     return {
-        machines: presentMachines(query.data?.machines),
+        machines,
         isLoading: query.isLoading,
         error: query.error instanceof Error ? query.error.message : query.error ? 'Failed to load machines' : null,
         refetch: query.refetch,

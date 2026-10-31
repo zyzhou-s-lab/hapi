@@ -79,9 +79,10 @@ describe('createExecutionMiddleware', () => {
         })
         const jwtSecret = new TextEncoder().encode('test-secret-test-secret-test-secret')
         const token = await new SignJWT({ gaid: owner.id }).setProtectedHeader({ alg: 'HS256' }).sign(jwtSecret)
+        let present = false
         const engine = {
-            getOnlineMachinesByNamespace: () => [undefined],
-            getMachine: () => undefined,
+            getOnlineMachinesByNamespace: () => [],
+            getMachine: () => present ? { id: 'gone' } : undefined,
         } as unknown as SyncEngine
         const app = new Hono<WebAppEnv>()
         mountExecutionRoutes(app, {
@@ -91,15 +92,21 @@ describe('createExecutionMiddleware', () => {
             getSseManager: () => null,
         })
         const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
-        const response = await app.request('/api/machines', { headers: { authorization: `Bearer ${token}` } })
-        const again = await app.request('/api/machines', { headers: { authorization: `Bearer ${token}` } })
+        const headers = { authorization: `Bearer ${token}` }
+        const response = await app.request('/api/machines', { headers })
+        const again = await app.request('/api/machines', { headers })
         expect(response.status).toBe(200)
         expect(await response.json()).toEqual({ machines: [] })
         expect(await again.json()).toEqual({ machines: [] })
         expect(warn).toHaveBeenCalledTimes(1)
-        expect(warn.mock.calls[0]?.[0]).toBe('[gateway] machine binding has no core row')
+        present = true
+        expect((await (await app.request('/api/machines', { headers })).json()).machines).toEqual([{ id: 'gone' }])
+        present = false
+        await app.request('/api/machines', { headers })
+        expect(warn).toHaveBeenCalledTimes(2)
         expect(store.getResource('machine', 'gone')).toMatchObject({ resourceId: 'gone', ownerAccountId: owner.id })
         warn.mockRestore()
+        store.close()
     })
 
     it('binds the returned fork session when the caller owns the source session', async () => {
