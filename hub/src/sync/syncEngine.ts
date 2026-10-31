@@ -4027,8 +4027,12 @@ export class SyncEngine {
         return await this.rpcGateway.getGitDiffFile(sessionId, options)
     }
 
-    async readSessionFile(sessionId: string, path: string): Promise<RpcReadFileResponse> {
-        return await this.rpcGateway.readSessionFile(sessionId, path)
+    async readSessionFile(sessionId: string, path: string, authorized = false): Promise<RpcReadFileResponse> {
+        return await this.rpcGateway.readSessionFile(sessionId, path, authorized)
+    }
+
+    async resolveListedConfigFile(sessionId: string, path: string): Promise<{ success: true; realpath: string } | { success: false; error: string }> {
+        return await this.rpcGateway.resolveListedConfigFile(sessionId, path)
     }
 
     async writeSessionFile(sessionId: string, path: string, content: string, expectedHash: string): Promise<RpcWriteFileResponse> {

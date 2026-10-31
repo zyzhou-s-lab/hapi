@@ -12,6 +12,7 @@ import { getErrorMessage, rpcError } from '../rpcResponses'
 
 interface ReadFileRequest {
     path: string
+    authorized?: boolean
 }
 
 type ReadFileResponse = FileReadResponse
@@ -34,44 +35,43 @@ interface WriteFileRequest {
     expectedHash?: string | null
 }
 
-const WHITELIST_TTL_MS = 5_000
-
 export function registerFileHandlers(
     rpcHandlerManager: RpcHandlerManager,
     workingDirectory: string,
     listedConfigPaths?: () => Promise<ReadonlySet<string>>,
 ): void {
-    let cachedWhitelist: { at: number; paths: ReadonlySet<string> } | undefined
-    const readWhitelist = async (): Promise<ReadonlySet<string>> => {
-        if (!listedConfigPaths) return new Set()
-        const now = Date.now()
-        if (cachedWhitelist && now - cachedWhitelist.at < WHITELIST_TTL_MS) return cachedWhitelist.paths
-        const paths = await listedConfigPaths()
-        cachedWhitelist = { at: now, paths }
-        return paths
-    }
-    const resolveReadable = async (requested: string): Promise<{ path: string } | { error: string }> => {
-        const validation = validatePath(requested, workingDirectory)
-        if (validation.valid) return { path: resolve(workingDirectory, requested) }
-        const denied = validation.error ?? 'Invalid file path'
+    const listedRealpath = async (requested: string): Promise<string | { error: string }> => {
+        if (!listedConfigPaths) return { error: 'Reading files outside the working directory is not allowed' }
         let real: string
         try {
             real = await realpath(resolve(requested))
-        } catch {
-            return { error: denied }
+        } catch (error) {
+            return { error: getErrorMessage(error, 'Invalid file path') }
         }
-        const allowed = await readWhitelist()
-        return allowed.has(real) ? { path: real } : { error: denied }
+        const allowed = await listedConfigPaths()
+        return allowed.has(real) ? real : { error: 'Reading files outside the working directory is not allowed' }
     }
     const resolveWritable = (requested: string): { path: string } | { error: string } => {
         const validation = validatePath(requested, workingDirectory)
         if (!validation.valid) return { error: validation.error ?? 'Invalid file path' }
         return { path: resolve(workingDirectory, requested) }
     }
+    rpcHandlerManager.registerHandler<{ path: string }, { success: true; realpath: string } | { success: false; error: string }>(RPC_METHODS.ResolveListedConfigFile, async (data) => {
+        const listed = await listedRealpath(data.path)
+        return typeof listed === 'string' ? { success: true, realpath: listed } : rpcError(listed.error)
+    })
     rpcHandlerManager.registerHandler<ReadFileRequest, ReadFileResponse>(RPC_METHODS.ReadFile, async (data) => {
         logger.debug('Read file request:', data.path)
 
-        const allowed = await resolveReadable(data.path)
+        const validation = validatePath(data.path, workingDirectory)
+        const readable = validation.valid
+            ? { path: resolve(workingDirectory, data.path) }
+            : await listedRealpath(data.path)
+        const allowed = typeof readable === 'string'
+            ? data.authorized === true
+                ? { path: readable }
+                : { error: 'authorization_required' as const }
+            : readable
         if ('error' in allowed) return rpcError(allowed.error)
 
         try {

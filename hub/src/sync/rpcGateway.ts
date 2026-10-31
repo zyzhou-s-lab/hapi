@@ -393,8 +393,12 @@ export class RpcGateway {
         return await this.sessionRpc(sessionId, RPC_METHODS.GitDiffFile, options) as RpcCommandResponse
     }
 
-    async readSessionFile(sessionId: string, path: string): Promise<RpcReadFileResponse> {
-        return await this.sessionRpc(sessionId, RPC_METHODS.ReadFile, { path }) as RpcReadFileResponse
+    async readSessionFile(sessionId: string, path: string, authorized = false): Promise<RpcReadFileResponse> {
+        return await this.sessionRpc(sessionId, RPC_METHODS.ReadFile, { path, authorized }) as RpcReadFileResponse
+    }
+
+    async resolveListedConfigFile(sessionId: string, path: string): Promise<{ success: true; realpath: string } | { success: false; error: string }> {
+        return await this.sessionRpc(sessionId, RPC_METHODS.ResolveListedConfigFile, { path }) as { success: true; realpath: string } | { success: false; error: string }
     }
 
     async writeSessionFile(sessionId: string, path: string, content: string, expectedHash: string): Promise<RpcWriteFileResponse> {

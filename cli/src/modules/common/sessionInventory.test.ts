@@ -149,7 +149,7 @@ command = "my-hook --token abc"
         }
     })
 
-    it('does not read an absolute path named by a repo opencode.json', async () => {
+    it('reads a repo opencode.json absolute path only after authorization', async () => {
         const root = mkdtempSync(join(tmpdir(), 'hapi-opencode-repo-'))
         const outside = mkdtempSync(join(tmpdir(), 'hapi-opencode-secret-'))
         const creds = join(outside, 'creds')
@@ -157,21 +157,25 @@ command = "my-hook --token abc"
         writeFileSync(join(root, 'opencode.json'), JSON.stringify({ instructions: [creds] }))
         try {
             const allowed = await listedSessionConfigRealpaths({ flavor: 'opencode', cwd: root })
-            expect(allowed.has(realpathSync(creds))).toBe(false)
+            const real = realpathSync(creds)
+            expect(allowed.has(real)).toBe(true)
             const rpc = new RpcHandlerManager({ scopePrefix: 'session-opencode' })
             registerFileHandlers(rpc, root, async () => allowed)
-            const response = JSON.parse(await rpc.handleRequest({
+            const read = async (authorized: boolean) => JSON.parse(await rpc.handleRequest({
                 method: 'session-opencode:readFile',
-                params: JSON.stringify({ path: creds }),
-            })) as { success: boolean }
-            expect(response.success).toBe(false)
+                params: JSON.stringify({ path: creds, authorized }),
+            })) as { success: boolean; content?: string }
+            expect((await read(false)).success).toBe(false)
+            const opened = await read(true)
+            expect(opened.success).toBe(true)
+            expect(Buffer.from(opened.content ?? '', 'base64').toString('utf8')).toContain('sekret')
         } finally {
             rmSync(root, { recursive: true, force: true })
             rmSync(outside, { recursive: true, force: true })
         }
     })
 
-    it('does not open a script named by a project settings file', () => {
+    it('lists a script named by a project settings file', () => {
         const root = mkdtempSync(join(tmpdir(), 'hapi-hook-repo-'))
         const outside = mkdtempSync(join(tmpdir(), 'hapi-hook-script-'))
         const script = join(outside, 'hook.sh')
@@ -185,10 +189,9 @@ command = "my-hook --token abc"
                 cwd: root,
                 text,
                 source: 'project',
-                allowOutside: false,
             })
             expect(items[0]?.event).toBe('PreToolUse')
-            expect(items[0]?.scriptPath).toBeUndefined()
+            expect(items[0]?.scriptPath).toBe(realpathSync(script))
         } finally {
             rmSync(root, { recursive: true, force: true })
             rmSync(outside, { recursive: true, force: true })

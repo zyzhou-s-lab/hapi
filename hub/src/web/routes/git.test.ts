@@ -80,6 +80,39 @@ describe('session file route', () => {
 
         expect(response.status).toBe(400)
     })
+
+    it('does not read an outside file until that realpath is authorized', async () => {
+        const session = {
+            id: 'session-auth',
+            namespace: 'default',
+            active: true,
+            metadata: { path: '/work/app' },
+        } as unknown as Session
+        const reads: unknown[][] = []
+        const engine = {
+            resolveSessionAccess: () => ({ ok: true as const, sessionId: 'session-auth', session }),
+            resolveListedConfigFile: async () => ({ success: true as const, realpath: '/tmp/creds' }),
+            readSessionFile: async (...args: unknown[]) => {
+                reads.push(args)
+                return { success: true, content: 'abc', hash: 'ab', size: 1, modified: 1 }
+            },
+        } as unknown as Partial<SyncEngine>
+        const app = buildApp(engine)
+        const denied = await app.request(`/api/sessions/session-auth/file?path=${encodeURIComponent('/tmp/creds')}`)
+        expect(await denied.json()).toEqual({ success: false, error: 'authorization_required', realpath: '/tmp/creds' })
+        expect(reads).toEqual([])
+
+        const grant = await app.request('/api/sessions/session-auth/file-authorization', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ path: '/tmp/creds' }),
+        })
+        expect(await grant.json()).toEqual({ success: true, realpath: '/tmp/creds' })
+
+        const allowed = await app.request(`/api/sessions/session-auth/file?path=${encodeURIComponent('/tmp/creds')}`)
+        expect((await allowed.json() as { success?: boolean }).success).toBe(true)
+        expect(reads).toEqual([['session-auth', '/tmp/creds', true]])
+    })
 })
 
 describe('generated images route', () => {

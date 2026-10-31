@@ -534,6 +534,13 @@ export class ApiClient {
         return await this.request<FileReadResponse>(`/api/sessions/${encodeURIComponent(sessionId)}/file?${params.toString()}`)
     }
 
+    async authorizeSessionFile(sessionId: string, path: string): Promise<{ success: boolean; realpath?: string; error?: string }> {
+        return await this.request(`/api/sessions/${encodeURIComponent(sessionId)}/file-authorization`, {
+            method: 'POST',
+            body: JSON.stringify({ path }),
+        })
+    }
+
     async writeSessionFile(sessionId: string, path: string, content: string, expectedHash: string): Promise<FileWriteResponse> {
         return await this.request<FileWriteResponse>(`/api/sessions/${encodeURIComponent(sessionId)}/file`, {
             method: 'PUT',

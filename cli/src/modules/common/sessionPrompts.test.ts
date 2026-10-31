@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -271,6 +271,6 @@ describe('session prompts', () => {
         const prompts = titles(cwd, home, 'opencode', { flavor: 'opencode', cwd, home, env: {}, hapiHome: home })
         const item = prompts?.user?.items.find((entry) => entry.title === 'creds')
         expect(item?.preview).toContain('aws_secret_access_key')
-        expect(item?.filePath).toBeUndefined()
+        expect(item?.filePath).toBe(realpathSync(creds))
     })
 })

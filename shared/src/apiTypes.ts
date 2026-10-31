@@ -693,6 +693,7 @@ export type FileReadResponse = {
     modified?: number
     hash?: string
     error?: string
+    realpath?: string
 }
 
 export type FileWriteResponse = {

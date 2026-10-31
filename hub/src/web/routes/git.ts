@@ -1,9 +1,11 @@
+import { isAbsolute, resolve, sep } from 'node:path'
 import { Hono } from 'hono'
 import { isWildcardSearch, matchesSearchQuery, toSearchGlob } from '@hapi/protocol'
 import { z } from 'zod'
 import { SessionConfigItemSelectorSchema } from '@hapi/protocol/schemas'
 import type { SyncEngine } from '../../sync/syncEngine'
 import type { WebAppEnv } from '../middleware/auth'
+import { grantSessionFileRead, sessionFileReadGranted } from '../../sync/sessionFileAuthorization'
 import { requireSessionFromParam, requireSyncEngine } from './guards'
 
 const fileSearchSchema = z.object({
@@ -67,6 +69,16 @@ function ifNoneMatchMatches(header: string | undefined, etag: string): boolean {
         const trimmed = candidate.trim()
         return trimmed === '*' || trimmed.replace(/^W\//, '') === normalized
     })
+}
+
+function outsideSessionPath(filePath: string, sessionPath: string): boolean {
+    if (!isAbsolute(filePath)) return false
+    const root = resolve(sessionPath)
+    const target = resolve(root, filePath)
+    const normalizedRoot = process.platform === 'win32' ? root.toLowerCase() : root
+    const normalizedTarget = process.platform === 'win32' ? target.toLowerCase() : target
+    const prefix = normalizedRoot.endsWith(sep) ? normalizedRoot : `${normalizedRoot}${sep}`
+    return normalizedTarget !== normalizedRoot && !normalizedTarget.startsWith(prefix)
 }
 
 export function createGitRoutes(getSyncEngine: () => SyncEngine | null): Hono<WebAppEnv> {
@@ -202,8 +214,31 @@ export function createGitRoutes(getSyncEngine: () => SyncEngine | null): Hono<We
             return c.json({ error: 'Invalid file path' }, 400)
         }
 
+        if (outsideSessionPath(parsed.data.path, sessionPath)) {
+            if (!sessionFileReadGranted(sessionResult.sessionId, parsed.data.path)) {
+                const resolved = await runRpc(() => engine.resolveListedConfigFile(sessionResult.sessionId, parsed.data.path))
+                if (!resolved.success) return c.json(resolved)
+                return c.json({ success: false, error: 'authorization_required', realpath: resolved.realpath })
+            }
+            const granted = await runRpc(() => engine.readSessionFile(sessionResult.sessionId, parsed.data.path, true))
+            return c.json(granted)
+        }
+
         const result = await runRpc(() => engine.readSessionFile(sessionResult.sessionId, parsed.data.path))
         return c.json(result)
+    })
+
+    app.post('/sessions/:id/file-authorization', async (c) => {
+        const engine = requireSyncEngine(c, getSyncEngine)
+        if (engine instanceof Response) return engine
+        const sessionResult = requireSessionFromParam(c, engine)
+        if (sessionResult instanceof Response) return sessionResult
+        const parsed = filePathSchema.safeParse(await c.req.json().catch(() => null))
+        if (!parsed.success) return c.json({ success: false, error: 'Invalid file path' }, 400)
+        const resolved = await runRpc(() => engine.resolveListedConfigFile(sessionResult.sessionId, parsed.data.path))
+        if (!resolved.success) return c.json(resolved)
+        grantSessionFileRead(sessionResult.sessionId, resolved.realpath)
+        return c.json({ success: true, realpath: resolved.realpath })
     })
 
     app.put('/sessions/:id/file', async (c) => {
