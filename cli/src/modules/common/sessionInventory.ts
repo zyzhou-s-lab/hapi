@@ -11,6 +11,7 @@ import {
 } from '@hapi/protocol/schemas';
 import { buildHookSettings, readMachineClaudeSettings } from '@/modules/common/hooks/generateHookSettings';
 import { listInventorySkills } from '@/modules/common/skills';
+import { collectSessionPrompts, getSessionPromptLive, type SessionPromptLive } from './sessionPrompts';
 
 const MAX_CONFIG_BYTES = 1_000_000;
 const SOURCE_RANK: Record<SessionInventorySource, number> = {
@@ -527,6 +528,7 @@ export async function readLiveSessionConfig(input: {
     sessionId?: string;
     startingMode?: string | null;
     skills?: LiveSessionConfig['skills'];
+    promptLive?: SessionPromptLive;
 }): Promise<LiveSessionConfig> {
     const flavor = (input.flavor ?? '').trim().toLowerCase();
     const sections = flavorInventory({ ...input, flavor });
@@ -537,5 +539,12 @@ export async function readLiveSessionConfig(input: {
         ...listed,
         items: listed.items.map((item) => disabledSkills.has(item.name) ? { ...item, enabled: false as const } : item),
     };
-    return { ...sections, skills };
+    const prompts = collectSessionPrompts({
+        flavor,
+        cwd: input.cwd,
+        startingMode: input.startingMode,
+        sessionId: input.sessionId,
+        promptLive: { ...getSessionPromptLive(input.sessionId), ...input.promptLive },
+    }).prompts;
+    return { ...sections, skills, prompts };
 }

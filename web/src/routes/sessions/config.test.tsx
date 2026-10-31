@@ -245,4 +245,54 @@ describe('SessionConfigPage', () => {
         release({ success: false, error: 'RPC handler not registered: session-1:listSessionConfig' })
         await waitFor(() => expect(screen.getByRole('button', { name: 'Retry' })).not.toBeDisabled())
     })
+
+    it('opens a prompt without a switch and shows the truncation note', async () => {
+        mocks.getSessionConfig.mockResolvedValue({
+            success: true,
+            mcp: { kind: 'servers', servers: [] },
+            skills: { items: [] },
+            hooks: { availability: 'listed', items: [] },
+            prompts: {
+                system: {
+                    availability: 'listed',
+                    note: 'claude-builtin',
+                    items: [{ id: 'sys', role: 'system', scope: 'injected', title: 'append-system-prompt', hasText: true }],
+                },
+                user: {
+                    availability: 'listed',
+                    items: [{
+                        id: 'claude',
+                        role: 'user',
+                        scope: 'project',
+                        title: 'CLAUDE.md',
+                        pathLabel: 'CLAUDE.md',
+                        preview: 'Use bun.',
+                        load: 'path',
+                        match: 'src/**/*.ts',
+                        hasText: true,
+                    }],
+                },
+            },
+        })
+        mocks.getSessionConfigItem.mockResolvedValue({
+            success: true,
+            kind: 'prompt',
+            id: 'claude',
+            title: 'CLAUDE.md',
+            markdown: '# Project\n\nUse bun.',
+            truncated: true,
+            note: 'no-import',
+        })
+        renderPage()
+        expect(await screen.findByRole('heading', { name: 'System prompt' })).toBeTruthy()
+        expect(screen.getByRole('heading', { name: 'User prompt' })).toBeTruthy()
+        expect(screen.getByText('Does not include Claude Code’s built-in system prompt.')).toBeTruthy()
+        expect(screen.getByText('Loads for matching paths · src/**/*.ts')).toBeTruthy()
+        expect(screen.queryByRole('switch', { name: 'Enable CLAUDE.md' })).toBeNull()
+        fireEvent.click(screen.getByRole('button', { name: /CLAUDE.md/ }))
+        expect(await screen.findByText('Showing the first part only.')).toBeTruthy()
+        expect(screen.getByText('@import lines are not expanded.')).toBeTruthy()
+        expect(screen.getByText(/# Project/)).toBeTruthy()
+        expect(screen.queryByRole('switch')).toBeNull()
+    })
 })

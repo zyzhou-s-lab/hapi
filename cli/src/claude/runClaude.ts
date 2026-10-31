@@ -29,6 +29,7 @@ import {
 } from '@hapi/protocol/conversationHistory';
 import { listSkills, type SkillSummary } from '@/modules/common/skills';
 import { inventorySkills, readLiveSessionConfig } from '@/modules/common/sessionInventory';
+import { setSessionPromptLive } from '@/modules/common/sessionPrompts';
 import { getErrorMessage, rpcError } from '@/modules/common/rpcResponses';
 
 export interface StartOptions {
@@ -150,7 +151,15 @@ export async function runClaude(options: StartOptions = {}): Promise<void> {
             const config = await readLiveSessionConfig({
                 flavor: 'claude',
                 cwd: workingDirectory,
+                sessionId: session.sessionId,
+                startingMode,
                 skills,
+                promptLive: {
+                    claude: {
+                        ...(currentCustomSystemPrompt ? { custom: currentCustomSystemPrompt } : {}),
+                        ...(currentAppendSystemPrompt ? { append: currentAppendSystemPrompt } : {}),
+                    },
+                },
             });
             return { success: true, ...config };
         } catch (error) {
@@ -305,6 +314,15 @@ export async function runClaude(options: StartOptions = {}): Promise<void> {
     let currentFallbackModel: string | undefined = undefined; // Track current fallback model
     let currentCustomSystemPrompt: string | undefined = undefined; // Track current custom system prompt
     let currentAppendSystemPrompt: string | undefined = undefined; // Track current append system prompt
+    const publishClaudePrompt = () => {
+        setSessionPromptLive(session.sessionId, {
+            claude: {
+                ...(currentCustomSystemPrompt ? { custom: currentCustomSystemPrompt } : {}),
+                ...(currentAppendSystemPrompt ? { append: currentAppendSystemPrompt } : {}),
+            },
+        })
+    }
+    publishClaudePrompt()
     let currentAllowedTools: string[] | undefined = undefined; // Track current allowed tools
     let currentDisallowedTools: string[] | undefined = undefined; // Track current disallowed tools
 
@@ -345,6 +363,7 @@ export async function runClaude(options: StartOptions = {}): Promise<void> {
         if (message.meta?.hasOwnProperty('customSystemPrompt')) {
             messageCustomSystemPrompt = message.meta.customSystemPrompt || undefined; // null becomes undefined
             currentCustomSystemPrompt = messageCustomSystemPrompt;
+            publishClaudePrompt()
             logger.debug(`[loop] Custom system prompt updated from user message: ${messageCustomSystemPrompt ? 'set' : 'reset to none'}`);
         } else {
             logger.debug(`[loop] User message received with no custom system prompt override, using current: ${currentCustomSystemPrompt ? 'set' : 'none'}`);
@@ -365,6 +384,7 @@ export async function runClaude(options: StartOptions = {}): Promise<void> {
         if (message.meta?.hasOwnProperty('appendSystemPrompt')) {
             messageAppendSystemPrompt = message.meta.appendSystemPrompt || undefined; // null becomes undefined
             currentAppendSystemPrompt = messageAppendSystemPrompt;
+            publishClaudePrompt()
             logger.debug(`[loop] Append system prompt updated from user message: ${messageAppendSystemPrompt ? 'set' : 'reset to none'}`);
         } else {
             logger.debug(`[loop] User message received with no append system prompt override, using current: ${currentAppendSystemPrompt ? 'set' : 'none'}`);

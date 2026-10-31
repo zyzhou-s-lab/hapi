@@ -32,6 +32,31 @@ export const SessionInventorySkillSchema = z.object({
     enabled: z.boolean().optional(),
 })
 
+export const SessionPromptScopeSchema = z.enum(['injected', 'user', 'project', 'managed'])
+export const SessionPromptLoadSchema = z.enum(['path', 'demand'])
+
+/** List row for one system or user instruction. Body text is not a field. */
+export const SessionPromptItemSchema = z.object({
+    id: z.string().min(1).max(200),
+    role: z.enum(['system', 'user']),
+    scope: SessionPromptScopeSchema,
+    title: z.string().min(1).max(200),
+    pathLabel: z.string().min(1).max(300).optional(),
+    preview: z.string().max(160).optional(),
+    truncated: z.boolean().optional(),
+    load: SessionPromptLoadSchema.optional(),
+    match: z.string().max(300).optional(),
+    note: z.string().max(80).optional(),
+    hasText: z.boolean().optional(),
+    codexCapped: z.boolean().optional(),
+})
+
+const SessionPromptBlockSchema = z.object({
+    availability: z.enum(['listed', 'none']),
+    note: z.string().max(80).optional(),
+    items: z.array(SessionPromptItemSchema).max(400),
+})
+
 /**
  * Live session-RPC payload. A missing section was not collected.
  * Commands, URLs, and tokens are not fields. The hub does not store this.
@@ -49,6 +74,10 @@ export const SessionInventorySchema = z.object({
         catalogUnavailable: z.boolean().optional(),
         items: z.array(SessionInventorySkillSchema).max(400),
     }).optional(),
+    prompts: z.object({
+        system: SessionPromptBlockSchema.optional(),
+        user: SessionPromptBlockSchema.optional(),
+    }).optional(),
 })
 
 export type SessionInventorySource = z.infer<typeof SessionInventorySourceSchema>
@@ -56,6 +85,9 @@ export type SessionInventoryMcpServer = z.infer<typeof SessionInventoryMcpServer
 export type SessionInventoryHook = z.infer<typeof SessionInventoryHookSchema>
 export type SessionInventorySkill = z.infer<typeof SessionInventorySkillSchema>
 export type SessionInventory = z.infer<typeof SessionInventorySchema>
+export type SessionPromptItem = z.infer<typeof SessionPromptItemSchema>
+export type SessionPromptLoad = z.infer<typeof SessionPromptLoadSchema>
+export type SessionPromptScope = z.infer<typeof SessionPromptScopeSchema>
 
 export type SessionConfigRpcResult =
     | ({ success: true } & SessionInventory)
@@ -82,13 +114,14 @@ const DETAIL_TEXT_LIMIT = 128 * 1024
 const SCRIPT_TEXT_LIMIT = 32 * 1024
 
 export const SessionConfigItemSelectorSchema = z.object({
-    kind: z.enum(['mcp', 'skill', 'hook']),
+    kind: z.enum(['mcp', 'skill', 'hook', 'prompt']),
     name: z.string().min(1).max(200).optional(),
     source: SessionInventorySourceSchema.optional(),
     event: z.string().min(1).max(80).optional(),
     matcher: z.string().min(1).max(120).optional(),
     commandName: z.string().min(1).max(80).optional(),
     index: z.number().int().min(0).max(50).optional(),
+    id: z.string().min(1).max(200).optional(),
 })
 
 const SessionConfigToolSchema = z.object({
@@ -126,6 +159,17 @@ export const SessionConfigDetailSchema = z.discriminatedUnion('kind', [
         script: z.string().max(SCRIPT_TEXT_LIMIT),
         truncated: z.boolean(),
     }),
+    z.object({
+        kind: z.literal('prompt'),
+        id: z.string().min(1).max(200),
+        title: z.string().min(1).max(200),
+        markdown: z.string().max(DETAIL_TEXT_LIMIT),
+        truncated: z.boolean(),
+        load: SessionPromptLoadSchema.optional(),
+        match: z.string().max(300).optional(),
+        note: z.string().max(80).optional(),
+        codexCapped: z.boolean().optional(),
+    }),
 ])
 
 export type SessionConfigItemSelector = z.infer<typeof SessionConfigItemSelectorSchema>
@@ -150,9 +194,10 @@ export function redactConfigSecrets(value: string): string {
 /** null when that agent honors a per-item boolean. Otherwise the switch stays disabled. */
 export function sessionConfigLock(
     flavor: string | null | undefined,
-    kind: 'mcp' | 'skill' | 'hook',
+    kind: 'mcp' | 'skill' | 'hook' | 'prompt',
     source: string | undefined,
 ): 'source' | 'unsupported' | null {
+    if (kind === 'prompt') return 'source'
     if (source !== 'user' && source !== 'project') return 'source'
     const name = (flavor ?? '').trim().toLowerCase()
     if (kind === 'mcp' && name === 'codex' && source === 'user') return null
@@ -179,6 +224,7 @@ export function parseSessionConfigDetail(raw: unknown): SessionConfigDetailResul
     if (!parsed.success) return { success: false, error: 'Invalid session config' }
     if (parsed.data.kind === 'hook') return { success: true, ...parsed.data, script: redactConfigSecrets(parsed.data.script) }
     if (parsed.data.kind === 'skill') return { success: true, ...parsed.data, markdown: redactConfigSecrets(parsed.data.markdown) }
+    if (parsed.data.kind === 'prompt') return { success: true, ...parsed.data, markdown: redactConfigSecrets(parsed.data.markdown) }
     return { success: true, ...parsed.data }
 }
 

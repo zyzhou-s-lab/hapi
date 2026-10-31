@@ -1,22 +1,30 @@
-import { sessionConfigLock, type SessionConfigItemSelector, type SessionInventory, type SessionInventorySource } from '@hapi/protocol/schemas'
+import { sessionConfigLock, type SessionConfigItemSelector, type SessionInventory, type SessionInventorySource, type SessionPromptItem, type SessionPromptLoad } from '@hapi/protocol/schemas'
 
 export type InventoryRow = {
     key: string
     title: string
     detail?: string
+    preview?: string
     source?: SessionInventorySource
+    scopeLabel?: string
     enabled: boolean
     mutable: boolean
     lock: 'source' | 'unsupported' | null
+    toggle: boolean
+    openable: boolean
+    load?: SessionPromptLoad
+    match?: string
+    note?: string
+    codexCapped?: boolean
     ref: SessionConfigItemSelector
 }
 
 export type InventorySection =
     | { status: 'unreported' }
     | { status: 'empty' }
-    | { status: 'none' }
+    | { status: 'none'; note?: string }
     | { status: 'catalogUnavailable' }
-    | { status: 'list'; rows: InventoryRow[]; tools?: boolean }
+    | { status: 'list'; rows: InventoryRow[]; tools?: boolean; note?: string }
 
 const SECRET_TEXT = /token|api[_-]?key|secret|password|bearer|authorization/i
 
@@ -66,6 +74,8 @@ function row(
         enabled: enabled !== false,
         mutable: lock === null,
         lock,
+        toggle: true,
+        openable: true,
         ref: { ...ref, ...(visibleSource ? { source: visibleSource } : {}) },
     }
 }
@@ -112,4 +122,45 @@ export function skillsSection(inventory: SessionInventory | null | undefined, fl
         const next = row(skill.name, skill.source, skill.description, { kind: 'skill', name: skill.name, source: skill.source }, skill.enabled, flavor)
         return next ? [next] : []
     }))
+}
+
+function promptRow(item: SessionPromptItem): InventoryRow | null {
+    const title = visibleInventoryText(item.title) ?? item.title
+    if (!title) return null
+    const detail = visibleInventoryText(item.pathLabel)
+    const preview = visibleInventoryText(item.preview)
+    return {
+        key: `prompt:${item.id}`,
+        title,
+        ...(detail ? { detail } : {}),
+        ...(preview ? { preview } : {}),
+        scopeLabel: item.scope,
+        enabled: true,
+        mutable: false,
+        lock: null,
+        toggle: false,
+        openable: item.hasText !== false,
+        ...(item.load ? { load: item.load } : {}),
+        ...(item.match ? { match: item.match } : {}),
+        ...(item.note ? { note: item.note } : {}),
+        ...(item.codexCapped ? { codexCapped: true } : {}),
+        ref: { kind: 'prompt', id: item.id },
+    }
+}
+
+export function promptSection(
+    inventory: SessionInventory | null | undefined,
+    role: 'system' | 'user',
+): InventorySection {
+    const block = inventory?.prompts?.[role]
+    if (!block) return { status: 'unreported' }
+    if (block.availability === 'none') {
+        return block.note ? { status: 'none', note: block.note } : { status: 'empty' }
+    }
+    const rows = block.items.flatMap((item) => {
+        const next = promptRow(item)
+        return next ? [next] : []
+    })
+    if (rows.length === 0) return block.note ? { status: 'none', note: block.note } : { status: 'empty' }
+    return { status: 'list', rows, ...(block.note ? { note: block.note } : {}) }
 }

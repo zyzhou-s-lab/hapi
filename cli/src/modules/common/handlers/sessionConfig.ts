@@ -6,6 +6,7 @@ import { logger } from '@/ui/logger'
 import { getErrorMessage, rpcError } from '../rpcResponses'
 import { readLiveSessionConfig, type LiveSessionConfig } from '../sessionInventory'
 import { readSessionConfigDetail, writeSessionConfigEnabled } from '../sessionConfigDetail'
+import type { SessionPromptLive } from '../sessionPrompts'
 
 export type SessionConfigContext = {
     flavor?: string | null
@@ -13,6 +14,7 @@ export type SessionConfigContext = {
     sessionId?: string
     tools?: string[]
     skills?: LiveSessionConfig['skills']
+    promptLive?: SessionPromptLive
 }
 
 export type SessionConfigResponse = { success: true } & LiveSessionConfig | { success: false; error: string }
@@ -33,6 +35,7 @@ export function registerSessionConfigHandlers(
                 sessionId: context.sessionId,
                 tools: context.tools,
                 skills: context.skills,
+                promptLive: context.promptLive,
             })
             return { success: true, ...config }
         } catch (error) {
@@ -52,6 +55,8 @@ export function registerSessionConfigHandlers(
                 sessionId: context.sessionId,
                 tools: context.tools,
                 selector: selector.data,
+                startingMode: context.startingMode,
+                promptLive: context.promptLive,
             })
             if ('error' in detail) return rpcError(detail.error)
             return { success: true, ...detail }

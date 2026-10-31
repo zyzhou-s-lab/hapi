@@ -3620,6 +3620,7 @@ class CodexRemoteLauncher extends RemoteLauncherBase {
                     const config = await readLiveSessionConfig({
                         flavor: 'codex',
                         cwd: session.path,
+                        sessionId: session.client.sessionId,
                         startingMode: session.startingMode,
                         skills: inventorySkills(reportedSkills),
                     });

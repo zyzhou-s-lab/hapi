@@ -17,11 +17,37 @@ import { queryKeys } from '@/lib/query-keys'
 import {
     hooksSection,
     mcpSection,
+    promptSection,
     skillsSection,
     type InventoryRow,
     type InventorySection,
 } from '@/lib/sessionInventoryView'
 import type { SessionConfigDetailResult } from '@hapi/protocol/schemas'
+
+function promptCopy(code: string | undefined, t: (key: string) => string): string | null {
+    if (!code) return null
+    const key = code.startsWith('session.config.') ? code : `session.config.prompt.note.${code}`
+    const translated = t(key)
+    return translated === key ? code : translated
+}
+
+function promptTitle(title: string, t: (key: string) => string): string {
+    const keys: Record<string, string> = {
+        'append-system-prompt': 'session.config.prompt.channel.append',
+        'system-prompt': 'session.config.prompt.channel.replace',
+        developer_instructions: 'session.config.prompt.channel.developer',
+        'first-message': 'session.config.prompt.firstMessage',
+        'plan-mode': 'session.config.prompt.planMode',
+        'hapi-instructions.md': 'session.config.prompt.hapiInstructions',
+        'cursor-account': 'session.config.prompt.note.cursor-account',
+        'remote-url': 'session.config.prompt.note.remote-url',
+        claudeMd: 'session.config.prompt.claudeMd',
+    }
+    const key = keys[title]
+    if (!key) return title
+    const translated = t(key)
+    return translated === key ? title : translated
+}
 
 function sectionMessage(section: InventorySection, t: (key: string) => string): string | null {
     switch (section.status) {
@@ -30,7 +56,7 @@ function sectionMessage(section: InventorySection, t: (key: string) => string): 
         case 'empty':
             return t('session.config.empty')
         case 'none':
-            return t('session.config.hooks.none')
+            return section.note ? promptCopy(section.note, t) : t('session.config.hooks.none')
         case 'catalogUnavailable':
             return t('session.config.skills.catalogUnavailable')
         default:
@@ -72,6 +98,9 @@ function ConfigSection(props: {
     return (
         <section>
             <h2 className="mb-2 text-base font-semibold text-[var(--app-fg)]">{props.title}</h2>
+            {props.section.status === 'list' && props.section.note ? (
+                <p className="mb-2 text-xs text-[var(--app-hint)]">{promptCopy(props.section.note, t)}</p>
+            ) : null}
             {props.section.status === 'list' && props.section.tools ? (
                 <p className="mb-2 text-xs text-[var(--app-hint)]">{props.toolsHint}</p>
             ) : null}
@@ -82,25 +111,55 @@ function ConfigSection(props: {
                     <ul>
                         {props.section.rows.map((item) => (
                             <li key={item.key} className="flex items-center gap-3 border-b border-[var(--app-divider)] px-3 py-2 last:border-b-0">
-                                <button type="button" className="min-w-0 flex-1 text-left" onClick={() => props.onOpen(item)}>
-                                    <div className="truncate text-sm text-[var(--app-fg)]">{item.title}</div>
-                                    {item.detail ? (
-                                        <div className="truncate text-xs text-[var(--app-hint)]">{item.detail}</div>
-                                    ) : null}
-                                    {item.lock ? (
-                                        <div className="text-xs text-[var(--app-hint)]">
-                                            {item.lock === 'unsupported' ? t('session.config.unsupported') : t('session.config.locked')}
-                                        </div>
-                                    ) : null}
-                                </button>
-                                <ConfigSwitch
-                                    row={item}
-                                    pending={props.pendingKey === item.key}
-                                    onToggle={(enabled) => props.onToggle(item, enabled)}
-                                />
+                                {item.openable ? (
+                                    <button type="button" className="min-w-0 flex-1 text-left" onClick={() => props.onOpen(item)}>
+                                        <div className="truncate text-sm text-[var(--app-fg)]">{promptTitle(item.title, t)}</div>
+                                        {item.detail ? (
+                                            <div className="truncate text-xs text-[var(--app-hint)]">{item.detail}</div>
+                                        ) : null}
+                                        {item.preview ? (
+                                            <div className="truncate text-xs text-[var(--app-hint)]">{item.preview}</div>
+                                        ) : null}
+                                        {item.load ? (
+                                            <div className="text-xs text-[var(--app-hint)]">
+                                                {t(`session.config.prompt.load.${item.load}`)}{item.match ? ` · ${item.match}` : ''}
+                                            </div>
+                                        ) : null}
+                                        {item.note ? (
+                                            <div className="text-xs text-[var(--app-hint)]">{promptCopy(item.note, t)}</div>
+                                        ) : null}
+                                        {item.codexCapped ? (
+                                            <div className="text-xs text-[var(--app-hint)]">{t('session.config.prompt.codexCap')}</div>
+                                        ) : null}
+                                        {item.lock ? (
+                                            <div className="text-xs text-[var(--app-hint)]">
+                                                {item.lock === 'unsupported' ? t('session.config.unsupported') : t('session.config.locked')}
+                                            </div>
+                                        ) : null}
+                                    </button>
+                                ) : (
+                                    <div className="min-w-0 flex-1 text-left">
+                                        <div className="truncate text-sm text-[var(--app-fg)]">{promptTitle(item.title, t)}</div>
+                                        {item.note ? (
+                                            <div className="text-xs text-[var(--app-hint)]">{promptCopy(item.note, t)}</div>
+                                        ) : null}
+                                    </div>
+                                )}
+                                {item.toggle ? (
+                                    <ConfigSwitch
+                                        row={item}
+                                        pending={props.pendingKey === item.key}
+                                        onToggle={(enabled) => props.onToggle(item, enabled)}
+                                    />
+                                ) : null}
                                 {item.source ? (
                                     <span className="shrink-0 rounded-full bg-[var(--app-subtle-bg)] px-2 py-0.5 text-[11px] text-[var(--app-hint)]">
                                         {t(`session.config.source.${item.source}`)}
+                                    </span>
+                                ) : null}
+                                {item.scopeLabel ? (
+                                    <span className="shrink-0 rounded-full bg-[var(--app-subtle-bg)] px-2 py-0.5 text-[11px] text-[var(--app-hint)]">
+                                        {t(`session.config.prompt.scope.${item.scopeLabel}`)}
                                     </span>
                                 ) : null}
                             </li>
@@ -117,10 +176,12 @@ function ConfigDetail(props: { detail: Extract<SessionConfigDetailResult, { succ
     const detail = props.detail
     return (
         <div className="flex flex-col gap-4">
-            {detail.kind === 'skill' ? (
+            {detail.kind === 'skill' || detail.kind === 'prompt' ? (
                 <>
+                    {detail.kind === 'prompt' && detail.note ? <p className="text-xs text-[var(--app-hint)]">{promptCopy(detail.note, t)}</p> : null}
+                    {detail.kind === 'prompt' && detail.codexCapped ? <p className="text-xs text-[var(--app-hint)]">{t('session.config.prompt.codexCap')}</p> : null}
                     {detail.truncated ? <p className="text-xs text-[var(--app-hint)]">{t('session.config.truncated')}</p> : null}
-                    <FileMarkdownView content={detail.markdown} />
+                    <FileMarkdownView content={detail.kind === 'skill' ? detail.markdown : detail.markdown} />
                 </>
             ) : null}
             {detail.kind === 'mcp' ? (
@@ -180,6 +241,8 @@ export default function SessionConfigPage() {
     }
 
     const flavor = session.metadata?.flavor
+    const systemPrompt = promptSection(config, 'system')
+    const userPrompt = promptSection(config, 'user')
     const mcp = mcpSection(config, flavor)
     const skills = skillsSection(config, flavor)
     const hooks = hooksSection(config, flavor)
@@ -267,16 +330,18 @@ export default function SessionConfigPage() {
                             {t('session.config.backToList')}
                         </button>
                         <div className="flex items-center justify-between gap-3">
-                            <h2 className="min-w-0 truncate text-base font-semibold text-[var(--app-fg)]">{selected.title}</h2>
-                            <ConfigSwitch row={selected} pending={pendingKey === selected.key} onToggle={(enabled) => { void toggle(selected, enabled) }} />
+                            <h2 className="min-w-0 truncate text-base font-semibold text-[var(--app-fg)]">{promptTitle(selected.title, t)}</h2>
+                            {selected.toggle ? (
+                                <ConfigSwitch row={selected} pending={pendingKey === selected.key} onToggle={(enabled) => { void toggle(selected, enabled) }} />
+                            ) : null}
                         </div>
                         {selected.lock ? (
                             <p className="text-sm text-[var(--app-hint)]">
                                 {selected.lock === 'unsupported' ? t('session.config.unsupported') : t('session.config.locked')}
                             </p>
-                        ) : (
+                        ) : selected.toggle ? (
                             <p className="text-xs text-[var(--app-hint)]">{t('session.config.effect')}</p>
-                        )}
+                        ) : null}
                         {detailError ? (
                             <SessionReadBanner
                                 message={formatSessionConfigError(detailError, t)}
@@ -291,6 +356,8 @@ export default function SessionConfigPage() {
                     </div>
                 ) : (
                     <div className="mx-auto flex w-full max-w-content flex-col gap-6 p-4">
+                        <ConfigSection title={t('session.config.systemPrompt')} section={systemPrompt} pendingKey={pendingKey} onOpen={setSelected} onToggle={(row, enabled) => { void toggle(row, enabled) }} />
+                        <ConfigSection title={t('session.config.userPrompt')} section={userPrompt} pendingKey={pendingKey} onOpen={setSelected} onToggle={(row, enabled) => { void toggle(row, enabled) }} />
                         <p className="text-xs text-[var(--app-hint)]">{t('session.config.effect')}</p>
                         <ConfigSection title={t('session.config.mcp')} section={mcp} toolsHint={t('session.config.mcp.toolsHint')} pendingKey={pendingKey} onOpen={setSelected} onToggle={(row, enabled) => { void toggle(row, enabled) }} />
                         <ConfigSection title={t('session.config.skills')} section={skills} pendingKey={pendingKey} onOpen={setSelected} onToggle={(row, enabled) => { void toggle(row, enabled) }} />

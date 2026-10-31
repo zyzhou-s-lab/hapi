@@ -81,4 +81,33 @@ describe('SessionInventorySchema', () => {
         expect(detail.success && detail.kind === 'hook' ? detail.script : '').toBe('GITHUB_TOKEN=*** ***')
         expect(redactConfigSecrets(`prefix ${token}"`)).toBe('prefix ***"')
     })
+
+    it('keeps prompt labels, drops command text, and redacts prompt detail', () => {
+        const parsed = parseSessionConfigRpc({
+            success: true,
+            prompts: {
+                system: { availability: 'listed', items: [{ id: 's1', role: 'system', scope: 'injected', title: 'append-system-prompt', command: 'secret' }] },
+                user: { availability: 'listed', items: [{ id: 'u1', role: 'user', scope: 'project', title: 'CLAUDE.md', pathLabel: 'CLAUDE.md', url: 'http://example.test' }] },
+            },
+        })
+        expect(parsed).toEqual({
+            success: true,
+            prompts: {
+                system: { availability: 'listed', items: [{ id: 's1', role: 'system', scope: 'injected', title: 'append-system-prompt' }] },
+                user: { availability: 'listed', items: [{ id: 'u1', role: 'user', scope: 'project', title: 'CLAUDE.md', pathLabel: 'CLAUDE.md' }] },
+            },
+        })
+        const token = ['s', 'k', '-', 'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j'].join('')
+        const detail = parseSessionConfigDetail({
+            success: true,
+            kind: 'prompt',
+            id: 'u1',
+            title: 'CLAUDE.md',
+            markdown: `OPENAI_API_KEY=zzgithub ${token}`,
+            truncated: true,
+        })
+        expect(detail.success && detail.kind === 'prompt' ? detail.markdown : '').toBe('OPENAI_API_KEY=*** ***')
+        expect(JSON.stringify(parsed)).not.toContain('http')
+        expect(JSON.stringify(parsed)).not.toContain('secret')
+    })
 })

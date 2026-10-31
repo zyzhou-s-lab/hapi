@@ -4,6 +4,7 @@ import { extname, isAbsolute, join, resolve, sep } from 'node:path'
 import { redactConfigSecrets, sessionConfigLock, type SessionConfigDetail, type SessionConfigItemSelector } from '@hapi/protocol/schemas'
 import { findSkill } from '@/modules/common/skills'
 import { commandBasename } from './sessionInventory'
+import { readSessionPromptDetail, type SessionPromptLive } from './sessionPrompts'
 import {
     collectJsonObjects,
     jsonStringField,
@@ -27,9 +28,11 @@ type DetailInput = {
     tools?: readonly string[]
     selector: SessionConfigItemSelector
     enabled: boolean
+    startingMode?: string | null
+    promptLive?: SessionPromptLive
 }
 
-function lockError(flavor: string, kind: 'mcp' | 'skill' | 'hook', source: string | undefined): string | null {
+function lockError(flavor: string, kind: 'mcp' | 'skill' | 'hook' | 'prompt', source: string | undefined): string | null {
     const lock = sessionConfigLock(flavor, kind, source)
     if (lock === 'source') return LOCKED
     if (lock === 'unsupported') return UNSUPPORTED
@@ -230,6 +233,19 @@ function editClaudeHooks(text: string, event: string, matcher: string | undefine
 export async function readSessionConfigDetail(input: Omit<DetailInput, 'enabled'>): Promise<SessionConfigDetail | { error: string }> {
     const selector = input.selector
     const flavor = (input.flavor ?? '').trim().toLowerCase()
+    if (selector.kind === 'prompt') {
+        if (!selector.id) return { error: NOT_FOUND }
+        const detail = readSessionPromptDetail({
+            flavor,
+            cwd: input.cwd,
+            sessionId: input.sessionId,
+            startingMode: input.startingMode,
+            promptLive: input.promptLive,
+            id: selector.id,
+        })
+        if ('error' in detail) return detail
+        return { kind: 'prompt', ...detail }
+    }
     if (selector.kind === 'skill') {
         if (!selector.name) return { error: NOT_FOUND }
         const skill = await findSkill(selector.name, input.cwd, { flavor: flavor || undefined })

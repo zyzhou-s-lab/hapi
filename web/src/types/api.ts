@@ -188,6 +188,7 @@ export type SessionConfigResponse = {
     mcp?: SessionInventory['mcp']
     hooks?: SessionInventory['hooks']
     skills?: SessionInventory['skills']
+    prompts?: SessionInventory['prompts']
 }
 
 export type PushSubscriptionKeys = {
