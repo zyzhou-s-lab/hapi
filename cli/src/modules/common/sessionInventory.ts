@@ -819,8 +819,14 @@ async function bundledAgentDirectory(): Promise<string | undefined> {
     if (override === '0') return undefined;
     if (override) return override;
     if (process.env.VITEST) return undefined;
-    bundledAgentsDir ??= loadBundledAgentDirectory();
-    return bundledAgentsDir;
+    if (!bundledAgentsDir) {
+        const pending = loadBundledAgentDirectory().then((dir) => {
+            if (!dir) bundledAgentsDir = undefined
+            return dir
+        })
+        bundledAgentsDir = pending
+    }
+    return bundledAgentsDir
 }
 
 /** Directories omp 18.12.6 actually scans: ~/.omp/agent/agents (PI_CODING_AGENT_DIR first), project .omp/agents, plus the same agents/ folder under .claude, .codex, and .gemini. Bundled agents are embedded in the omp binary and materialized with `omp agents unpack`. */

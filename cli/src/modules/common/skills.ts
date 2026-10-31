@@ -106,11 +106,16 @@ function getProjectSkillsRoots(directory: string, flavor?: string): string[] {
     }
     return roots;
 }
-/** User and project skill directories a toggle may write. A symlink may land in any of them. */
-export function knownSkillRoots(workingDirectory?: string): string[] {
+/** Roots a toggle may write for this skill's own source. User and project roots stay separate. */
+export function skillWriteRoots(workingDirectory: string | undefined, source: 'user' | 'project'): string[] {
+    if (source === 'user') return userSkillWriteRoots();
+    return projectWriteRoots(workingDirectory);
+}
+
+function userSkillWriteRoots(): string[] {
     const home = getHomeDirectory();
     const ompHome = process.env.PI_CODING_AGENT_DIR?.trim() || join(home, '.omp', 'agent');
-    const roots = [
+    return [
         join(home, '.agents', 'skills'),
         join(ompHome, 'skills'),
         join(process.env.CLAUDE_CONFIG_DIR?.trim() || join(home, '.claude'), 'skills'),
@@ -118,17 +123,20 @@ export function knownSkillRoots(workingDirectory?: string): string[] {
         join(process.env.GROK_HOME?.trim() || join(home, '.grok'), 'skills'),
         join(home, '.copilot', 'skills'),
     ];
-    if (!workingDirectory) return roots;
+}
+
+function projectWriteRoots(workingDirectory: string | undefined): string[] {
+    if (!workingDirectory) return [];
     const start = resolve(workingDirectory);
     const directories = [start];
     let current = start;
     while (!existsSync(join(current, '.git'))) {
         const parent = dirname(current);
-        if (parent === current) return roots.concat(projectSkillRoots(start));
+        if (parent === current) return projectSkillRoots(start);
         current = parent;
         directories.push(current);
     }
-    return roots.concat(directories.flatMap(projectSkillRoots));
+    return directories.flatMap(projectSkillRoots);
 }
 
 function projectSkillRoots(directory: string): string[] {

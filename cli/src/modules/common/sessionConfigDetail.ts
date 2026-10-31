@@ -1,8 +1,8 @@
-import { existsSync, readFileSync, realpathSync, statSync } from 'node:fs'
+import { existsSync, lstatSync, readFileSync, realpathSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { basename, extname, isAbsolute, join, resolve, sep } from 'node:path'
 import { redactConfigSecrets, sessionConfigLock, type SessionConfigDetail, type SessionConfigItemSelector } from '@hapi/protocol/schemas'
-import { findSkill, knownSkillRoots } from '@/modules/common/skills'
+import { findSkill, skillWriteRoots } from '@/modules/common/skills'
 import { commandBasename } from './sessionInventory'
 import { readSessionPromptDetail, type SessionPromptLive } from './sessionPrompts'
 import {
@@ -40,10 +40,13 @@ function lockError(flavor: string, kind: 'mcp' | 'skill' | 'hook' | 'prompt', so
 }
 function skillMarkdownPath(path: string, roots: readonly string[]): string | null {
     try {
+        if (lstatSync(path).isSymbolicLink()) return null
         const real = realpathSync(path)
         if (basename(real) !== 'SKILL.md' || !statSync(real).isFile()) return null
         const allowed = roots.some((root) => {
             try {
+                const rootInfo = lstatSync(root)
+                if (rootInfo.isSymbolicLink() || !rootInfo.isDirectory()) return false
                 const realRoot = realpathSync(root)
                 const prefix = realRoot.endsWith(sep) ? realRoot : `${realRoot}${sep}`
                 return real.startsWith(prefix)
@@ -328,7 +331,9 @@ export async function writeSessionConfigEnabled(input: DetailInput): Promise<{ e
             const skill = await findSkill(input.selector.name, input.cwd, { flavor: (input.flavor ?? '').trim().toLowerCase() || undefined })
             if (!skill || skill.source !== input.selector.source) return { error: NOT_FOUND }
             if (skill.truncated) return { error: 'Skill is too large to update' }
-            const real = skillMarkdownPath(skill.filePath, knownSkillRoots(input.cwd))
+            const real = skill.source === 'user' || skill.source === 'project'
+                ? skillMarkdownPath(skill.filePath, skillWriteRoots(input.cwd, skill.source))
+                : null
             if (!real) return { error: 'Only a SKILL.md frontmatter disabled field can be changed' }
             const text = readText(real)
             if (text === null) return { error: NOT_FOUND }

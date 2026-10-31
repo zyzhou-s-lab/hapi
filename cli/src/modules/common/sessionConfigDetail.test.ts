@@ -172,9 +172,8 @@ describe('session config detail', () => {
                 enabled: false,
                 selector: { kind: 'skill', name: 'linked', source: 'user' },
             })
-            expect(linked).toEqual({ enabled: false })
-            expect(readFileSync(real, 'utf8')).toContain('disabled: true')
-            expect(readFileSync(real, 'utf8')).toContain('# Linked body')
+            expect(linked).toEqual({ error: 'Only a SKILL.md frontmatter disabled field can be changed' })
+            expect(readFileSync(real, 'utf8')).not.toContain('disabled:')
             expect(lstatSync(join(linkedDir, 'SKILL.md')).isSymbolicLink()).toBe(true)
 
             const outsideDir = join(home, '.agents', 'skills', 'outside')
@@ -206,6 +205,37 @@ describe('session config detail', () => {
             })
             expect(refused).toEqual({ error: 'Only a SKILL.md frontmatter disabled field can be changed' })
             expect(readFileSync(notes, 'utf8')).not.toContain('disabled:')
+
+            const bridgeOutside = join(home, '.claude', 'skills', 'bridge')
+            mkdirSync(bridgeOutside, { recursive: true })
+            const bridgeFile = join(bridgeOutside, 'SKILL.md')
+            writeFileSync(bridgeFile, '---\nname: bridge\ndescription: Bridge\n---\n# Bridge\n')
+            const bridgeDir = join(cwd, '.agents', 'skills', 'bridge')
+            mkdirSync(bridgeDir, { recursive: true })
+            symlinkSync(bridgeFile, join(bridgeDir, 'SKILL.md'))
+            const bridge = await writeSessionConfigEnabled({
+                cwd,
+                flavor: 'omp',
+                enabled: false,
+                selector: { kind: 'skill', name: 'bridge', source: 'project' },
+            })
+            expect(bridge).toEqual({ error: 'Only a SKILL.md frontmatter disabled field can be changed' })
+            expect(readFileSync(bridgeFile, 'utf8')).not.toContain('disabled:')
+
+            rmSync(join(cwd, '.agents', 'skills'), { recursive: true, force: true })
+            const rootedOutside = join(home, 'rooted-skills')
+            mkdirSync(join(rootedOutside, 'rooted'), { recursive: true })
+            const rootedFile = join(rootedOutside, 'rooted', 'SKILL.md')
+            writeFileSync(rootedFile, '---\nname: rooted\ndescription: Rooted\n---\n# Rooted\n')
+            symlinkSync(rootedOutside, join(cwd, '.agents', 'skills'))
+            const rooted = await writeSessionConfigEnabled({
+                cwd,
+                flavor: 'omp',
+                enabled: false,
+                selector: { kind: 'skill', name: 'rooted', source: 'project' },
+            })
+            expect(rooted).toEqual({ error: 'Only a SKILL.md frontmatter disabled field can be changed' })
+            expect(readFileSync(rootedFile, 'utf8')).not.toContain('disabled:')
 
             const system = await writeSessionConfigEnabled({
                 cwd,

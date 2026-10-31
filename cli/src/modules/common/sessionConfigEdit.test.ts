@@ -97,6 +97,10 @@ description: Read docs
         const yes = setFrontmatterBoolean('---\nname: docs\ndisabled: yes # keep\n---\n# Body\n', 'disabled', false)
         expect(yes).toContain('disabled: false # keep')
         expect(yes.match(/disabled:/g)).toHaveLength(1)
+        const empty = setFrontmatterBoolean('---\nname: docs\ndisabled:\ndescription: keep\n---\n# Body\n', 'disabled', true)
+        expect(empty).toContain('description: keep')
+        expect(empty.match(/disabled:/g)).toHaveLength(1)
+        expect(empty).toContain('disabled: true\n')
         expect(() => setFrontmatterBoolean('# Hello only\n', 'disabled', true)).toThrow('Skill has no frontmatter')
     })
 
