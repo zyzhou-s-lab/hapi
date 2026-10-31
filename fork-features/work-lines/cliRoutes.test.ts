@@ -61,7 +61,7 @@ describe('cli work routes', () => {
 
         const summary = await app.request('/cli/work/training-runs/exp-1', { headers: ownerAuth })
         expect(summary.status).toBe(200)
-        expect(await summary.json()).toEqual({ metrics: ['loss'], partial: true })
+        expect(await summary.json()).toEqual({ metrics: ['loss'], partial: true, cards: [] })
         expect(rpcCalls).toEqual([{ machineId: 'gpu', run: 'exp-1', runDir: '/data/wandb/offline-run-1' }])
 
         const hidden = await app.request('/cli/work/training-runs/exp-1', {

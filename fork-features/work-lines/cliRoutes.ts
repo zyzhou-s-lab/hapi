@@ -78,12 +78,13 @@ export function mountCliWorkRoutes(app: Hono<WebAppEnv>, deps: {
         if (ready instanceof Response) return ready
         const row = ready.engine.getWorkLines().getTrainingRun(ready.account.id, c.req.param('run'))
         if (!row || !canSeeMachine(ready.account.id, row.machineId)) return c.json({ error: 'Not found' }, 404)
+        const cards = ready.engine.getWorkLines().listTrainingCards(ready.account.id, row.run)
         try {
             const summary = await ready.engine.queryTrainingRun(row.machineId, { run: row.run, runDir: row.runDir })
-            if (!summary || typeof summary !== 'object') return c.json({ unavailable: true })
-            return c.json(summary)
+            if (!summary || typeof summary !== 'object' || Array.isArray(summary)) return c.json({ unavailable: true, cards })
+            return c.json({ ...summary, cards })
         } catch {
-            return c.json({ unavailable: true })
+            return c.json({ unavailable: true, cards })
         }
     })
 

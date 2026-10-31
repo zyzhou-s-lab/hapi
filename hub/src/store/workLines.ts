@@ -342,7 +342,11 @@ export class WorkLinesStore {
             'SELECT json FROM work_layouts WHERE account_id = ? AND surface = ?'
         ).get(accountId, surface) as { json: string } | null
         if (!row) return null
-        return normalizeStoredLayout(surface, row.json)
+        const normalized = normalizeStoredLayout(surface, row.json)
+        if (surface !== 'workbench') return normalized
+        const migrated = migrateTrainingInstanceIds(normalized)
+        if (!migrated.changed) return normalized
+        return this.putLayout(accountId, surface, migrated.layout)
     }
 
     putLayout(accountId: number, surface: string, layout: unknown): WorkLayout {
@@ -370,7 +374,9 @@ export class WorkLinesStore {
         return this.db.transaction(() => {
             this.requireLine(accountId, cleanLine)
             if (!this.getTrainingRun(accountId, cleanRun)) throw new WorkMapError('训练不存在', 404)
-            const current = this.getLayout(accountId, 'workbench') ?? {
+            const loaded = this.getLayout(accountId, 'workbench')
+            const migrated = loaded ? migrateTrainingInstanceIds(loaded) : null
+            const current = migrated?.layout ?? {
                 revision: 1,
                 regions: {
                     rail: [...workbenchDefaultRegions.rail],
@@ -379,11 +385,21 @@ export class WorkLinesStore {
                 },
             }
             const main = [...(current.regions.main ?? [])]
+            const wantedAxis = axisProvided ? cleanAxis : ''
             const index = requestedId.length > 0
                 ? main.findIndex((item) => item.cardId === 'example.training-curves' && item.args?.instanceId === requestedId)
-                : -1
+                : main.findIndex((item) => sameTrainingCard(item, cleanLine, cleanRun, cleanMetrics, wantedAxis))
             if (requestedId.length > 0 && (index < 0 || main[index]?.args?.lineId !== cleanLine)) {
                 throw new WorkMapError('卡片不存在', 404)
+            }
+            if (requestedId.length === 0 && index >= 0) {
+                const existingId = main[index]?.args?.instanceId ?? ''
+                if (existingId.length > 0) {
+                    const layout = migrated?.changed
+                        ? this.putLayout(accountId, 'workbench', current)
+                        : current
+                    return { layout, instanceId: existingId }
+                }
             }
             const id = requestedId.length > 0 ? requestedId : randomUUID()
             const previous = index >= 0 ? main[index]?.args ?? {} : {}
@@ -412,6 +428,27 @@ export class WorkLinesStore {
             main.splice(index, 1)
             return this.putLayout(accountId, 'workbench', { revision: current.revision, regions: { ...current.regions, main } })
         })()
+    }
+
+    listTrainingCards(accountId: number, run: string): { instanceId: string; lineId: string; metrics: string[]; xAxis?: string }[] {
+        const wanted = run.trim()
+        const layout = this.getLayout(accountId, 'workbench')
+        if (!layout || wanted.length === 0) return []
+        const cards: { instanceId: string; lineId: string; metrics: string[]; xAxis?: string }[] = []
+        for (const slot of layout.regions.main ?? []) {
+            if (slot.cardId !== 'example.training-curves' || slot.args?.run !== wanted) continue
+            const instanceId = slot.args.instanceId?.trim() ?? ''
+            const lineId = slot.args.lineId?.trim() ?? ''
+            if (instanceId.length === 0 || lineId.length === 0) continue
+            const xAxis = slot.args.xAxis?.trim() ?? ''
+            cards.push({
+                instanceId,
+                lineId,
+                metrics: trainingMetricList(slot.args.metrics),
+                ...(xAxis.length > 0 ? { xAxis } : {}),
+            })
+        }
+        return cards
     }
 
     registerTrainingRun(accountId: number, input: { run: string; machineId: string; runDir: string }): WorkTrainingRun {
@@ -563,4 +600,45 @@ function validateLayout(surface: WorkSurface, layout: unknown): WorkLayout {
         })
     }
     return { revision: parsed.data.revision, regions }
+}
+
+function migrateTrainingInstanceIds(layout: WorkLayout): { layout: WorkLayout; changed: boolean } {
+    let changed = false
+    const main = (layout.regions.main ?? []).map((slot) => {
+        if (slot.cardId !== 'example.training-curves') return slot
+        if ((slot.args?.instanceId?.trim() ?? '').length > 0) return slot
+        changed = true
+        return { cardId: slot.cardId, args: { ...(slot.args ?? {}), instanceId: randomUUID() } }
+    })
+    if (!changed) return { layout, changed: false }
+    return { layout: { ...layout, regions: { ...layout.regions, main } }, changed: true }
+}
+
+function trainingMetricList(raw: string | undefined): string[] {
+    if (!raw) return []
+    try {
+        const parsed = JSON.parse(raw) as unknown
+        if (!Array.isArray(parsed)) return []
+        const seen = new Set<string>()
+        const metrics: string[] = []
+        for (const item of parsed) {
+            if (typeof item !== 'string') continue
+            const metric = item.trim()
+            if (metric.length === 0 || seen.has(metric)) continue
+            seen.add(metric)
+            metrics.push(metric)
+        }
+        return metrics
+    } catch {
+        return []
+    }
+}
+
+function sameTrainingCard(slot: WorkLayoutSlot, lineId: string, run: string, metrics: readonly string[], xAxis: string): boolean {
+    if (slot.cardId !== 'example.training-curves') return false
+    if (slot.args?.lineId !== lineId || slot.args.run !== run) return false
+    if ((slot.args.xAxis?.trim() ?? '') !== xAxis) return false
+    const stored = trainingMetricList(slot.args.metrics).sort()
+    const wanted = [...metrics].sort()
+    return stored.length === wanted.length && stored.every((metric, index) => metric === wanted[index])
 }

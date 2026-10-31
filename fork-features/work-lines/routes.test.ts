@@ -78,7 +78,7 @@ describe('work line routes', () => {
 
         const summary = await app.request('/api/work/training-runs/exp-1', { headers: auth })
         expect(summary.status).toBe(200)
-        expect(await summary.json()).toEqual({ unavailable: true })
+        expect(await summary.json()).toEqual({ unavailable: true, cards: [] })
         expect(rpcCalls).toEqual([{ machineId: 'gpu', run: 'exp-1', runDir: '/data/wandb/offline-run-1' }])
 
 
@@ -169,8 +169,50 @@ describe('work line routes', () => {
         const saved = await app.request('/api/work/layout/workbench', { headers: { authorization: `Bearer ${await token()}` } })
         const body = await saved.json() as { layout: { regions: { main: { args?: { metrics?: string } }[] } } }
         expect(body.layout.regions.main.find((slot) => slot.args?.metrics)?.args?.metrics).toBe('["loss"]')
-        expect(pushed).toEqual([{ accountId: account.id, update: { lineId, run: 'exp-1', metrics: ['loss', 'loss'], instanceId: expect.any(String) } }])
+        expect(pushed).toEqual([{ accountId: account.id, update: { lineId, run: 'exp-1', metrics: ['loss'], instanceId: expect.any(String) } }])
         setTrainingCardPush(null)
+    })
+
+    it('reuses an identical card and lists its instance on the run query', async () => {
+        const auth = { authorization: `Bearer ${await token()}`, 'content-type': 'application/json' }
+        await app.request('/api/work/training-runs', {
+            method: 'POST',
+            headers: auth,
+            body: JSON.stringify({ run: 'exp-reuse', machineId: 'gpu', runDir: '/data/wandb/offline-run-reuse' }),
+        })
+        const created = await app.request('/api/work/lines', {
+            method: 'POST',
+            headers: auth,
+            body: JSON.stringify({ name: '复用', primaryMachineId: 'gpu', primaryPath: '/data/reuse' }),
+        })
+        const lineId = (await created.json() as { line: { id: string } }).line.id
+        const first = await app.request('/api/work/layout/workbench/training', {
+            method: 'PUT',
+            headers: auth,
+            body: JSON.stringify({ lineId, run: 'exp-reuse', metrics: ['loss', 'acc'] }),
+        })
+        const second = await app.request('/api/work/layout/workbench/training', {
+            method: 'PUT',
+            headers: auth,
+            body: JSON.stringify({ lineId, run: 'exp-reuse', metrics: ['acc', 'loss'] }),
+        })
+        const firstId = (await first.json() as { instanceId: string }).instanceId
+        expect((await second.json() as { instanceId: string }).instanceId).toBe(firstId)
+        const third = await app.request('/api/work/layout/workbench/training', {
+            method: 'PUT',
+            headers: auth,
+            body: JSON.stringify({ lineId, run: 'exp-reuse', metrics: ['loss'], xAxis: 'loss' }),
+        })
+        const thirdId = (await third.json() as { instanceId: string }).instanceId
+        expect(thirdId).not.toBe(firstId)
+        const summary = await app.request('/api/work/training-runs/exp-reuse', { headers: { authorization: `Bearer ${await token()}` } })
+        expect(await summary.json()).toEqual({
+            unavailable: true,
+            cards: [
+                { instanceId: firstId, lineId, metrics: ['loss', 'acc'] },
+                { instanceId: thirdId, lineId, metrics: ['loss'], xAxis: 'loss' },
+            ],
+        })
     })
 
     it('keeps two cards for one run and unbinds only the named card', async () => {

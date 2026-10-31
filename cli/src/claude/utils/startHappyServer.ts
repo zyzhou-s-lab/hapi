@@ -530,7 +530,7 @@ function createHapiMcpServer(
         return trainingResult(response.status, response.body);
     });
     mcp.registerTool<any, any>('query_training_run', {
-        description: 'Query one registered W&B run. Returns metric names when the runner can read the run.',
+        description: 'Query one registered W&B run. Returns metric names when the runner can read the run, and cards already bound to it (instanceId, lineId, metrics, xAxis). Reuse instanceId instead of binding a duplicate.',
         title: 'Query Training Run',
         inputSchema: z.object({ run: z.string().describe('Registered run name') }),
     }, async (args: { run: string }) => {
@@ -538,13 +538,13 @@ function createHapiMcpServer(
         return trainingResult(response.status, response.body);
     });
     mcp.registerTool<any, any>('bind_training_card', {
-        description: 'Add a training card for a registered run, or update one card when instanceId is set. Omit instanceId to add another card, even for the same run. metrics empty means every metric. xAxis is the card default horizontal axis.',
+        description: 'Add a training card for a registered run, or update one card when instanceId is set. Omit instanceId to add a card; the same line, run, metrics, and xAxis reuses the existing card. metrics empty means every metric. xAxis is the card default horizontal axis.',
         title: 'Bind Training Card',
         inputSchema: z.object({
             lineId: z.string().describe('Work line id'),
             run: z.string().describe('Registered run name'),
             metrics: z.array(z.string()).optional().describe('Metric names to draw. Omit or pass [] to draw every metric.'),
-            instanceId: z.string().optional().describe('Existing card id. Omit to create a new card.'),
+            instanceId: z.string().optional().describe('Existing card id. Omit to create a card, or to reuse one with the same line, run, metrics, and xAxis.'),
             xAxis: z.string().optional().describe('Default x axis id, such as _step or a logged metric.'),
         }),
     }, async (args: { lineId: string; run: string; metrics?: string[]; instanceId?: string; xAxis?: string }) => {

@@ -247,7 +247,12 @@ export function mountWorkLineRoutes(app: Hono<WebAppEnv>, deps: {
                 xAxis: body.xAxis,
             })
             invalidate(ready.account.defaultNamespace, ready.account.id, 'work-layout')
-            pushTrainingCard(ready.account.id, { lineId: body.lineId, run: body.run, metrics, instanceId: bound.instanceId })
+            pushTrainingCard(ready.account.id, {
+                lineId: body.lineId,
+                run: body.run,
+                metrics: storedTrainingMetrics(bound.layout, bound.instanceId),
+                instanceId: bound.instanceId,
+            })
             return c.json({ layout: bound.layout, instanceId: bound.instanceId })
         } catch (error) {
             return mapError(c, error)
@@ -310,12 +315,12 @@ export function mountWorkLineRoutes(app: Hono<WebAppEnv>, deps: {
         if (ready instanceof Response) return ready
         const row = ready.engine.getWorkLines().getTrainingRun(ready.account.id, c.req.param('run'))
         if (!row || !canSeeMachine(ready.account.id, row.machineId)) return c.json({ error: 'Not found' }, 404)
+        const cards = ready.engine.getWorkLines().listTrainingCards(ready.account.id, row.run)
         try {
             const summary = await ready.engine.queryTrainingRun(row.machineId, { run: row.run, runDir: row.runDir })
-            if (!summary || typeof summary !== 'object') return c.json({ unavailable: true })
-            return c.json(summary)
+            return c.json(trainingQueryBody(summary, cards))
         } catch {
-            return c.json({ unavailable: true })
+            return c.json({ unavailable: true, cards })
         }
     })
 
@@ -326,6 +331,31 @@ function mapError(c: { json: (body: unknown, status?: number) => Response }, err
     if (error instanceof WorkMapError) return c.json({ error: error.message }, error.status)
     console.error('[work-lines] request failed', error)
     return c.json({ error: 'Work request failed' }, 500)
+}
+
+function storedTrainingMetrics(layout: { regions: { main?: { cardId: string; args?: { instanceId?: string; metrics?: string } }[] } }, instanceId: string): string[] {
+    const slot = layout.regions.main?.find((item) => item.cardId === 'example.training-curves' && item.args?.instanceId === instanceId)
+    const raw = slot?.args?.metrics
+    if (!raw) return []
+    try {
+        const parsed = JSON.parse(raw) as unknown
+        if (!Array.isArray(parsed)) return []
+        const seen = new Set<string>()
+        const metrics: string[] = []
+        for (const item of parsed) {
+            if (typeof item !== 'string' || seen.has(item)) continue
+            seen.add(item)
+            metrics.push(item)
+        }
+        return metrics
+    } catch {
+        return []
+    }
+}
+
+function trainingQueryBody(summary: unknown, cards: unknown): unknown {
+    if (!summary || typeof summary !== 'object' || Array.isArray(summary)) return { unavailable: true, cards }
+    return { ...summary, cards }
 }
 
 function machineIdFromDirectoryKey(key: string): string {

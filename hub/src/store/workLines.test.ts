@@ -127,6 +127,34 @@ describe('work lines', () => {
             'work_training_runs'
         ])
     })
+
+    it('assigns an id to a legacy card and reuses an identical bind', () => {
+        const lines = open().workLines
+        const line = lines.createLine(1, { name: 'a', primaryMachineId: 'gpu', primaryPath: '/data' })
+        lines.registerTrainingRun(1, { run: 'exp-1', machineId: 'gpu', runDir: '/data/wandb/offline-run-1' })
+        lines.putLayout(1, 'workbench', {
+            revision: 1,
+            regions: {
+                rail: [{ cardId: 'workbench.line-list' }],
+                main: [{ cardId: 'example.training-curves', args: { lineId: line.id, run: 'exp-1', metrics: '["loss","loss"]' } }],
+                side: [{ cardId: 'workbench.sessions' }, { cardId: 'workbench.continue' }],
+            },
+        })
+        const read = lines.getLayout(1, 'workbench')
+        const id = read?.regions.main.find((slot) => slot.cardId === 'example.training-curves')?.args?.instanceId
+        if (!id) throw new Error('missing instance id')
+        expect(lines.getLayout(1, 'workbench')?.regions.main.find((slot) => slot.cardId === 'example.training-curves')?.args?.instanceId).toBe(id)
+        const reused = lines.bindTrainingLine(1, { lineId: line.id, run: 'exp-1', metrics: ['loss'] })
+        expect(reused.instanceId).toBe(id)
+        expect(reused.layout.regions.main.filter((slot) => slot.cardId === 'example.training-curves')).toHaveLength(1)
+        const added = lines.bindTrainingLine(1, { lineId: line.id, run: 'exp-1', metrics: ['loss'], xAxis: '_step' })
+        expect(added.instanceId).not.toBe(id)
+        expect(lines.listTrainingCards(1, 'exp-1')).toEqual([
+            { instanceId: id, lineId: line.id, metrics: ['loss'] },
+            { instanceId: added.instanceId, lineId: line.id, metrics: ['loss'], xAxis: '_step' },
+        ])
+        expect(lines.unbindTrainingCard(1, id!).regions.main.some((slot) => slot.args?.instanceId === id)).toBe(false)
+    })
 })
 
 describe('schema 27', () => {
