@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test'
-import { parseSessionConfigDetail, parseSessionConfigRpc, redactConfigSecrets, SessionInventorySchema } from './sessionInventory'
+import { asMarkdownRedaction, parseSessionConfigDetail, parseSessionConfigRpc, redactConfigSecrets, SessionInventorySchema } from './sessionInventory'
 
 describe('SessionInventorySchema', () => {
     it('keeps names and sources and drops command, url, and token fields', () => {
@@ -62,9 +62,9 @@ describe('SessionInventorySchema', () => {
         const parsed = parseSessionConfigRpc({ success: false, error: `Bearer ${token}" OPENAI_API_KEY=zzsecret GITHUB_TOKEN=zzgithub` })
         expect(parsed.success).toBe(false)
         if (parsed.success) return
-        expect(parsed.error).toContain('Bearer `***`"')
-        expect(parsed.error).toContain('OPENAI_API_KEY=`***`')
-        expect(parsed.error).toContain('GITHUB_TOKEN=`***`')
+        expect(parsed.error).toContain('Bearer ***"')
+        expect(parsed.error).toContain('OPENAI_API_KEY=***')
+        expect(parsed.error).toContain('GITHUB_TOKEN=***')
         expect(parsed.error).not.toContain(token)
         expect(parsed.error).not.toContain('zzsecret')
         expect(parseSessionConfigRpc({ success: false, error: '   ' })).toEqual({ success: false, error: '' })
@@ -78,8 +78,8 @@ describe('SessionInventorySchema', () => {
             script: `GITHUB_TOKEN=zzgithub ${token}`,
             truncated: false,
         })
-        expect(detail.success && detail.kind === 'hook' ? detail.script : '').toBe('GITHUB_TOKEN=`***` `***`')
-        expect(redactConfigSecrets(`prefix ${token}"`)).toBe('prefix `***`"')
+        expect(detail.success && detail.kind === 'hook' ? detail.script : '').toBe('GITHUB_TOKEN=*** ***')
+        expect(redactConfigSecrets(`prefix ${token}"`)).toBe('prefix ***"')
     })
 
     it('redacts hapi_mu tokens without blanking ordinary names', () => {
@@ -89,7 +89,7 @@ describe('SessionInventorySchema', () => {
         const ghp = `ghp_${'d'.repeat(12)}`
         const pat = `github_pat_${'e'.repeat(12)}`
         const slack = `xoxb-${'f'.repeat(12)}`
-        const hidden = '`***`'
+        const hidden = '***'
         expect(redactConfigSecrets(`see ${hapi} ${short} ${sk} ${ghp} ${pat} ${slack}`))
             .toBe(`see ${hidden} ${short} ${hidden} ${hidden} ${hidden} ${hidden}`)
         expect(redactConfigSecrets(hapi)).toBe(hidden)
@@ -97,7 +97,12 @@ describe('SessionInventorySchema', () => {
         expect(redactConfigSecrets('hapi_session_config_detail')).toBe('hapi_session_config_detail')
         expect(redactConfigSecrets('use hapi_change_title_now please')).toBe('use hapi_change_title_now please')
         expect(redactConfigSecrets('mcp__hapi__change_title')).toBe('mcp__hapi__change_title')
-        expect(redactConfigSecrets('useToken = true')).toBe('useToken = true')
+        expect(redactConfigSecrets('PASSWORD=yes')).toBe('PASSWORD=***')
+        expect(redactConfigSecrets('DB_PASSWORD=Yes')).toBe('DB_PASSWORD=***')
+        expect(redactConfigSecrets('SECRET=0')).toBe('SECRET=***')
+        expect(redactConfigSecrets('--token true')).toBe('--token ***')
+        expect(asMarkdownRedaction('TOKEN=***')).toBe('TOKEN=`***`')
+        expect(asMarkdownRedaction('TOKEN=`***`')).toBe('TOKEN=`***`')
         expect(redactConfigSecrets('useToken = false')).toBe('useToken = false')
         expect(redactConfigSecrets('"useToken": "true"')).toBe('"useToken": "true"')
         const secret = ['plain', 'value'].join('-')
@@ -131,7 +136,7 @@ describe('SessionInventorySchema', () => {
             markdown: `OPENAI_API_KEY=zzgithub ${token}`,
             truncated: true,
         })
-        expect(detail.success && detail.kind === 'prompt' ? detail.markdown : '').toBe('OPENAI_API_KEY=`***` `***`')
+        expect(detail.success && detail.kind === 'prompt' ? detail.markdown : '').toBe('OPENAI_API_KEY=*** ***')
         expect(JSON.stringify(parsed)).not.toContain('http')
         expect(JSON.stringify(parsed)).not.toContain('secret')
     })

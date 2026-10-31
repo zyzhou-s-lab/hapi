@@ -80,6 +80,19 @@ describe('useAppGoBack file preview navigation', () => {
         })
     })
 
+    it('returns to the config page when the file was opened from config', () => {
+        routerMocks.pathname = '/sessions/session-1/file'
+        routerMocks.search = { path: 'encoded-path', origin: 'config' }
+        const { result } = renderHook(() => useAppGoBack())
+
+        act(() => result.current())
+
+        expect(routerMocks.navigate).toHaveBeenCalledWith({
+            to: '/sessions/session-1/config',
+            resetScroll: false,
+        })
+    })
+
     it('keeps returning file-browser previews to their previous file context', () => {
         routerMocks.pathname = '/sessions/session-1/file'
         routerMocks.search = {

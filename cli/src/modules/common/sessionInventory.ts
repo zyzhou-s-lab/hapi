@@ -185,7 +185,7 @@ export function dedupeHooks(items: readonly SessionInventoryHook[]): SessionInve
 }
 
 export function inventorySkills(
-    skills: readonly { name: string; description?: string; source?: string; enabled?: boolean }[],
+    skills: readonly { name: string; description?: string; source?: string; enabled?: boolean; filePath?: string }[],
     options?: { catalogUnavailable?: boolean }
 ): NonNullable<SessionInventory['skills']> {
     const items: SessionInventorySkill[] = [];
@@ -199,6 +199,7 @@ export function inventorySkills(
             ...(description ? { description } : {}),
             ...(source ? { source } : {}),
             ...(skill.enabled === false ? { enabled: false } : {}),
+            ...(skill.filePath && !skill.filePath.startsWith('/') && !skill.filePath.includes('..') ? { filePath: skill.filePath } : {}),
         });
         if (items.length >= 400) break;
     }

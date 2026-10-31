@@ -302,4 +302,52 @@ describe('SessionConfigPage', () => {
         expect(screen.getByText(/# Project/)).toBeTruthy()
         expect(screen.queryByRole('switch')).toBeNull()
     })
+
+    it('opens an in-workspace file from the list and keeps injected prompts in the detail', async () => {
+        mocks.getSessionConfig.mockResolvedValue({
+            success: true,
+            mcp: { kind: 'servers', servers: [] },
+            skills: { items: [{ name: 'docs', source: 'project', description: 'Read docs', filePath: '.agents/skills/docs/SKILL.md' }] },
+            hooks: { availability: 'listed', items: [] },
+            prompts: {
+                system: {
+                    availability: 'listed',
+                    items: [{ id: 'sys', role: 'system', scope: 'injected', title: 'append-system-prompt', hasText: true }],
+                },
+                user: {
+                    availability: 'listed',
+                    items: [{
+                        id: 'local',
+                        role: 'user',
+                        scope: 'project',
+                        title: 'CLAUDE.md',
+                        pathLabel: 'CLAUDE.md',
+                        filePath: 'CLAUDE.md',
+                        hasText: true,
+                    }],
+                },
+            },
+        })
+        mocks.getSessionConfigItem.mockResolvedValue({
+            success: true,
+            kind: 'prompt',
+            id: 'sys',
+            title: 'append-system-prompt',
+            markdown: 'Use the title tool.',
+            truncated: false,
+        })
+        renderPage()
+        const locked = await screen.findByRole('switch', { name: 'Enable docs' })
+        expect(locked.parentElement?.getAttribute('title')).toContain('does not honor')
+        fireEvent.click(await screen.findByRole('button', { name: /^CLAUDE\.md/ }))
+        expect(screen.getAllByText('›').length).toBeGreaterThan(0)
+        expect(mocks.navigate).toHaveBeenCalledWith(expect.objectContaining({
+            to: '/sessions/$sessionId/file',
+            params: { sessionId: 'session-1' },
+            search: expect.objectContaining({ origin: 'config', path: expect.any(String) }),
+        }))
+        fireEvent.click(screen.getByRole('button', { name: /append-system-prompt/ }))
+        expect(await screen.findByText('Use the title tool.')).toBeTruthy()
+    })
+
 })

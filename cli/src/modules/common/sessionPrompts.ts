@@ -59,6 +59,7 @@ type Draft = {
     codexCapped?: boolean
     truncated?: boolean
     stripFrontmatter?: boolean
+    filePath?: string
     text?: string
 }
 
@@ -67,6 +68,12 @@ type Body = { text: string; truncated: boolean; stripFrontmatter?: boolean }
 type Collected = {
     prompts: NonNullable<SessionInventory['prompts']>
     body(id: string): (Body & { title: string; load?: 'path' | 'demand'; match?: string; note?: string; codexCapped?: boolean }) | null
+}
+
+export function sessionRelativePath(file: string, cwd: string): string | undefined {
+    const rel = relative(resolve(cwd), resolve(file))
+    if (!rel || rel.startsWith('..') || isAbsolute(rel)) return undefined
+    return rel.split(sep).join('/')
 }
 
 function clip(value: string, max: number): string {
@@ -304,6 +311,7 @@ function pushFile(drafts: Draft[], input: {
         scope: input.scope,
         title: input.title,
         pathLabel: displayPath(input.path, input.cwd, input.home),
+        ...(sessionRelativePath(input.path, input.cwd) ? { filePath: sessionRelativePath(input.path, input.cwd) } : {}),
         ...(input.load ? { load: input.load } : {}),
         ...(input.match ? { match: input.match } : {}),
         note: hasImport(body.text) ? 'no-import' : input.note,
@@ -333,6 +341,7 @@ function finish(drafts: Draft[], note?: string): { items: SessionPromptItem[]; b
             ...(draft.note ? { note: clip(draft.note, 80) } : {}),
             ...(draft.hasText === false ? { hasText: false } : {}),
             ...(draft.codexCapped ? { codexCapped: true } : {}),
+            ...(draft.filePath ? { filePath: clip(draft.filePath, 500) } : {}),
         }
         items.push(item)
         if (draft.hasText !== false && draft.text !== undefined) {
@@ -651,6 +660,7 @@ function collectCursor(input: CollectInput, demandOnly: boolean): Draft[] {
             drafts.push({
                 ...draft,
                 pathLabel: displayPath(abs, cwd, home),
+                ...(sessionRelativePath(abs, cwd) ? { filePath: sessionRelativePath(abs, cwd) } : {}),
                 scope: insideProject ? 'project' : 'user',
                 ...(demandOnly ? { load: 'demand' as const } : {}),
             })
@@ -701,7 +711,7 @@ function collectOpencode(input: CollectInput, live: SessionPromptLive | undefine
             role: 'system',
             scope: 'injected',
             title: 'hapi-instructions.md',
-            ...(file && body ? { pathLabel: displayPath(file, cwd, home) } : {}),
+            ...(file && body ? { pathLabel: displayPath(file, cwd, home), ...(sessionRelativePath(file, cwd) ? { filePath: sessionRelativePath(file, cwd) } : {}) } : {}),
             text: redactConfigSecrets(body?.text ?? getTitleInstruction()),
             ...(body?.truncated ? { truncated: true } : {}),
         })
@@ -803,6 +813,7 @@ function collectOmp(input: CollectInput, live: SessionPromptLive | undefined): C
                 scope: resolve(path).startsWith(resolve(home) + sep) && !resolve(path).startsWith(cwd) ? 'user' : 'project',
                 title: path.split(sep).pop() || 'instructions.md',
                 pathLabel: displayPath(path, cwd, home),
+                ...(sessionRelativePath(path, cwd) ? { filePath: sessionRelativePath(path, cwd) } : {}),
                 load: 'demand',
                 match,
                 text: redactConfigSecrets(body.text),
@@ -877,6 +888,7 @@ function collectOmp(input: CollectInput, live: SessionPromptLive | undefined): C
                 scope: dir === cwd || dir.startsWith(`${cwd}${sep}`) ? 'project' : 'user',
                 title: path.split(sep).pop() || 'rule.md',
                 pathLabel: displayPath(path, cwd, home),
+                ...(sessionRelativePath(path, cwd) ? { filePath: sessionRelativePath(path, cwd) } : {}),
                 load: 'demand',
                 match: triggers.join(' | '),
                 text: redactConfigSecrets(body.text),

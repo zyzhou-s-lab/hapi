@@ -13,6 +13,8 @@ import { PRESERVE_SESSION_SIDEBAR_SCROLL } from '@/lib/sessionNavigation'
 import { transferComposerDraftThenNavigate } from '@/lib/composer-draft-transfer'
 import { useTranslation } from '@/lib/use-translation'
 import { formatSessionConfigError } from '@/lib/sessionConfigError'
+import { encodeBase64 } from '@/lib/utils'
+import { asMarkdownRedaction } from '@hapi/protocol/schemas'
 import { queryKeys } from '@/lib/query-keys'
 import {
     hooksSection,
@@ -72,14 +74,19 @@ function sectionMessage(section: InventorySection, t: (key: string) => string): 
 
 function ConfigSwitch(props: { row: InventoryRow; pending: boolean; onToggle: (enabled: boolean) => void }) {
     const { t } = useTranslation()
-    return (
+    const reason = props.row.lock === 'unsupported'
+        ? t('session.config.unsupported')
+        : props.row.lock
+            ? t('session.config.locked')
+            : undefined
+    const button = (
         <button
             type="button"
             role="switch"
             aria-checked={props.row.enabled}
             aria-label={t('session.config.toggle', { name: props.row.title })}
             disabled={!props.row.mutable || props.pending}
-            title={props.row.lock === 'unsupported' ? t('session.config.unsupported') : props.row.mutable ? t('session.config.effect') : t('session.config.locked')}
+            title={reason ?? t('session.config.effect')}
             onClick={(event) => {
                 event.stopPropagation()
                 props.onToggle(!props.row.enabled)
@@ -89,6 +96,7 @@ function ConfigSwitch(props: { row: InventoryRow; pending: boolean; onToggle: (e
             <span className={`absolute top-0.5 h-4 w-4 rounded-full bg-[var(--app-bg)] ${props.row.enabled ? 'left-4' : 'left-0.5'}`} />
         </button>
     )
+    return reason ? <span title={reason} className="inline-flex">{button}</span> : button
 }
 
 function ConfigSection(props: {
@@ -103,16 +111,15 @@ function ConfigSection(props: {
     return (
         <section>
             <h2 className="mb-2 text-base font-semibold text-[var(--app-fg)]">{props.title}</h2>
-
             <div className="overflow-hidden rounded-lg border border-[var(--app-border)] bg-[var(--app-bg)]">
                 {message ? (
                     <p className="px-3 py-4 text-sm text-[var(--app-hint)]">{message}</p>
                 ) : props.section.status === 'list' ? (
                     <ul>
                         {props.section.rows.map((item) => (
-                            <li key={item.key} className="flex items-center gap-3 border-b border-[var(--app-divider)] px-3 py-2 last:border-b-0">
+                            <li key={item.key} className={`flex items-center gap-3 border-b border-[var(--app-divider)] px-3 py-2 last:border-b-0 ${item.openable ? 'cursor-pointer hover:bg-[var(--app-subtle-bg)]' : ''}`}>
                                 {item.openable ? (
-                                    <button type="button" className="min-w-0 flex-1 text-left" onClick={() => props.onOpen(item)}>
+                                    <button type="button" className="min-w-0 flex-1 cursor-pointer text-left" onClick={() => props.onOpen(item)}>
                                         <div className="flex min-w-0 items-baseline gap-2">
                                             <span className="max-w-[45%] shrink-0 truncate text-sm text-[var(--app-fg)]">{promptTitle(item.title, t)}</span>
                                             {item.detail ? (
@@ -153,6 +160,7 @@ function ConfigSection(props: {
                                         {t(`session.config.prompt.scope.${item.scopeLabel}`)}
                                     </span>
                                 ) : null}
+                                {item.openable ? <span aria-hidden="true" className="shrink-0 text-sm text-[var(--app-hint)]">›</span> : null}
                             </li>
                         ))}
                     </ul>
@@ -175,7 +183,7 @@ function ConfigDetail(props: { detail: Extract<SessionConfigDetailResult, { succ
                         <pre className="overflow-x-auto whitespace-pre-wrap font-mono text-xs text-[var(--app-hint)]">{t('session.config.prompt.frontmatter')}{'\n'}{detail.frontmatter}</pre>
                     ) : null}
                     {detail.truncated ? <p className="text-xs text-[var(--app-hint)]">{t('session.config.truncated')}</p> : null}
-                    <FileMarkdownView content={detail.markdown} />
+                    <FileMarkdownView content={asMarkdownRedaction(detail.markdown)} />
                 </>
             ) : null}
             {detail.kind === 'mcp' ? (
@@ -264,6 +272,20 @@ export default function SessionConfigPage() {
         }
     }
 
+    const openRow = (row: InventoryRow) => {
+        if (!row.filePath) {
+            setSelected(row)
+            return
+        }
+        void navigate({
+            to: '/sessions/$sessionId/file',
+            params: { sessionId },
+            search: { path: encodeBase64(row.filePath), origin: 'config' },
+            ...PRESERVE_SESSION_SIDEBAR_SCROLL,
+        })
+    }
+
+
     const pageError = error ?? toggleError
     return (
         <div className="flex h-full min-h-0 flex-col">
@@ -350,11 +372,11 @@ export default function SessionConfigPage() {
                     </div>
                 ) : (
                     <div className="mx-auto flex w-full max-w-content flex-col gap-6 p-4">
-                        <ConfigSection title={t('session.config.systemPrompt')} section={systemPrompt} pendingKey={pendingKey} onOpen={setSelected} onToggle={(row, enabled) => { void toggle(row, enabled) }} />
-                        <ConfigSection title={t('session.config.userPrompt')} section={userPrompt} pendingKey={pendingKey} onOpen={setSelected} onToggle={(row, enabled) => { void toggle(row, enabled) }} />
-                        <ConfigSection title={t('session.config.mcp')} section={mcp} pendingKey={pendingKey} onOpen={setSelected} onToggle={(row, enabled) => { void toggle(row, enabled) }} />
-                        <ConfigSection title={t('session.config.skills')} section={skills} pendingKey={pendingKey} onOpen={setSelected} onToggle={(row, enabled) => { void toggle(row, enabled) }} />
-                        <ConfigSection title={t('session.config.hooks')} section={hooks} pendingKey={pendingKey} onOpen={setSelected} onToggle={(row, enabled) => { void toggle(row, enabled) }} />
+                        <ConfigSection title={t('session.config.systemPrompt')} section={systemPrompt} pendingKey={pendingKey} onOpen={openRow} onToggle={(row, enabled) => { void toggle(row, enabled) }} />
+                        <ConfigSection title={t('session.config.userPrompt')} section={userPrompt} pendingKey={pendingKey} onOpen={openRow} onToggle={(row, enabled) => { void toggle(row, enabled) }} />
+                        <ConfigSection title={t('session.config.mcp')} section={mcp} pendingKey={pendingKey} onOpen={openRow} onToggle={(row, enabled) => { void toggle(row, enabled) }} />
+                        <ConfigSection title={t('session.config.skills')} section={skills} pendingKey={pendingKey} onOpen={openRow} onToggle={(row, enabled) => { void toggle(row, enabled) }} />
+                        <ConfigSection title={t('session.config.hooks')} section={hooks} pendingKey={pendingKey} onOpen={openRow} onToggle={(row, enabled) => { void toggle(row, enabled) }} />
                     </div>
                 )}
             </div>

@@ -1,5 +1,5 @@
 import { access, open, readdir, readFile, stat } from 'fs/promises';
-import { basename, dirname, join, resolve, sep } from 'path';
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'path';
 import { homedir } from 'os';
 import { parse as parseYaml } from 'yaml';
 
@@ -328,14 +328,19 @@ async function discoverSkills(workingDirectory?: string, options: { flavor?: str
     return [...dedupedSkills.values()].sort((a, b) => a.name.localeCompare(b.name));
 }
 
-export async function listInventorySkills(workingDirectory?: string, options: { flavor?: string } = {}): Promise<Array<SkillSummary & { enabled?: boolean }>> {
+export async function listInventorySkills(workingDirectory?: string, options: { flavor?: string } = {}): Promise<Array<SkillSummary & { enabled?: boolean; filePath?: string }>> {
     const skills = await discoverSkills(workingDirectory, options);
-    return skills.map(({ name, description, source, enabled }) => ({
-        name,
-        ...(description ? { description } : {}),
-        ...(source ? { source } : {}),
-        ...(enabled ? {} : { enabled: false }),
-    }));
+    return skills.map(({ name, description, source, enabled, filePath }) => {
+        const rel = workingDirectory ? relative(resolve(workingDirectory), resolve(filePath)) : ''
+        const inside = Boolean(rel) && !rel.startsWith('..') && !isAbsolute(rel)
+        return {
+            name,
+            ...(description ? { description } : {}),
+            ...(source ? { source } : {}),
+            ...(enabled ? {} : { enabled: false }),
+            ...(inside ? { filePath: rel.split(sep).join('/') } : {}),
+        }
+    });
 }
 
 export async function findSkill(

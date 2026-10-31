@@ -26,8 +26,8 @@ const reported: SessionInventory = {
 
 describe('session inventory view', () => {
     it('redacts secrets in a preview instead of dropping the line', () => {
-        const hidden = '`***`'
-        expect(visibleInventoryText('see https://example.test token=abc')).toBe(`see token=${hidden}`)
+        const hidden = '***'
+        expect(visibleInventoryText('see https://example.test token=abc and kept')).toBe(`see token=${hidden} and kept`)
         const secret = ['plain', 'value'].join('-')
         const preview = visibleInventoryText(`hapi_session_config_detail useToken = true CLI_API_TOKEN=${secret}`)
         expect(preview).toContain('hapi_session_config_detail')

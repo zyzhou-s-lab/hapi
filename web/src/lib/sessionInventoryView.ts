@@ -17,6 +17,7 @@ export type InventoryRow = {
     note?: string
     codexCapped?: boolean
     ref: SessionConfigItemSelector
+    filePath?: string
 }
 
 export type InventorySection =
@@ -48,8 +49,7 @@ export function visibleInventoryText(value: string | undefined): string | undefi
         .replace(/https?:\/\/\S+/gi, '')
         .replace(/\s+/g, ' ')
         .trim()
-    if (!text || /:\/\//.test(text)) return undefined
-    return text
+    return text || undefined
 }
 
 function row(
@@ -59,6 +59,7 @@ function row(
     ref: SessionConfigItemSelector,
     enabled: boolean | undefined,
     flavor: string | null | undefined,
+    filePath?: string,
 ): InventoryRow | null {
     const visibleTitle = visibleInventoryText(title)
     if (!visibleTitle) return null
@@ -76,6 +77,7 @@ function row(
         toggle: true,
         openable: true,
         ref: { ...ref, ...(visibleSource ? { source: visibleSource } : {}) },
+        ...(filePath ? { filePath } : {}),
     }
 }
 
@@ -118,7 +120,7 @@ export function skillsSection(inventory: SessionInventory | null | undefined, fl
     if (!skills) return { status: 'unreported' }
     if (skills.catalogUnavailable) return { status: 'catalogUnavailable' }
     return rowsOrEmpty(skills.items.flatMap((skill) => {
-        const next = row(skill.name, skill.source, skill.description, { kind: 'skill', name: skill.name, source: skill.source }, skill.enabled, flavor)
+        const next = row(skill.name, skill.source, skill.description, { kind: 'skill', name: skill.name, source: skill.source }, skill.enabled, flavor, skill.filePath)
         return next ? [next] : []
     }))
 }
@@ -142,6 +144,7 @@ function promptRow(item: SessionPromptItem): InventoryRow | null {
         ...(item.load ? { load: item.load } : {}),
         ...(item.match ? { match: item.match } : {}),
         ...(item.codexCapped ? { codexCapped: true } : {}),
+        ...(item.filePath ? { filePath: item.filePath } : {}),
         ref: { kind: 'prompt', id: item.id },
     }
 }

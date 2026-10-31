@@ -61,6 +61,13 @@ export function useAppGoBack(): () => void {
                 })
                 return
             }
+            if (origin === 'config') {
+                navigate({
+                    to: pathname.replace(/\/file$/, '/config'),
+                    ...PRESERVE_SESSION_SIDEBAR_SCROLL,
+                })
+                return
+            }
 
             const filesPath = pathname.replace(/\/file$/, '/files')
             navigate({

@@ -37,7 +37,7 @@ describe('session prompts', () => {
         expect(rule?.load).toBe('path')
         expect(rule?.match).toBe('src/**/*.ts')
         const claude = user.find((item) => item.title === 'CLAUDE.md')
-        expect(claude?.preview).toContain('OPENAI_API_KEY=`***`')
+        expect(claude?.preview).toContain('OPENAI_API_KEY=***')
         expect(claude?.preview).not.toContain('zzsecret')
         expect(prompts?.system?.items[0]?.title).toBe('append-system-prompt')
         expect(prompts?.system?.note).toBe('claude-builtin')
@@ -57,6 +57,8 @@ describe('session prompts', () => {
         expect(files.some((item) => item.scope === 'project' && item.pathLabel === '~/.claude/CLAUDE.md')).toBe(false)
         expect(userFile?.preview).toContain('user home file')
         expect(projectFile?.pathLabel).toBe('~/repo/CLAUDE.md')
+        expect(projectFile?.filePath).toBe('CLAUDE.md')
+        expect(userFile?.filePath).toBeUndefined()
     })
 
     it('strips rule frontmatter from the detail and keeps it as metadata', () => {
