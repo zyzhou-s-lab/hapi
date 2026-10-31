@@ -136,14 +136,14 @@ command = "my-hook --token abc"
                 },
             })
             const byName = Object.fromEntries((config.mcp?.servers ?? []).map((server) => [server.name, server]))
-            expect(byName.notion).toMatchObject({ source: 'user', loaded: true })
+            expect(byName.notion).toMatchObject({ source: 'user', loaded: false })
             expect(byName.notion?.filePath).toContain('mcp.json')
             expect(byName.notion?.line).toBeGreaterThan(0)
             expect(byName.idle).toMatchObject({ source: 'user', loaded: false })
             expect(byName.fromSettings?.filePath).toContain('settings.json')
             expect(byName.fromSettings?.loaded).toBe(false)
             expect(byName.projectServer).toMatchObject({ source: 'project', loaded: false, filePath: '.mcp.json' })
-            expect(byName.extra_probe).toBeUndefined()
+            expect(byName.extra_probe).toMatchObject({ source: 'tool', loaded: true })
             const encoded = JSON.stringify(config.mcp)
             expect(encoded).not.toContain('sekret')
             expect(encoded).not.toContain('127.0.0.1')
@@ -157,33 +157,65 @@ command = "my-hook --token abc"
         }
     })
 
-    it('does not treat an omp dumpTools mcp prefix as loaded when the prompt never names the server', async () => {
-        const workspace = mkdtempSync(join(tmpdir(), 'hapi-omp-mcp-prompt-'))
-        const agent = mkdtempSync(join(tmpdir(), 'hapi-omp-agent-prompt-'))
+    it('loads an omp server only when its own handshake answers', async () => {
+        const workspace = mkdtempSync(join(tmpdir(), 'hapi-omp-mcp-probe-'))
+        const agent = mkdtempSync(join(tmpdir(), 'hapi-omp-agent-probe-'))
         const previous = process.env.PI_CODING_AGENT_DIR
         process.env.PI_CODING_AGENT_DIR = agent
+        const answering = join(agent, 'answer.cjs')
+        const dead = join(agent, 'dead.cjs')
+        writeFileSync(answering, `
+            const readline = require('node:readline')
+            const rl = readline.createInterface({ input: process.stdin })
+            rl.on('line', (line) => {
+                let msg
+                try { msg = JSON.parse(line) } catch { return }
+                if (!msg || !msg.id) return
+                if (msg.method === 'initialize') {
+                    process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result: { protocolVersion: '2025-06-18', capabilities: {} } }) + '\\n')
+                } else if (msg.method === 'tools/list') {
+                    process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result: { tools: [{ name: 'ping', description: 'p' }] } }) + '\\n')
+                }
+            })
+        `)
+        writeFileSync(dead, 'process.exit(1)\n')
         writeFileSync(join(agent, 'mcp.json'), JSON.stringify({
             mcpServers: {
-                notion: { command: 'true' },
-                'android-remote-control-mi10pro': { command: 'true' },
+                git: { command: 'true' },
+                memory: { command: 'true' },
+                time: { command: 'true' },
+                android: { command: process.execPath, args: [dead] },
+                android_remote_control: { command: process.execPath, args: [answering] },
+                idle: { command: 'true' },
             },
         }))
         try {
-            const missingPrompt = await readLiveSessionConfig({
-                flavor: 'omp',
-                cwd: workspace,
-                tools: ['mcp__notion__search'],
-            })
-            expect(missingPrompt.mcp?.servers.find((server) => server.name === 'notion')?.loaded).toBeUndefined()
             const config = await readLiveSessionConfig({
                 flavor: 'omp',
                 cwd: workspace,
-                tools: ['mcp__notion__search'],
-                promptLive: { omp: { systemPrompt: ['device mcp__android_remote_control_mi10pro_android_tap'] } },
+                tools: ['read', 'mcp__extra_probe', 'mcp__android__tap'],
+                promptLive: {
+                    omp: {
+                        systemPrompt: [
+                            'You can use git and memory. Check the time.',
+                            '## MCP Server Instructions\n### git\n### idle\n### android',
+                            'mcp__android__tap and mcp__android_remote_control__tap',
+                            'Warning: MCP server "idle" not ready after 30000ms; its tools are unavailable for this run.',
+                            'Warning: MCP server "android_remote_control" failed to connect: disconnected; its tools are unavailable for this run.',
+                            'MCP server "idle" failed to connect: v1.2 failed. Its tools are unavailable until the client restarts the session.',
+                            "MCP server 'idle' failed",
+                        ],
+                    },
+                },
             })
-            const byName = Object.fromEntries((config.mcp?.servers ?? []).map((server) => [server.name, server]))
-            expect(byName.notion?.loaded).toBe(false)
-            expect(byName['android-remote-control-mi10pro']?.loaded).toBe(true)
+            const byName = Object.fromEntries((config.mcp?.servers ?? []).map((server) => [server.name, server.loaded]))
+            expect(byName.git).toBe(false)
+            expect(byName.memory).toBe(false)
+            expect(byName.time).toBe(false)
+            expect(byName.android).toBe(false)
+            expect(byName.android_remote_control).toBe(true)
+            expect(byName.idle).toBe(false)
+            expect(byName.extra_probe).toBe(true)
         } finally {
             if (previous === undefined) delete process.env.PI_CODING_AGENT_DIR
             else process.env.PI_CODING_AGENT_DIR = previous

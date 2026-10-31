@@ -102,6 +102,7 @@ function ConfigSwitch(props: { row: InventoryRow; pending: boolean; onToggle: (e
 
 function RowText(props: { item: InventoryRow }) {
     const { t } = useTranslation()
+    const reason = lockReason(props.item, t)
     return (
         <>
             <div className="flex min-w-0 items-baseline gap-2">
@@ -110,6 +111,7 @@ function RowText(props: { item: InventoryRow }) {
                     <span className="min-w-0 truncate text-xs text-[var(--app-hint)]">{promptPathLabel(props.item.detail, t)}</span>
                 ) : null}
             </div>
+            {reason ? <div className="text-[11px] leading-4 text-[var(--app-hint)]">{reason}</div> : null}
             {props.item.preview ? (
                 <div className="truncate text-xs text-[var(--app-hint)]">{props.item.preview}</div>
             ) : null}

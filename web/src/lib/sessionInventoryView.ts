@@ -170,6 +170,7 @@ function promptRow(item: SessionPromptItem): InventoryRow | null {
         toggle: false,
         openable: Boolean(item.filePath),
         ...(item.load ? { load: item.load } : {}),
+        ...(item.loaded === undefined ? {} : { loaded: item.loaded }),
         ...(item.match ? { match: item.match } : {}),
         ...(item.codexCapped ? { codexCapped: true } : {}),
         ...(item.filePath ? { filePath: item.filePath } : {}),

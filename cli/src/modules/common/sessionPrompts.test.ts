@@ -248,7 +248,43 @@ describe('session prompts', () => {
         expect(user.find((item) => item.title === 'api.mdc')?.match).toContain('src/**/*.ts')
         expect(user.find((item) => item.title === 'style.instructions.md')?.match).toContain('**/*.ts')
         expect(user.find((item) => item.title === 'careful.md')?.match).toContain('rm -rf')
-        expect(user.find((item) => item.title === 'AGENTS.md')?.load).toBe('demand')
+        expect(user.find((item) => item.title === 'AGENTS.md')?.load).toBeUndefined()
+        expect(user.find((item) => item.title === 'AGENTS.md')?.loaded).toBe(false)
+    })
+
+    it('marks an omp instruction loaded only when the system prompt has its path or text', () => {
+        const home = tempDir()
+        const parent = tempDir()
+        const cwd = join(parent, 'repo')
+        mkdirSync(join(cwd, '.git'), { recursive: true })
+        mkdirSync(join(cwd, '.omp'), { recursive: true })
+        mkdirSync(join(home, 'agent'), { recursive: true })
+        const projectText = 'Project agents text that is long enough to match.'
+        writeFileSync(join(cwd, 'AGENTS.md'), projectText)
+        writeFileSync(join(parent, 'AGENTS.md'), 'Parent agents text that omp does not walk past the git root.')
+        writeFileSync(join(cwd, '.omp', 'AGENTS.md'), 'Nearest omp agents text that is also long enough.')
+        writeFileSync(join(home, 'agent', 'AGENTS.md'), 'User agent instructions that are long enough to match.')
+        const prompts = titles(cwd, home, 'omp', {
+            flavor: 'omp',
+            cwd,
+            home,
+            env: { PI_CODING_AGENT_DIR: join(home, 'agent') },
+            promptLive: {
+                omp: {
+                    systemPrompt: [
+                        projectText,
+                        join(home, 'agent', 'AGENTS.md'),
+                    ],
+                },
+            },
+        })
+        const user = prompts?.user?.items ?? []
+        const byPath = Object.fromEntries(user.filter((item) => item.title === 'AGENTS.md').map((item) => [item.pathLabel, item.loaded]))
+        expect(byPath['AGENTS.md']).toBe(true)
+        expect(byPath['.omp/AGENTS.md']).toBe(false)
+        expect(byPath['~/agent/AGENTS.md']).toBe(true)
+        expect(user.some((item) => item.pathLabel?.includes('Parent'))).toBe(false)
+        expect(user.every((item) => item.title !== 'AGENTS.md' || item.load === undefined)).toBe(true)
     })
 
     it('reports no user files for flavors that do not read them', () => {

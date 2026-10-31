@@ -14,6 +14,7 @@ import {
 import { buildHookSettings, readMachineClaudeSettings } from '@/modules/common/hooks/generateHookSettings';
 import { listInventorySkills } from '@/modules/common/skills';
 import { collectSessionPrompts, getSessionPromptLive, type SessionPromptLive } from './sessionPrompts';
+import { checkMcpServers, probeTargetsFromConfig, type McpProbeTarget } from './mcpServerCheck';
 import { lineOfJsonKey, lineOfSnippet, listedConfigFilePath, tryRealpath } from './configFilePath';
 
 const MAX_CONFIG_BYTES = 1_000_000;
@@ -432,23 +433,52 @@ export function withMcpLoadState(servers: readonly SessionInventoryMcpServer[], 
     return dedupeServers([...servers, ...extras]).map((server) => ({ ...server, loaded: loaded.has(server.name) }));
 }
 
-const MCP_FAILURE_MENTION = /MCP server "[^"]+"[^\n.]*(?:failed|not ready|timed out|unavailable)[^\n.]*/gi
-
-/** omp 18.12.6 keeps MCP tools out of dumpTools. A server counts as loaded when its name is in the live system prompt, not when a failure line mentions it. */
-export function ompSystemPromptNamesServer(name: string, parts: readonly string[]): boolean {
-    const text = parts.join('\n').replace(MCP_FAILURE_MENTION, ' ')
-    const forms = new Set([name, name.replaceAll('-', '_'), name.replaceAll('_', '-')])
-    for (const form of forms) {
-        if (!form) continue
-        const escaped = form.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-        if (new RegExp(`(?<![A-Za-z0-9])${escaped}(?![A-Za-z0-9])`).test(text)) return true
+function ompProbeTargets(cwd: string): McpProbeTarget[] {
+    const dir = process.env.PI_CODING_AGENT_DIR?.trim() || join(homedir(), '.omp', 'agent');
+    const seen = new Set<string>();
+    const targets: McpProbeTarget[] = [];
+    for (const path of [join(dir, 'mcp.json'), join(dir, 'settings.json'), ...projectMcpPaths(cwd)]) {
+        const text = readTextFile(path);
+        if (!text) continue;
+        let parsed: unknown;
+        try {
+            parsed = JSON.parse(text);
+        } catch {
+            continue;
+        }
+        for (const target of probeTargetsFromConfig(parsed)) {
+            if (seen.has(target.name)) continue;
+            seen.add(target.name);
+            targets.push(target);
+        }
     }
-    return false
+    return targets;
 }
 
-export function withOmpPromptLoadState(servers: readonly SessionInventoryMcpServer[], prompt: readonly string[] | undefined): SessionInventoryMcpServer[] {
-    if (!prompt) return servers.map((server) => ({ ...server }))
-    return servers.map((server) => ({ ...server, loaded: ompSystemPromptNamesServer(server.name, prompt) }))
+/** omp servers are loaded only when a Magpie-style handshake answers. A server seen only as a tool name stays on the list. */
+async function withOmpCheckedLoadState(
+    servers: readonly SessionInventoryMcpServer[],
+    tools: readonly string[] | undefined,
+    cwd: string,
+): Promise<SessionInventoryMcpServer[]> {
+    const known = new Set(servers.map((server) => server.name));
+    const extras = tools
+        ? withMcpLoadState([], tools).filter((server) => !known.has(server.name))
+        : [];
+    const byName = new Map(ompProbeTargets(cwd).map((target) => [target.name, target]));
+    const probing = servers.flatMap((server) => {
+        if (server.enabled === false) return [];
+        const target = byName.get(server.name);
+        return target ? [target] : [];
+    });
+    const loaded = await checkMcpServers(probing);
+    return [
+        ...servers.map((server) => ({
+            ...server,
+            loaded: server.enabled !== false && loaded.get(server.name) === true,
+        })),
+        ...extras,
+    ];
 }
 
 export function ompInventoryFromTools(tools: readonly string[]): SessionInventoryPatch {
@@ -883,7 +913,7 @@ export async function readLiveSessionConfig(input: {
         ? {
             kind: 'servers' as const,
             servers: flavor === 'omp'
-                ? withOmpPromptLoadState(sections.mcp.servers, promptLive.omp?.systemPrompt)
+                ? await withOmpCheckedLoadState(sections.mcp.servers, input.tools, input.cwd)
                 : withMcpLoadState(sections.mcp.servers, input.tools),
         }
         : undefined;

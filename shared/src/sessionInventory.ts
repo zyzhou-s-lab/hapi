@@ -61,6 +61,7 @@ export const SessionPromptItemSchema = z.object({
     preview: z.string().max(160).optional(),
     truncated: z.boolean().optional(),
     load: SessionPromptLoadSchema.optional(),
+    loaded: z.boolean().optional(),
     match: z.string().max(300).optional(),
     note: z.string().max(80).optional(),
     hasText: z.boolean().optional(),
