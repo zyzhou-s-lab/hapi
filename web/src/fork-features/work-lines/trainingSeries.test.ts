@@ -109,6 +109,38 @@ describe('training series', () => {
         expect(decay.drawable[0]?.values).toEqual([0.2, 0.5, 0.9])
     })
 
+    it('leaves null gaps where a sparse metric has no sample', () => {
+        const sparse = prepareTrainingPlot([
+            { id: 'loss', name: 'loss', points: [{ step: 1, value: 1 }, { step: 2, value: 0.5 }, { step: 3, value: 0.2 }] },
+            { id: 'eval', name: 'eval', points: [{ step: 2, value: 0.4 }] },
+        ], {
+            hidden: new Set(),
+            smooth: false,
+            log: false,
+            alpha: 0.6,
+        })
+        expect(sparse.steps).toEqual([1, 2, 3])
+        expect(sparse.drawable.map((row) => row.values)).toEqual([
+            [1, 0.5, 0.2],
+            [null, 0.4, null],
+        ])
+        const custom = prepareTrainingPlot([
+            { id: 'loss', name: 'loss', points: [{ step: 1, value: 1 }, { step: 2, value: 0.5 }, { step: 3, value: 0.2 }] },
+            { id: 'eval', name: 'eval', points: [{ step: 1, value: 0.8 }, { step: 3, value: 0.3 }] },
+        ], {
+            hidden: new Set(),
+            smooth: false,
+            log: false,
+            alpha: 0.6,
+            xAxis: 'epoch',
+            xSource: [
+                { id: 'epoch', name: 'epoch', points: [{ step: 1, value: 0 }, { step: 2, value: 1 }, { step: 3, value: 2 }] },
+            ],
+        })
+        expect(custom.steps).toEqual([0, 1, 2])
+        expect(custom.drawable.find((row) => row.id === 'eval')?.values).toEqual([0.8, null, 0.3])
+    })
+
     it('names one or two selected metrics and counts the rest', () => {
         expect(trainingMetricSelection([])).toEqual({ kind: 'none' })
         expect(trainingMetricSelection(['loss'])).toEqual({ kind: 'names', text: 'loss' })

@@ -4,37 +4,30 @@ import 'uplot/dist/uPlot.min.css'
 import { useTranslation } from '@/lib/use-translation'
 import { TRAINING_X_RUNTIME, TRAINING_X_STEP, TRAINING_X_WALL, prepareTrainingPlot, trainingCustomXAxes, trainingMetricSelection, type TrainingSeries } from '../trainingSeries'
 import { pushTrainingChartData, type ZoomableChart } from './chartUpdate'
+import { readTrainingHidden, readTrainingXAxis, trainingBrowserStore, writeTrainingHidden, writeTrainingXAxis } from './trainingPrefs'
 
 const STROKES = ['#2563eb', '#dc2626', '#059669', '#d97706', '#7c3aed', '#0891b2']
 const SMOOTH_ALPHA = 0.6
-const X_AXIS_STORAGE_KEY = 'hapi.training.xAxis'
 
-function storedXAxis(): string {
-    try {
-        return window.localStorage.getItem(X_AXIS_STORAGE_KEY) || TRAINING_X_STEP
-    } catch {
-        return TRAINING_X_STEP
-    }
-}
-
-function rememberXAxis(value: string): void {
-    try {
-        window.localStorage.setItem(X_AXIS_STORAGE_KEY, value)
-    } catch {
-        // Private mode or a full quota. The in-memory choice still applies.
-    }
-}
 function span(min: number, max: number, log: boolean): { min: number; max: number } {
     if (min !== max) return { min, max }
     return log ? { min: min / 2, max: min * 2 } : { min: min - 1, max: max + 1 }
 }
 
-export function TrainingChart(props: { series: TrainingSeries[], xSource?: readonly TrainingSeries[] }): ReactNode {
+export function TrainingChart(props: { series: TrainingSeries[], xSource?: readonly TrainingSeries[], run?: string }): ReactNode {
     const { t } = useTranslation()
-    const [hidden, setHidden] = useState<ReadonlySet<string>>(new Set())
+    const run = props.run ?? ''
+    const store = trainingBrowserStore()
+    const [prefsRun, setPrefsRun] = useState(run)
+    const [hidden, setHidden] = useState<ReadonlySet<string>>(() => readTrainingHidden(run, store))
     const [smooth, setSmooth] = useState(false)
     const [log, setLog] = useState(false)
-    const [xAxis, setXAxis] = useState(storedXAxis)
+    const [xAxis, setXAxis] = useState(() => readTrainingXAxis(run, store))
+    if (prefsRun !== run) {
+        setPrefsRun(run)
+        setHidden(readTrainingHidden(run, store))
+        setXAxis(readTrainingXAxis(run, store))
+    }
     const host = useRef<HTMLDivElement>(null)
     const metricsRef = useRef<HTMLDivElement>(null)
     const [metricsOpen, setMetricsOpen] = useState(false)
@@ -55,6 +48,7 @@ export function TrainingChart(props: { series: TrainingSeries[], xSource?: reado
     const preparedRef = useRef(prepared)
     preparedRef.current = prepared
     const shape = `${activeX}:${log ? 1 : 0}:${[...hidden].sort().join(',')}:${prepared.drawable.map((row) => row.id).join(',')}`
+    const noneSelected = props.series.length > 0 && props.series.every((row) => hidden.has(row.id))
 
     useEffect(() => {
         const element = host.current
@@ -76,6 +70,7 @@ export function TrainingChart(props: { series: TrainingSeries[], xSource?: reado
                     label: row.name,
                     stroke: STROKES[index % STROKES.length],
                     width: 2,
+                    spanGaps: true,
                     points: { show: false },
                 })),
             ],
@@ -120,17 +115,23 @@ export function TrainingChart(props: { series: TrainingSeries[], xSource?: reado
         const close = (event: PointerEvent) => {
             if (!metricsRef.current?.contains(event.target as Node)) setMetricsOpen(false)
         }
+        const onKey = (event: KeyboardEvent) => {
+            if (event.key === 'Escape') setMetricsOpen(false)
+        }
         document.addEventListener('pointerdown', close)
-        return () => document.removeEventListener('pointerdown', close)
+        document.addEventListener('keydown', onKey)
+        return () => {
+            document.removeEventListener('pointerdown', close)
+            document.removeEventListener('keydown', onKey)
+        }
     }, [metricsOpen])
 
     const toggle = (id: string) => {
-        setHidden((current) => {
-            const next = new Set(current)
-            if (next.has(id)) next.delete(id)
-            else next.add(id)
-            return next
-        })
+        const next = new Set(hidden)
+        if (next.has(id)) next.delete(id)
+        else next.add(id)
+        setHidden(next)
+        writeTrainingHidden(run, next, store)
     }
 
     return (
@@ -138,7 +139,16 @@ export function TrainingChart(props: { series: TrainingSeries[], xSource?: reado
             <div className="mb-2 flex flex-wrap items-center gap-3 text-xs text-[var(--app-fg)]">
                 <label className="flex items-center gap-1">
                     {t('work.trainingXAxis')}
-                    <select className="rounded border border-[var(--app-divider)] bg-transparent px-1 py-0.5" value={activeX} onChange={(event) => { setXAxis(event.target.value); rememberXAxis(event.target.value) }}>
+                    <select
+                        className="rounded border border-[var(--app-divider)] bg-transparent px-1 py-0.5"
+                        value={activeX}
+                        title={prepared.pointsOnly ? t('work.trainingXSorted') : undefined}
+                        onChange={(event) => {
+                            const value = event.target.value
+                            setXAxis(value)
+                            writeTrainingXAxis(run, value, store)
+                        }}
+                    >
                         <option value={TRAINING_X_STEP}>{t('work.trainingXStep')}</option>
                         <option value={TRAINING_X_RUNTIME}>{t('work.trainingXRuntime')}</option>
                         <option value={TRAINING_X_WALL}>{t('work.trainingXWall')}</option>
@@ -149,14 +159,14 @@ export function TrainingChart(props: { series: TrainingSeries[], xSource?: reado
                     <button
                         type="button"
                         aria-expanded={metricsOpen}
-                        aria-haspopup="listbox"
+                        aria-haspopup="true"
                         className="rounded border border-[var(--app-divider)] bg-transparent px-1 py-0.5"
                         onClick={() => setMetricsOpen((open) => !open)}
                     >
                         {metricButtonLabel(props.series.filter((row) => !hidden.has(row.id)).map((row) => row.name), t)}
                     </button>
                     {metricsOpen ? (
-                        <div className="absolute left-0 top-full z-20 mt-1 min-w-40 rounded-md border border-[var(--app-border)] bg-[var(--app-bg)] p-1 shadow-lg" role="listbox">
+                        <div className="absolute left-0 top-full z-20 mt-1 min-w-40 rounded-md border border-[var(--app-border)] bg-[var(--app-bg)] p-1 shadow-lg" role="group">
                             {props.series.map((row) => (
                                 <label key={row.id} className="flex items-center gap-1 px-1 py-0.5">
                                     <input type="checkbox" checked={!hidden.has(row.id)} onChange={() => toggle(row.id)} />
@@ -176,7 +186,7 @@ export function TrainingChart(props: { series: TrainingSeries[], xSource?: reado
                 </label>
             </div>
             {log && prepared.dropped > 0 ? <p className="mb-2 text-xs text-[var(--app-hint)]">{t('work.trainingDropped', { count: prepared.dropped })}</p> : null}
-            <div ref={host} />
+            {noneSelected ? <p className="text-sm text-[var(--app-hint)]">{t('work.trainingSelectMetric')}</p> : <div ref={host} />}
             <p className="mt-1 text-xs text-[var(--app-hint)]">{t('work.trainingZoom')}</p>
         </div>
     )

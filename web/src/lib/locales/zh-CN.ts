@@ -1421,6 +1421,8 @@ export default {
   'work.trainingXWall': 'Wall Time',
   'work.trainingMetricsNone': '未选',
   'work.trainingMetricsCount': '{count} 个指标',
+  'work.trainingSelectMetric': '请选择指标。',
+  'work.trainingXSorted': '非单调的自定义横轴按数值排序后绘制。',
   'work.trainingDropped': '对数轴隐藏了 {count} 个小于等于 0 的点。',
   'work.trainingZoom': '拖拽缩放，双击还原。',
   'work.trainingNoWandb': '这台机器读不了 wandb。',

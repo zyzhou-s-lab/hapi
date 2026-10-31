@@ -1422,6 +1422,8 @@ export default {
   'work.trainingXWall': 'Wall Time',
   'work.trainingMetricsNone': 'None',
   'work.trainingMetricsCount': '{count} metrics',
+  'work.trainingSelectMetric': 'Select a metric.',
+  'work.trainingXSorted': 'A non-monotonic custom axis is plotted in sorted order.',
   'work.trainingDropped': '{count} points at or below 0 are hidden on the log scale.',
   'work.trainingZoom': 'Drag to zoom. Double-click to reset.',
   'work.trainingNoWandb': 'This machine cannot read wandb.',
