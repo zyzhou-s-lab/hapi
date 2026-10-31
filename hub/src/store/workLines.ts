@@ -1,4 +1,5 @@
 import type { Database } from 'bun:sqlite'
+import { workbenchDefaultRegions } from '@hapi/protocol'
 import { randomUUID } from 'node:crypto'
 import { z } from 'zod'
 
@@ -61,8 +62,8 @@ const RUN_MAX = 120
 const LAYOUT_REGION_MAX = 40
 const LAYOUT_ARGS_MAX = 8
 const LAYOUT_VALUE_MAX = 200
-const CARD_ID = /^[a-z0-9]+([.][a-z0-9]+)+$/
-
+const METRICS_ARG_MAX = 8_000
+const CARD_ID = /^[a-z0-9]+(-[a-z0-9]+)*(\.[a-z0-9]+(-[a-z0-9]+)*)+$/
 const LAYOUT_REGIONS = {
     overview: ['stats', 'body'],
     workbench: ['rail', 'main', 'side']
@@ -354,6 +355,35 @@ export class WorkLinesStore {
         `).run(accountId, surface, JSON.stringify(normalized), Date.now())
         return normalized
     }
+    bindTrainingLine(accountId: number, lineId: string, run: string, metrics: string[] = []): WorkLayout {
+        const cleanLine = cleanRequired(lineId, 'lineId', LAYOUT_VALUE_MAX)
+        const cleanRun = cleanRequired(run, 'run', LAYOUT_VALUE_MAX)
+        const cleanMetrics = [...new Set(metrics.map((metric) => metric.trim()).filter((metric) => metric.length > 0))]
+        if (cleanMetrics.length > 32 || cleanMetrics.some((metric) => metric.length > LAYOUT_VALUE_MAX)) {
+            throw new WorkMapError('metrics 不合法')
+        }
+        return this.db.transaction(() => {
+            this.requireLine(accountId, cleanLine)
+            if (!this.getTrainingRun(accountId, cleanRun)) throw new WorkMapError('训练不存在', 404)
+            // revision stays below the client LAYOUT_REVISION so a later default card can still be merged.
+            const current = this.getLayout(accountId, 'workbench') ?? {
+                revision: 1,
+                regions: {
+                    rail: [...workbenchDefaultRegions.rail],
+                    main: [...workbenchDefaultRegions.main],
+                    side: [...workbenchDefaultRegions.side],
+                },
+            }
+            const main = [...(current.regions.main ?? [])]
+            const args: Record<string, string> = { run: cleanRun, lineId: cleanLine }
+            if (cleanMetrics.length > 0) args.metrics = JSON.stringify(cleanMetrics)
+            const slot = { cardId: 'example.training-curves', args }
+            const index = main.findIndex((item) => item.cardId === slot.cardId && item.args?.lineId === cleanLine)
+            if (index >= 0) main[index] = slot
+            else main.push(slot)
+            return this.putLayout(accountId, 'workbench', { revision: current.revision, regions: { ...current.regions, main } })
+        })()
+    }
 
     registerTrainingRun(accountId: number, input: { run: string; machineId: string; runDir: string }): WorkTrainingRun {
         const run = cleanRequired(input.run, 'run', RUN_MAX)
@@ -369,6 +399,13 @@ export class WorkLinesStore {
             ON CONFLICT (account_id, run) DO UPDATE SET machine_id = excluded.machine_id, run_dir = excluded.run_dir
         `).run(accountId, run, machineId, runDir, now)
         return this.requireTrainingRun(accountId, run)
+    }
+
+    listTrainingRuns(accountId: number): { run: string }[] {
+        const rows = this.db.prepare(
+            'SELECT run FROM work_training_runs WHERE account_id = ? ORDER BY run'
+        ).all(accountId) as { run: string }[]
+        return rows.map((row) => ({ run: row.run }))
     }
 
     getTrainingRun(accountId: number, run: string): WorkTrainingRun | null {
@@ -462,10 +499,16 @@ const storedLayoutSchema = z.object({
 
 const writeSlotSchema = z.object({
     cardId: z.string().regex(CARD_ID),
-    args: z.record(z.string().min(1).max(LAYOUT_VALUE_MAX), z.string().max(LAYOUT_VALUE_MAX)).optional()
+    args: z.record(z.string().min(1).max(LAYOUT_VALUE_MAX), z.string().max(METRICS_ARG_MAX)).optional()
 }).superRefine((slot, context) => {
-    if (slot.args && Object.keys(slot.args).length > LAYOUT_ARGS_MAX) {
+    const args = slot.args ?? {}
+    if (Object.keys(args).length > LAYOUT_ARGS_MAX) {
         context.addIssue({ code: 'custom', message: 'args 太多' })
+    }
+    for (const [key, value] of Object.entries(args)) {
+        if (key !== 'metrics' && value.length > LAYOUT_VALUE_MAX) {
+            context.addIssue({ code: 'custom', message: 'args 太长' })
+        }
     }
 })
 

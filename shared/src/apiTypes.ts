@@ -776,6 +776,8 @@ export type PathExistsResponse = {
     exists: Record<string, boolean>
     /** Requested paths rejected by the runner's configured workspace roots. */
     outsideWorkspaceRoots?: string[]
+    /** Realpath of each path the machine could resolve, when it differs. */
+    resolved?: Record<string, string>
 }
 
 export type MachinePathsExistsResponse = PathExistsResponse

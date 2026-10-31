@@ -1,4 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { mkdtempSync, mkdirSync, realpathSync, rmSync, symlinkSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import type { Session } from '@/api/types'
 
 const {
@@ -257,6 +260,26 @@ describe('bootstrapExistingSession', () => {
         })
 
         expect(metadata.capabilities?.terminal).toBe(true)
+    })
+
+    it('stores a symlinked working directory as its realpath', () => {
+        const root = mkdtempSync(join(tmpdir(), 'hapi-session-path-'))
+        const real = join(root, 'real')
+        const link = join(root, 'link')
+        mkdirSync(real)
+        symlinkSync(real, link)
+        try {
+            const metadata = buildSessionMetadata({
+                flavor: 'claude',
+                startedBy: 'runner',
+                workingDirectory: link,
+                machineId: 'machine-1',
+                now: 123,
+            })
+            expect(metadata.path).toBe(realpathSync(real))
+        } finally {
+            rmSync(root, { recursive: true, force: true })
+        }
     })
 })
 

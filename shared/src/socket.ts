@@ -143,6 +143,7 @@ export interface TerminalServerToClientEvents {
     'training:history': (data: Omit<TrainingHistoryPayload, 'machineId'>) => void
     'training:points': (data: Omit<TrainingPointsPayload, 'machineId'>) => void
     'training:error': (data: { run: string; message: string }) => void
+    'training:card': (data: { lineId: string; run: string; metrics: string[] }) => void
 }
 
 export interface TerminalClientToServerEvents {

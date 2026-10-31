@@ -3999,8 +3999,8 @@ export class SyncEngine {
         return false
     }
 
-    async checkPathsExist(machineId: string, paths: string[]): ReturnType<RpcGateway['checkPathsExist']> {
-        return await this.rpcGateway.checkPathsExist(machineId, paths)
+    async checkPathsExist(machineId: string, paths: string[], timeoutMs?: number): ReturnType<RpcGateway['checkPathsExist']> {
+        return await this.rpcGateway.checkPathsExist(machineId, paths, timeoutMs)
     }
 
     async getAgentAvailability(machineId: string): ReturnType<RpcGateway['getAgentAvailability']> {

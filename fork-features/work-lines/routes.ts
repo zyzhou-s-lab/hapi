@@ -6,7 +6,7 @@ import type { WebAppEnv } from '../../hub/src/web/middleware/auth'
 import type { MultiUserGatewayStore } from '../multi-user/gatewayStore'
 import { gatewayAccountId } from '../multi-user/executionMount'
 import { WorkMapError } from '../../hub/src/store/workLines'
-
+import { pushTrainingCard } from '../../hub/src/socket/trainingCardPush'
 const lineCreateSchema = z.object({
     name: z.string(),
     goal: z.string().nullable().optional(),
@@ -93,7 +93,13 @@ export function mountWorkLineRoutes(app: Hono<WebAppEnv>, deps: {
     routes.get('/map', async (c) => {
         const ready = await open(c)
         if (ready instanceof Response) return ready
-        return c.json(ready.engine.getWorkLines().getMap(ready.account.id))
+        const map = ready.engine.getWorkLines().getMap(ready.account.id)
+        const items = [
+            ...map.lines.map((line) => ({ machineId: line.primaryMachineId, path: line.primaryPath })),
+            ...map.directories.map((row) => splitDirectoryKey(row.directoryKey)),
+        ]
+        const resolved = await canonicalPaths(ready.engine, items)
+        return c.json({ ...map, ...(Object.keys(resolved).length > 0 ? { canonicalPaths: resolved } : {}) })
     })
 
     routes.post('/lines', async (c) => {
@@ -105,7 +111,8 @@ export function mountWorkLineRoutes(app: Hono<WebAppEnv>, deps: {
             return c.json({ error: 'Not found' }, 404)
         }
         try {
-            const line = ready.engine.getWorkLines().createLine(ready.account.id, parsed.data)
+            const primaryPath = await canonicalPath(ready.engine, parsed.data.primaryMachineId, parsed.data.primaryPath)
+            const line = ready.engine.getWorkLines().createLine(ready.account.id, { ...parsed.data, primaryPath })
             invalidate(ready.account.defaultNamespace, ready.account.id, 'work-map')
             return c.json({ line })
         } catch (error) {
@@ -122,7 +129,20 @@ export function mountWorkLineRoutes(app: Hono<WebAppEnv>, deps: {
             return c.json({ error: 'Not found' }, 404)
         }
         try {
-            const line = ready.engine.getWorkLines().updateLine(ready.account.id, c.req.param('id'), parsed.data)
+            const existing = parsed.data.primaryPath === undefined
+                ? undefined
+                : ready.engine.getWorkLines().getMap(ready.account.id).lines.find((line) => line.id === c.req.param('id'))
+            const machineId = parsed.data.primaryMachineId ?? existing?.primaryMachineId
+            if (machineId && parsed.data.primaryPath !== undefined && !canSeeMachine(ready.account.id, machineId)) {
+                return c.json({ error: 'Not found' }, 404)
+            }
+            const primaryPath = parsed.data.primaryPath === undefined || !machineId
+                ? parsed.data.primaryPath
+                : await canonicalPath(ready.engine, machineId, parsed.data.primaryPath)
+            const line = ready.engine.getWorkLines().updateLine(ready.account.id, c.req.param('id'), {
+                ...parsed.data,
+                ...(parsed.data.primaryPath !== undefined && machineId ? { primaryMachineId: machineId, primaryPath } : { primaryPath }),
+            })
             invalidate(ready.account.defaultNamespace, ready.account.id, 'work-map')
             return c.json({ line })
         } catch (error) {
@@ -150,7 +170,9 @@ export function mountWorkLineRoutes(app: Hono<WebAppEnv>, deps: {
         const machineId = machineIdFromDirectoryKey(parsed.data.directoryKey)
         if (!canSeeMachine(ready.account.id, machineId)) return c.json({ error: 'Not found' }, 404)
         try {
-            ready.engine.getWorkLines().putDirectory(ready.account.id, parsed.data)
+            const parts = splitDirectoryKey(parsed.data.directoryKey)
+            const path = await canonicalPath(ready.engine, parts.machineId, parts.path)
+            ready.engine.getWorkLines().putDirectory(ready.account.id, { ...parsed.data, directoryKey: `${parts.machineId}::${path}` })
             invalidate(ready.account.defaultNamespace, ready.account.id, 'work-map')
             return c.json({ ok: true })
         } catch (error) {
@@ -204,6 +226,26 @@ export function mountWorkLineRoutes(app: Hono<WebAppEnv>, deps: {
         }
     })
 
+    routes.put('/layout/:surface/training', async (c) => {
+        const ready = await open(c)
+        if (ready instanceof Response) return ready
+        if (c.req.param('surface') !== 'workbench') return c.json({ error: 'Not found' }, 404)
+        const body = await c.req.json().catch(() => null) as { lineId?: unknown; run?: unknown; metrics?: unknown } | null
+        if (!body || typeof body.lineId !== 'string' || typeof body.run !== 'string') return c.json({ error: 'Invalid body' }, 400)
+        if (body.metrics !== undefined && (!Array.isArray(body.metrics) || body.metrics.some((metric) => typeof metric !== 'string'))) {
+            return c.json({ error: 'Invalid body' }, 400)
+        }
+        try {
+            const metrics = Array.isArray(body.metrics) ? body.metrics : []
+            const layout = ready.engine.getWorkLines().bindTrainingLine(ready.account.id, body.lineId, body.run, metrics)
+            invalidate(ready.account.defaultNamespace, ready.account.id, 'work-layout')
+            pushTrainingCard(ready.account.id, { lineId: body.lineId, run: body.run, metrics })
+            return c.json({ layout })
+        } catch (error) {
+            return mapError(c, error)
+        }
+    })
+
     routes.put('/layout/:surface', async (c) => {
         const ready = await open(c)
         if (ready instanceof Response) return ready
@@ -218,6 +260,12 @@ export function mountWorkLineRoutes(app: Hono<WebAppEnv>, deps: {
         } catch (error) {
             return mapError(c, error)
         }
+    })
+
+    routes.get('/training-runs', async (c) => {
+        const ready = await open(c)
+        if (ready instanceof Response) return ready
+        return c.json({ runs: ready.engine.getWorkLines().listTrainingRuns(ready.account.id) })
     })
 
     routes.post('/training-runs', async (c) => {
@@ -262,4 +310,65 @@ function mapError(c: { json: (body: unknown, status?: number) => Response }, err
 function machineIdFromDirectoryKey(key: string): string {
     const separator = key.indexOf('::')
     return separator > 0 ? key.slice(0, separator) : ''
+}
+
+function splitDirectoryKey(key: string): { machineId: string, path: string } {
+    const separator = key.indexOf('::')
+    if (separator <= 0) return { machineId: '', path: key }
+    return { machineId: key.slice(0, separator), path: key.slice(separator + 2) }
+}
+
+async function canonicalPath(engine: SyncEngine, machineId: string, path: string): Promise<string> {
+    const resolved = await canonicalPaths(engine, [{ machineId, path }])
+    return resolved[path] ?? path
+}
+
+const PATH_CANON_TIMEOUT_MS = 2_000
+const PATH_CANON_TTL_MS = 10_000
+const PATH_CANON_CACHE_MAX = 64
+const pathCanonCache = new Map<string, { at: number, resolved: Record<string, string> }>()
+
+function rememberCanonicalPaths(key: string, resolved: Record<string, string>): void {
+    const now = Date.now()
+    for (const [cachedKey, entry] of pathCanonCache) {
+        if (now - entry.at >= PATH_CANON_TTL_MS) pathCanonCache.delete(cachedKey)
+    }
+    pathCanonCache.delete(key)
+    pathCanonCache.set(key, { at: now, resolved })
+    while (pathCanonCache.size > PATH_CANON_CACHE_MAX) {
+        const oldest = pathCanonCache.keys().next().value
+        if (oldest === undefined) break
+        pathCanonCache.delete(oldest)
+    }
+}
+
+async function canonicalPaths(engine: SyncEngine, items: Array<{ machineId: string, path: string }>): Promise<Record<string, string>> {
+    const grouped = new Map<string, Set<string>>()
+    for (const item of items) {
+        if (!item.machineId || !item.path) continue
+        const paths = grouped.get(item.machineId) ?? new Set<string>()
+        paths.add(item.path)
+        grouped.set(item.machineId, paths)
+    }
+    const canonical: Record<string, string> = {}
+    await Promise.all([...grouped].map(async ([machineId, paths]) => {
+        const key = `${machineId}\n${[...paths].sort().join('\n')}`
+        const cached = pathCanonCache.get(key)
+        if (cached && Date.now() - cached.at < PATH_CANON_TTL_MS) {
+            Object.assign(canonical, cached.resolved)
+            return
+        }
+        try {
+            const result = await engine.checkPathsExist(machineId, [...paths], PATH_CANON_TIMEOUT_MS)
+            const resolved: Record<string, string> = {}
+            for (const [raw, value] of Object.entries(result.resolved ?? {})) {
+                if (value && value !== raw) resolved[raw] = value
+            }
+            rememberCanonicalPaths(key, resolved)
+            Object.assign(canonical, resolved)
+        } catch {
+            // The machine is offline or slow. Comparison keeps the stored path.
+        }
+    }))
+    return canonical
 }

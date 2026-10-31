@@ -84,6 +84,20 @@ describe('work lines', () => {
                 body: []
             }
         })).toThrow(WorkMapError)
+        expect(lines.putLayout(1, 'overview', {
+            revision: 1,
+            regions: {
+                stats: [{ cardId: 'overview.lines', args: { metrics: 'x'.repeat(201) } }],
+                body: []
+            }
+        }).revision).toBe(1)
+        expect(() => lines.putLayout(1, 'overview', {
+            revision: 1,
+            regions: {
+                stats: [{ cardId: 'overview.lines', args: { metrics: 'x'.repeat(8_001) } }],
+                body: []
+            }
+        })).toThrow(WorkMapError)
     })
 
     it('registers a run without a points table and purges the account', () => {

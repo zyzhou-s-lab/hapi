@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { SessionSummary } from '@/types/api'
-import { deriveWork, type WorkMapData } from './deriveWork'
+import { deriveWork, deriveWorkbench, type WorkMapData } from './deriveWork'
 
 function session(patch: Partial<SessionSummary> & { id: string }): SessionSummary {
     return {
@@ -58,5 +58,39 @@ describe('deriveWork', () => {
         }, (item) => item.id, () => 'gpu')
         expect(model.inboxCount).toBe(1)
         expect(model.needsYouCount).toBe(0)
+    })
+
+    it('picks the latest waiting session as focus and keeps the primary directory', () => {
+        const map: WorkMapData = {
+            lines: [{ id: 'line-1', name: '主线', goal: 'ship', sort: 0, primaryMachineId: 'gpu', primaryPath: '/repo' }],
+            directories: [{ directoryKey: 'gpu::/repo', mode: 'line', lineId: 'line-1' }],
+            sessions: [],
+            dismissed: [],
+        }
+        const bench = deriveWorkbench([
+            session({ id: 'old', updatedAt: 1 }),
+            session({ id: 'wait', updatedAt: 5, pendingRequestsCount: 1 }),
+            session({ id: 'loose', metadata: { path: '/new', machineId: 'gpu' } }),
+        ], map, (item) => item.id, () => 'gpu')
+        expect(bench.focus('line-1')?.id).toBe('wait')
+        expect(bench.lineDirectories('line-1').map((row) => row.directoryKey)).toEqual(['gpu::/repo'])
+        expect(bench.inboxDirectoryCount).toBe(1)
+        expect(bench.lines[0]?.sessionCount).toBe(2)
+    })
+
+    it('matches a realpath session to a line stored through a symlink', () => {
+        const map: WorkMapData = {
+            lines: [{ id: 'line-1', name: '主线', goal: null, sort: 0, primaryMachineId: 'mac', primaryPath: '/tmp/proj' }],
+            directories: [{ directoryKey: 'mac::/tmp/proj', mode: 'line', lineId: 'line-1' }],
+            sessions: [],
+            dismissed: [],
+            canonicalPaths: { '/tmp/proj': '/private/tmp/proj' },
+        }
+        const bench = deriveWorkbench([
+            session({ id: 'live', metadata: { path: '/private/tmp/proj', machineId: 'mac' } }),
+        ], map, (item) => item.id, () => 'mac')
+        expect(bench.lines[0]?.sessionCount).toBe(1)
+        expect(bench.inboxDirectoryCount).toBe(0)
+        expect(bench.lineDirectories('line-1').map((row) => row.path)).toEqual(['/private/tmp/proj'])
     })
 })

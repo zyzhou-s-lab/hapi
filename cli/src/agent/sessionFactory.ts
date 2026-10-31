@@ -1,4 +1,5 @@
 import os from 'node:os'
+import { realpathSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import { resolve } from 'node:path'
 
@@ -9,6 +10,7 @@ import { getInstalledCliMtimeMs, notifyRunnerSessionStarted } from '@/runner/con
 import type { MachineAgentSkills } from '@hapi/protocol/schemas'
 import { readSettings } from '@/persistence'
 import { configuration } from '@/configuration'
+import { normalizeWindowsDriveRoot } from '@/api/machinePathPolicy'
 import { logger } from '@/ui/logger'
 import { runtimePath } from '@/projectPath'
 import { getInvokedCwd } from '@/utils/invokedCwd'
@@ -93,9 +95,13 @@ export function buildSessionMetadata(options: {
     const happyLibDir = runtimePath()
     const worktreeInfo = readWorktreeEnv()
     const now = options.now ?? Date.now()
+    const path = canonicalDirectory(options.workingDirectory)
+    const worktree = worktreeInfo
+        ? { ...worktreeInfo, basePath: canonicalDirectory(worktreeInfo.basePath) }
+        : undefined
 
     return {
-        path: options.workingDirectory,
+        path,
         host: process.env.HAPI_HOSTNAME || os.hostname(),
         version: packageJson.version,
         os: os.platform(),
@@ -113,8 +119,16 @@ export function buildSessionMetadata(options: {
         capabilities: {
             terminal: true
         },
-        worktree: worktreeInfo ?? undefined,
+        worktree,
         ...options.metadataOverrides
+    }
+}
+
+function canonicalDirectory(path: string): string {
+    try {
+        return normalizeWindowsDriveRoot(realpathSync.native(path))
+    } catch {
+        return path
     }
 }
 

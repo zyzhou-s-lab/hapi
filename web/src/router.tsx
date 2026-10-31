@@ -41,6 +41,8 @@ import { useSkills } from '@/hooks/queries/useSkills'
 import { getSessionTitle } from '@/lib/sessionTitle'
 import { SessionTabsBar, useHasSessionTabs, useSessionTabsSync } from '@/fork-features/session-tabs/SessionTabsBar'
 import { PhoneWorkPaneProvider, PhoneWorkToggle, usePhoneWorkPane, WorkOverview } from '@/fork-features/work-lines/WorkOverview'
+import { Workbench } from '@/fork-features/work-lines/Workbench'
+import { parseWorkSearch } from '@/fork-features/work-lines/workSearch'
 import type { SessionSummary } from '@/types/api'
 import { buildSessionReferenceText, matchSessionsForMention } from '@/lib/sessionReference'
 import type { Suggestion } from '@/hooks/useActiveSuggestions'
@@ -1326,6 +1328,16 @@ const shareRoute = createRoute({
     component: SharePage,
 })
 
+const workRoute = createRoute({
+    getParentRoute: () => rootRoute,
+    path: '/work',
+    validateSearch: (search: Record<string, unknown>) => parseWorkSearch(search),
+    component: function WorkPage() {
+        const search = useSearch({ from: '/work' })
+        return <Workbench search={search} />
+    },
+})
+
 export const routeTree = rootRoute.addChildren([
     indexRoute,
     sessionsRoute.addChildren([
@@ -1357,6 +1369,7 @@ export const routeTree = rootRoute.addChildren([
         settingsUserRoute,
     ]),
     shareRoute,
+    workRoute,
 ])
 
 type RouterHistory = Parameters<typeof createRouter>[0]['history']
