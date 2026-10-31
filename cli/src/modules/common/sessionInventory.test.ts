@@ -15,6 +15,7 @@ import {
     parseCodexConfigInventory,
     projectMcpPaths,
     readLiveSessionConfig,
+    listSessionAgents,
     listedSessionConfigRealpaths,
 } from './sessionInventory'
 
@@ -95,10 +96,56 @@ command = "my-hook --token abc"
     })
 
     it('turns omp mcp tool names into a tools list and reports no hooks', () => {
-        expect(ompInventoryFromTools(['read', 'mcp__example_probe', 'mcp__'])).toEqual({
-            mcp: { kind: 'tools', servers: [{ name: 'example_probe', source: 'tool' }] },
+        expect(ompInventoryFromTools(['read', 'mcp__example_probe', 'mcp__hapi__display_image', 'mcp__'])).toEqual({
+            mcp: { kind: 'tools', servers: [{ name: 'example_probe', source: 'tool' }, { name: 'hapi', source: 'tool' }] },
             hooks: { availability: 'none', items: [] },
         })
+    })
+
+    it('lists configured omp servers and marks which ones the session loaded', async () => {
+        const workspace = mkdtempSync(join(tmpdir(), 'hapi-omp-mcp-'))
+        const agent = mkdtempSync(join(tmpdir(), 'hapi-omp-agent-'))
+        const previous = process.env.PI_CODING_AGENT_DIR
+        process.env.PI_CODING_AGENT_DIR = agent
+        mkdirSync(join(workspace, '.git'))
+        writeFileSync(join(agent, 'mcp.json'), JSON.stringify({
+            mcpServers: {
+                notion: { type: 'http', url: 'http://127.0.0.1:9/mcp', headers: { Authorization: 'Bearer sekret' } },
+                idle: { command: 'echo', args: ['hidden'] },
+            },
+        }, null, 2))
+        writeFileSync(join(agent, 'settings.json'), JSON.stringify({
+            mcpServers: { fromSettings: { command: 'true' } },
+        }))
+        writeFileSync(join(workspace, '.mcp.json'), JSON.stringify({
+            mcpServers: { projectServer: { command: 'true' } },
+        }))
+        try {
+            const config = await readLiveSessionConfig({
+                flavor: 'omp',
+                cwd: workspace,
+                tools: ['read', 'mcp__notion__search', 'mcp__extra_probe'],
+            })
+            const byName = Object.fromEntries((config.mcp?.servers ?? []).map((server) => [server.name, server]))
+            expect(byName.notion).toMatchObject({ source: 'user', loaded: true })
+            expect(byName.notion?.filePath).toContain('mcp.json')
+            expect(byName.notion?.line).toBeGreaterThan(0)
+            expect(byName.idle).toMatchObject({ source: 'user', loaded: false })
+            expect(byName.fromSettings?.filePath).toContain('settings.json')
+            expect(byName.fromSettings?.loaded).toBe(false)
+            expect(byName.projectServer).toMatchObject({ source: 'project', loaded: false, filePath: '.mcp.json' })
+            expect(byName.extra_probe).toMatchObject({ source: 'tool', loaded: true })
+            const encoded = JSON.stringify(config.mcp)
+            expect(encoded).not.toContain('sekret')
+            expect(encoded).not.toContain('127.0.0.1')
+            expect(encoded).not.toContain('Bearer')
+            expect(encoded).not.toContain('hidden')
+        } finally {
+            if (previous === undefined) delete process.env.PI_CODING_AGENT_DIR
+            else process.env.PI_CODING_AGENT_DIR = previous
+            rmSync(workspace, { recursive: true, force: true })
+            rmSync(agent, { recursive: true, force: true })
+        }
     })
 
     it('redacts skill text and marks stamped cursor bridges as injected', () => {
@@ -172,6 +219,51 @@ command = "my-hook --token abc"
         } finally {
             rmSync(root, { recursive: true, force: true })
             rmSync(outside, { recursive: true, force: true })
+        }
+    })
+
+    it('lists custom sub-agents and lets a project file override a bundled one', async () => {
+        const workspace = mkdtempSync(join(tmpdir(), 'hapi-agents-project-'))
+        const home = mkdtempSync(join(tmpdir(), 'hapi-agents-home-'))
+        const bundled = mkdtempSync(join(tmpdir(), 'hapi-agents-bundled-'))
+        const previousHome = process.env.PI_CODING_AGENT_DIR
+        const previousClaude = process.env.CLAUDE_CONFIG_DIR
+        const previousBundled = process.env.HAPI_OMP_BUNDLED_AGENTS
+        process.env.PI_CODING_AGENT_DIR = home
+        process.env.CLAUDE_CONFIG_DIR = join(home, 'claude')
+        process.env.HAPI_OMP_BUNDLED_AGENTS = bundled
+        mkdirSync(join(workspace, '.git'))
+        mkdirSync(join(workspace, '.omp', 'agents'), { recursive: true })
+        mkdirSync(join(home, 'agents'), { recursive: true })
+        mkdirSync(join(home, 'claude', 'agents'), { recursive: true })
+        writeFileSync(join(workspace, '.omp', 'agents', 'scout.md'), '---\nmeta:\n  name: hidden\n  description: Nested\nname: scout\ndescription: Project scout\n---\nDo not leak token=sekret\n')
+        writeFileSync(join(home, 'agents', 'notes.md'), '---\nname: notes\ndescription: User notes https://example.test\n---\nbody\n')
+        writeFileSync(join(home, 'claude', 'agents', 'claude-helper.md'), '---\nname: claude-helper\ndescription: Claude helper\n---\nbody\n')
+        writeFileSync(join(bundled, 'scout.md'), '---\nname: scout\ndescription: Bundled scout\n---\nbody\n')
+        writeFileSync(join(bundled, 'task.md'), '---\nname: task\ndescription: Bundled task\n---\nbody\n')
+        try {
+            const agents = await listSessionAgents(workspace)
+            const byName = Object.fromEntries(agents.map((agent) => [agent.name, agent]))
+            expect(byName.scout).toMatchObject({ source: 'project', description: 'Project scout' })
+            expect(byName.scout?.filePath).toBe('.omp/agents/scout.md')
+            expect(byName.notes).toMatchObject({ source: 'user', description: 'User notes' })
+            expect(byName.notes?.filePath).toContain('/agents/notes.md')
+            expect(byName['claude-helper']).toMatchObject({ source: 'user', description: 'Claude helper' })
+            expect(byName.task).toMatchObject({ source: 'system', description: 'Bundled task' })
+            expect(byName.task?.filePath).toContain('/task.md')
+            const encoded = JSON.stringify(agents)
+            expect(encoded).not.toContain('sekret')
+            expect(encoded).not.toContain('https://')
+        } finally {
+            if (previousHome === undefined) delete process.env.PI_CODING_AGENT_DIR
+            else process.env.PI_CODING_AGENT_DIR = previousHome
+            if (previousClaude === undefined) delete process.env.CLAUDE_CONFIG_DIR
+            else process.env.CLAUDE_CONFIG_DIR = previousClaude
+            if (previousBundled === undefined) delete process.env.HAPI_OMP_BUNDLED_AGENTS
+            else process.env.HAPI_OMP_BUNDLED_AGENTS = previousBundled
+            rmSync(workspace, { recursive: true, force: true })
+            rmSync(home, { recursive: true, force: true })
+            rmSync(bundled, { recursive: true, force: true })
         }
     })
 

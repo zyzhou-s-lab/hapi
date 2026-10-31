@@ -13,6 +13,7 @@ import { useTranslation } from '@/lib/use-translation'
 import { formatSessionConfigError } from '@/lib/sessionConfigError'
 import { encodeBase64 } from '@/lib/utils'
 import {
+    agentsSection,
     hooksSection,
     mcpSection,
     promptSection,
@@ -53,12 +54,12 @@ function promptTitle(title: string, t: (key: string) => string): string {
     return translated === key ? title : translated
 }
 
-function sectionMessage(section: InventorySection, t: (key: string) => string): string | null {
+function sectionMessage(section: InventorySection, t: (key: string) => string, emptyKey: string): string | null {
     switch (section.status) {
         case 'unreported':
             return t('session.config.unreported')
         case 'empty':
-            return t('session.config.empty')
+            return t(emptyKey)
         case 'none':
             return section.note ? promptCopy(section.note, t) : t('session.config.hooks.none')
         case 'catalogUnavailable':
@@ -68,31 +69,35 @@ function sectionMessage(section: InventorySection, t: (key: string) => string): 
     }
 }
 
+function lockReason(row: InventoryRow, t: (key: string) => string): string | undefined {
+    if (!row.lock) return undefined
+    return row.lock === 'unsupported' ? t('session.config.unsupported') : t('session.config.locked')
+}
+
 function ConfigSwitch(props: { row: InventoryRow; pending: boolean; onToggle: (enabled: boolean) => void }) {
     const { t } = useTranslation()
-    const reason = props.row.lock === 'unsupported'
-        ? t('session.config.unsupported')
-        : props.row.lock
-            ? t('session.config.locked')
-            : undefined
-    const button = (
-        <button
-            type="button"
-            role="switch"
-            aria-checked={props.row.enabled}
-            aria-label={t('session.config.toggle', { name: props.row.title })}
-            disabled={!props.row.mutable || props.pending}
-            title={reason ?? t('session.config.effect')}
-            onClick={(event) => {
-                event.stopPropagation()
-                props.onToggle(!props.row.enabled)
-            }}
-            className={`relative h-5 w-9 shrink-0 rounded-full transition-colors ${props.row.enabled ? 'bg-[var(--app-link)]' : 'bg-[var(--app-border)]'} disabled:opacity-40`}
-        >
-            <span className={`absolute top-0.5 h-4 w-4 rounded-full bg-[var(--app-bg)] ${props.row.enabled ? 'left-4' : 'left-0.5'}`} />
-        </button>
+    const reason = lockReason(props.row, t)
+    const hint = props.row.mutable && props.row.ref.kind === 'skill' ? t('session.config.skillHint') : reason
+    return (
+        <span className={`inline-flex items-center gap-2 ${props.row.mutable ? '' : 'max-w-56'}`}>
+            {hint ? <span className={`text-right text-[11px] leading-4 text-[var(--app-hint)] ${props.row.mutable ? 'whitespace-nowrap' : ''}`}>{hint}</span> : null}
+            <button
+                type="button"
+                role="switch"
+                aria-checked={props.row.enabled}
+                aria-label={t('session.config.toggle', { name: props.row.title })}
+                disabled={!props.row.mutable || props.pending}
+                title={hint ?? t('session.config.effect')}
+                onClick={(event) => {
+                    event.stopPropagation()
+                    props.onToggle(!props.row.enabled)
+                }}
+                className={`relative h-5 w-9 shrink-0 rounded-full transition-colors ${props.row.enabled ? 'bg-[var(--app-link)]' : 'bg-[var(--app-border)]'} disabled:cursor-not-allowed disabled:opacity-40`}
+            >
+                <span className={`absolute top-0.5 h-4 w-4 rounded-full bg-[var(--app-bg)] ${props.row.enabled ? 'left-4' : 'left-0.5'}`} />
+            </button>
+        </span>
     )
-    return reason ? <span title={reason} className="inline-flex">{button}</span> : button
 }
 
 function RowText(props: { item: InventoryRow }) {
@@ -122,6 +127,7 @@ function RowText(props: { item: InventoryRow }) {
 
 function ConfigSection(props: {
     title: string
+    emptyKey: string
     section: InventorySection
     pendingKey: string | null
     onOpen: (row: InventoryRow) => void
@@ -129,7 +135,7 @@ function ConfigSection(props: {
     onToggle: (row: InventoryRow, enabled: boolean) => void
 }) {
     const { t } = useTranslation()
-    const message = sectionMessage(props.section, t)
+    const message = sectionMessage(props.section, t, props.emptyKey)
     return (
         <section>
             <h2 className="mb-2 text-base font-semibold text-[var(--app-fg)]">{props.title}</h2>
@@ -168,6 +174,11 @@ function ConfigSection(props: {
                                         onToggle={(enabled) => props.onToggle(item, enabled)}
                                     />
                                 ) : null}
+                                {item.loaded === undefined ? null : (
+                                    <span className="shrink-0 rounded-full bg-[var(--app-subtle-bg)] px-2 py-0.5 text-[11px] text-[var(--app-hint)]">
+                                        {t(item.loaded ? 'session.config.mcp.loaded' : 'session.config.mcp.notLoaded')}
+                                    </span>
+                                )}
                                 {item.source ? (
                                     <span className="shrink-0 rounded-full bg-[var(--app-subtle-bg)] px-2 py-0.5 text-[11px] text-[var(--app-hint)]">
                                         {t(`session.config.source.${item.source}`)}
@@ -212,22 +223,34 @@ export default function SessionConfigPage() {
     const systemPrompt = promptSection(config, 'system')
     const userPrompt = promptSection(config, 'user')
     const mcp = mcpSection(config, flavor)
+    const agents = agentsSection(config, flavor)
     const skills = skillsSection(config, flavor)
     const hooks = hooksSection(config, flavor)
 
     const toggle = async (row: InventoryRow, enabled: boolean) => {
-        if (!api || !row.mutable) return
+        if (!row.mutable) {
+            setToggleError(lockReason(row, t) ?? t('session.config.locked'))
+            return
+        }
+        if (!api) {
+            setToggleError(t('session.config.unavailable'))
+            return
+        }
         setPendingKey(row.key)
         setToggleError(null)
         try {
             const result = await api.setSessionConfigItemEnabled(sessionId, row.ref, enabled)
             if (!result.success) {
-                setToggleError(result.error ?? 'Failed to update session config')
+                setToggleError(formatSessionConfigError(result.error ?? 'Failed to update session config', t, 'update'))
                 return
             }
             await refetch()
         } catch (toggleFailure) {
-            setToggleError(toggleFailure instanceof Error ? toggleFailure.message : 'Failed to update session config')
+            setToggleError(formatSessionConfigError(
+                toggleFailure instanceof Error ? toggleFailure.message : 'Failed to update session config',
+                t,
+                'update',
+            ))
         } finally {
             setPendingKey(null)
         }
@@ -253,7 +276,7 @@ export default function SessionConfigPage() {
         openFile(row.scriptPath)
     }
 
-    const pageError = error ?? toggleError
+    const readError = error != null ? formatSessionConfigError(error, t) : null
     return (
         <div className="flex h-full min-h-0 flex-col">
             <SessionHeader
@@ -301,19 +324,27 @@ export default function SessionConfigPage() {
                 }}
             />
             <div className="app-scroll-y min-h-0 flex-1">
-                {pageError !== null ? (
+                {toggleError ? (
                     <SessionReadBanner
-                        message={formatSessionConfigError(pageError, t)}
+                        message={toggleError}
+                        onRetry={() => { setToggleError(null); void refetch() }}
+                        retrying={isFetching}
+                    />
+                ) : null}
+                {readError !== null ? (
+                    <SessionReadBanner
+                        message={readError}
                         onRetry={() => { void refetch() }}
                         retrying={isFetching}
                     />
                 ) : (
                     <div className="mx-auto flex w-full max-w-content flex-col gap-6 p-4">
-                        <ConfigSection title={t('session.config.systemPrompt')} section={systemPrompt} pendingKey={pendingKey} onOpen={openRow} onOpenScript={openScript} onToggle={(row, enabled) => { void toggle(row, enabled) }} />
-                        <ConfigSection title={t('session.config.userPrompt')} section={userPrompt} pendingKey={pendingKey} onOpen={openRow} onOpenScript={openScript} onToggle={(row, enabled) => { void toggle(row, enabled) }} />
-                        <ConfigSection title={t('session.config.mcp')} section={mcp} pendingKey={pendingKey} onOpen={openRow} onOpenScript={openScript} onToggle={(row, enabled) => { void toggle(row, enabled) }} />
-                        <ConfigSection title={t('session.config.skills')} section={skills} pendingKey={pendingKey} onOpen={openRow} onOpenScript={openScript} onToggle={(row, enabled) => { void toggle(row, enabled) }} />
-                        <ConfigSection title={t('session.config.hooks')} section={hooks} pendingKey={pendingKey} onOpen={openRow} onOpenScript={openScript} onToggle={(row, enabled) => { void toggle(row, enabled) }} />
+                        <ConfigSection title={t('session.config.systemPrompt')} emptyKey="session.config.systemPrompt.empty" section={systemPrompt} pendingKey={pendingKey} onOpen={openRow} onOpenScript={openScript} onToggle={(row, enabled) => { void toggle(row, enabled) }} />
+                        <ConfigSection title={t('session.config.userPrompt')} emptyKey="session.config.userPrompt.empty" section={userPrompt} pendingKey={pendingKey} onOpen={openRow} onOpenScript={openScript} onToggle={(row, enabled) => { void toggle(row, enabled) }} />
+                        <ConfigSection title={t('session.config.mcp')} emptyKey="session.config.mcp.empty" section={mcp} pendingKey={pendingKey} onOpen={openRow} onOpenScript={openScript} onToggle={(row, enabled) => { void toggle(row, enabled) }} />
+                        <ConfigSection title={t('session.config.agents')} emptyKey="session.config.agents.empty" section={agents} pendingKey={pendingKey} onOpen={openRow} onOpenScript={openScript} onToggle={(row, enabled) => { void toggle(row, enabled) }} />
+                        <ConfigSection title={t('session.config.skills')} emptyKey="session.config.skills.empty" section={skills} pendingKey={pendingKey} onOpen={openRow} onOpenScript={openScript} onToggle={(row, enabled) => { void toggle(row, enabled) }} />
+                        <ConfigSection title={t('session.config.hooks')} emptyKey="session.config.hooks.empty" section={hooks} pendingKey={pendingKey} onOpen={openRow} onOpenScript={openScript} onToggle={(row, enabled) => { void toggle(row, enabled) }} />
                     </div>
                 )}
             </div>

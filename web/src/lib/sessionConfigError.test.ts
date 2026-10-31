@@ -5,6 +5,7 @@ const t = (key: string, params?: Record<string, string | number>) => {
     if (key === 'session.config.runnerOffline') return 'Runner is offline and the config could not be read.'
     if (key === 'session.config.unavailable') return 'Unavailable'
     if (key === 'session.config.errorWithDetail') return `Could not read session config: ${params?.error}`
+    if (key === 'session.config.updateWithDetail') return `Could not update the switch: ${params?.error}`
     if (key === 'session.config.invalid') return 'Could not parse session config.'
     return key
 }
@@ -53,5 +54,6 @@ describe('formatSessionConfigError', () => {
         expect(envLine).not.toContain(bare)
         expect(formatSessionConfigError(`boom ${'x'.repeat(200)}`, t)).toMatch(/…$/)
         expect(formatSessionConfigError('/tmp/only-a-path', t)).toBe('Unavailable')
+        expect(formatSessionConfigError('disk full', t, 'update')).toBe('Could not update the switch: disk full')
     })
 })

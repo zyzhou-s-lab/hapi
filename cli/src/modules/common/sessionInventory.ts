@@ -1,4 +1,5 @@
-import { existsSync, lstatSync, readFileSync, statSync } from 'node:fs';
+import { spawn } from 'node:child_process';
+import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, extname, isAbsolute, join, resolve, sep } from 'node:path';
 import { logger } from '@/ui/logger';
@@ -6,6 +7,7 @@ import {
     type SessionInventory,
     type SessionInventoryHook,
     type SessionInventoryMcpServer,
+    type SessionInventoryAgent,
     type SessionInventorySkill,
     type SessionInventorySource,
 } from '@hapi/protocol/schemas';
@@ -152,6 +154,7 @@ export function dedupeServers(servers: readonly SessionInventoryMcpServer[]): Se
                 name,
                 source: server.source,
                 ...(server.enabled === false ? { enabled: false } : {}),
+                ...(server.loaded !== undefined ? { loaded: server.loaded } : {}),
                 ...(server.filePath ? { filePath: server.filePath } : {}),
                 ...(server.line ? { line: server.line } : {}),
             });
@@ -408,14 +411,47 @@ export function codexInjectedHooks(): SessionInventoryHook[] {
     ];
 }
 
+/** `mcp__<server>__<tool>`. The server is the text before the first `__`, so a name like `a__b` is reported as `a`. */
+export function mcpServerNameFromTool(tool: string): string | undefined {
+    if (!tool.startsWith('mcp__')) return undefined;
+    const rest = tool.slice('mcp__'.length);
+    if (!rest) return undefined;
+    const server = rest.includes('__') ? rest.slice(0, rest.indexOf('__')) : rest;
+    return isSafeInventoryName(server) ? server : undefined;
+}
+
+/** Configured servers stay. A reported tool list sets `loaded` and adds servers that are running but not in a config file. */
+export function withMcpLoadState(servers: readonly SessionInventoryMcpServer[], tools: readonly string[] | undefined): SessionInventoryMcpServer[] {
+    if (!tools) return [...servers];
+    const loaded = new Set(tools.flatMap((tool) => {
+        const name = mcpServerNameFromTool(tool);
+        return name ? [name] : [];
+    }));
+    const known = new Set(servers.map((server) => server.name));
+    const extras = [...loaded].filter((name) => !known.has(name)).map((name) => ({ name, source: 'tool' as const }));
+    return dedupeServers([...servers, ...extras]).map((server) => ({ ...server, loaded: loaded.has(server.name) }));
+}
+
 export function ompInventoryFromTools(tools: readonly string[]): SessionInventoryPatch {
     const servers = dedupeServers(tools.flatMap((tool) => {
-        if (!tool.startsWith('mcp__')) return [];
-        const name = tool.slice('mcp__'.length);
-        return isSafeInventoryName(name) ? [{ name, source: 'tool' as const }] : [];
+        const name = mcpServerNameFromTool(tool);
+        return name ? [{ name, source: 'tool' as const }] : [];
     }));
     return {
         mcp: { kind: 'tools', servers },
+        hooks: { availability: 'none', items: [] },
+    };
+}
+
+function loadOmpInventory(cwd: string): SessionInventoryPatch {
+    const dir = process.env.PI_CODING_AGENT_DIR?.trim() || join(homedir(), '.omp', 'agent');
+    const servers = dedupeServers([
+        ...jsonServersFromFile(join(dir, 'mcp.json'), cwd, 'user'),
+        ...jsonServersFromFile(join(dir, 'settings.json'), cwd, 'user'),
+        ...projectMcpPaths(cwd).flatMap((path) => jsonServersFromFile(path, cwd, 'project')),
+    ]);
+    return {
+        mcp: { kind: 'servers', servers },
         hooks: { availability: 'none', items: [] },
     };
 }
@@ -626,20 +662,8 @@ function flavorInventory(input: {
             return loadCodexInventory(input.startingMode === 'local', input.cwd);
         case 'cursor':
             return loadCursorInventory(input.sessionId, input.cwd);
-        case 'omp': {
-            const listed = ompInventoryFromTools(input.tools ?? []);
-            const dir = process.env.PI_CODING_AGENT_DIR?.trim() || join(homedir(), '.omp', 'agent');
-            const files = [join(dir, 'mcp.json'), join(dir, 'settings.json')];
-            const servers = (listed.mcp?.servers ?? []).map((server) => {
-                for (const file of files) {
-                    const text = readTextFile(file);
-                    if (!text || !lineOfJsonKey(text, server.name)) continue;
-                    return { ...server, ...fileLocation({ file, cwd: input.cwd, text }, server.name) };
-                }
-                return server;
-            });
-            return listed.mcp ? { ...listed, mcp: { ...listed.mcp, servers } } : listed;
-        }
+        case 'omp':
+            return loadOmpInventory(input.cwd);
         case 'copilot':
         case 'grok':
         case 'kimi':
@@ -658,6 +682,172 @@ function flavorInventory(input: {
     }
 }
 
+
+const PROJECT_AGENT_DIRS = ['.omp/agents', '.claude/agents', '.codex/agents', '.gemini/agents'] as const;
+
+function unquoteAgentValue(value: string): string {
+    const trimmed = value.trim();
+    if ((trimmed.startsWith('"') && trimmed.endsWith('"')) || (trimmed.startsWith("'") && trimmed.endsWith("'"))) {
+        return trimmed.slice(1, -1);
+    }
+    return trimmed;
+}
+
+function agentFrontmatter(text: string): { name?: string; description?: string; line?: number } {
+    if (!text.startsWith('---')) return {};
+    const end = text.indexOf('\n---', 3);
+    if (end < 0) return {};
+    const lines = text.slice(0, end).split(/\r?\n/);
+    let name: string | undefined;
+    let description: string | undefined;
+    let line: number | undefined;
+    for (let index = 0; index < lines.length; index++) {
+        const nameMatch = /^name:\s*(.+)$/.exec(lines[index]);
+        const descriptionMatch = /^description:\s*(.+)$/.exec(lines[index]);
+        if (nameMatch && !name) {
+            name = unquoteAgentValue(nameMatch[1]);
+            line = index + 1;
+        }
+        if (descriptionMatch && !description) description = unquoteAgentValue(descriptionMatch[1]);
+    }
+    return { name, description, line };
+}
+
+function agentsFromDirectory(dir: string, cwd: string, source: SessionInventorySource): SessionInventoryAgent[] {
+    let names: string[] = [];
+    try {
+        names = readdirSync(dir).filter((name) => name.endsWith('.md')).sort();
+    } catch {
+        return [];
+    }
+    const items: SessionInventoryAgent[] = [];
+    for (const fileName of names) {
+        const file = join(dir, fileName);
+        const text = readTextFile(file);
+        if (!text) continue;
+        const meta = agentFrontmatter(text);
+        const name = (meta.name || fileName.replace(/\.md$/, '')).trim();
+        if (!isSafeInventoryName(name)) continue;
+        const description = redactStoredText(meta.description, 500);
+        const filePath = listedConfigFilePath(file, cwd);
+        items.push({
+            name,
+            source,
+            ...(description ? { description } : {}),
+            ...(filePath ? { filePath } : {}),
+            ...(filePath && meta.line ? { line: meta.line } : {}),
+        });
+    }
+    return items;
+}
+
+function projectAgentDirectories(cwd: string, home = homedir()): string[] {
+    const dirs: string[] = [];
+    let current = resolve(cwd);
+    const seen = new Set<string>();
+    while (!seen.has(current)) {
+        seen.add(current);
+        if (current === resolve(home)) break;
+        for (const relative of PROJECT_AGENT_DIRS) dirs.push(join(current, relative));
+        if (existsSync(join(current, '.git'))) break;
+        const parent = dirname(current);
+        if (parent === current) break;
+        current = parent;
+    }
+    return dirs;
+}
+
+function userAgentDirectories(): string[] {
+    const home = homedir();
+    const ompHome = process.env.PI_CODING_AGENT_DIR?.trim() || join(home, '.omp', 'agent');
+    const claudeHome = process.env.CLAUDE_CONFIG_DIR?.trim() || join(home, '.claude');
+    return [
+        join(ompHome, 'agents'),
+        join(claudeHome, 'agents'),
+        join(home, '.codex', 'agents'),
+        join(home, '.gemini', 'agents'),
+    ];
+}
+
+let bundledAgentsDir: Promise<string | undefined> | undefined;
+
+function bundledAgentCacheRoot(): string {
+    const xdg = process.env.XDG_CACHE_HOME?.trim();
+    return xdg ? join(xdg, 'hapi', 'omp-bundled-agents') : join(homedir(), '.hapi', 'omp-bundled-agents');
+}
+
+function spawnText(command: string, args: string[], timeoutMs: number): Promise<{ code: number | null; stdout: string }> {
+    const { promise, resolve } = Promise.withResolvers<{ code: number | null; stdout: string }>();
+    const child = spawn(command, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+    let stdout = '';
+    let settled = false;
+    const finish = (code: number | null) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        resolve({ code, stdout });
+    };
+    const timer = setTimeout(() => {
+        child.kill();
+        finish(null);
+    }, timeoutMs);
+    child.stdout.setEncoding('utf8');
+    child.stdout.on('data', (chunk: string) => { stdout += chunk; });
+    child.stderr.on('data', () => undefined);
+    child.on('error', () => finish(null));
+    child.on('close', (code) => finish(code));
+    return promise;
+}
+
+async function loadBundledAgentDirectory(): Promise<string | undefined> {
+    const version = await spawnText('omp', ['--version'], 5000);
+    if (version.code !== 0) return undefined;
+    const tag = version.stdout.trim().split(/\s+/)[0]?.replace(/[^\w.-]/g, '') || 'unknown';
+    const dir = join(bundledAgentCacheRoot(), tag);
+    if (existsSync(join(dir, 'scout.md'))) return dir;
+    try {
+        mkdirSync(dir, { recursive: true });
+    } catch {
+        return undefined;
+    }
+    const unpacked = await spawnText('omp', ['agents', 'unpack', '--dir', dir, '--force'], 20000);
+    return unpacked.code === 0 ? dir : undefined;
+}
+
+async function bundledAgentDirectory(): Promise<string | undefined> {
+    const override = process.env.HAPI_OMP_BUNDLED_AGENTS?.trim();
+    if (override === '0') return undefined;
+    if (override) return override;
+    if (process.env.VITEST) return undefined;
+    if (!bundledAgentsDir) {
+        const pending = loadBundledAgentDirectory().then((dir) => {
+            if (!dir) bundledAgentsDir = undefined
+            return dir
+        })
+        bundledAgentsDir = pending
+    }
+    return bundledAgentsDir
+}
+
+/** Directories omp 18.12.6 actually scans: ~/.omp/agent/agents (PI_CODING_AGENT_DIR first), project .omp/agents, plus the same agents/ folder under .claude, .codex, and .gemini. Bundled agents are embedded in the omp binary and materialized with `omp agents unpack`. */
+export async function listSessionAgents(cwd: string): Promise<SessionInventoryAgent[]> {
+    const byName = new Map<string, SessionInventoryAgent>();
+    const add = (agent: SessionInventoryAgent) => {
+        if (!byName.has(agent.name)) byName.set(agent.name, agent);
+    };
+    for (const dir of projectAgentDirectories(cwd)) {
+        for (const agent of agentsFromDirectory(dir, cwd, 'project')) add(agent);
+    }
+    for (const dir of userAgentDirectories()) {
+        for (const agent of agentsFromDirectory(dir, cwd, 'user')) add(agent);
+    }
+    const bundled = await bundledAgentDirectory();
+    if (bundled) {
+        for (const agent of agentsFromDirectory(bundled, cwd, 'system')) add(agent);
+    }
+    return [...byName.values()].sort((left, right) => left.name.localeCompare(right.name)).slice(0, 200);
+}
+
 export async function readLiveSessionConfig(input: {
     flavor?: string | null;
     cwd: string;
@@ -669,6 +859,9 @@ export async function readLiveSessionConfig(input: {
 }): Promise<LiveSessionConfig> {
     const flavor = (input.flavor ?? '').trim().toLowerCase();
     const sections = flavorInventory({ ...input, flavor });
+    const mcp = sections.mcp
+        ? { kind: 'servers' as const, servers: withMcpLoadState(sections.mcp.servers, input.tools) }
+        : undefined;
     const diskSkills = await listInventorySkills(input.cwd, { flavor: flavor || undefined });
     const filePathByName = new Map(diskSkills.flatMap((skill) => skill.filePath ? [[skill.name, skill.filePath] as const] : []));
     const disabledSkills = new Set(diskSkills.filter((skill) => skill.enabled === false).map((skill) => skill.name));
@@ -691,7 +884,8 @@ export async function readLiveSessionConfig(input: {
         sessionId: input.sessionId,
         promptLive: { ...getSessionPromptLive(input.sessionId), ...input.promptLive },
     }).prompts;
-    return { ...sections, skills, prompts };
+    const agents = { items: await listSessionAgents(input.cwd) };
+    return { ...sections, ...(mcp ? { mcp } : {}), agents, skills, prompts };
 }
 
 export async function listedSessionConfigRealpaths(input: {
@@ -708,6 +902,7 @@ export async function listedSessionConfigRealpaths(input: {
         ...(config.mcp?.servers ?? []).flatMap((server) => server.filePath ? [server.filePath] : []),
         ...(config.hooks?.items ?? []).flatMap((hook) => [hook.filePath, hook.scriptPath].filter((path): path is string => Boolean(path))),
         ...(config.skills?.items ?? []).flatMap((skill) => skill.filePath ? [skill.filePath] : []),
+        ...(config.agents?.items ?? []).flatMap((agent) => agent.filePath ? [agent.filePath] : []),
         ...(config.prompts?.system?.items ?? []).flatMap((item) => item.filePath ? [item.filePath] : []),
         ...(config.prompts?.user?.items ?? []).flatMap((item) => item.filePath ? [item.filePath] : []),
     ];

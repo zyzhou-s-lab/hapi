@@ -1,8 +1,8 @@
-import { existsSync, readFileSync, realpathSync, statSync } from 'node:fs'
+import { existsSync, lstatSync, readFileSync, realpathSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { extname, isAbsolute, join, resolve, sep } from 'node:path'
+import { basename, extname, isAbsolute, join, resolve, sep } from 'node:path'
 import { redactConfigSecrets, sessionConfigLock, type SessionConfigDetail, type SessionConfigItemSelector } from '@hapi/protocol/schemas'
-import { findSkill } from '@/modules/common/skills'
+import { findSkill, skillWriteRoots, type SkillWriteRoot } from '@/modules/common/skills'
 import { commandBasename } from './sessionInventory'
 import { readSessionPromptDetail, type SessionPromptLive } from './sessionPrompts'
 import {
@@ -37,6 +37,31 @@ function lockError(flavor: string, kind: 'mcp' | 'skill' | 'hook' | 'prompt', so
     if (lock === 'source') return LOCKED
     if (lock === 'unsupported') return UNSUPPORTED
     return null
+}
+function skillMarkdownPath(path: string, roots: readonly SkillWriteRoot[]): string | null {
+    try {
+        if (lstatSync(path).isSymbolicLink()) return null
+        const real = realpathSync(path)
+        if (basename(real) !== 'SKILL.md' || !statSync(real).isFile()) return null
+        const allowed = roots.some(({ root, anchor }) => {
+            try {
+                const rootInfo = lstatSync(root)
+                if (rootInfo.isSymbolicLink() || !rootInfo.isDirectory()) return false
+                const realRoot = realpathSync(root)
+                const prefix = realRoot.endsWith(sep) ? realRoot : `${realRoot}${sep}`
+                if (!real.startsWith(prefix)) return false
+                if (!anchor) return true
+                const realAnchor = realpathSync(anchor)
+                const anchorPrefix = realAnchor.endsWith(sep) ? realAnchor : `${realAnchor}${sep}`
+                return realRoot.startsWith(anchorPrefix)
+            } catch {
+                return false
+            }
+        })
+        return allowed ? real : null
+    } catch {
+        return null
+    }
 }
 
 function readText(path: string): string | null {
@@ -310,9 +335,13 @@ export async function writeSessionConfigEnabled(input: DetailInput): Promise<{ e
             const skill = await findSkill(input.selector.name, input.cwd, { flavor: (input.flavor ?? '').trim().toLowerCase() || undefined })
             if (!skill || skill.source !== input.selector.source) return { error: NOT_FOUND }
             if (skill.truncated) return { error: 'Skill is too large to update' }
-            const text = readText(skill.filePath)
+            const real = skill.source === 'user' || skill.source === 'project'
+                ? skillMarkdownPath(skill.filePath, skillWriteRoots(input.cwd, skill.source))
+                : null
+            if (!real) return { error: 'Only a SKILL.md frontmatter disabled field can be changed' }
+            const text = readText(real)
             if (text === null) return { error: NOT_FOUND }
-            writeTextAtomic(skill.filePath, setFrontmatterBoolean(text, 'disabled', !input.enabled))
+            writeTextAtomic(real, setFrontmatterBoolean(text, 'disabled', !input.enabled))
             return { enabled: input.enabled }
         }
         if (input.selector.kind === 'mcp') {

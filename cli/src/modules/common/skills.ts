@@ -1,6 +1,7 @@
+import { existsSync } from 'node:fs';
 import { access, lstat, open, readdir, readFile, realpath, stat } from 'fs/promises';
-import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'path';
 import { homedir } from 'os';
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'path';
 import { parse as parseYaml } from 'yaml';
 import { listedConfigFilePath } from './configFilePath';
 export interface SkillSummary {
@@ -105,6 +106,54 @@ function getProjectSkillsRoots(directory: string, flavor?: string): string[] {
     }
     return roots;
 }
+export type SkillWriteRoot = { root: string, anchor?: string }
+
+/** Roots a toggle may write for this skill's own source. User and project roots stay separate. */
+export function skillWriteRoots(workingDirectory: string | undefined, source: 'user' | 'project'): SkillWriteRoot[] {
+    if (source === 'user') return userSkillWriteRoots().map((root) => ({ root }));
+    return projectWriteRoots(workingDirectory);
+}
+
+function userSkillWriteRoots(): string[] {
+    const home = getHomeDirectory();
+    const ompHome = process.env.PI_CODING_AGENT_DIR?.trim() || join(home, '.omp', 'agent');
+    return [
+        join(home, '.agents', 'skills'),
+        join(ompHome, 'skills'),
+        join(process.env.CLAUDE_CONFIG_DIR?.trim() || join(home, '.claude'), 'skills'),
+        join(process.env.CODEX_HOME?.trim() || join(home, '.codex'), 'skills'),
+        join(process.env.GROK_HOME?.trim() || join(home, '.grok'), 'skills'),
+        join(home, '.copilot', 'skills'),
+    ];
+}
+
+function projectWriteRoots(workingDirectory: string | undefined): SkillWriteRoot[] {
+    if (!workingDirectory) return [];
+    const start = resolve(workingDirectory);
+    const directories = [start];
+    let current = start;
+    while (!existsSync(join(current, '.git'))) {
+        const parent = dirname(current);
+        if (parent === current) return projectSkillRoots(start);
+        current = parent;
+        directories.push(current);
+    }
+    return directories.flatMap(projectSkillRoots);
+}
+
+function projectSkillRoots(directory: string): SkillWriteRoot[] {
+    return [
+        join(directory, '.agents', 'skills'),
+        join(directory, '.omp', 'skills'),
+        join(directory, '.omp', 'agent', 'skills'),
+        join(directory, '.claude', 'skills'),
+        join(directory, '.codex', 'skills'),
+        join(directory, '.grok', 'skills'),
+        join(directory, '.copilot', 'skills'),
+        join(directory, '.github', 'skills'),
+    ].map((root) => ({ root, anchor: directory }));
+}
+
 
 async function pathExists(path: string): Promise<boolean> {
     try {

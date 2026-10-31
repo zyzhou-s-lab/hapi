@@ -20,6 +20,7 @@ export type InventoryRow = {
     filePath?: string
     line?: number
     scriptPath?: string
+    loaded?: boolean
 }
 
 export type InventorySection =
@@ -96,7 +97,8 @@ export function mcpSection(inventory: SessionInventory | null | undefined, flavo
     if (!mcp) return { status: 'unreported' }
     const rows = mcp.servers.flatMap((server) => {
         const next = row(server.name, server.source, undefined, { kind: 'mcp', name: server.name, source: server.source }, server.enabled, flavor, server.filePath, server.line)
-        return next ? [next] : []
+        if (!next) return []
+        return [{ ...next, ...(server.loaded === undefined ? {} : { loaded: server.loaded }) }]
     })
     if (mcp.kind === 'tools') return { status: 'list', rows, tools: true }
     return rowsOrEmpty(rows)
@@ -119,6 +121,26 @@ export function hooksSection(inventory: SessionInventory | null | undefined, fla
         return next ? [next] : []
     })
     return rowsOrEmpty(rows)
+}
+
+export function agentsSection(inventory: SessionInventory | null | undefined, flavor?: string | null): InventorySection {
+    const agents = inventory?.agents
+    if (!agents) return { status: 'unreported' }
+    return rowsOrEmpty(agents.items.flatMap((agent) => {
+        const next = row(agent.name, agent.source, agent.description, {
+            kind: 'skill',
+            name: agent.name,
+            source: agent.source,
+        }, true, flavor, agent.filePath, agent.line)
+        if (!next) return []
+        return [{
+            ...next,
+            key: `agent:${agent.source ?? ''}:${agent.name}`,
+            toggle: false,
+            mutable: false,
+            lock: null,
+        }]
+    }))
 }
 
 export function skillsSection(inventory: SessionInventory | null | undefined, flavor?: string | null): InventorySection {
