@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { Hono } from 'hono'
 import { SignJWT } from 'jose'
 import { createExecutionMiddleware, mountExecutionRoutes } from './executionMount'
@@ -90,10 +90,16 @@ describe('createExecutionMiddleware', () => {
             getSyncEngine: () => engine,
             getSseManager: () => null,
         })
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
         const response = await app.request('/api/machines', { headers: { authorization: `Bearer ${token}` } })
+        const again = await app.request('/api/machines', { headers: { authorization: `Bearer ${token}` } })
         expect(response.status).toBe(200)
         expect(await response.json()).toEqual({ machines: [] })
-        store.close()
+        expect(await again.json()).toEqual({ machines: [] })
+        expect(warn).toHaveBeenCalledTimes(1)
+        expect(warn.mock.calls[0]?.[0]).toBe('[gateway] machine binding has no core row')
+        expect(store.getResource('machine', 'gone')).toMatchObject({ resourceId: 'gone', ownerAccountId: owner.id })
+        warn.mockRestore()
     })
 
     it('binds the returned fork session when the caller owns the source session', async () => {
