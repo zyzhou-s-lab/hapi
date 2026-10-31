@@ -1,4 +1,4 @@
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { PassThrough } from 'node:stream'
@@ -67,6 +67,29 @@ describe('training pump', () => {
             finished: true,
             batch: [{ step: 2, metric: 'loss', value: 0.2 }],
         }])
+    })
+
+    it('sends a long history as several frames without dropping points', () => {
+        const frames: TrainingHistoryPayload[] = []
+        const pump = createTrainingPump({
+            run: 'exp-1',
+            machineId: 'gpu',
+            emit: (event, payload) => {
+                expect(event).toBe('training:history')
+                frames.push(payload as TrainingHistoryPayload)
+            },
+        })
+        for (let step = 0; step < 4500; step += 1) {
+            pump.push({ kind: 'point', step, metric: 'loss', value: step / 10 })
+        }
+        expect(pump.push({ kind: 'exit' })).toBe('stop')
+        const batches = frames.map((frame) => frame.batch ?? [])
+        expect(frames.length).toBeGreaterThan(1)
+        expect(batches.every((batch) => batch.length <= 2000)).toBe(true)
+        expect(batches.reduce((sum, batch) => sum + batch.length, 0)).toBe(4500)
+        expect(frames[0]?.reset).toBe(true)
+        expect(frames.at(-1)?.finished).toBe(true)
+        expect(batches.flat().map((point) => point.step)).toEqual(Array.from({ length: 4500 }, (_, step) => step))
     })
 
     it('resets with an empty history when the file shrinks', () => {
@@ -264,6 +287,16 @@ elif mode == "nested":
     payloads = [history([history_item(nested=("train", "loss"), value=0.5)], step=3), exit_record]
 elif mode == "split":
     payloads = [history([history_item("loss", value=0.75, pad=40000)], step=4), exit_record]
+elif mode == "span":
+    buf = struct.pack("<4sHB", b":W&B", 0xBEE1, 0)
+    buf += struct.pack("<IHB", 0, 40000, FULL)
+    buf += b"\x00" * (BLOCK - len(buf))
+    index = BLOCK
+    for payload in (history([history_item("loss", value=0.1)], step=8), exit_record):
+        index, buf = write_payload(buf, index, payload)
+    with open(path, "wb") as handle:
+        handle.write(buf)
+    raise SystemExit(0)
 else:
     raise SystemExit(2)
 write_file(path, payloads)
@@ -321,6 +354,52 @@ write_file(path, payloads)
             expect(split.code).toBe(0)
             expect(split.lines).toEqual([
                 { kind: 'point', step: 4, metric: 'loss', value: 0.75 },
+                { kind: 'exit' },
+            ])
+        } finally {
+            rmSync(dir, { recursive: true, force: true })
+        }
+    })
+
+    it('waits while the header is still short', async () => {
+        const dir = mkdtempSync(join(tmpdir(), 'wandb-short-'))
+        const file = join(dir, 'run.wandb')
+        writeFileSync(file, Buffer.alloc(0))
+        const child = spawn('python3', ['-c', READ_WANDB_SCRIPT, file], { stdio: ['ignore', 'pipe', 'pipe'] })
+        const chunks: Buffer[] = []
+        child.stdout.on('data', (chunk: Buffer) => chunks.push(chunk))
+        try {
+            await new Promise((resolve) => setTimeout(resolve, 300))
+            expect(Buffer.concat(chunks).toString('utf8')).toBe('')
+            writeFileSync(file, Buffer.from(':W&'))
+            await new Promise((resolve) => setTimeout(resolve, 300))
+            expect(Buffer.concat(chunks).toString('utf8')).toBe('')
+            const complete = await writeRun(dir, 'legacy')
+            writeFileSync(file, readFileSync(complete))
+            const code = await new Promise<number | null>((resolve) => {
+                const timer = setTimeout(() => { child.kill(); resolve(null) }, 3000)
+                child.on('exit', (status) => { clearTimeout(timer); resolve(status) })
+            })
+            const lines = Buffer.concat(chunks).toString('utf8').trim().split('\n').filter(Boolean).map((line) => JSON.parse(line) as { kind: string })
+            expect(code).toBe(0)
+            expect(lines).toEqual([
+                { kind: 'point', step: 1, metric: 'loss', value: 0.25 },
+                { kind: 'exit' },
+            ])
+        } finally {
+            child.kill()
+            rmSync(dir, { recursive: true, force: true })
+        }
+    })
+
+    it('skips a record that does not fit in its block once', async () => {
+        const dir = mkdtempSync(join(tmpdir(), 'wandb-span-'))
+        try {
+            const span = await readFile(await writeRun(dir, 'span'))
+            expect(span.code).toBe(0)
+            expect(span.lines).toEqual([
+                { kind: 'skip', error: 'record did not parse' },
+                { kind: 'point', step: 8, metric: 'loss', value: 0.1 },
                 { kind: 'exit' },
             ])
         } finally {

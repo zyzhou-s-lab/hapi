@@ -25,17 +25,26 @@ export function Workbench(props: { search: WorkSearch }): ReactNode {
     }, [map, navigate, props.search.inbox, props.search.line])
     const lineIds = map?.lines.map((line) => line.id) ?? []
     const missing = map != null && missingWorkLine(props.search, lineIds)
-    const view = props.search.line
-        ? { kind: 'line' as const, lineId: props.search.line }
-        : props.search.inbox
+    const view = missing || !props.search.line
+        ? props.search.inbox && !missing
             ? { kind: 'inbox' as const }
             : { kind: 'line' as const, lineId: '' }
+        : { kind: 'line' as const, lineId: props.search.line }
     return (
         <div className="flex h-full min-h-0 flex-col bg-[var(--app-bg)]">
             <header className="flex items-center justify-between px-4 py-3">
                 <h2 className="text-base font-semibold text-[var(--app-fg)]">{t('work.workbenchTitle')}</h2>
             </header>
-            {missing ? <p className="px-4 pb-2 text-sm text-red-600" role="alert">{t('work.lineMissing')}</p> : null}
+            {missing ? (
+                <>
+                    <p className="px-4 text-sm text-red-600" role="alert">{t('work.lineMissing')}</p>
+                    <p className="px-4 pb-2">
+                        <button type="button" className="text-sm text-[var(--app-link)]" onClick={() => navigate({ to: '/work', search: lineIds[0] ? { line: lineIds[0] } : { inbox: true } })}>
+                            {lineIds[0] ? t('work.backToFirstLine') : t('work.backToInbox')}
+                        </button>
+                    </p>
+                </>
+            ) : null}
             <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-4">
                 <WorkCardHost surface="workbench" view={view} sessions={sessions} api={api} />
             </div>

@@ -1386,6 +1386,8 @@ export default {
   'work.cardFailed': 'This card failed.',
   'work.workbenchTitle': 'Workbench',
   'work.lineMissing': 'This line does not exist.',
+  'work.backToFirstLine': 'Back to the first line',
+  'work.backToInbox': 'Back to the inbox',
   'work.lines': 'Lines',
   'work.inbox': 'Inbox',
   'work.noMachines': 'No machine you can use. A line needs one.',

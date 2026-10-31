@@ -53,6 +53,27 @@ export function parseTailLine(line: string): TailLine {
     return { kind: 'skip', error: 'record did not parse' }
 }
 
+const TRAINING_FRAME_POINTS = 2000
+const TRAINING_FRAME_BYTES = 256 * 1024
+
+function trainingFrameChunks(points: { step: number; metric: string; value: number }[]): { step: number; metric: string; value: number }[][] {
+    const chunks: { step: number; metric: string; value: number }[][] = []
+    let current: { step: number; metric: string; value: number }[] = []
+    let bytes = 0
+    for (const point of points) {
+        const size = point.metric.length + 64
+        if (current.length > 0 && (current.length >= TRAINING_FRAME_POINTS || bytes + size > TRAINING_FRAME_BYTES)) {
+            chunks.push(current)
+            current = []
+            bytes = 0
+        }
+        current.push(point)
+        bytes += size
+    }
+    if (current.length > 0) chunks.push(current)
+    return chunks
+}
+
 export function createTrainingPump(options: {
     run: string
     machineId: string
@@ -78,14 +99,19 @@ export function createTrainingPump(options: {
     const flush = () => {
         clearTimer()
         if (batch.length === 0 && !lastError && !finished) return
+        const parts = trainingFrameChunks(batch)
+        const frames = parts.length > 0 ? parts : [[]]
         const reset = !historySent
-        options.emit(reset ? 'training:history' : 'training:points', {
-            run: options.run,
-            machineId: options.machineId,
-            ...(reset ? { reset: true } : {}),
-            ...(finished ? { finished: true } : {}),
-            ...(lastError ? { lastError } : {}),
-            ...(batch.length > 0 ? { batch } : {}),
+        frames.forEach((part, index) => {
+            const last = index === frames.length - 1
+            options.emit(reset ? 'training:history' : 'training:points', {
+                run: options.run,
+                machineId: options.machineId,
+                ...(reset ? { reset: true } : {}),
+                ...(finished && last ? { finished: true } : {}),
+                ...(lastError && last ? { lastError } : {}),
+                ...(part.length > 0 ? { batch: part } : {}),
+            })
         })
         historySent = true
         batch = []

@@ -74,5 +74,7 @@ describe('workbench create line', () => {
             </AppContextProvider>,
         )
         expect(await screen.findByRole('alert')).toHaveProperty('textContent', 'This line does not exist.')
+        expect(screen.queryByText('Show on this line')).toBeNull()
+        expect(screen.getByRole('button', { name: 'Back to the first line' })).toBeTruthy()
     })
 })

@@ -103,16 +103,32 @@ def record_body(blob):
     return history, exited
 
 def open_checked(path):
+    try:
+        size = os.path.getsize(path)
+    except OSError:
+        raise
+    if size < HEADER:
+        return None
     handle = open(path, "rb")
     header = handle.read(HEADER)
-    if len(header) != HEADER:
+    if len(header) < HEADER:
         handle.close()
-        raise ValueError("header")
+        return None
     ident, magic, version = struct.unpack("<4sHB", header)
     if ident != b":W&B" or magic != 0xBEE1 or version != 0:
         handle.close()
         raise ValueError("header")
     return handle
+
+def wait_open(path):
+    while True:
+        try:
+            handle = open_checked(path)
+        except Exception:
+            fail("cannot read this run")
+        if handle is not None:
+            return handle
+        time.sleep(0.2)
 
 def pull(handle, index, size):
     if index > size:
@@ -125,6 +141,7 @@ def pull(handle, index, size):
         if handle.read(space) != b"\x00" * space:
             raise ValueError("pad")
         index += space
+        space = BLOCK - (index % BLOCK)
     if index + HEADER > size:
         return None
     handle.seek(index)
@@ -132,10 +149,10 @@ def pull(handle, index, size):
     if len(header) != HEADER:
         return None
     checksum, length, kind = struct.unpack("<IHB", header)
-    if kind not in (FULL, FIRST, MIDDLE, LAST) or index + HEADER + length > size:
-        if index + HEADER + length > size and kind in (FULL, FIRST, MIDDLE, LAST):
-            return None
+    if kind not in (FULL, FIRST, MIDDLE, LAST) or space < HEADER + length:
         raise ValueError("record")
+    if index + HEADER + length > size:
+        return None
     data = handle.read(length)
     if len(data) != length:
         return None
@@ -166,36 +183,38 @@ def next_payload(handle, index, size):
             raise ValueError("record")
 
 path = sys.argv[1]
-try:
-    handle = open_checked(path)
-except Exception:
-    fail("cannot read this run")
-
+handle = wait_open(path)
 offset = HEADER
+last_good = HEADER
 while True:
     try:
         size = os.path.getsize(path)
     except OSError:
         fail("cannot read this run")
-    if size < offset:
+    if size < last_good:
         emit({"kind": "reset"})
         try:
             handle.close()
-            handle = open_checked(path)
-            offset = HEADER
         except Exception:
-            fail("cannot read this run")
+            pass
+        handle = wait_open(path)
+        offset = HEADER
+        last_good = HEADER
+        continue
+    if offset > size:
+        time.sleep(0.2)
         continue
     try:
         found = next_payload(handle, offset, size)
     except Exception:
         emit({"kind": "skip", "error": "record did not parse"})
-        offset = min(size, offset + 1)
+        offset = (offset // BLOCK + 1) * BLOCK
         continue
     if found is None:
         time.sleep(0.2)
         continue
     payload, offset = found
+    last_good = offset
     try:
         history, exited = record_body(payload)
     except Exception:

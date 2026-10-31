@@ -1385,6 +1385,8 @@ export default {
   'work.cardFailed': '这张卡加载失败。',
   'work.workbenchTitle': '工作台',
   'work.lineMissing': '这条主线不存在。',
+  'work.backToFirstLine': '回到第一条主线',
+  'work.backToInbox': '回到待整理',
   'work.lines': '主线',
   'work.inbox': '待整理',
   'work.noMachines': '没有可访问的机器，不能新建主线。',
