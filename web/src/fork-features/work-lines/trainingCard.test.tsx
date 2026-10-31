@@ -87,4 +87,49 @@ describe('training curve card', () => {
         fireEvent.click(screen.getByText('Show on this line'))
         await waitFor(() => expect(bindWorkTraining).toHaveBeenCalledWith('line-1', 'exp-2'))
     })
+
+    it('clears a save failure after success or another run is chosen', async () => {
+        const logged = vi.spyOn(console, 'error').mockImplementation(() => {})
+        const bindWorkTraining = vi.fn()
+            .mockRejectedValueOnce(new Error('offline'))
+            .mockResolvedValueOnce(undefined)
+        const api = {
+            getWorkMap: async () => ({ lines: [], directories: [], sessions: [], dismissed: [] }),
+            getWorkLayout: async () => ({ source: 'default', layout: null }),
+            listTrainingRuns: async () => ({ runs: [{ run: 'exp-1' }, { run: 'exp-2' }] }),
+            bindWorkTraining,
+        } as unknown as ApiClient
+        const view = host('line-1', api)
+        expect(await screen.findByRole('option', { name: 'exp-2' })).toBeTruthy()
+        fireEvent.change(screen.getByRole('combobox'), { target: { value: 'exp-2' } })
+        fireEvent.click(screen.getByText('Show on this line'))
+        expect(await screen.findByText('Could not save the run.')).toBeTruthy()
+        fireEvent.change(screen.getByRole('combobox'), { target: { value: 'exp-1' } })
+        await waitFor(() => expect(screen.queryByText('Could not save the run.')).toBeNull())
+        fireEvent.change(screen.getByRole('combobox'), { target: { value: 'exp-2' } })
+        expect(screen.queryByText('Could not save the run.')).toBeNull()
+        fireEvent.click(screen.getByText('Show on this line'))
+        await waitFor(() => expect(bindWorkTraining).toHaveBeenCalledTimes(2))
+        expect(screen.queryByText('Could not save the run.')).toBeNull()
+        view.rerender(
+            <AppContextProvider value={{ api, token: 't', baseUrl: 'http://hub', user: { id: 7 } }}>
+                <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+                    <I18nProvider>
+                        <WorkCardHost
+                            surface="workbench"
+                            view={{ kind: 'line', lineId: 'line-2' }}
+                            sessions={[]}
+                            api={api}
+                            layoutFor={() => ({
+                                revision: 2,
+                                regions: { main: [{ cardId: 'example.training-curves', args: { run: 'exp-1', lineId: 'line-1' } }] },
+                            })}
+                        />
+                    </I18nProvider>
+                </QueryClientProvider>
+            </AppContextProvider>,
+        )
+        expect(screen.queryByText('Could not save the run.')).toBeNull()
+        logged.mockRestore()
+    })
 })

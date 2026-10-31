@@ -4,8 +4,13 @@ import { describe, expect, it, vi } from 'vitest'
 import type { ApiClient } from '@/api/client'
 import { AppContextProvider } from '@/lib/app-context'
 import { I18nProvider } from '@/lib/i18n-context'
+import { Workbench } from './Workbench'
 import { WorkCardHost } from './WorkCardHost'
 import './workbenchCards'
+
+vi.mock('@tanstack/react-router', () => ({
+    useNavigate: () => vi.fn(),
+}))
 
 const emptyMap = { lines: [], directories: [], sessions: [], dismissed: [] }
 
@@ -46,5 +51,28 @@ describe('workbench create line', () => {
         fireEvent.change(screen.getByPlaceholderText('Name'), { target: { value: '另一条' } })
         expect(screen.queryByText('Could not create the line.')).toBeNull()
         logged.mockRestore()
+    })
+
+    it('says when the open line does not exist', async () => {
+        const api = {
+            getSessions: async () => ({ sessions: [] }),
+            getWorkMap: async () => ({
+                lines: [{ id: 'line-1', name: 'Main', goal: null, sort: 0, primaryMachineId: 'gpu', primaryPath: '/repo' }],
+                directories: [],
+                sessions: [],
+                dismissed: [],
+            }),
+            getWorkLayout: async () => ({ source: 'default', layout: null }),
+        } as unknown as ApiClient
+        render(
+            <AppContextProvider value={{ api, token: 't', baseUrl: 'http://hub', user: { id: 7 } }}>
+                <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+                    <I18nProvider>
+                        <Workbench search={{ line: 'no-such-line' }} />
+                    </I18nProvider>
+                </QueryClientProvider>
+            </AppContextProvider>,
+        )
+        expect(await screen.findByRole('alert')).toHaveProperty('textContent', 'This line does not exist.')
     })
 })

@@ -186,15 +186,158 @@ describe('attachTrainingHandlers', () => {
 })
 
 describe('wandb reader script', () => {
-    it('fails closed when wandb is not installed', async () => {
-        const child = spawn('python3', ['-c', READ_WANDB_SCRIPT, '/no/such.wandb'], { stdio: ['ignore', 'pipe', 'pipe'] })
+    const writer = String.raw`
+import json, struct, sys, zlib
+BLOCK = 32768
+FULL, FIRST, MIDDLE, LAST = 1, 2, 3, 4
+
+def varint(number):
+    out = bytearray()
+    while True:
+        byte = number & 0x7f
+        number >>= 7
+        out.append(byte | 0x80 if number else byte)
+        if not number:
+            return bytes(out)
+
+def field_bytes(field, payload):
+    return varint((field << 3) | 2) + varint(len(payload)) + payload
+
+def field_str(field, text):
+    return field_bytes(field, text.encode())
+
+def history_item(key=None, nested=(), value=None, pad=0):
+    body = b""
+    if key is not None:
+        body += field_str(1, key)
+    for part in nested:
+        body += field_str(2, part)
+    if value is not None:
+        body += field_str(16, json.dumps(value))
+    if pad:
+        body += field_bytes(3, b"x" * pad)
+    return body
+
+def history(items, step=None):
+    body = b"".join(field_bytes(1, item) for item in items)
+    if step is not None:
+        body += field_bytes(2, varint((1 << 3) | 0) + varint(step))
+    return field_bytes(2, body)
+
+def write_record(buf, index, payload, kind):
+    checksum = zlib.crc32(payload, zlib.crc32(bytes([kind])) & 0xFFFFFFFF) & 0xFFFFFFFF
+    buf += struct.pack("<IHB", checksum, len(payload), kind)
+    buf += payload
+    return index + 7 + len(payload), buf
+
+def write_payload(buf, index, payload):
+    space = BLOCK - (index % BLOCK)
+    if space < 7:
+        buf += b"\x00" * space
+        index += space
+        space = BLOCK
+    if len(payload) + 7 <= space:
+        return write_record(buf, index, payload, FULL)
+    room = space - 7
+    index, buf = write_record(buf, index, payload[:room], FIRST)
+    used = room
+    left = len(payload) - used
+    while left > BLOCK - 7:
+        index, buf = write_record(buf, index, payload[used:used + BLOCK - 7], MIDDLE)
+        used += BLOCK - 7
+        left -= BLOCK - 7
+    return write_record(buf, index, payload[used:], LAST)
+
+def write_file(path, payloads):
+    buf = struct.pack("<4sHB", b":W&B", 0xBEE1, 0)
+    index = 7
+    for payload in payloads:
+        index, buf = write_payload(buf, index, payload)
+    with open(path, "wb") as handle:
+        handle.write(buf)
+
+mode, path = sys.argv[1], sys.argv[2]
+exit_record = field_bytes(18, b"")
+if mode == "legacy":
+    payloads = [history([history_item("_step", value=1), history_item("loss", value=0.25)]), exit_record]
+elif mode == "nested":
+    payloads = [history([history_item(nested=("train", "loss"), value=0.5)], step=3), exit_record]
+elif mode == "split":
+    payloads = [history([history_item("loss", value=0.75, pad=40000)], step=4), exit_record]
+else:
+    raise SystemExit(2)
+write_file(path, payloads)
+`
+
+    async function readFile(file: string): Promise<{ code: number | null; lines: { kind: string; step?: number; metric?: string; value?: number; message?: string }[] }> {
+        const child = spawn('python3', ['-c', READ_WANDB_SCRIPT, file], { stdio: ['ignore', 'pipe', 'pipe'] })
         const chunks: Buffer[] = []
         child.stdout.on('data', (chunk: Buffer) => chunks.push(chunk))
         const code = await new Promise<number | null>((resolve) => {
-            child.on('exit', resolve)
+            const timer = setTimeout(() => { child.kill(); resolve(null) }, 5000)
+            child.on('exit', (status) => { clearTimeout(timer); resolve(status) })
         })
-        const line = JSON.parse(Buffer.concat(chunks).toString('utf8').trim()) as { kind: string; message: string }
+        const lines = Buffer.concat(chunks).toString('utf8').trim().split('\n').filter(Boolean).map((line) => JSON.parse(line) as { kind: string })
+        return { code, lines }
+    }
+
+    async function writeRun(dir: string, mode: string): Promise<string> {
+        const file = join(dir, 'run.wandb')
+        const child = spawn('python3', ['-c', writer, mode, file], { stdio: 'ignore' })
+        const code = await new Promise<number | null>((resolve) => child.on('exit', resolve))
         expect(code).toBe(0)
-        expect(line).toEqual({ kind: 'fatal', message: 'wandb is not available' })
+        return file
+    }
+
+    it('does not import wandb', () => {
+        expect(READ_WANDB_SCRIPT).not.toContain('import wandb')
+        expect(READ_WANDB_SCRIPT).not.toContain('wandb.sdk')
+    })
+
+    it('reads a legacy key record and a nested step record', async () => {
+        const dir = mkdtempSync(join(tmpdir(), 'wandb-read-'))
+        try {
+            const legacy = await readFile(await writeRun(dir, 'legacy'))
+            expect(legacy.code).toBe(0)
+            expect(legacy.lines).toEqual([
+                { kind: 'point', step: 1, metric: 'loss', value: 0.25 },
+                { kind: 'exit' },
+            ])
+            const nested = await readFile(await writeRun(dir, 'nested'))
+            expect(nested.code).toBe(0)
+            expect(nested.lines).toEqual([
+                { kind: 'point', step: 3, metric: 'train/loss', value: 0.5 },
+                { kind: 'exit' },
+            ])
+        } finally {
+            rmSync(dir, { recursive: true, force: true })
+        }
+    })
+
+    it('reads a record split across a leveldb block', async () => {
+        const dir = mkdtempSync(join(tmpdir(), 'wandb-split-'))
+        try {
+            const split = await readFile(await writeRun(dir, 'split'))
+            expect(split.code).toBe(0)
+            expect(split.lines).toEqual([
+                { kind: 'point', step: 4, metric: 'loss', value: 0.75 },
+                { kind: 'exit' },
+            ])
+        } finally {
+            rmSync(dir, { recursive: true, force: true })
+        }
+    })
+
+    it('reports an unreadable file instead of a missing wandb package', async () => {
+        const dir = mkdtempSync(join(tmpdir(), 'wandb-bad-'))
+        const file = join(dir, 'broken.wandb')
+        writeFileSync(file, 'not a wandb file')
+        try {
+            const broken = await readFile(file)
+            expect(broken.code).toBe(0)
+            expect(broken.lines).toEqual([{ kind: 'fatal', message: 'cannot read this run' }])
+        } finally {
+            rmSync(dir, { recursive: true, force: true })
+        }
     })
 })

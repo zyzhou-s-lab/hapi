@@ -1,4 +1,4 @@
-import { lazy, Suspense, useState, type ReactNode } from 'react'
+import { lazy, Suspense, useEffect, useRef, useState, type ReactNode } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useAppContext } from '@/lib/app-context'
 import { useTranslation } from '@/lib/use-translation'
@@ -56,28 +56,34 @@ function TrainingCurvesCard(props: { ctx: WorkCardContext }): ReactNode {
         enabled: Boolean(api),
     })
     const [selected, setSelected] = useState(props.ctx.slot.args?.run ?? '')
-    const [saveFailed, setSaveFailed] = useState(false)
+    const [failedKey, setFailedKey] = useState<string | null>(null)
     const lineId = props.ctx.view.kind === 'line' ? props.ctx.view.lineId : ''
+    const selection = useRef({ lineId, selected })
+    selection.current = { lineId, selected }
+    useEffect(() => { setFailedKey(null) }, [lineId, selected])
     const save = useMutation({
-        mutationFn: async () => {
-            if (!api || !selected || !lineId) throw new Error('API unavailable')
-            await api.bindWorkTraining(lineId, selected)
+        mutationFn: async (input: { lineId: string; run: string }) => {
+            if (!api || !input.run || !input.lineId) throw new Error('API unavailable')
+            await api.bindWorkTraining(input.lineId, input.run)
         },
         onSuccess: async () => {
-            setSaveFailed(false)
+            setFailedKey(null)
             await queryClient.invalidateQueries({ queryKey: ['work', 'layout', 'workbench'] })
         },
-        onError: (error) => {
+        onError: (error, input) => {
             console.error(error)
-            setSaveFailed(true)
+            if (selection.current.lineId === input.lineId && selection.current.selected === input.run) {
+                setFailedKey(`${input.lineId}\0${input.run}`)
+            }
         },
     })
+    const saveFailed = failedKey === `${lineId}\0${selected}`
     return (
         <CardFrame title={t('work.trainingCurves')}>
-            <form className="mb-3 flex flex-wrap items-center gap-2" onSubmit={(event) => { event.preventDefault(); setSaveFailed(false); save.mutate() }}>
+            <form className="mb-3 flex flex-wrap items-center gap-2" onSubmit={(event) => { event.preventDefault(); setFailedKey(null); save.mutate({ lineId, run: selected }) }}>
                 <label className="text-xs text-[var(--app-hint)]">
                     {t('work.trainingPickRun')}
-                    <select className="ml-2 rounded border border-[var(--app-divider)] bg-transparent px-2 py-1 text-sm text-[var(--app-fg)]" value={selected} onChange={(event) => { setSaveFailed(false); setSelected(event.target.value) }}>
+                    <select className="ml-2 rounded border border-[var(--app-divider)] bg-transparent px-2 py-1 text-sm text-[var(--app-fg)]" value={selected} onChange={(event) => { setSelected(event.target.value) }}>
                         <option value="">{t('work.trainingPickRun')}</option>
                         {(runs.data?.runs ?? []).map((item) => <option key={item.run} value={item.run}>{item.run}</option>)}
                     </select>

@@ -1385,6 +1385,7 @@ export default {
   'work.retry': 'Retry',
   'work.cardFailed': 'This card failed.',
   'work.workbenchTitle': 'Workbench',
+  'work.lineMissing': 'This line does not exist.',
   'work.lines': 'Lines',
   'work.inbox': 'Inbox',
   'work.noMachines': 'No machine you can use. A line needs one.',
