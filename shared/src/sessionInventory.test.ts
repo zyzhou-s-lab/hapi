@@ -82,6 +82,16 @@ describe('SessionInventorySchema', () => {
         expect(redactConfigSecrets(`prefix ${token}"`)).toBe('prefix ***"')
     })
 
+    it('redacts hapi tokens and common provider prefixes', () => {
+        const hapi = `hapi_mu_${'a'.repeat(16)}`
+        const sk = `sk-${'b'.repeat(12)}`
+        const ghp = `ghp_${'c'.repeat(12)}`
+        const pat = `github_pat_${'d'.repeat(12)}`
+        const slack = `xoxb-${'e'.repeat(12)}`
+        expect(redactConfigSecrets(`see ${hapi} ${sk} ${ghp} ${pat} ${slack} and hapi_change_title`))
+            .toBe('see *** *** *** *** *** and hapi_change_title')
+    })
+
     it('keeps prompt labels, drops command text, and redacts prompt detail', () => {
         const parsed = parseSessionConfigRpc({
             success: true,

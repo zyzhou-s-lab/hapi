@@ -73,7 +73,8 @@ function clip(value: string, max: number): string {
 }
 
 function previewOf(text: string): string | undefined {
-    const flat = redactConfigSecrets(text).replace(/\s+/g, ' ').trim()
+    const parsed = matter(text)
+    const flat = redactConfigSecrets(parsed.raw ? parsed.body : text).replace(/\s+/g, ' ').trim()
     if (!flat) return undefined
     return clip(flat, PREVIEW_LIMIT)
 }
@@ -218,14 +219,14 @@ function listFiles(dir: string, accept: (name: string) => boolean, recursive: bo
     return out
 }
 
-type Matter = { values: Record<string, string>; lists: Record<string, string[]>; body: string }
+type Matter = { values: Record<string, string>; lists: Record<string, string[]>; body: string; raw: string }
 
 function matter(text: string): Matter {
     const values: Record<string, string> = {}
     const lists: Record<string, string[]> = {}
-    if (!text.startsWith('---')) return { values, lists, body: text }
+    if (!text.startsWith('---')) return { values, lists, body: text, raw: '' }
     const end = text.indexOf('\n---', 3)
-    if (end < 0) return { values, lists, body: text }
+    if (end < 0) return { values, lists, body: text, raw: '' }
     const raw = text.slice(text.indexOf('\n', 0) + 1, end)
     let listKey: string | null = null
     for (const line of raw.split(/\r?\n/)) {
@@ -251,7 +252,7 @@ function matter(text: string): Matter {
         values[key] = value
     }
     const body = text.slice(end + 4).replace(/^\r?\n/, '')
-    return { values, lists, body }
+    return { values, lists, body, raw }
 }
 
 function fieldList(parsed: Matter, key: string): string[] {
@@ -385,6 +386,7 @@ function collectClaude(input: CollectInput, live: SessionPromptLive | undefined)
     const home = input.home ?? homedir()
     const cwd = resolve(input.cwd)
     const claudeDir = input.env?.CLAUDE_CONFIG_DIR?.trim() || join(home, '.claude')
+    const userClaudePath = resolve(join(claudeDir, 'CLAUDE.md'))
     const userSettings = claudeSettings(join(claudeDir, 'settings.json'))
     const managedPath = process.platform === 'darwin'
         ? '/Library/Application Support/ClaudeCode/managed-settings.json'
@@ -452,6 +454,7 @@ function collectClaude(input: CollectInput, live: SessionPromptLive | undefined)
         for (const dir of chain) {
             for (const name of ['CLAUDE.md', join('.claude', 'CLAUDE.md'), 'CLAUDE.local.md']) {
                 const path = join(dir, name)
+                if (resolve(path) === userClaudePath) continue
                 if (excluded(skip, path)) continue
                 pushFile(user, { scope: 'project', title: name.split(sep).pop() || name, path, cwd, home })
             }
@@ -763,7 +766,7 @@ function collectOmp(input: CollectInput, live: SessionPromptLive | undefined): C
         role: 'system' as const,
         scope: 'injected' as const,
         title: 'system-prompt',
-        pathLabel: String(index + 1),
+        pathLabel: `segment:${index + 1}`,
         text: redactConfigSecrets(part),
     }))
     const user: Draft[] = []
@@ -927,17 +930,21 @@ export function readSessionPromptDetail(input: CollectInput & { id: string }): {
     match?: string
     note?: string
     codexCapped?: boolean
+    frontmatter?: string
 } | { error: string } {
     const found = collectSessionPrompts(input).body(input.id)
     if (!found) return { error: 'Config entry not found' }
+    const parsed = matter(found.text)
+    const frontmatter = parsed.raw.trim()
     return {
         id: input.id,
         title: found.title,
-        markdown: found.text,
+        markdown: parsed.raw ? parsed.body : found.text,
         truncated: found.truncated,
         ...(found.load ? { load: found.load } : {}),
         ...(found.match ? { match: found.match } : {}),
         ...(found.note ? { note: found.note } : {}),
         ...(found.codexCapped ? { codexCapped: true } : {}),
+        ...(frontmatter ? { frontmatter: clip(frontmatter, 2000) } : {}),
     }
 }

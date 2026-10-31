@@ -256,7 +256,7 @@ describe('SessionConfigPage', () => {
                 system: {
                     availability: 'listed',
                     note: 'claude-builtin',
-                    items: [{ id: 'sys', role: 'system', scope: 'injected', title: 'append-system-prompt', hasText: true }],
+                    items: [{ id: 'sys', role: 'system', scope: 'injected', title: 'system-prompt', pathLabel: 'segment:1', hasText: true }],
                 },
                 user: {
                     availability: 'listed',
@@ -282,16 +282,20 @@ describe('SessionConfigPage', () => {
             markdown: '# Project\n\nUse bun.',
             truncated: true,
             note: 'no-import',
+            frontmatter: 'alwaysApply: true',
         })
         renderPage()
         expect(await screen.findByRole('heading', { name: 'System prompt' })).toBeTruthy()
         expect(screen.getByRole('heading', { name: 'User prompt' })).toBeTruthy()
         expect(screen.getByText('Does not include Claude Code’s built-in system prompt.')).toBeTruthy()
+        expect(screen.getByText('Part 1')).toBeTruthy()
         expect(screen.getByText('Loads for matching paths · src/**/*.ts')).toBeTruthy()
         expect(screen.queryByRole('switch', { name: 'Enable CLAUDE.md' })).toBeNull()
         fireEvent.click(screen.getByRole('button', { name: /CLAUDE.md/ }))
         expect(await screen.findByText('Showing the first part only.')).toBeTruthy()
         expect(screen.getByText('@import lines are not expanded.')).toBeTruthy()
+        expect(screen.getByText(/Frontmatter/)).toBeTruthy()
+        expect(screen.getByText(/alwaysApply: true/)).toBeTruthy()
         expect(screen.getByText(/# Project/)).toBeTruthy()
         expect(screen.queryByRole('switch')).toBeNull()
     })

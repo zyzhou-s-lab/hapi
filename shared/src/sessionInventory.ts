@@ -169,6 +169,7 @@ export const SessionConfigDetailSchema = z.discriminatedUnion('kind', [
         match: z.string().max(300).optional(),
         note: z.string().max(80).optional(),
         codexCapped: z.boolean().optional(),
+        frontmatter: z.string().max(2000).optional(),
     }),
 ])
 
@@ -185,7 +186,7 @@ export function redactConfigSecrets(value: string): string {
     return value
         .replace(/([a-z][a-z0-9+.-]*:\/\/)[^\s/@]+:[^\s/@]+@/gi, '$1***@')
         .replace(/\b(bearer)\s+[^\s"']+/gi, '$1 ***')
-        .replace(/\b(sk-|ghp_|github_pat_|xox[baprs]-)[A-Za-z0-9_-]{8,}/g, '***')
+        .replace(/\b(sk-|ghp_|github_pat_|xox[baprs]-|hapi_[a-z0-9]+_)[A-Za-z0-9_-]{8,}/g, '***')
         .replace(/(^|[^A-Za-z0-9])([A-Za-z][A-Za-z0-9_]*(?:API_KEY|ACCESS_KEY|SECRET|TOKEN|PASSWORD))\s*=\s*[^\s"']+/g, '$1$2=***')
         .replace(/(--(?:api[-_]?key|token|secret|password|passwd|key))(=|\s+)\S+/gi, '$1$2***')
         .replace(/(^|[^A-Za-z0-9_])(token|api[_-]?key|secret|password|passwd|key)(\s*[:=]\s*)[^\s"']+/gi, '$1$2$3***')
@@ -224,7 +225,14 @@ export function parseSessionConfigDetail(raw: unknown): SessionConfigDetailResul
     if (!parsed.success) return { success: false, error: 'Invalid session config' }
     if (parsed.data.kind === 'hook') return { success: true, ...parsed.data, script: redactConfigSecrets(parsed.data.script) }
     if (parsed.data.kind === 'skill') return { success: true, ...parsed.data, markdown: redactConfigSecrets(parsed.data.markdown) }
-    if (parsed.data.kind === 'prompt') return { success: true, ...parsed.data, markdown: redactConfigSecrets(parsed.data.markdown) }
+    if (parsed.data.kind === 'prompt') {
+        return {
+            success: true,
+            ...parsed.data,
+            markdown: redactConfigSecrets(parsed.data.markdown),
+            ...(parsed.data.frontmatter ? { frontmatter: redactConfigSecrets(parsed.data.frontmatter) } : {}),
+        }
+    }
     return { success: true, ...parsed.data }
 }
 

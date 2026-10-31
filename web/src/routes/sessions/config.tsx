@@ -31,6 +31,12 @@ function promptCopy(code: string | undefined, t: (key: string) => string): strin
     return translated === key ? code : translated
 }
 
+function promptPathLabel(detail: string, t: (key: string, params?: Record<string, string | number>) => string): string {
+    const segment = /^segment:(\d+)$/.exec(detail)
+    if (!segment?.[1]) return detail
+    return t('session.config.prompt.segment', { n: segment[1] })
+}
+
 function promptTitle(title: string, t: (key: string) => string): string {
     const keys: Record<string, string> = {
         'append-system-prompt': 'session.config.prompt.channel.append',
@@ -115,7 +121,7 @@ function ConfigSection(props: {
                                     <button type="button" className="min-w-0 flex-1 text-left" onClick={() => props.onOpen(item)}>
                                         <div className="truncate text-sm text-[var(--app-fg)]">{promptTitle(item.title, t)}</div>
                                         {item.detail ? (
-                                            <div className="truncate text-xs text-[var(--app-hint)]">{item.detail}</div>
+                                            <div className="truncate text-xs text-[var(--app-hint)]">{promptPathLabel(item.detail, t)}</div>
                                         ) : null}
                                         {item.preview ? (
                                             <div className="truncate text-xs text-[var(--app-hint)]">{item.preview}</div>
@@ -180,8 +186,11 @@ function ConfigDetail(props: { detail: Extract<SessionConfigDetailResult, { succ
                 <>
                     {detail.kind === 'prompt' && detail.note ? <p className="text-xs text-[var(--app-hint)]">{promptCopy(detail.note, t)}</p> : null}
                     {detail.kind === 'prompt' && detail.codexCapped ? <p className="text-xs text-[var(--app-hint)]">{t('session.config.prompt.codexCap')}</p> : null}
+                    {detail.kind === 'prompt' && detail.frontmatter ? (
+                        <pre className="overflow-x-auto whitespace-pre-wrap font-mono text-xs text-[var(--app-hint)]">{t('session.config.prompt.frontmatter')}{'\n'}{detail.frontmatter}</pre>
+                    ) : null}
                     {detail.truncated ? <p className="text-xs text-[var(--app-hint)]">{t('session.config.truncated')}</p> : null}
-                    <FileMarkdownView content={detail.kind === 'skill' ? detail.markdown : detail.markdown} />
+                    <FileMarkdownView content={detail.markdown} />
                 </>
             ) : null}
             {detail.kind === 'mcp' ? (

@@ -43,6 +43,37 @@ describe('session prompts', () => {
         expect(prompts?.system?.note).toBe('claude-builtin')
     })
 
+    it('does not list the user CLAUDE.md again while walking ancestors', () => {
+        const home = tempDir()
+        const cwd = join(home, 'repo')
+        mkdirSync(join(home, '.claude'), { recursive: true })
+        mkdirSync(cwd, { recursive: true })
+        writeFileSync(join(home, '.claude', 'CLAUDE.md'), 'user home file')
+        writeFileSync(join(cwd, 'CLAUDE.md'), 'project file')
+        const prompts = titles(cwd, home, 'claude', { flavor: 'claude', cwd, home, env: {} })
+        const files = prompts?.user?.items.filter((item) => item.title === 'CLAUDE.md') ?? []
+        const userFile = files.find((item) => item.scope === 'user' && item.pathLabel === '~/.claude/CLAUDE.md')
+        const projectFile = files.find((item) => item.scope === 'project' && item.preview?.includes('project file'))
+        expect(files.some((item) => item.scope === 'project' && item.pathLabel === '~/.claude/CLAUDE.md')).toBe(false)
+        expect(userFile?.preview).toContain('user home file')
+        expect(projectFile?.pathLabel).toBe('~/repo/CLAUDE.md')
+    })
+
+    it('strips rule frontmatter from the detail and keeps it as metadata', () => {
+        const home = tempDir()
+        const cwd = tempDir()
+        mkdirSync(join(cwd, '.claude', 'rules'), { recursive: true })
+        writeFileSync(join(cwd, '.claude', 'rules', 'api.md'), '---\nalwaysApply: true\npaths:\n  - src/**/*.ts\n---\n# Check\n\nBody.\n')
+        const prompts = titles(cwd, home, 'claude', { flavor: 'claude', cwd, home, env: {} })
+        const rule = prompts?.user?.items.find((item) => item.title === 'api.md')
+        expect(rule?.preview).toContain('# Check')
+        expect(rule?.preview).not.toContain('alwaysApply')
+        const detail = readSessionPromptDetail({ flavor: 'claude', cwd, home, env: {}, id: rule?.id ?? '' })
+        expect('markdown' in detail ? detail.markdown : '').toBe('# Check\n\nBody.\n')
+        expect('frontmatter' in detail ? detail.frontmatter : '').toContain('alwaysApply: true')
+        expect('markdown' in detail ? detail.markdown : '').not.toContain('---')
+    })
+
     it('does not follow a symlinked instruction file', () => {
         const home = tempDir()
         const cwd = tempDir()
@@ -163,8 +194,9 @@ describe('session prompts', () => {
             cwd,
             home,
             env: { PI_CODING_AGENT_DIR: join(home, 'agent') },
-            promptLive: { omp: { systemPrompt: ['omp system'] } },
+            promptLive: { omp: { systemPrompt: ['omp system', 'second chunk'] } },
         })
+        expect(prompts?.system?.items.map((item) => item.pathLabel)).toEqual(['segment:1', 'segment:2'])
         expect(prompts?.system?.items.map((item) => item.preview)).toContain('omp system')
         const user = prompts?.user?.items ?? []
         expect(user.find((item) => item.title === 'api.mdc')?.load).toBe('demand')

@@ -288,6 +288,8 @@ export default {
   'session.config.prompt.note.no-import': '未展开 @import。',
   'session.config.prompt.note.nested-claude': '子目录里的 CLAUDE.md 要打开那个目录的文件才会加载，这里不列出。',
   'session.config.prompt.codexCap': 'Codex 拼进上下文时会在这里截断。',
+  'session.config.prompt.segment': '第 {n} 段',
+  'session.config.prompt.frontmatter': '元信息',
 
   // Session actions
   'session.action.rename': '重命名',

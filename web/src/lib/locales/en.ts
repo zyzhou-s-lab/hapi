@@ -284,6 +284,8 @@ export default {
   'session.config.prompt.note.no-import': '@import lines are not expanded.',
   'session.config.prompt.note.nested-claude': 'CLAUDE.md files in subdirectories load only when Claude opens those files. They are not listed here.',
   'session.config.prompt.codexCap': 'Codex drops this when it joins instructions into the prompt.',
+  'session.config.prompt.segment': 'Part {n}',
+  'session.config.prompt.frontmatter': 'Frontmatter',
 
   // Session actions
   'session.action.rename': 'Rename',
