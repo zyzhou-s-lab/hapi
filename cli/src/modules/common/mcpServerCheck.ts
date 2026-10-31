@@ -1,25 +1,43 @@
 import { spawn } from 'node:child_process'
+import { createRequire } from 'node:module'
 import { createInterface } from 'node:readline'
 
 /**
  * Whether one configured MCP server is actually up.
  *
  * Copied from Magpie 0.1.2396 (`github.com/yetone/magpie` tag v0.1.2396,
- * `internal/library/mcp_check.go`). The Library page's own comment: the only
- * way to know is to connect the way an agent would. A command is started,
- * asked to initialize and to list its tools, then stopped. A URL is asked
- * the same over HTTP. `ok` means it answered. A sign-in refusal, an HTTP
- * error, a dead process, or a step that never answers is not loaded.
+ * `internal/library/mcp_check.go`). Magpie is MIT licensed:
+ * Copyright (c) 2026 yetone. Permission is hereby granted, free of charge, to
+ * any person obtaining a copy of this software to deal in it without
+ * restriction, including the rights to use, copy, modify, merge, publish,
+ * distribute, sublicense, and/or sell copies, provided the copyright notice
+ * and this permission notice appear in all copies or substantial portions.
+ * https://github.com/yetone/magpie/blob/v0.1.2396/LICENSE
+ *
+ * The Library page's own comment: the only way to know is to connect the way
+ * an agent would. A command is started, asked to initialize and to list its
+ * tools, then stopped. A URL is asked the same over HTTP. `ok` means it
+ * answered. A sign-in refusal, an HTTP error, a dead process, or a step that
+ * never answers is not loaded.
  *
  * Not copied: WSL distros, and Magpie refreshing its own OAuth token. A 401
  * or 403 is simply not loaded.
  */
 
 const MCP_PROTOCOL = '2025-06-18'
-const STDIO_STEP_MS = 30_000
-const REMOTE_STEP_MS = 60_000
+/** One server, initialize plus tools/list. A silent process must not hold the config page. */
+const PROBE_BUDGET_MS = 8_000
 const CHECK_AT_ONCE = 4
 const INITIALIZED = '{"jsonrpc":"2.0","method":"notifications/initialized"}'
+const require = createRequire(import.meta.url)
+const HAPI_VERSION = (() => {
+    try {
+        const version = (require('../../../package.json') as { version?: unknown }).version
+        return typeof version === 'string' && version ? version : '0.0.0'
+    } catch {
+        return '0.0.0'
+    }
+})()
 
 export type McpProbeTarget = {
     name: string
@@ -48,7 +66,7 @@ function initializeReq(): string {
     return request(1, 'initialize', {
         protocolVersion: MCP_PROTOCOL,
         capabilities: {},
-        clientInfo: { name: 'magpie', version: '0.1.2396' },
+        clientInfo: { name: 'hapi', version: HAPI_VERSION },
     })
 }
 
@@ -104,11 +122,17 @@ async function checkStdio(target: McpProbeTarget): Promise<boolean> {
     })
     let exited = false
     const exit = new Promise<void>((resolve) => {
-        child.once('exit', () => {
+        let settled = false
+        const finish = () => {
+            if (settled) return
+            settled = true
             exited = true
             wake()
             resolve()
-        })
+        }
+        // Spawn failures (ENOENT, EACCES, a bad cwd) emit 'error' and may never emit 'exit'.
+        child.once('error', finish)
+        child.once('exit', finish)
     })
     child.stdin.on('error', () => {
         exited = true
@@ -134,13 +158,15 @@ async function checkStdio(target: McpProbeTarget): Promise<boolean> {
         if (exited || child.exitCode !== null || child.stdin.destroyed || !child.stdin.writable) return
         child.stdin.write(`${body}\n`)
     }
+    const started = Date.now()
+    const remaining = () => Math.max(0, PROBE_BUDGET_MS - (Date.now() - started))
     try {
         send(initializeReq())
-        const init = await waitFor(1, STDIO_STEP_MS)
+        const init = await waitFor(1, remaining())
         if (!init || init.error) return false
         send(INITIALIZED)
         send(request(2, 'tools/list'))
-        const tools = await waitFor(2, STDIO_STEP_MS)
+        const tools = await waitFor(2, remaining())
         return Boolean(tools && toolsOk(tools))
     } catch {
         return false
@@ -197,14 +223,23 @@ async function checkHttp(target: McpProbeTarget): Promise<boolean> {
     if (!target.url) return false
     const headers = target.headers ?? {}
     let session = ''
+    const started = Date.now()
+    const remaining = () => Math.max(0, PROBE_BUDGET_MS - (Date.now() - started))
     try {
-        const init = await postJson(target.url, initializeReq(), headers, session, REMOTE_STEP_MS)
+        const initBudget = remaining()
+        if (initBudget <= 0) return false
+        const init = await postJson(target.url, initializeReq(), headers, session, initBudget)
         if (init.status === 401 || init.status === 403 || init.status < 200 || init.status >= 300) return false
         session = init.headers.get('Mcp-Session-Id') ?? ''
         const initMsg = await readRpc(init, 1)
         if (!initMsg || initMsg.error) return false
-        await postJson(target.url, INITIALIZED, headers, session, REMOTE_STEP_MS).catch(() => undefined)
-        const listed = await postJson(target.url, request(2, 'tools/list'), headers, session, REMOTE_STEP_MS)
+        const noteBudget = remaining()
+        if (noteBudget > 0) {
+            await postJson(target.url, INITIALIZED, headers, session, noteBudget).catch(() => undefined)
+        }
+        const listBudget = remaining()
+        if (listBudget <= 0) return false
+        const listed = await postJson(target.url, request(2, 'tools/list'), headers, session, listBudget)
         if (listed.status === 401 || listed.status === 403 || listed.status < 200 || listed.status >= 300) return false
         const tools = await readRpc(listed, 2)
         return Boolean(tools && toolsOk(tools))

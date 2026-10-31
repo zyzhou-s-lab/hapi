@@ -287,6 +287,64 @@ describe('session prompts', () => {
         expect(user.every((item) => item.title !== 'AGENTS.md' || item.load === undefined)).toBe(true)
     })
 
+    it('marks a multi-line AGENTS.md loaded from an omp 18.12.6 repo-rules block', () => {
+        const home = tempDir()
+        const cwd = tempDir()
+        mkdirSync(join(cwd, '.git'))
+        mkdirSync(join(cwd, '.omp'))
+        const body = '# Title\n\nFollow the repository rules when editing code here.\n'
+        writeFileSync(join(cwd, 'AGENTS.md'), body)
+        writeFileSync(join(cwd, '.omp', 'AGENTS.md'), '# Other\n\nThis nearest omp file is not in the prompt.\n')
+        const prompts = titles(cwd, home, 'omp', {
+            flavor: 'omp',
+            cwd,
+            home,
+            env: { PI_CODING_AGENT_DIR: join(home, 'agent') },
+            promptLive: {
+                omp: {
+                    systemPrompt: [[
+                        '<repo-rules>',
+                        'MUST follow these context files for all tasks:',
+                        '<file path="/opt/omp/other/AGENTS.md">',
+                        '# Title',
+                        '',
+                        'Follow the repository rules when editing code here.',
+                        '</file>',
+                        '</repo-rules>',
+                    ].join('\n')],
+                },
+            },
+        })
+        const byPath = Object.fromEntries((prompts?.user?.items ?? []).filter((item) => item.title === 'AGENTS.md').map((item) => [item.pathLabel, item.loaded]))
+        expect(byPath['AGENTS.md']).toBe(true)
+        expect(byPath['.omp/AGENTS.md']).toBe(false)
+        expect(JSON.stringify(prompts)).not.toContain(join(cwd, 'AGENTS.md'))
+    })
+
+    it('loads contextFiles.extra names from the agent directory and skips paths', () => {
+        const home = tempDir()
+        const cwd = tempDir()
+        mkdirSync(join(cwd, '.git'))
+        const agent = join(home, 'agent')
+        mkdirSync(agent)
+        writeFileSync(join(agent, 'settings.json'), JSON.stringify({
+            contextFiles: { extra: ['TEAM.md', 'AGENTS.md', '../SECRET.md', 'nested/NO.md', ''] },
+        }))
+        writeFileSync(join(agent, 'TEAM.md'), 'Team rules that are long enough to list.')
+        writeFileSync(join(home, 'SECRET.md'), 'should not load from a path')
+        const prompts = titles(cwd, home, 'omp', {
+            flavor: 'omp',
+            cwd,
+            home,
+            env: { PI_CODING_AGENT_DIR: agent },
+        })
+        const items = prompts?.user?.items ?? []
+        expect(items.some((item) => item.title === 'TEAM.md' && item.scope === 'user')).toBe(true)
+        expect(items.some((item) => item.title === 'SECRET.md' || item.title === 'NO.md')).toBe(false)
+        expect(items.filter((item) => item.title === 'AGENTS.md')).toEqual([])
+    })
+
+
     it('reports no user files for flavors that do not read them', () => {
         const home = tempDir()
         const cwd = tempDir()

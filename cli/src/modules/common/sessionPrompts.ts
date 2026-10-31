@@ -785,10 +785,14 @@ function collectOpencode(input: CollectInput, live: SessionPromptLive | undefine
     }
 }
 
+function collapsed(value: string): string {
+    return value.replace(/\s+/g, ' ').trim()
+}
+
 function ompInstructionLoaded(prompt: string, path: string, text: string): boolean {
     if (prompt.includes(path)) return true
-    const body = text.replace(/\s+/g, ' ').trim()
-    return body.length >= 24 && prompt.includes(body.slice(0, 80))
+    const needle = collapsed(text).slice(0, 80)
+    return needle.length >= 24 && collapsed(prompt).includes(needle)
 }
 
 /** Filenames omp loads beside AGENTS.md (`contextFiles.extra`). Names only, never paths. */

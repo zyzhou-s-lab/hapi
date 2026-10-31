@@ -437,6 +437,9 @@ function ompProbeTargets(cwd: string): McpProbeTarget[] {
     const dir = process.env.PI_CODING_AGENT_DIR?.trim() || join(homedir(), '.omp', 'agent');
     const seen = new Set<string>();
     const targets: McpProbeTarget[] = [];
+    // omp 18.12.6 keeps the first definition. Native user mcp.json outranks the
+    // portable root .mcp.json fallback, so the user files stay first. Native
+    // project .omp/mcp.json would win; this walk does not read it.
     for (const path of [join(dir, 'mcp.json'), join(dir, 'settings.json'), ...projectMcpPaths(cwd)]) {
         const text = readTextFile(path);
         if (!text) continue;
