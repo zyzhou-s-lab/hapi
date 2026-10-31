@@ -152,14 +152,8 @@ export async function runClaude(options: StartOptions = {}): Promise<void> {
                 flavor: 'claude',
                 cwd: workingDirectory,
                 sessionId: session.sessionId,
-                startingMode,
+                startingMode: options.startingMode ?? (startedBy === 'runner' ? 'remote' : 'local'),
                 skills,
-                promptLive: {
-                    claude: {
-                        ...(currentCustomSystemPrompt ? { custom: currentCustomSystemPrompt } : {}),
-                        ...(currentAppendSystemPrompt ? { append: currentAppendSystemPrompt } : {}),
-                    },
-                },
             });
             return { success: true, ...config };
         } catch (error) {

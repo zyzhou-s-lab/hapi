@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { collectSessionPrompts, readSessionPromptDetail } from './sessionPrompts'
+import { clearSessionPromptLive, collectSessionPrompts, getSessionPromptLive, readSessionPromptDetail, setSessionPromptLive } from './sessionPrompts'
 
 const dirs: string[] = []
 
@@ -85,6 +85,29 @@ describe('session prompts', () => {
         expect(names).not.toContain('project:TEAM_GUIDE.md')
         expect(prompts?.user?.items.some((item) => item.codexCapped)).toBe(true)
         expect(prompts?.system?.items[0]?.title).toBe('developer_instructions')
+    })
+
+    it('does not count a large global Codex file toward the project byte cap', () => {
+        const home = tempDir()
+        const cwd = tempDir()
+        mkdirSync(join(home, '.codex'), { recursive: true })
+        mkdirSync(join(cwd, '.git'))
+        writeFileSync(join(home, '.codex', 'config.toml'), 'project_doc_max_bytes = 32\n')
+        writeFileSync(join(home, '.codex', 'AGENTS.md'), 'g'.repeat(10_000))
+        writeFileSync(join(cwd, 'AGENTS.md'), 'small project file')
+        const prompts = titles(cwd, home, 'codex', { flavor: 'codex', cwd, home, startingMode: 'local', env: { CODEX_HOME: join(home, '.codex') } })
+        const globalFile = prompts?.user?.items.find((item) => item.scope === 'user')
+        const project = prompts?.user?.items.find((item) => item.scope === 'project')
+        expect(globalFile?.codexCapped).toBeUndefined()
+        expect(project?.codexCapped).toBeUndefined()
+        expect(project?.title).toBe('AGENTS.md')
+    })
+
+    it('drops live prompt state when the session ends', () => {
+        setSessionPromptLive('session-end', { claude: { custom: 'kept' } })
+        expect(getSessionPromptLive('session-end')?.claude?.custom).toBe('kept')
+        clearSessionPromptLive('session-end')
+        expect(getSessionPromptLive('session-end')).toBeUndefined()
     })
 
     it('lets an OpenCode AGENTS.md replace CLAUDE.md and does not fetch a URL', () => {

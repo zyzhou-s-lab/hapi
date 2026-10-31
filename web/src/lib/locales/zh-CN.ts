@@ -286,6 +286,7 @@ export default {
   'session.config.prompt.note.cursor-account': '用户规则和团队规则在 Cursor 账号里，runner 读不到。',
   'session.config.prompt.note.remote-url': '远程指令，不拉取。',
   'session.config.prompt.note.no-import': '未展开 @import。',
+  'session.config.prompt.note.nested-claude': '子目录里的 CLAUDE.md 要打开那个目录的文件才会加载，这里不列出。',
   'session.config.prompt.codexCap': 'Codex 拼进上下文时会在这里截断。',
 
   // Session actions

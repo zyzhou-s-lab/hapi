@@ -1,6 +1,6 @@
 import { closeSync, lstatSync, openSync, readdirSync, readFileSync, readSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { dirname, join, relative, resolve, sep } from 'node:path'
+import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { redactConfigSecrets, type SessionInventory, type SessionPromptItem, type SessionPromptScope } from '@hapi/protocol/schemas'
 import { configuration } from '@/configuration'
 import { displayedCodexDeveloperInstructions } from '@/codex/utils/appServerConfig'
@@ -22,6 +22,11 @@ const liveBySession = new Map<string, SessionPromptLive>()
 
 export function setSessionPromptLive(sessionId: string, live: SessionPromptLive): void {
     liveBySession.set(sessionId, live)
+}
+
+export function clearSessionPromptLive(sessionId: string | undefined): void {
+    if (!sessionId) return
+    liveBySession.delete(sessionId)
 }
 
 export function getSessionPromptLive(sessionId: string | undefined): SessionPromptLive | undefined {
@@ -401,6 +406,22 @@ function collectClaude(input: CollectInput, live: SessionPromptLive | undefined)
         text: redactConfigSecrets(systemText.text),
     }
     const user: Draft[] = []
+    const managedFile = process.platform === 'darwin'
+        ? '/Library/Application Support/ClaudeCode/CLAUDE.md'
+        : process.platform === 'win32'
+            ? 'C:\\Program Files\\ClaudeCode\\CLAUDE.md'
+            : '/etc/claude-code/CLAUDE.md'
+    pushFile(user, { scope: 'managed', title: 'CLAUDE.md', path: managedFile, cwd, home })
+    const claudeMd = managed.claudeMd
+    if (typeof claudeMd === 'string' && claudeMd.trim()) {
+        user.push({
+            role: 'user',
+            scope: 'managed',
+            title: 'claudeMd',
+            pathLabel: displayPath(managedPath, cwd, home),
+            text: redactConfigSecrets(claudeMd),
+        })
+    }
     if (mode !== 'managed-only') {
         const userFile = join(claudeDir, 'CLAUDE.md')
         if (!excluded(skip, userFile)) pushFile(user, { scope: 'user', title: 'CLAUDE.md', path: userFile, cwd, home })
@@ -419,22 +440,6 @@ function collectClaude(input: CollectInput, live: SessionPromptLive | undefined)
                 ...(paths.length > 0 ? { load: 'path', match: paths.join(', ') } : {}),
             })
         }
-    }
-    const managedFile = process.platform === 'darwin'
-        ? '/Library/Application Support/ClaudeCode/CLAUDE.md'
-        : process.platform === 'win32'
-            ? 'C:\\Program Files\\ClaudeCode\\CLAUDE.md'
-            : '/etc/claude-code/CLAUDE.md'
-    pushFile(user, { scope: 'managed', title: 'CLAUDE.md', path: managedFile, cwd, home })
-    const claudeMd = managed.claudeMd
-    if (typeof claudeMd === 'string' && claudeMd.trim()) {
-        user.push({
-            role: 'user',
-            scope: 'managed',
-            title: 'claudeMd',
-            pathLabel: displayPath(managedPath, cwd, home),
-            text: redactConfigSecrets(claudeMd),
-        })
     }
     if (mode !== 'managed-only') {
         const chain = upward(cwd, sep).reverse()
@@ -484,7 +489,7 @@ function collectClaude(input: CollectInput, live: SessionPromptLive | undefined)
     const users = finish(user)
     const bodies = new Map([...system.bodies, ...users.bodies])
     return {
-        prompts: { system: block(system.items, 'claude-builtin'), user: block(users.items) },
+        prompts: { system: block(system.items, 'claude-builtin'), user: block(users.items, users.items.length > 0 ? 'nested-claude' : undefined) },
         body: (id) => bodies.get(id) ?? null,
     }
 }
@@ -563,8 +568,9 @@ function collectCodex(input: CollectInput, live: SessionPromptLive | undefined):
     let used = 0
     const user: Draft[] = []
     for (const file of chosen) {
-        const capped = used >= settings.maxBytes || used + file.size > settings.maxBytes
-        used += file.size
+        const projectFile = file.scope === 'project'
+        const capped = projectFile && (used >= settings.maxBytes || used + file.size > settings.maxBytes)
+        if (projectFile) used += file.size
         pushFile(user, {
             scope: file.scope,
             title: file.path.split(sep).pop() || 'AGENTS.md',
@@ -705,7 +711,8 @@ function collectOpencode(input: CollectInput, live: SessionPromptLive | undefine
         join(home, '.config', 'opencode', 'opencode.json'),
     ]
     for (const configPath of configs) {
-        if (resolve(configPath).startsWith(join(hapiRoot, 'tmp', 'opencode'))) continue
+        const hapiConfigDir = join(hapiRoot, 'tmp', 'opencode')
+        if (resolve(configPath) === hapiConfigDir || resolve(configPath).startsWith(`${hapiConfigDir}${sep}`)) continue
         const parsed = readJson(configPath)
         const instructions = asRecord(parsed).instructions
         if (!Array.isArray(instructions)) continue
@@ -731,8 +738,12 @@ function collectOpencode(input: CollectInput, live: SessionPromptLive | undefine
                 }
                 return
             }
-            const path = join(base, entry)
-            if (!resolve(path).startsWith(resolve(base)) && !resolve(path).startsWith(cwd)) return
+            const path = isAbsolute(entry) ? entry : join(base, entry)
+            const abs = resolve(path)
+            const baseAbs = resolve(base)
+            const cwdAbs = resolve(cwd)
+            const inside = (root: string) => abs === root || abs.startsWith(`${root}${sep}`)
+            if (!isAbsolute(entry) && !inside(baseAbs) && !inside(cwdAbs)) return
             pushFile(user, { scope: 'project', title: path.split(sep).pop() || 'instruction.md', path, cwd, home })
         })
     }
@@ -848,7 +859,7 @@ function collectOmp(input: CollectInput, live: SessionPromptLive | undefined): C
             if (triggers.length === 0) continue
             user.push({
                 role: 'user',
-                scope: dir.startsWith(cwd) ? 'project' : 'user',
+                scope: dir === cwd || dir.startsWith(`${cwd}${sep}`) ? 'project' : 'user',
                 title: path.split(sep).pop() || 'rule.md',
                 pathLabel: displayPath(path, cwd, home),
                 load: 'demand',
@@ -885,11 +896,7 @@ export function collectSessionPrompts(input: CollectInput): Collected {
     if (flavor === 'claude') return collectClaude({ ...input, home, cwd }, live)
     if (flavor === 'codex') return collectCodex({ ...input, home, cwd }, live)
     if (flavor === 'cursor') {
-        const users = finish(collectCursor({ ...input, home, cwd }, false).map((draft) => (
-            draft.pathLabel && !draft.pathLabel.startsWith('~') && !draft.pathLabel.startsWith('/')
-                ? draft
-                : draft
-        )))
+        const users = finish(collectCursor({ ...input, home, cwd }, false))
         return {
             prompts: { system: block([], 'no-hapi-system'), user: block(users.items) },
             body: (id) => users.bodies.get(id) ?? null,
