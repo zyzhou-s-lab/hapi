@@ -21,6 +21,7 @@ export type InventoryRow = {
     line?: number
     scriptPath?: string
     loaded?: boolean
+    unchecked?: boolean
 }
 
 export type InventorySection =
@@ -98,7 +99,7 @@ export function mcpSection(inventory: SessionInventory | null | undefined, flavo
     const rows = mcp.servers.flatMap((server) => {
         const next = row(server.name, server.source, undefined, { kind: 'mcp', name: server.name, source: server.source }, server.enabled, flavor, server.filePath, server.line)
         if (!next) return []
-        return [{ ...next, ...(server.loaded === undefined ? {} : { loaded: server.loaded }) }]
+        return [{ ...next, ...(server.loaded === undefined ? {} : { loaded: server.loaded }), ...(server.source === 'project' && server.loaded === undefined ? { unchecked: true } : {}) }]
     })
     if (mcp.kind === 'tools') return { status: 'list', rows, tools: true }
     return rowsOrEmpty(rows)

@@ -24,8 +24,13 @@ export function registerSessionConfigHandlers(
     workingDirectory: string,
     getContext: () => SessionConfigContext = () => ({})
 ): void {
-    rpcHandlerManager.registerHandler<Record<string, never>, SessionConfigResponse>(RPC_METHODS.ListSessionConfig, async () => {
+    rpcHandlerManager.registerHandler<unknown, SessionConfigResponse>(RPC_METHODS.ListSessionConfig, async (params: unknown) => {
         logger.debug('List session config request')
+        const parsed = z.object({
+            fresh: z.boolean().optional(),
+            check: z.string().min(1).max(200).optional(),
+        }).safeParse(params ?? {})
+        const request = parsed.success ? parsed.data : {}
         try {
             const context = getContext()
             const config = await readLiveSessionConfig({
@@ -36,6 +41,8 @@ export function registerSessionConfigHandlers(
                 tools: context.tools,
                 skills: context.skills,
                 promptLive: context.promptLive,
+                fresh: request.fresh,
+                check: request.check,
             })
             return { success: true, ...config }
         } catch (error) {

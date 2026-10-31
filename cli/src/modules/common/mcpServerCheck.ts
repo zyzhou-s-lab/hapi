@@ -96,12 +96,52 @@ function toolsOk(message: RpcMsg): boolean {
     return Array.isArray(result.tools)
 }
 
-async function checkStdio(target: McpProbeTarget): Promise<boolean> {
-    if (!target.command) return false
+type ProbeHit = { ok: boolean; timedOut: boolean }
+
+function down(timedOut = false): ProbeHit {
+    return { ok: false, timedOut }
+}
+
+const probeCache = new Map<string, boolean>()
+
+function sortedPairs(record: Record<string, string> | undefined): Array<[string, string]> {
+    if (!record) return []
+    return Object.keys(record).sort().map((key) => [key, record[key] ?? ''])
+}
+
+/** Identity of a server's config. The name is not part of it. */
+export function probeConfigKey(target: McpProbeTarget): string {
+    return JSON.stringify({
+        transport: target.transport,
+        command: target.command ?? null,
+        args: target.args ?? [],
+        cwd: target.cwd ?? null,
+        env: sortedPairs(target.env),
+        url: target.url ?? null,
+        headers: sortedPairs(target.headers),
+    })
+}
+
+export function cachedProbe(target: McpProbeTarget): boolean | undefined {
+    const key = probeConfigKey(target)
+    return probeCache.has(key) ? probeCache.get(key) : undefined
+}
+
+export function clearProbeCache(): void {
+    probeCache.clear()
+}
+
+async function checkStdio(target: McpProbeTarget): Promise<ProbeHit> {
+    if (!target.command) return down()
+    // omp starts the server in the session directory, or the cwd written in the
+    // config. Magpie pins HOME only because its own cwd is often unusable.
+    // Pinning HOME here would check a different directory than omp launches.
+    const group = process.platform !== 'win32'
     const child = spawn(target.command, target.args ?? [], {
         cwd: target.cwd,
         env: { ...process.env, ...target.env },
         stdio: ['pipe', 'pipe', 'pipe'],
+        detached: group,
     })
     const lines: RpcMsg[] = []
     let pending: (() => void) | undefined
@@ -121,11 +161,13 @@ async function checkStdio(target: McpProbeTarget): Promise<boolean> {
         wake()
     })
     let exited = false
+    let processGone = false
     const exit = new Promise<void>((resolve) => {
         let settled = false
         const finish = () => {
             if (settled) return
             settled = true
+            processGone = true
             exited = true
             wake()
             resolve()
@@ -163,22 +205,39 @@ async function checkStdio(target: McpProbeTarget): Promise<boolean> {
     try {
         send(initializeReq())
         const init = await waitFor(1, remaining())
-        if (!init || init.error) return false
+        if (!init || init.error) return down(!init && !processGone && child.exitCode === null)
         send(INITIALIZED)
         send(request(2, 'tools/list'))
         const tools = await waitFor(2, remaining())
-        return Boolean(tools && toolsOk(tools))
+        if (!tools || !toolsOk(tools)) return down(!tools && !processGone && child.exitCode === null)
+        return { ok: true, timedOut: false }
     } catch {
-        return false
+        return down()
     } finally {
         reader.close()
         if (!exited && child.exitCode === null && child.stdin.writable) child.stdin.end()
-        const closed = await Promise.race([
+        const waitExit = (ms: number) => Promise.race([
             exit.then(() => true),
-            new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 1_000)),
+            new Promise<boolean>((resolve) => setTimeout(() => resolve(false), ms)),
         ])
-        if (!closed) child.kill()
-        await Promise.race([exit, new Promise((resolve) => setTimeout(resolve, 3_000))])
+        const signal = (name: NodeJS.Signals) => {
+            if (processGone || !child.pid || child.pid <= 0) return
+            try {
+                if (group) process.kill(-child.pid, name)
+                else child.kill(name)
+            } catch {
+                // already gone
+            }
+        }
+        // Windows stays on one SIGTERM. Elsewhere the child is its own group, so a
+        // wrapper that ignores SIGTERM cannot leave grandchildren behind.
+        if (!await waitExit(1_000)) signal('SIGTERM')
+        if (!group) {
+            await Promise.race([exit, new Promise((resolve) => setTimeout(resolve, 3_000))])
+        } else if (!await waitExit(1_000)) {
+            signal('SIGKILL')
+            await waitExit(1_000)
+        }
     }
 }
 
@@ -219,32 +278,34 @@ async function readRpc(response: Response, id: number): Promise<RpcMsg | undefin
     }
 }
 
-async function checkHttp(target: McpProbeTarget): Promise<boolean> {
-    if (!target.url) return false
+async function checkHttp(target: McpProbeTarget): Promise<ProbeHit> {
+    if (!target.url) return down()
     const headers = target.headers ?? {}
     let session = ''
     const started = Date.now()
     const remaining = () => Math.max(0, PROBE_BUDGET_MS - (Date.now() - started))
     try {
         const initBudget = remaining()
-        if (initBudget <= 0) return false
+        if (initBudget <= 0) return down(true)
         const init = await postJson(target.url, initializeReq(), headers, session, initBudget)
-        if (init.status === 401 || init.status === 403 || init.status < 200 || init.status >= 300) return false
+        if (init.status === 401 || init.status === 403 || init.status < 200 || init.status >= 300) return down()
         session = init.headers.get('Mcp-Session-Id') ?? ''
         const initMsg = await readRpc(init, 1)
-        if (!initMsg || initMsg.error) return false
+        if (!initMsg || initMsg.error) return down()
         const noteBudget = remaining()
         if (noteBudget > 0) {
             await postJson(target.url, INITIALIZED, headers, session, noteBudget).catch(() => undefined)
         }
         const listBudget = remaining()
-        if (listBudget <= 0) return false
+        if (listBudget <= 0) return down(true)
         const listed = await postJson(target.url, request(2, 'tools/list'), headers, session, listBudget)
-        if (listed.status === 401 || listed.status === 403 || listed.status < 200 || listed.status >= 300) return false
+        if (listed.status === 401 || listed.status === 403 || listed.status < 200 || listed.status >= 300) return down()
         const tools = await readRpc(listed, 2)
-        return Boolean(tools && toolsOk(tools))
-    } catch {
-        return false
+        if (!tools || !toolsOk(tools)) return down()
+        return { ok: true, timedOut: false }
+    } catch (error) {
+        const name = error instanceof Error ? error.name : ''
+        return down(name === 'TimeoutError' || name === 'AbortError')
     } finally {
         if (session) {
             fetch(target.url, {
@@ -258,24 +319,39 @@ async function checkHttp(target: McpProbeTarget): Promise<boolean> {
 
 /** One server. `true` only when initialize and tools/list both come back. */
 export async function checkMcpServer(target: McpProbeTarget): Promise<boolean> {
-    if (target.transport === 'stdio') return checkStdio(target)
-    return checkHttp(target)
+    const result = target.transport === 'stdio' ? await checkStdio(target) : await checkHttp(target)
+    return result.ok
 }
 
-/** At most four at a time, same as Magpie's checkAtOnce. */
-export async function checkMcpServers(targets: readonly McpProbeTarget[]): Promise<Map<string, boolean>> {
+/** At most four at a time. A stored result is reused until the config changes; a timeout is not stored. */
+export async function checkMcpServers(targets: readonly McpProbeTarget[], options?: { fresh?: boolean }): Promise<Map<string, boolean>> {
     const loaded = new Map<string, boolean>()
+    const pending: McpProbeTarget[] = []
+    for (const target of targets) {
+        if (!options?.fresh) {
+            const hit = cachedProbe(target)
+            if (hit !== undefined) {
+                loaded.set(target.name, hit)
+                continue
+            }
+        }
+        pending.push(target)
+    }
     let cursor = 0
     async function worker(): Promise<void> {
         for (;;) {
             const index = cursor
             cursor += 1
-            const target = targets[index]
+            const target = pending[index]
             if (!target) return
-            loaded.set(target.name, await checkMcpServer(target))
+            const result = target.transport === 'stdio' ? await checkStdio(target) : await checkHttp(target)
+            const key = probeConfigKey(target)
+            if (result.timedOut) probeCache.delete(key)
+            else probeCache.set(key, result.ok)
+            loaded.set(target.name, result.ok)
         }
     }
-    await Promise.all(Array.from({ length: Math.min(CHECK_AT_ONCE, targets.length) }, () => worker()))
+    await Promise.all(Array.from({ length: Math.min(CHECK_AT_ONCE, pending.length) }, () => worker()))
     return loaded
 }
 

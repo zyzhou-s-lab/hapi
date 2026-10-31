@@ -14,7 +14,7 @@ import {
 import { buildHookSettings, readMachineClaudeSettings } from '@/modules/common/hooks/generateHookSettings';
 import { listInventorySkills } from '@/modules/common/skills';
 import { collectSessionPrompts, getSessionPromptLive, type SessionPromptLive } from './sessionPrompts';
-import { checkMcpServers, probeTargetsFromConfig, type McpProbeTarget } from './mcpServerCheck';
+import { cachedProbe, checkMcpServers, probeTargetsFromConfig, type McpProbeTarget } from './mcpServerCheck';
 import { lineOfJsonKey, lineOfSnippet, listedConfigFilePath, tryRealpath } from './configFilePath';
 
 const MAX_CONFIG_BYTES = 1_000_000;
@@ -437,10 +437,9 @@ function ompProbeTargets(cwd: string): McpProbeTarget[] {
     const dir = process.env.PI_CODING_AGENT_DIR?.trim() || join(homedir(), '.omp', 'agent');
     const seen = new Set<string>();
     const targets: McpProbeTarget[] = [];
-    // omp 18.12.6 keeps the first definition. Native user mcp.json outranks the
-    // portable root .mcp.json fallback, so the user files stay first. Native
-    // project .omp/mcp.json would win; this walk does not read it.
-    for (const path of [join(dir, 'mcp.json'), join(dir, 'settings.json'), ...projectMcpPaths(cwd)]) {
+    // omp 18.12.6 keeps the first definition. Native project .omp/mcp.json, then
+    // .omp/.mcp.json, then the user file. Root .mcp.json stays last.
+    for (const path of [...ompProjectMcpPaths(cwd), join(dir, 'mcp.json'), join(dir, 'settings.json'), ...projectMcpPaths(cwd)]) {
         const text = readTextFile(path);
         if (!text) continue;
         let parsed: unknown;
@@ -458,28 +457,46 @@ function ompProbeTargets(cwd: string): McpProbeTarget[] {
     return targets;
 }
 
-/** omp servers are loaded only when a Magpie-style handshake answers. A server seen only as a tool name stays on the list. */
+/** User servers are checked. A project server is only checked when `check` names it; a cached project result is shown without starting it. */
 async function withOmpCheckedLoadState(
     servers: readonly SessionInventoryMcpServer[],
     tools: readonly string[] | undefined,
     cwd: string,
+    options?: { fresh?: boolean; check?: string },
 ): Promise<SessionInventoryMcpServer[]> {
     const known = new Set(servers.map((server) => server.name));
     const extras = tools
         ? withMcpLoadState([], tools).filter((server) => !known.has(server.name))
         : [];
     const byName = new Map(ompProbeTargets(cwd).map((target) => [target.name, target]));
-    const probing = servers.flatMap((server) => {
-        if (server.enabled === false) return [];
+    const selected = options?.check?.trim();
+    const probing: McpProbeTarget[] = [];
+    const cachedProject = new Map<string, boolean>();
+    for (const server of servers) {
+        if (server.enabled === false) continue;
         const target = byName.get(server.name);
-        return target ? [target] : [];
-    });
-    const loaded = await checkMcpServers(probing);
+        if (!target) continue;
+        if (server.source === 'project' && selected !== server.name) {
+            if (!options?.fresh) {
+                const hit = cachedProbe(target);
+                if (hit !== undefined) cachedProject.set(server.name, hit);
+            }
+            continue;
+        }
+        probing.push(target);
+    }
+    const loaded = await checkMcpServers(probing, { fresh: options?.fresh === true });
     return [
-        ...servers.map((server) => ({
-            ...server,
-            loaded: server.enabled !== false && loaded.get(server.name) === true,
-        })),
+        ...servers.map((server) => {
+            if (server.enabled === false) return { ...server, loaded: false as const };
+            if (loaded.has(server.name)) return { ...server, loaded: loaded.get(server.name) === true };
+            if (cachedProject.has(server.name)) return { ...server, loaded: cachedProject.get(server.name) === true };
+            if (server.source === 'project') {
+                const { loaded: _loaded, ...rest } = server;
+                return rest;
+            }
+            return { ...server, loaded: false as const };
+        }),
         ...extras,
     ];
 }
@@ -501,6 +518,8 @@ function loadOmpInventory(cwd: string): SessionInventoryPatch {
         ...jsonServersFromFile(join(dir, 'mcp.json'), cwd, 'user'),
         ...jsonServersFromFile(join(dir, 'settings.json'), cwd, 'user'),
         ...projectMcpPaths(cwd).flatMap((path) => jsonServersFromFile(path, cwd, 'project')),
+        // Same rank: the later row wins, so the closer .omp file is last.
+        ...ompProjectMcpPaths(cwd).reverse().flatMap((path) => jsonServersFromFile(path, cwd, 'project')),
     ]);
     return {
         mcp: { kind: 'servers', servers },
@@ -556,19 +575,28 @@ function readJsonFile(path: string, options?: { allowSymlink?: boolean }): unkno
 }
 
 export function projectMcpPaths(cwd: string, home = homedir()): string[] {
-    const paths: string[] = [];
+    return walkProjectDirs(cwd, home).map((dir) => join(dir, '.mcp.json'));
+}
+
+/** Native project MCP files, closer directory first. omp reads `<cwd>/.omp/mcp.json` then `.omp/.mcp.json`; this walk continues to the git root. */
+export function ompProjectMcpPaths(cwd: string, home = homedir()): string[] {
+    return walkProjectDirs(cwd, home).flatMap((dir) => [join(dir, '.omp', 'mcp.json'), join(dir, '.omp', '.mcp.json')]);
+}
+
+function walkProjectDirs(cwd: string, home: string): string[] {
+    const dirs: string[] = [];
     let current = resolve(cwd);
     const seen = new Set<string>();
     while (!seen.has(current)) {
         seen.add(current);
         if (current === resolve(home)) break;
-        paths.push(join(current, '.mcp.json'));
+        dirs.push(current);
         if (existsSync(join(current, '.git'))) break;
         const parent = dirname(current);
         if (parent === current) break;
         current = parent;
     }
-    return paths;
+    return dirs;
 }
 
 export function loadClaudeInventory(cwd: string): SessionInventoryPatch {
@@ -908,6 +936,8 @@ export async function readLiveSessionConfig(input: {
     startingMode?: string | null;
     skills?: LiveSessionConfig['skills'];
     promptLive?: SessionPromptLive;
+    fresh?: boolean;
+    check?: string;
 }): Promise<LiveSessionConfig> {
     const flavor = (input.flavor ?? '').trim().toLowerCase();
     const sections = flavorInventory({ ...input, flavor });
@@ -916,7 +946,7 @@ export async function readLiveSessionConfig(input: {
         ? {
             kind: 'servers' as const,
             servers: flavor === 'omp'
-                ? await withOmpCheckedLoadState(sections.mcp.servers, input.tools, input.cwd)
+                ? await withOmpCheckedLoadState(sections.mcp.servers, input.tools, input.cwd, { fresh: input.fresh, check: input.check })
                 : withMcpLoadState(sections.mcp.servers, input.tools),
         }
         : undefined;

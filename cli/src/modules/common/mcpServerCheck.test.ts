@@ -1,8 +1,9 @@
+import { execFileSync } from 'node:child_process'
 import { createServer, type ServerResponse } from 'node:http'
 import { readFileSync } from 'node:fs'
 import type { AddressInfo } from 'node:net'
 import { describe, expect, it } from 'vitest'
-import { checkMcpServer } from './mcpServerCheck'
+import { checkMcpServer, checkMcpServers, clearProbeCache } from './mcpServerCheck'
 
 const HAPI_VERSION = (JSON.parse(readFileSync(new URL('../../../package.json', import.meta.url), 'utf8')) as { version: string }).version
 
@@ -132,4 +133,50 @@ describe('mcp server probe', () => {
             expect(await checkMcpServer({ name: 'locked', transport: 'http', url })).toBe(false)
         })
     })
+
+    it('asks a silent server again instead of reusing a timeout', async () => {
+        clearProbeCache()
+        // Wall clock: each unanswered stdio probe uses the real 8s budget, so two calls must not collapse into one.
+        const started = Date.now()
+        const target = { name: 'slow', transport: 'stdio' as const, command: '/bin/sleep', args: ['30'] }
+        expect((await checkMcpServers([target])).get('slow')).toBe(false)
+        expect((await checkMcpServers([target])).get('slow')).toBe(false)
+        const elapsed = Date.now() - started
+        expect(elapsed).toBeGreaterThan(12_000)
+        expect(elapsed).toBeLessThan(24_000)
+    }, 30_000)
+
+    it.skipIf(process.platform === 'win32')('leaves no process after a shell that ignores SIGTERM', async () => {
+        const token = `hapi-probe-leak-${process.pid}-${Date.now()}`
+        const pids = () => {
+            let out = ''
+            try {
+                out = execFileSync('ps', ['-axeww', '-o', 'pid=,command='], { encoding: 'utf8', maxBuffer: 32 * 1024 * 1024 })
+            } catch {
+                return [] as number[]
+            }
+            return out.split('\n').flatMap((line) => {
+                if (!line.includes(token)) return []
+                const pid = Number(line.trim().split(/\s+/)[0])
+                return Number.isInteger(pid) && pid > 0 && pid !== process.pid ? [pid] : []
+            })
+        }
+        try {
+            // Wall clock: the shell never answers, and both it and sleep must be gone when the probe returns.
+            const ok = await checkMcpServer({
+                name: 'trap',
+                transport: 'stdio',
+                command: 'sh',
+                args: ['-c', 'trap "" TERM; sleep 100'],
+                env: { HAPI_PROBE_LEAK: token },
+            })
+            expect(ok).toBe(false)
+            expect(pids()).toEqual([])
+        } finally {
+            for (const pid of pids()) {
+                try { process.kill(pid, 'SIGKILL') } catch { /* already gone */ }
+            }
+        }
+    }, 20_000)
+
 })

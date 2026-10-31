@@ -135,12 +135,22 @@ function ConfigSection(props: {
     onOpen: (row: InventoryRow) => void
     onOpenScript: (row: InventoryRow) => void
     onToggle: (row: InventoryRow, enabled: boolean) => void
+    onCheck?: (row: InventoryRow) => void
+    onRecheck?: () => void
+    rechecking?: boolean
 }) {
     const { t } = useTranslation()
     const message = sectionMessage(props.section, t, props.emptyKey)
     return (
         <section>
-            <h2 className="mb-2 text-base font-semibold text-[var(--app-fg)]">{props.title}</h2>
+            <div className="mb-2 flex items-center justify-between gap-3">
+                <h2 className="text-base font-semibold text-[var(--app-fg)]">{props.title}</h2>
+                {props.onRecheck ? (
+                    <button type="button" className="shrink-0 text-xs text-[var(--app-link)] disabled:opacity-50" disabled={props.rechecking} onClick={props.onRecheck}>
+                        {t('session.config.mcp.recheck')}
+                    </button>
+                ) : null}
+            </div>
             <div className="overflow-hidden rounded-lg border border-[var(--app-border)] bg-[var(--app-bg)]">
                 {message ? (
                     <p className="px-3 py-4 text-sm text-[var(--app-hint)]">{message}</p>
@@ -176,7 +186,24 @@ function ConfigSection(props: {
                                         onToggle={(enabled) => props.onToggle(item, enabled)}
                                     />
                                 ) : null}
-                                {item.loaded === undefined ? null : (
+                                {item.unchecked ? (
+                                    <button
+                                        type="button"
+                                        className="shrink-0 text-xs text-[var(--app-link)] disabled:opacity-50"
+                                        disabled={props.pendingKey === item.key}
+                                        onClick={(event) => {
+                                            event.stopPropagation()
+                                            props.onCheck?.(item)
+                                        }}
+                                    >
+                                        {t('session.config.mcp.check')}
+                                    </button>
+                                ) : null}
+                                {item.unchecked ? (
+                                    <span className="shrink-0 rounded-full bg-[var(--app-subtle-bg)] px-2 py-0.5 text-[11px] text-[var(--app-hint)]">
+                                        {t('session.config.mcp.unchecked')}
+                                    </span>
+                                ) : item.loaded === undefined ? null : (
                                     <span className="shrink-0 rounded-full bg-[var(--app-subtle-bg)] px-2 py-0.5 text-[11px] text-[var(--app-hint)]">
                                         {t(item.loaded ? 'session.config.mcp.loaded' : 'session.config.mcp.notLoaded')}
                                     </span>
@@ -209,8 +236,9 @@ export default function SessionConfigPage() {
     const goBack = useAppGoBack()
     const { sessionId } = useParams({ from: '/sessions/$sessionId/config' })
     const { session } = useSession(api, sessionId)
-    const { config, error, isLoading, isFetching, refetch } = useSessionConfig(api, sessionId)
+    const { config, error, isLoading, isFetching, refetch, reload } = useSessionConfig(api, sessionId)
     const [pendingKey, setPendingKey] = useState<string | null>(null)
+    const [rechecking, setRechecking] = useState(false)
     const [toggleError, setToggleError] = useState<string | null>(null)
 
     if (!session || isLoading) {
@@ -257,6 +285,40 @@ export default function SessionConfigPage() {
             setPendingKey(null)
         }
     }
+
+    const checkRow = async (row: InventoryRow) => {
+        if (!api) return
+        setPendingKey(row.key)
+        setToggleError(null)
+        try {
+            await reload({ check: row.title })
+        } catch (checkFailure) {
+            setToggleError(formatSessionConfigError(
+                checkFailure instanceof Error ? checkFailure.message : 'Failed to read session config',
+                t,
+                'read',
+            ))
+        } finally {
+            setPendingKey(null)
+        }
+    }
+
+    const recheck = async () => {
+        setRechecking(true)
+        setToggleError(null)
+        try {
+            await reload({ fresh: true })
+        } catch (checkFailure) {
+            setToggleError(formatSessionConfigError(
+                checkFailure instanceof Error ? checkFailure.message : 'Failed to read session config',
+                t,
+                'read',
+            ))
+        } finally {
+            setRechecking(false)
+        }
+    }
+
 
     const openFile = (path: string, line?: number) => {
         void navigate({
@@ -343,7 +405,7 @@ export default function SessionConfigPage() {
                     <div className="mx-auto flex w-full max-w-content flex-col gap-6 p-4">
                         <ConfigSection title={t('session.config.systemPrompt')} emptyKey="session.config.systemPrompt.empty" section={systemPrompt} pendingKey={pendingKey} onOpen={openRow} onOpenScript={openScript} onToggle={(row, enabled) => { void toggle(row, enabled) }} />
                         <ConfigSection title={t('session.config.userPrompt')} emptyKey="session.config.userPrompt.empty" section={userPrompt} pendingKey={pendingKey} onOpen={openRow} onOpenScript={openScript} onToggle={(row, enabled) => { void toggle(row, enabled) }} />
-                        <ConfigSection title={t('session.config.mcp')} emptyKey="session.config.mcp.empty" section={mcp} pendingKey={pendingKey} onOpen={openRow} onOpenScript={openScript} onToggle={(row, enabled) => { void toggle(row, enabled) }} />
+                        <ConfigSection title={t('session.config.mcp')} emptyKey="session.config.mcp.empty" section={mcp} pendingKey={pendingKey} onOpen={openRow} onOpenScript={openScript} onToggle={(row, enabled) => { void toggle(row, enabled) }} onCheck={(row) => { void checkRow(row) }} onRecheck={flavor === 'omp' ? () => { void recheck() } : undefined} rechecking={rechecking} />
                         <ConfigSection title={t('session.config.agents')} emptyKey="session.config.agents.empty" section={agents} pendingKey={pendingKey} onOpen={openRow} onOpenScript={openScript} onToggle={(row, enabled) => { void toggle(row, enabled) }} />
                         <ConfigSection title={t('session.config.skills')} emptyKey="session.config.skills.empty" section={skills} pendingKey={pendingKey} onOpen={openRow} onOpenScript={openScript} onToggle={(row, enabled) => { void toggle(row, enabled) }} />
                         <ConfigSection title={t('session.config.hooks')} emptyKey="session.config.hooks.empty" section={hooks} pendingKey={pendingKey} onOpen={openRow} onOpenScript={openScript} onToggle={(row, enabled) => { void toggle(row, enabled) }} />

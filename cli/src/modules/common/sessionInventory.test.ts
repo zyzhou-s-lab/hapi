@@ -1,8 +1,9 @@
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager'
 import { describe, expect, it } from 'vitest'
+import { clearProbeCache } from './mcpServerCheck'
 import { registerFileHandlers } from './handlers/files'
 import {
     commandBasename,
@@ -14,6 +15,7 @@ import {
     ompInventoryFromTools,
     parseCodexConfigInventory,
     projectMcpPaths,
+    ompProjectMcpPaths,
     readLiveSessionConfig,
     listSessionAgents,
     listedSessionConfigRealpaths,
@@ -142,7 +144,8 @@ command = "my-hook --token abc"
             expect(byName.idle).toMatchObject({ source: 'user', loaded: false })
             expect(byName.fromSettings?.filePath).toContain('settings.json')
             expect(byName.fromSettings?.loaded).toBe(false)
-            expect(byName.projectServer).toMatchObject({ source: 'project', loaded: false, filePath: '.mcp.json' })
+            expect(byName.projectServer).toMatchObject({ source: 'project', filePath: '.mcp.json' })
+            expect(byName.projectServer.loaded).toBeUndefined()
             expect(byName.extra_probe).toMatchObject({ source: 'tool', loaded: true })
             const encoded = JSON.stringify(config.mcp)
             expect(encoded).not.toContain('sekret')
@@ -254,6 +257,93 @@ command = "my-hook --token abc"
             '/home/dev/proj/.mcp.json',
         ])
     })
+
+    it('walks native project mcp files from the cwd up to the git root', () => {
+        expect(ompProjectMcpPaths('/home/dev/proj/app', '/home/dev')).toEqual([
+            '/home/dev/proj/app/.omp/mcp.json',
+            '/home/dev/proj/app/.omp/.mcp.json',
+            '/home/dev/proj/.omp/mcp.json',
+            '/home/dev/proj/.omp/.mcp.json',
+        ])
+    })
+
+    it('checks user servers from cache and leaves a project server unstarted until asked', async () => {
+        clearProbeCache()
+        const workspace = mkdtempSync(join(tmpdir(), 'hapi-omp-priority-'))
+        const app = join(workspace, 'app')
+        const agent = mkdtempSync(join(tmpdir(), 'hapi-omp-priority-agent-'))
+        const previous = process.env.PI_CODING_AGENT_DIR
+        process.env.PI_CODING_AGENT_DIR = agent
+        mkdirSync(join(workspace, '.git'))
+        mkdirSync(join(app, '.omp'), { recursive: true })
+        mkdirSync(join(workspace, '.omp'), { recursive: true })
+        const userHits = join(agent, 'user-hits.txt')
+        const projectHits = join(agent, 'project-hits.txt')
+        const script = (file: string, mark: string) => `
+            const fs = require('node:fs')
+            const readline = require('node:readline')
+            fs.appendFileSync(${JSON.stringify(file)}, ${JSON.stringify(mark)})
+            const rl = readline.createInterface({ input: process.stdin })
+            rl.on('line', (line) => {
+                let msg
+                try { msg = JSON.parse(line) } catch { return }
+                if (!msg || !msg.id) return
+                const result = msg.method === 'tools/list' ? { tools: [] } : { protocolVersion: '2025-06-18', capabilities: {} }
+                process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result }) + '\\n')
+            })
+        `
+        const userScript = join(agent, 'user.cjs')
+        const projectScript = join(agent, 'project.cjs')
+        writeFileSync(userScript, script(userHits, 'u'))
+        writeFileSync(projectScript, script(projectHits, 'p'))
+        writeFileSync(join(agent, 'mcp.json'), JSON.stringify({
+            mcpServers: { userServer: { command: process.execPath, args: [userScript] } },
+        }))
+        writeFileSync(join(workspace, '.omp', 'mcp.json'), JSON.stringify({
+            mcpServers: { shared: { command: 'true' }, parentOnly: { command: 'true' } },
+        }))
+        writeFileSync(join(app, '.omp', 'mcp.json'), JSON.stringify({
+            mcpServers: { shared: { command: process.execPath, args: [projectScript] } },
+        }))
+        const read = (extra?: { fresh?: boolean; check?: string }) => readLiveSessionConfig({
+            flavor: 'omp',
+            cwd: app,
+            tools: [],
+            ...extra,
+        })
+        const named = async (extra?: { fresh?: boolean; check?: string }) => {
+            const config = await read(extra)
+            return Object.fromEntries((config.mcp?.servers ?? []).map((server) => [server.name, server]))
+        }
+        try {
+            const first = await named()
+            expect(first.userServer?.loaded).toBe(true)
+            expect(first.shared).toMatchObject({ source: 'project', filePath: '.omp/mcp.json' })
+            expect(first.shared?.loaded).toBeUndefined()
+            expect(first.parentOnly?.source).toBe('project')
+            expect(existsSync(projectHits)).toBe(false)
+            expect(readFileSync(userHits, 'utf8')).toBe('u')
+            await named()
+            expect(readFileSync(userHits, 'utf8')).toBe('u')
+            const checked = await named({ check: 'shared' })
+            expect(checked.shared?.loaded).toBe(true)
+            expect(readFileSync(projectHits, 'utf8')).toBe('p')
+            const cached = await named()
+            expect(cached.shared?.loaded).toBe(true)
+            expect(readFileSync(projectHits, 'utf8')).toBe('p')
+            const fresh = await named({ fresh: true })
+            expect(readFileSync(userHits, 'utf8')).toBe('uu')
+            expect(readFileSync(projectHits, 'utf8')).toBe('p')
+            expect(fresh.shared?.loaded).toBeUndefined()
+        } finally {
+            if (previous === undefined) delete process.env.PI_CODING_AGENT_DIR
+            else process.env.PI_CODING_AGENT_DIR = previous
+            rmSync(workspace, { recursive: true, force: true })
+            rmSync(agent, { recursive: true, force: true })
+            clearProbeCache()
+        }
+    })
+
 
     it('attaches the on-disk skill file when a catalog entry has no path', async () => {
         const root = mkdtempSync(join(tmpdir(), 'hapi-skill-path-'))

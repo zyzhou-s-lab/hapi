@@ -115,7 +115,12 @@ export function createGitRoutes(getSyncEngine: () => SyncEngine | null): Hono<We
             return sessionResult
         }
 
-        const result = await runRpc(() => engine.listSessionConfig(sessionResult.sessionId))
+        const fresh = c.req.query('fresh') === '1'
+        const check = c.req.query('check')
+        const result = await runRpc(() => engine.listSessionConfig(sessionResult.sessionId, {
+            ...(fresh ? { fresh: true } : {}),
+            ...(check && check.length <= 200 ? { check } : {}),
+        }))
         return c.json(result)
     })
 

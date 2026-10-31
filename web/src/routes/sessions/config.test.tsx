@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
     getSessionConfig: vi.fn(),
     getSessionConfigItem: vi.fn(),
     setSessionConfigItemEnabled: vi.fn(),
+    flavor: undefined as string | undefined,
 }))
 
 vi.mock('@tanstack/react-router', () => ({
@@ -44,7 +45,7 @@ vi.mock('@/hooks/queries/useSession', () => ({
         session: {
             id: 'session-1',
             active: true,
-            metadata: { path: '/work' },
+            metadata: { path: '/work', ...(mocks.flavor ? { flavor: mocks.flavor } : {}) },
         },
     }),
 }))
@@ -73,6 +74,7 @@ describe('SessionConfigPage', () => {
         mocks.getSessionConfig.mockReset()
         mocks.getSessionConfigItem.mockReset()
         mocks.setSessionConfigItemEnabled.mockReset()
+        mocks.flavor = undefined
     })
 
     it('renders a live config response and hides urls and tokens', async () => {
@@ -307,5 +309,32 @@ describe('SessionConfigPage', () => {
             source: 'user',
         }, false)
     })
+
+    it('checks one project server and can recheck omp without the cache', async () => {
+        mocks.flavor = 'omp'
+        mocks.getSessionConfig.mockResolvedValue({
+            success: true,
+            mcp: {
+                kind: 'servers',
+                servers: [
+                    { name: 'repo', source: 'project' },
+                    { name: 'notion', source: 'user', loaded: true },
+                ],
+            },
+            skills: { items: [] },
+            hooks: { availability: 'listed', items: [] },
+        })
+        renderPage()
+        expect(await screen.findByText('Not checked')).toBeTruthy()
+        fireEvent.click(screen.getByRole('button', { name: 'Check' }))
+        await waitFor(() => {
+            expect(mocks.getSessionConfig).toHaveBeenCalledWith('session-1', { check: 'repo' })
+        })
+        fireEvent.click(screen.getByRole('button', { name: 'Check again' }))
+        await waitFor(() => {
+            expect(mocks.getSessionConfig).toHaveBeenCalledWith('session-1', { fresh: true })
+        })
+    })
+
 
 })
