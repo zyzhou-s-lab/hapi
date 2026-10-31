@@ -1421,7 +1421,5 @@ export default {
   'work.trainingUnreadable': '这次训练读不了。',
   'work.trainingRunnerDown': 'runner 没连上。',
   'work.trainingReconnecting': '正在重新连接…',
-  'work.trainingPickRun': '训练',
-  'work.trainingUseRun': '显示在这条主线上',
-  'work.trainingSaveFailed': '没能保存这次训练。',
+  'work.trainingUnbound': '尚未绑定。',
 } as const

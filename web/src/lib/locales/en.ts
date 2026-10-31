@@ -1422,7 +1422,5 @@ export default {
   'work.trainingUnreadable': 'This run cannot be read.',
   'work.trainingRunnerDown': 'The runner is not connected.',
   'work.trainingReconnecting': 'Reconnecting…',
-  'work.trainingPickRun': 'Run',
-  'work.trainingUseRun': 'Show on this line',
-  'work.trainingSaveFailed': 'Could not save the run.',
+  'work.trainingUnbound': 'Not bound yet.',
 } as const

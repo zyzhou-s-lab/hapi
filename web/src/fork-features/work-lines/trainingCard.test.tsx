@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { render, screen } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 import type { ApiClient } from '@/api/client'
 import { AppContextProvider } from '@/lib/app-context'
@@ -68,68 +68,46 @@ describe('training curve card', () => {
         expect(await screen.findByText('uplot-chart')).toBeTruthy()
     })
 
-    it('shows the curve only on the bound line and can save a run', async () => {
-        const bindWorkTraining = vi.fn(async () => {})
+    it('shows the curve only on the bound line', () => {
         const api = {
             getWorkMap: async () => ({ lines: [], directories: [], sessions: [], dismissed: [] }),
             getWorkLayout: async () => ({ source: 'default', layout: null }),
-            listTrainingRuns: async () => ({ runs: [{ run: 'exp-1' }, { run: 'exp-2' }] }),
-            bindWorkTraining,
         } as unknown as ApiClient
         const other = host('other', api)
+        expect(screen.getByText('Not bound yet.')).toBeTruthy()
         expect(screen.queryByText('No points yet.')).toBeNull()
-        expect(screen.getByRole('combobox')).toBeTruthy()
         other.unmount()
         host('line-1', api)
-        expect(await screen.findByText('No points yet.')).toBeTruthy()
-        expect(await screen.findByRole('option', { name: 'exp-2' })).toBeTruthy()
-        fireEvent.change(screen.getByRole('combobox'), { target: { value: 'exp-2' } })
-        fireEvent.click(screen.getByText('Show on this line'))
-        await waitFor(() => expect(bindWorkTraining).toHaveBeenCalledWith('line-1', 'exp-2'))
+        expect(screen.getByText('No points yet.')).toBeTruthy()
+        expect(screen.queryByRole('combobox')).toBeNull()
+        expect(screen.queryByText('Show on this line')).toBeNull()
     })
 
-    it('clears a save failure after success or another run is chosen', async () => {
-        const logged = vi.spyOn(console, 'error').mockImplementation(() => {})
-        const bindWorkTraining = vi.fn()
-            .mockRejectedValueOnce(new Error('offline'))
-            .mockResolvedValueOnce(undefined)
+    it('says the card is not bound when the slot has no run', () => {
         const api = {
             getWorkMap: async () => ({ lines: [], directories: [], sessions: [], dismissed: [] }),
             getWorkLayout: async () => ({ source: 'default', layout: null }),
-            listTrainingRuns: async () => ({ runs: [{ run: 'exp-1' }, { run: 'exp-2' }] }),
-            bindWorkTraining,
         } as unknown as ApiClient
-        const view = host('line-1', api)
-        expect(await screen.findByRole('option', { name: 'exp-2' })).toBeTruthy()
-        fireEvent.change(screen.getByRole('combobox'), { target: { value: 'exp-2' } })
-        fireEvent.click(screen.getByText('Show on this line'))
-        expect(await screen.findByText('Could not save the run.')).toBeTruthy()
-        fireEvent.change(screen.getByRole('combobox'), { target: { value: 'exp-1' } })
-        await waitFor(() => expect(screen.queryByText('Could not save the run.')).toBeNull())
-        fireEvent.change(screen.getByRole('combobox'), { target: { value: 'exp-2' } })
-        expect(screen.queryByText('Could not save the run.')).toBeNull()
-        fireEvent.click(screen.getByText('Show on this line'))
-        await waitFor(() => expect(bindWorkTraining).toHaveBeenCalledTimes(2))
-        expect(screen.queryByText('Could not save the run.')).toBeNull()
-        view.rerender(
+        render(
             <AppContextProvider value={{ api, token: 't', baseUrl: 'http://hub', user: { id: 7 } }}>
                 <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
                     <I18nProvider>
                         <WorkCardHost
                             surface="workbench"
-                            view={{ kind: 'line', lineId: 'line-2' }}
+                            view={{ kind: 'line', lineId: 'line-1' }}
                             sessions={[]}
                             api={api}
                             layoutFor={() => ({
                                 revision: 2,
-                                regions: { main: [{ cardId: 'example.training-curves', args: { run: 'exp-1', lineId: 'line-1' } }] },
+                                regions: { main: [{ cardId: 'example.training-curves', args: { lineId: 'line-1' } }] },
                             })}
                         />
                     </I18nProvider>
                 </QueryClientProvider>
             </AppContextProvider>,
         )
-        expect(screen.queryByText('Could not save the run.')).toBeNull()
-        logged.mockRestore()
+        expect(screen.getByText('Not bound yet.')).toBeTruthy()
+        expect(screen.queryByText('uplot-chart')).toBeNull()
+        expect(screen.queryByRole('combobox')).toBeNull()
     })
 })

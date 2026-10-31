@@ -62,8 +62,8 @@ const RUN_MAX = 120
 const LAYOUT_REGION_MAX = 40
 const LAYOUT_ARGS_MAX = 8
 const LAYOUT_VALUE_MAX = 200
+const METRICS_ARG_MAX = 8_000
 const CARD_ID = /^[a-z0-9]+(-[a-z0-9]+)*(\.[a-z0-9]+(-[a-z0-9]+)*)+$/
-
 const LAYOUT_REGIONS = {
     overview: ['stats', 'body'],
     workbench: ['rail', 'main', 'side']
@@ -499,10 +499,16 @@ const storedLayoutSchema = z.object({
 
 const writeSlotSchema = z.object({
     cardId: z.string().regex(CARD_ID),
-    args: z.record(z.string().min(1).max(LAYOUT_VALUE_MAX), z.string().max(4_000)).optional()
+    args: z.record(z.string().min(1).max(LAYOUT_VALUE_MAX), z.string().max(METRICS_ARG_MAX)).optional()
 }).superRefine((slot, context) => {
-    if (slot.args && Object.keys(slot.args).length > LAYOUT_ARGS_MAX) {
+    const args = slot.args ?? {}
+    if (Object.keys(args).length > LAYOUT_ARGS_MAX) {
         context.addIssue({ code: 'custom', message: 'args 太多' })
+    }
+    for (const [key, value] of Object.entries(args)) {
+        if (key !== 'metrics' && value.length > LAYOUT_VALUE_MAX) {
+            context.addIssue({ code: 'custom', message: 'args 太长' })
+        }
     }
 })
 
