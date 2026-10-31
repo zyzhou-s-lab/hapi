@@ -1,0 +1,10 @@
+{
+  "name": "hapi-grid-demo",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "react": "^19.2.3",
+    "react-dom": "^19.2.3",
+    "react-grid-layout": "2.3.0"
+  }
+}
