@@ -63,6 +63,12 @@ export function trainingCustomXAxes(series: readonly TrainingSeries[]): string[]
         .map((row) => row.id)
 }
 
+export function trainingMetricSelection(names: readonly string[]): { kind: 'none' } | { kind: 'names', text: string } | { kind: 'count', count: number } {
+    if (names.length === 0) return { kind: 'none' }
+    if (names.length <= 2) return { kind: 'names', text: names.join(', ') }
+    return { kind: 'count', count: names.length }
+}
+
 export function prepareTrainingPlot(series: readonly TrainingSeries[], options: {
     hidden: ReadonlySet<string>
     smooth: boolean

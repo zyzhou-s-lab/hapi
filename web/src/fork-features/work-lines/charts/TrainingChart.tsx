@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import uPlot from 'uplot'
 import 'uplot/dist/uPlot.min.css'
 import { useTranslation } from '@/lib/use-translation'
-import { TRAINING_X_RUNTIME, TRAINING_X_STEP, TRAINING_X_WALL, prepareTrainingPlot, trainingCustomXAxes, type TrainingSeries } from '../trainingSeries'
+import { TRAINING_X_RUNTIME, TRAINING_X_STEP, TRAINING_X_WALL, prepareTrainingPlot, trainingCustomXAxes, trainingMetricSelection, type TrainingSeries } from '../trainingSeries'
 import { pushTrainingChartData, type ZoomableChart } from './chartUpdate'
 
 const STROKES = ['#2563eb', '#dc2626', '#059669', '#d97706', '#7c3aed', '#0891b2']
@@ -36,6 +36,8 @@ export function TrainingChart(props: { series: TrainingSeries[], xSource?: reado
     const [log, setLog] = useState(false)
     const [xAxis, setXAxis] = useState(storedXAxis)
     const host = useRef<HTMLDivElement>(null)
+    const metricsRef = useRef<HTMLDivElement>(null)
+    const [metricsOpen, setMetricsOpen] = useState(false)
     const chartRef = useRef<uPlot | null>(null)
     const zoomedRef = useRef(false)
     const xSource = props.xSource ?? props.series
@@ -52,7 +54,7 @@ export function TrainingChart(props: { series: TrainingSeries[], xSource?: reado
     }), [activeX, hidden, log, props.series, smooth, xSource])
     const preparedRef = useRef(prepared)
     preparedRef.current = prepared
-    const shape = `${activeX}:${prepared.pointsOnly ? 1 : 0}:${log ? 1 : 0}:${[...hidden].sort().join(',')}:${prepared.drawable.map((row) => row.id).join(',')}`
+    const shape = `${activeX}:${log ? 1 : 0}:${[...hidden].sort().join(',')}:${prepared.drawable.map((row) => row.id).join(',')}`
 
     useEffect(() => {
         const element = host.current
@@ -64,13 +66,17 @@ export function TrainingChart(props: { series: TrainingSeries[], xSource?: reado
             height: 280,
             // _timestamp is wandb's unix seconds. uPlot time scale uses seconds.
             scales: { x: { time: activeX === TRAINING_X_WALL }, y: log ? { distr: 3 } : {} },
+            axes: [
+                { grid: { show: false } },
+                { grid: { show: false } },
+            ],
             series: [
                 {},
                 ...prepared.drawable.map((row, index) => ({
                     label: row.name,
                     stroke: STROKES[index % STROKES.length],
                     width: 2,
-                    ...(prepared.pointsOnly ? { paths: () => null, points: { show: true } } : {}),
+                    points: { show: false },
                 })),
             ],
             cursor: { drag: { x: true, y: true, setScale: true } },
@@ -109,6 +115,15 @@ export function TrainingChart(props: { series: TrainingSeries[], xSource?: reado
         pushTrainingChartData(chart as unknown as ZoomableChart, data, zoomedRef.current)
     }, [prepared])
 
+    useEffect(() => {
+        if (!metricsOpen) return
+        const close = (event: PointerEvent) => {
+            if (!metricsRef.current?.contains(event.target as Node)) setMetricsOpen(false)
+        }
+        document.addEventListener('pointerdown', close)
+        return () => document.removeEventListener('pointerdown', close)
+    }, [metricsOpen])
+
     const toggle = (id: string) => {
         setHidden((current) => {
             const next = new Set(current)
@@ -130,12 +145,27 @@ export function TrainingChart(props: { series: TrainingSeries[], xSource?: reado
                         {customX.map((id) => <option key={id} value={id}>{id}</option>)}
                     </select>
                 </label>
-                {props.series.map((row) => (
-                    <label key={row.id} className="flex items-center gap-1">
-                        <input type="checkbox" checked={!hidden.has(row.id)} onChange={() => toggle(row.id)} />
-                        {row.name}
-                    </label>
-                ))}
+                <div className="relative" ref={metricsRef}>
+                    <button
+                        type="button"
+                        aria-expanded={metricsOpen}
+                        aria-haspopup="listbox"
+                        className="rounded border border-[var(--app-divider)] bg-transparent px-1 py-0.5"
+                        onClick={() => setMetricsOpen((open) => !open)}
+                    >
+                        {metricButtonLabel(props.series.filter((row) => !hidden.has(row.id)).map((row) => row.name), t)}
+                    </button>
+                    {metricsOpen ? (
+                        <div className="absolute left-0 top-full z-20 mt-1 min-w-40 rounded-md border border-[var(--app-border)] bg-[var(--app-bg)] p-1 shadow-lg" role="listbox">
+                            {props.series.map((row) => (
+                                <label key={row.id} className="flex items-center gap-1 px-1 py-0.5">
+                                    <input type="checkbox" checked={!hidden.has(row.id)} onChange={() => toggle(row.id)} />
+                                    {row.name}
+                                </label>
+                            ))}
+                        </div>
+                    ) : null}
+                </div>
                 <label className="flex items-center gap-1">
                     <input type="checkbox" checked={smooth} onChange={() => setSmooth((value) => !value)} />
                     {t('work.trainingSmooth')}
@@ -150,4 +180,11 @@ export function TrainingChart(props: { series: TrainingSeries[], xSource?: reado
             <p className="mt-1 text-xs text-[var(--app-hint)]">{t('work.trainingZoom')}</p>
         </div>
     )
+}
+
+function metricButtonLabel(names: readonly string[], t: (key: string, params?: Record<string, string | number>) => string): string {
+    const selection = trainingMetricSelection(names)
+    if (selection.kind === 'none') return t('work.trainingMetricsNone')
+    if (selection.kind === 'names') return selection.text
+    return t('work.trainingMetricsCount', { count: selection.count })
 }

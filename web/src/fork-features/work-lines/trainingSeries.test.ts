@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { applyTrainingBatch, filterTrainingSeries, prepareTrainingPlot, smoothPoints, trainingCustomXAxes, trainingMetricsFromArgs, type TrainingSeries } from './trainingSeries'
+import { applyTrainingBatch, filterTrainingSeries, prepareTrainingPlot, smoothPoints, trainingCustomXAxes, trainingMetricSelection, trainingMetricsFromArgs, type TrainingSeries } from './trainingSeries'
 import { reduceTrainingDisconnect, reduceTrainingError, reduceTrainingFrame, emptyTrainingState, nextSubscribeDelay, trainingMessageKey } from '@/hooks/useTrainingSocket'
 import { pushTrainingChartData } from './charts/chartUpdate'
 
@@ -91,7 +91,6 @@ describe('training series', () => {
                 { id: 'lr', name: 'lr', points: [{ step: 1, value: 0.1 }, { step: 2, value: 0.1 }, { step: 3, value: 0.01 }] },
             ],
         })
-        expect(repeated.pointsOnly).toBe(true)
         expect(repeated.steps).toEqual([0.01, 0.1, 0.1])
         expect(repeated.drawable[0]?.values).toEqual([0.3, 0.5, 0.4])
         const decay = prepareTrainingPlot([
@@ -106,9 +105,15 @@ describe('training series', () => {
                 { id: 'lr', name: 'lr', points: [{ step: 1, value: 0.1 }, { step: 2, value: 0.05 }, { step: 3, value: 0.01 }] },
             ],
         })
-        expect(decay.pointsOnly).toBe(true)
         expect(decay.steps).toEqual([0.01, 0.05, 0.1])
         expect(decay.drawable[0]?.values).toEqual([0.2, 0.5, 0.9])
+    })
+
+    it('names one or two selected metrics and counts the rest', () => {
+        expect(trainingMetricSelection([])).toEqual({ kind: 'none' })
+        expect(trainingMetricSelection(['loss'])).toEqual({ kind: 'names', text: 'loss' })
+        expect(trainingMetricSelection(['loss', 'lr'])).toEqual({ kind: 'names', text: 'loss, lr' })
+        expect(trainingMetricSelection(['loss', 'lr', 'epoch'])).toEqual({ kind: 'count', count: 3 })
     })
 
     it('auto-scales until the user zooms', () => {
