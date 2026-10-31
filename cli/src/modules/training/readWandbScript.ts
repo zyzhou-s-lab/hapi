@@ -166,8 +166,10 @@ def next_payload(handle, index, size):
     if pulled is None:
         return None
     kind, data, index = pulled
+    if kind == MIDDLE or kind == LAST:
+        return ("orphan", kind, index)
     if kind == FULL:
-        return data, index
+        return ("data", data, index)
     if kind != FIRST:
         raise ValueError("record")
     parts = [data]
@@ -178,10 +180,9 @@ def next_payload(handle, index, size):
         kind, data, index = pulled
         parts.append(data)
         if kind == LAST:
-            return b"".join(parts), index
+            return ("data", b"".join(parts), index)
         if kind != MIDDLE:
             raise ValueError("record")
-
 path = sys.argv[1]
 handle = wait_open(path)
 offset = HEADER
@@ -213,7 +214,10 @@ while True:
     if found is None:
         time.sleep(0.2)
         continue
-    payload, offset = found
+    if found[0] == "orphan":
+        offset = found[2]
+        continue
+    payload, offset = found[1], found[2]
     last_good = offset
     try:
         history, exited = record_body(payload)

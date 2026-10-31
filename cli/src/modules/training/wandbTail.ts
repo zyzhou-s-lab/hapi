@@ -107,7 +107,7 @@ export function createTrainingPump(options: {
             options.emit(reset ? 'training:history' : 'training:points', {
                 run: options.run,
                 machineId: options.machineId,
-                ...(reset ? { reset: true } : {}),
+                ...(reset && index === 0 ? { reset: true } : {}),
                 ...(finished && last ? { finished: true } : {}),
                 ...(lastError && last ? { lastError } : {}),
                 ...(part.length > 0 ? { batch: part } : {}),

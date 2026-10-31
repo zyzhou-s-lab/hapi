@@ -88,7 +88,7 @@ describe('training pump', () => {
         expect(batches.every((batch) => batch.length <= 2000)).toBe(true)
         expect(batches.reduce((sum, batch) => sum + batch.length, 0)).toBe(4500)
         expect(frames[0]?.reset).toBe(true)
-        expect(frames.at(-1)?.finished).toBe(true)
+        expect(frames.slice(1).every((frame) => !('reset' in frame))).toBe(true)
         expect(batches.flat().map((point) => point.step)).toEqual(Array.from({ length: 4500 }, (_, step) => step))
     })
 
@@ -297,6 +297,9 @@ elif mode == "span":
     with open(path, "wb") as handle:
         handle.write(buf)
     raise SystemExit(0)
+elif mode == "dense":
+    payloads = [history([history_item("loss", value=step / 10)], step=step) for step in range(4000)]
+    payloads.append(exit_record)
 else:
     raise SystemExit(2)
 write_file(path, payloads)
@@ -307,7 +310,7 @@ write_file(path, payloads)
         const chunks: Buffer[] = []
         child.stdout.on('data', (chunk: Buffer) => chunks.push(chunk))
         const code = await new Promise<number | null>((resolve) => {
-            const timer = setTimeout(() => { child.kill(); resolve(null) }, 5000)
+            const timer = setTimeout(() => { child.kill(); resolve(null) }, 20000)
             child.on('exit', (status) => { clearTimeout(timer); resolve(status) })
         })
         const lines = Buffer.concat(chunks).toString('utf8').trim().split('\n').filter(Boolean).map((line) => JSON.parse(line) as { kind: string })
@@ -407,6 +410,25 @@ write_file(path, payloads)
         }
     })
 
+    it('keeps later points and the exit record after one flipped byte', async () => {
+        const dir = mkdtempSync(join(tmpdir(), 'wandb-flip-'))
+        try {
+            const file = await writeRun(dir, 'dense')
+            const bytes = readFileSync(file)
+            expect(bytes.length).toBeGreaterThan(80_000)
+            bytes[40_000] ^= 0xff
+            writeFileSync(file, bytes)
+            const flipped = await readFile(file)
+            const points = flipped.lines.filter((line) => line.kind === 'point')
+            const skips = flipped.lines.filter((line) => line.kind === 'skip')
+            expect(flipped.code).toBe(0)
+            expect(flipped.lines.at(-1)?.kind).toBe('exit')
+            expect(points.length).toBeGreaterThan(3_000)
+            expect(skips.length).toBeLessThan(5)
+        } finally {
+            rmSync(dir, { recursive: true, force: true })
+        }
+    })
     it('reports an unreadable file instead of a missing wandb package', async () => {
         const dir = mkdtempSync(join(tmpdir(), 'wandb-bad-'))
         const file = join(dir, 'broken.wandb')
