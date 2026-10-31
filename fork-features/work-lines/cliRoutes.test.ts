@@ -108,25 +108,37 @@ describe('cli work routes', () => {
 
     it('tells a hub base token that is not a gateway token to use one', async () => {
         const config = await createConfiguration()
+        const previousToken = config.cliApiToken
+        const previousSource = config.cliApiTokenSource === 'file' || config.cliApiTokenSource === 'generated' ? config.cliApiTokenSource : 'env'
         config._setCliApiToken('hub-base-token', 'env', false)
-        const response = await app.request('/cli/work/training-runs', {
-            method: 'POST',
-            headers: { authorization: 'Bearer hub-base-token', 'content-type': 'application/json' },
-            body: JSON.stringify({ run: 'exp-base', machineId: 'gpu', runDir: '/data/wandb/offline-run-base' }),
-        })
-        expect(response.status).toBe(401)
-        expect(await response.json()).toEqual({ error: 'training tools need a gateway CLI token' })
+        try {
+            const response = await app.request('/cli/work/training-runs', {
+                method: 'POST',
+                headers: { authorization: 'Bearer hub-base-token', 'content-type': 'application/json' },
+                body: JSON.stringify({ run: 'exp-base', machineId: 'gpu', runDir: '/data/wandb/offline-run-base' }),
+            })
+            expect(response.status).toBe(401)
+            expect(await response.json()).toEqual({ error: 'training tools need a gateway CLI token' })
+        } finally {
+            config._setCliApiToken(previousToken, previousSource, false)
+        }
     })
 
     it('accepts the hub base token when that token is already the gateway token', async () => {
         const config = await createConfiguration()
+        const previousToken = config.cliApiToken
+        const previousSource = config.cliApiTokenSource === 'file' || config.cliApiTokenSource === 'generated' ? config.cliApiTokenSource : 'env'
         config._setCliApiToken(ownerToken.plaintext, 'env', false)
-        const response = await app.request('/cli/work/training-runs', {
-            method: 'POST',
-            headers: ownerAuth,
-            body: JSON.stringify({ run: 'exp-seed', machineId: 'gpu', runDir: '/data/wandb/offline-run-seed' }),
-        })
-        expect(response.status).toBe(200)
-        expect(core.workLines.getTrainingRun(owner.id, 'exp-seed')?.run).toBe('exp-seed')
+        try {
+            const response = await app.request('/cli/work/training-runs', {
+                method: 'POST',
+                headers: ownerAuth,
+                body: JSON.stringify({ run: 'exp-seed', machineId: 'gpu', runDir: '/data/wandb/offline-run-seed' }),
+            })
+            expect(response.status).toBe(200)
+            expect(core.workLines.getTrainingRun(owner.id, 'exp-seed')?.run).toBe('exp-seed')
+        } finally {
+            config._setCliApiToken(previousToken, previousSource, false)
+        }
     })
 })

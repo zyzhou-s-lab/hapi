@@ -257,5 +257,17 @@ describe('work line routes', () => {
             body: JSON.stringify({ name: '同一目录', primaryMachineId: 'gpu', primaryPath: '/private/tmp/proj' }),
         })
         expect(duplicate.status).toBe(400)
+        const plain = await app.request('/api/work/lines', {
+            method: 'POST',
+            headers: auth,
+            body: JSON.stringify({ name: '只改路径', primaryMachineId: 'gpu', primaryPath: '/data/plain-path' }),
+        })
+        const plainLine = await plain.json() as { line: { id: string } }
+        const patched = await app.request(`/api/work/lines/${plainLine.line.id}`, {
+            method: 'PATCH',
+            headers: auth,
+            body: JSON.stringify({ primaryPath: '/tmp/proj' }),
+        })
+        expect(patched.status).toBe(400)
     })
 })

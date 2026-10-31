@@ -24,17 +24,19 @@ export function TrainingChart(props: { series: TrainingSeries[], xSource?: reado
     const zoomedRef = useRef(false)
     const xSource = props.xSource ?? props.series
     const customX = trainingCustomXAxes(xSource)
+    const xChoices = new Set<string>([TRAINING_X_STEP, TRAINING_X_RUNTIME, TRAINING_X_WALL, ...customX])
+    const activeX = xChoices.has(xAxis) ? xAxis : TRAINING_X_STEP
     const prepared = useMemo(() => prepareTrainingPlot(props.series, {
         hidden,
         smooth,
         log,
         alpha: SMOOTH_ALPHA,
-        xAxis,
+        xAxis: activeX,
         xSource,
-    }), [hidden, log, props.series, smooth, xAxis, xSource])
+    }), [activeX, hidden, log, props.series, smooth, xSource])
     const preparedRef = useRef(prepared)
     preparedRef.current = prepared
-    const shape = `${xAxis}:${log ? 1 : 0}:${[...hidden].sort().join(',')}:${prepared.drawable.map((row) => row.id).join(',')}`
+    const shape = `${activeX}:${prepared.pointsOnly ? 1 : 0}:${log ? 1 : 0}:${[...hidden].sort().join(',')}:${prepared.drawable.map((row) => row.id).join(',')}`
 
     useEffect(() => {
         const element = host.current
@@ -44,13 +46,15 @@ export function TrainingChart(props: { series: TrainingSeries[], xSource?: reado
         const chart = new uPlot({
             width,
             height: 280,
-            scales: { x: { time: false }, y: log ? { distr: 3 } : {} },
+            // _timestamp is wandb's unix seconds. uPlot time scale uses seconds.
+            scales: { x: { time: activeX === TRAINING_X_WALL }, y: log ? { distr: 3 } : {} },
             series: [
                 {},
                 ...prepared.drawable.map((row, index) => ({
                     label: row.name,
                     stroke: STROKES[index % STROKES.length],
                     width: 2,
+                    ...(prepared.pointsOnly ? { paths: () => null, points: { show: true } } : {}),
                 })),
             ],
             cursor: { drag: { x: true, y: true, setScale: true } },
@@ -103,7 +107,7 @@ export function TrainingChart(props: { series: TrainingSeries[], xSource?: reado
             <div className="mb-2 flex flex-wrap items-center gap-3 text-xs text-[var(--app-fg)]">
                 <label className="flex items-center gap-1">
                     {t('work.trainingXAxis')}
-                    <select className="rounded border border-[var(--app-divider)] bg-transparent px-1 py-0.5" value={xAxis} onChange={(event) => setXAxis(event.target.value)}>
+                    <select className="rounded border border-[var(--app-divider)] bg-transparent px-1 py-0.5" value={activeX} onChange={(event) => setXAxis(event.target.value)}>
                         <option value={TRAINING_X_STEP}>{t('work.trainingXStep')}</option>
                         <option value={TRAINING_X_RUNTIME}>{t('work.trainingXRuntime')}</option>
                         <option value={TRAINING_X_WALL}>{t('work.trainingXWall')}</option>

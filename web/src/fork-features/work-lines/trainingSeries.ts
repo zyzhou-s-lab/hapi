@@ -74,8 +74,10 @@ export function prepareTrainingPlot(series: readonly TrainingSeries[], options: 
     steps: number[]
     drawable: { id: string; name: string; values: (number | null)[] }[]
     dropped: number
+    pointsOnly: boolean
 } {
     const xAxis = options.xAxis && options.xAxis.length > 0 ? options.xAxis : TRAINING_X_STEP
+    const pointsOnly = xAxis !== TRAINING_X_STEP && xAxis !== TRAINING_X_RUNTIME && xAxis !== TRAINING_X_WALL
     const xByStep = new Map<number, number>()
     if (xAxis !== TRAINING_X_STEP) {
         const source = options.xSource ?? series
@@ -95,23 +97,33 @@ export function prepareTrainingPlot(series: readonly TrainingSeries[], options: 
             }
             points = kept
         }
-        const plotted = points.flatMap((point) => {
-            const x = xAxis === TRAINING_X_STEP ? point.step : xByStep.get(point.step)
-            return x == null || !Number.isFinite(x) ? [] : [{ step: x, value: point.value }]
-        })
-        return { id: row.id, name: row.name, points: plotted }
+        return {
+            id: row.id,
+            name: row.name,
+            points: points.flatMap((point) => {
+                const x = xAxis === TRAINING_X_STEP ? point.step : xByStep.get(point.step)
+                return x == null || !Number.isFinite(x) ? [] : [{ step: point.step, x, value: point.value }]
+            }),
+        }
     })
-    const steps = [...new Set(visible.flatMap((row) => row.points.map((point) => point.step)))].sort((left, right) => left - right)
+    const orders = [...new Set(visible.flatMap((row) => row.points.map((point) => point.step)))].sort((left, right) => left - right)
+    const steps = pointsOnly
+        ? orders.map((step) => visible.flatMap((row) => row.points).find((point) => point.step === step)?.x ?? step)
+        : [...new Set(orders.map((step) => visible.flatMap((row) => row.points).find((point) => point.step === step)?.x ?? step))].sort((left, right) => left - right)
     return {
+        pointsOnly,
         steps,
         dropped,
         drawable: visible.map((row) => {
             const byStep = new Map(row.points.map((point) => [point.step, point.value]))
-            return {
-                id: row.id,
-                name: row.name,
-                values: steps.map((step) => byStep.get(step) ?? null),
-            }
+            const values = orders.map((step) => byStep.get(step) ?? null)
+            if (pointsOnly) return { id: row.id, name: row.name, values }
+            const byX = new Map<number, number | null>()
+            orders.forEach((step, index) => {
+                const x = visible.flatMap((item) => item.points).find((point) => point.step === step)?.x ?? step
+                byX.set(x, values[index] ?? byX.get(x) ?? null)
+            })
+            return { id: row.id, name: row.name, values: steps.map((step) => byX.get(step) ?? null) }
         }),
     }
 }

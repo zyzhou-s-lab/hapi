@@ -126,7 +126,9 @@ function isHubBaseCliToken(token: string): boolean {
 }
 
 function storedTrainingMetrics(layout: WorkLayout, lineId: string, run: string): string[] {
-    const slot = layout.regions.main?.find((item) => item.cardId === 'example.training-curves' && item.args?.lineId === lineId && item.args.run === run)
+    const storedLine = lineId.trim()
+    const storedRun = run.trim()
+    const slot = layout.regions.main?.find((item) => item.cardId === 'example.training-curves' && item.args?.lineId === storedLine && item.args.run === storedRun)
     const raw = slot?.args?.metrics
     if (!raw) return []
     try {

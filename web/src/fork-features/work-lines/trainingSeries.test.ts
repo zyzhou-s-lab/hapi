@@ -79,6 +79,21 @@ describe('training series', () => {
             { id: '_runtime', name: '_runtime', points: [{ step: 1, value: 3 }] },
             { id: 'epoch', name: 'epoch', points: [{ step: 1, value: 0 }] },
         ])).toEqual(['epoch'])
+        const repeated = prepareTrainingPlot([
+            { id: 'loss', name: 'loss', points: [{ step: 1, value: 0.5 }, { step: 2, value: 0.4 }, { step: 3, value: 0.3 }] },
+        ], {
+            hidden: new Set(),
+            smooth: false,
+            log: false,
+            alpha: 0.6,
+            xAxis: 'lr',
+            xSource: [
+                { id: 'lr', name: 'lr', points: [{ step: 1, value: 0.1 }, { step: 2, value: 0.1 }, { step: 3, value: 0.01 }] },
+            ],
+        })
+        expect(repeated.pointsOnly).toBe(true)
+        expect(repeated.steps).toEqual([0.1, 0.1, 0.01])
+        expect(repeated.drawable[0]?.values).toEqual([0.5, 0.4, 0.3])
     })
 
     it('auto-scales until the user zooms', () => {

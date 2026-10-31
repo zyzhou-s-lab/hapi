@@ -342,8 +342,8 @@ export class RpcGateway {
         return result as MachineCreateDirectoryResponse
     }
 
-    async checkPathsExist(machineId: string, paths: string[]): Promise<PathExistsResponse> {
-        const result = await this.machineRpc(machineId, RPC_METHODS.PathExists, { paths }) as RpcPathExistsResponse | unknown
+    async checkPathsExist(machineId: string, paths: string[], timeoutMs?: number): Promise<PathExistsResponse> {
+        const result = await this.machineRpc(machineId, RPC_METHODS.PathExists, { paths }, timeoutMs) as RpcPathExistsResponse | unknown
         if (!result || typeof result !== 'object') {
             throw new Error('Unexpected path-exists result')
         }

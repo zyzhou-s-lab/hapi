@@ -129,10 +129,20 @@ export function mountWorkLineRoutes(app: Hono<WebAppEnv>, deps: {
             return c.json({ error: 'Not found' }, 404)
         }
         try {
-            const primaryPath = parsed.data.primaryPath === undefined || !parsed.data.primaryMachineId
+            const existing = parsed.data.primaryPath === undefined
+                ? undefined
+                : ready.engine.getWorkLines().getMap(ready.account.id).lines.find((line) => line.id === c.req.param('id'))
+            const machineId = parsed.data.primaryMachineId ?? existing?.primaryMachineId
+            if (machineId && parsed.data.primaryPath !== undefined && !canSeeMachine(ready.account.id, machineId)) {
+                return c.json({ error: 'Not found' }, 404)
+            }
+            const primaryPath = parsed.data.primaryPath === undefined || !machineId
                 ? parsed.data.primaryPath
-                : await canonicalPath(ready.engine, parsed.data.primaryMachineId, parsed.data.primaryPath)
-            const line = ready.engine.getWorkLines().updateLine(ready.account.id, c.req.param('id'), { ...parsed.data, primaryPath })
+                : await canonicalPath(ready.engine, machineId, parsed.data.primaryPath)
+            const line = ready.engine.getWorkLines().updateLine(ready.account.id, c.req.param('id'), {
+                ...parsed.data,
+                ...(parsed.data.primaryPath !== undefined && machineId ? { primaryMachineId: machineId, primaryPath } : { primaryPath }),
+            })
             invalidate(ready.account.defaultNamespace, ready.account.id, 'work-map')
             return c.json({ line })
         } catch (error) {
@@ -313,6 +323,10 @@ async function canonicalPath(engine: SyncEngine, machineId: string, path: string
     return resolved[path] ?? path
 }
 
+const PATH_CANON_TIMEOUT_MS = 2_000
+const PATH_CANON_TTL_MS = 10_000
+const pathCanonCache = new Map<string, { at: number, resolved: Record<string, string> }>()
+
 async function canonicalPaths(engine: SyncEngine, items: Array<{ machineId: string, path: string }>): Promise<Record<string, string>> {
     const grouped = new Map<string, Set<string>>()
     for (const item of items) {
@@ -323,13 +337,22 @@ async function canonicalPaths(engine: SyncEngine, items: Array<{ machineId: stri
     }
     const canonical: Record<string, string> = {}
     await Promise.all([...grouped].map(async ([machineId, paths]) => {
+        const key = `${machineId}\n${[...paths].sort().join('\n')}`
+        const cached = pathCanonCache.get(key)
+        if (cached && Date.now() - cached.at < PATH_CANON_TTL_MS) {
+            Object.assign(canonical, cached.resolved)
+            return
+        }
         try {
-            const result = await engine.checkPathsExist(machineId, [...paths])
-            for (const [raw, resolved] of Object.entries(result.resolved ?? {})) {
-                if (resolved && resolved !== raw) canonical[raw] = resolved
+            const result = await engine.checkPathsExist(machineId, [...paths], PATH_CANON_TIMEOUT_MS)
+            const resolved: Record<string, string> = {}
+            for (const [raw, value] of Object.entries(result.resolved ?? {})) {
+                if (value && value !== raw) resolved[raw] = value
             }
+            pathCanonCache.set(key, { at: Date.now(), resolved })
+            Object.assign(canonical, resolved)
         } catch {
-            // The machine is offline. Comparison keeps the stored path.
+            // The machine is offline or slow. Comparison keeps the stored path.
         }
     }))
     return canonical
