@@ -7,7 +7,7 @@ import { MultiUserGatewayStore } from '../multi-user/gatewayStore'
 import type { SyncEngine } from '../../hub/src/sync/syncEngine'
 import type { SSEManager } from '../../hub/src/sse/sseManager'
 import type { WebAppEnv } from '../../hub/src/web/middleware/auth'
-
+import { setTrainingCardPush } from '../../hub/src/socket/trainingCardPush'
 const jwtSecret = new TextEncoder().encode('test-secret-test-secret-test-secret')
 
 describe('work line routes', () => {
@@ -142,6 +142,28 @@ describe('work line routes', () => {
         expect(hyphen.status).toBe(400)
     })
 
+    it('binds selected metrics and pushes the card to open pages', async () => {
+        const auth = { authorization: `Bearer ${await token()}`, 'content-type': 'application/json' }
+        const created = await app.request('/api/work/lines', {
+            method: 'POST',
+            headers: auth,
+            body: JSON.stringify({ name: '指标', primaryMachineId: 'gpu', primaryPath: '/data/metrics' }),
+        })
+        const lineId = (await created.json() as { line: { id: string } }).line.id
+        const pushed: unknown[] = []
+        setTrainingCardPush((accountId, update) => { pushed.push({ accountId, update }) })
+        const response = await app.request('/api/work/layout/workbench/training', {
+            method: 'PUT',
+            headers: auth,
+            body: JSON.stringify({ lineId, run: 'exp-1', metrics: ['loss', 'loss'] }),
+        })
+        expect(response.status).toBe(200)
+        const saved = await app.request('/api/work/layout/workbench', { headers: { authorization: `Bearer ${await token()}` } })
+        const body = await saved.json() as { layout: { regions: { main: { args?: { metrics?: string } }[] } } }
+        expect(body.layout.regions.main.find((slot) => slot.args?.metrics)?.args?.metrics).toBe('["loss"]')
+        expect(pushed).toEqual([{ accountId: account.id, update: { lineId, run: 'exp-1', metrics: ['loss', 'loss'] } }])
+        setTrainingCardPush(null)
+    })
     it('broadcasts card-invalidated without curve points when a line is created', async () => {
         const auth = { authorization: `Bearer ${await token()}`, 'content-type': 'application/json' }
         const created = await app.request('/api/work/lines', {

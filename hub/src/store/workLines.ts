@@ -355,10 +355,13 @@ export class WorkLinesStore {
         `).run(accountId, surface, JSON.stringify(normalized), Date.now())
         return normalized
     }
-
-    bindTrainingLine(accountId: number, lineId: string, run: string): WorkLayout {
+    bindTrainingLine(accountId: number, lineId: string, run: string, metrics: string[] = []): WorkLayout {
         const cleanLine = cleanRequired(lineId, 'lineId', LAYOUT_VALUE_MAX)
         const cleanRun = cleanRequired(run, 'run', LAYOUT_VALUE_MAX)
+        const cleanMetrics = [...new Set(metrics.map((metric) => metric.trim()).filter((metric) => metric.length > 0))]
+        if (cleanMetrics.length > 32 || cleanMetrics.some((metric) => metric.length > LAYOUT_VALUE_MAX)) {
+            throw new WorkMapError('metrics 不合法')
+        }
         return this.db.transaction(() => {
             this.requireLine(accountId, cleanLine)
             if (!this.getTrainingRun(accountId, cleanRun)) throw new WorkMapError('训练不存在', 404)
@@ -372,7 +375,9 @@ export class WorkLinesStore {
                 },
             }
             const main = [...(current.regions.main ?? [])]
-            const slot = { cardId: 'example.training-curves', args: { run: cleanRun, lineId: cleanLine } }
+            const args: Record<string, string> = { run: cleanRun, lineId: cleanLine }
+            if (cleanMetrics.length > 0) args.metrics = JSON.stringify(cleanMetrics)
+            const slot = { cardId: 'example.training-curves', args }
             const index = main.findIndex((item) => item.cardId === slot.cardId && item.args?.lineId === cleanLine)
             if (index >= 0) main[index] = slot
             else main.push(slot)
@@ -494,7 +499,7 @@ const storedLayoutSchema = z.object({
 
 const writeSlotSchema = z.object({
     cardId: z.string().regex(CARD_ID),
-    args: z.record(z.string().min(1).max(LAYOUT_VALUE_MAX), z.string().max(LAYOUT_VALUE_MAX)).optional()
+    args: z.record(z.string().min(1).max(LAYOUT_VALUE_MAX), z.string().max(4_000)).optional()
 }).superRefine((slot, context) => {
     if (slot.args && Object.keys(slot.args).length > LAYOUT_ARGS_MAX) {
         context.addIssue({ code: 'custom', message: 'args 太多' })

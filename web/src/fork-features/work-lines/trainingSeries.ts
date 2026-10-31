@@ -25,6 +25,25 @@ export function applyTrainingBatch(series: TrainingSeries[], batch: TrainingBatc
     return next
 }
 
+export function trainingMetricsFromArgs(args: Record<string, string> | undefined): string[] | null {
+    const raw = args?.metrics
+    if (!raw) return null
+    try {
+        const parsed = JSON.parse(raw) as unknown
+        if (!Array.isArray(parsed)) return null
+        const names = parsed.filter((item): item is string => typeof item === 'string' && item.length > 0)
+        return names.length > 0 ? names : null
+    } catch {
+        return null
+    }
+}
+
+export function filterTrainingSeries(series: readonly TrainingSeries[], metrics: string[] | null): TrainingSeries[] {
+    if (!metrics) return [...series]
+    const allowed = new Set(metrics)
+    return series.filter((row) => allowed.has(row.id))
+}
+
 export function smoothPoints(points: readonly TrainingPoint[], alpha: number): TrainingPoint[] {
     let previous: number | null = null
     return points.map((point) => {

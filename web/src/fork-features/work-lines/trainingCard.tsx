@@ -4,7 +4,7 @@ import { useAppContext } from '@/lib/app-context'
 import { useTranslation } from '@/lib/use-translation'
 import { trainingMessageKey, useTrainingSocket, type TrainingSocketState } from '@/hooks/useTrainingSocket'
 import { CardFrame, registerWorkCards, type WorkCardContext } from './WorkCardHost'
-import type { TrainingSeries } from './trainingSeries'
+import { filterTrainingSeries, trainingMetricsFromArgs, type TrainingSeries } from './trainingSeries'
 
 const TrainingChart = lazy(() => import('./charts/TrainingChart').then((mod) => ({ default: mod.TrainingChart })))
 
@@ -46,7 +46,9 @@ function TrainingCurvesCard(props: { ctx: WorkCardContext }): ReactNode {
     const queryClient = useQueryClient()
     const bound = trainingRunBound(props.ctx)
     const run = bound ? props.ctx.slot.args?.run ?? '' : ''
+    const metrics = trainingMetricsFromArgs(props.ctx.slot.args)
     const state = useTrainingSocket({ baseUrl, token, run })
+    const shown = { ...state, series: filterTrainingSeries(state.series, metrics) }
     const runs = useQuery({
         queryKey: ['work', 'training-runs'],
         queryFn: async () => {
@@ -91,7 +93,7 @@ function TrainingCurvesCard(props: { ctx: WorkCardContext }): ReactNode {
                 <button type="submit" className="text-sm text-[var(--app-link)]" disabled={!selected || save.isPending}>{t('work.trainingUseRun')}</button>
                 {saveFailed ? <p className="text-sm text-red-600">{t('work.trainingSaveFailed')}</p> : null}
             </form>
-            {bound ? <TrainingCurvesBody state={state} /> : null}
+            {bound ? <TrainingCurvesBody state={shown} /> : null}
         </CardFrame>
     )
 }

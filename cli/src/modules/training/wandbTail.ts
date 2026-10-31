@@ -181,6 +181,46 @@ async function wandbFile(runDir: string): Promise<string | null> {
     return file ? join(runDir, file) : null
 }
 
+export async function listWandbMetrics(runDir: string, policy?: Pick<MachinePathPolicy, 'resolveForCheck' | 'isWithinSpawnRoots'>): Promise<string[]> {
+    const resolved = await resolveTrainingRunDir(runDir, policy)
+    if (!resolved) throw new Error('cannot read this run')
+    const file = await wandbFile(resolved)
+    if (!file) throw new Error('cannot read this run')
+    const child = spawn('python3', ['-c', READ_WANDB_SCRIPT, file], { stdio: ['ignore', 'pipe', 'pipe'] })
+    const names = new Set<string>()
+    let buffer = ''
+    return await new Promise((resolve, reject) => {
+        let settled = false
+        const finish = (error?: Error) => {
+            if (settled) return
+            settled = true
+            clearTimeout(timer)
+            child.kill()
+            if (error) reject(error)
+            else resolve([...names].sort())
+        }
+        const timer = setTimeout(() => finish(), 2_000)
+        child.stdout?.setEncoding('utf8')
+        child.stdout?.on('data', (chunk: string) => {
+            buffer += chunk
+            let newline = buffer.indexOf('\n')
+            while (newline >= 0) {
+                const line = buffer.slice(0, newline).trim()
+                buffer = buffer.slice(newline + 1)
+                if (line) {
+                    const parsed = parseTailLine(line)
+                    if (parsed.kind === 'point') names.add(parsed.metric)
+                    if (parsed.kind === 'exit') finish()
+                    if (parsed.kind === 'fatal') finish(new Error(parsed.message))
+                }
+                newline = buffer.indexOf('\n')
+            }
+        })
+        child.on('error', (error) => finish(error))
+        child.on('exit', () => finish())
+    })
+}
+
 export function startTrainingTail(options: {
     run: string
     runDir: string

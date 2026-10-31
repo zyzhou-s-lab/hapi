@@ -4,6 +4,7 @@ import { useNavigate } from '@tanstack/react-router'
 import { useAppContext } from '@/lib/app-context'
 import { useTranslation } from '@/lib/use-translation'
 import { useSessions } from '@/hooks/queries/useSessions'
+import { useTrainingCardSocket } from '@/hooks/useTrainingCardSocket'
 import { WorkCardHost } from './WorkCardHost'
 import './workbenchCards'
 import './trainingCard'
@@ -11,9 +12,10 @@ import { workMapQueryOptions } from './useWorkMap'
 import { defaultWorkSearch, missingWorkLine, type WorkSearch } from './workSearch'
 
 export function Workbench(props: { search: WorkSearch }): ReactNode {
-    const { api } = useAppContext()
+    const { api, token, baseUrl } = useAppContext()
     const { sessions } = useSessions(api)
     const { t } = useTranslation()
+    useTrainingCardSocket(baseUrl, token)
     const navigate = useNavigate()
     const mapQuery = useQuery(workMapQueryOptions(api))
     const map = mapQuery.data ?? null

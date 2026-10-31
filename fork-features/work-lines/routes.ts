@@ -6,7 +6,7 @@ import type { WebAppEnv } from '../../hub/src/web/middleware/auth'
 import type { MultiUserGatewayStore } from '../multi-user/gatewayStore'
 import { gatewayAccountId } from '../multi-user/executionMount'
 import { WorkMapError } from '../../hub/src/store/workLines'
-
+import { pushTrainingCard } from '../../hub/src/socket/trainingCardPush'
 const lineCreateSchema = z.object({
     name: z.string(),
     goal: z.string().nullable().optional(),
@@ -208,11 +208,16 @@ export function mountWorkLineRoutes(app: Hono<WebAppEnv>, deps: {
         const ready = await open(c)
         if (ready instanceof Response) return ready
         if (c.req.param('surface') !== 'workbench') return c.json({ error: 'Not found' }, 404)
-        const body = await c.req.json().catch(() => null) as { lineId?: unknown; run?: unknown } | null
+        const body = await c.req.json().catch(() => null) as { lineId?: unknown; run?: unknown; metrics?: unknown } | null
         if (!body || typeof body.lineId !== 'string' || typeof body.run !== 'string') return c.json({ error: 'Invalid body' }, 400)
+        if (body.metrics !== undefined && (!Array.isArray(body.metrics) || body.metrics.some((metric) => typeof metric !== 'string'))) {
+            return c.json({ error: 'Invalid body' }, 400)
+        }
         try {
-            const layout = ready.engine.getWorkLines().bindTrainingLine(ready.account.id, body.lineId, body.run)
+            const metrics = Array.isArray(body.metrics) ? body.metrics : []
+            const layout = ready.engine.getWorkLines().bindTrainingLine(ready.account.id, body.lineId, body.run, metrics)
             invalidate(ready.account.defaultNamespace, ready.account.id, 'work-layout')
+            pushTrainingCard(ready.account.id, { lineId: body.lineId, run: body.run, metrics })
             return c.json({ layout })
         } catch (error) {
             return mapError(c, error)

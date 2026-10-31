@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { applyTrainingBatch, prepareTrainingPlot, smoothPoints, type TrainingSeries } from './trainingSeries'
+import { applyTrainingBatch, filterTrainingSeries, prepareTrainingPlot, smoothPoints, trainingMetricsFromArgs, type TrainingSeries } from './trainingSeries'
 import { reduceTrainingDisconnect, reduceTrainingError, reduceTrainingFrame, emptyTrainingState, nextSubscribeDelay, trainingMessageKey } from '@/hooks/useTrainingSocket'
 import { pushTrainingChartData } from './charts/chartUpdate'
 
@@ -15,6 +15,14 @@ describe('training series', () => {
         expect(replaced).toEqual([{ id: 'acc', name: 'acc', points: [{ step: 1, value: 0.1 }] }])
         const updated = applyTrainingBatch(replaced, [{ step: 1, metric: 'acc', value: 0.4 }, { step: 2, metric: 'acc', value: 0.5 }], false)
         expect(updated[0]?.points).toEqual([{ step: 1, value: 0.4 }, { step: 2, value: 0.5 }])
+    })
+
+    it('keeps every series when the card metrics field is empty', () => {
+        expect(trainingMetricsFromArgs(undefined)).toBeNull()
+        expect(trainingMetricsFromArgs({ metrics: '[]' })).toBeNull()
+        expect(trainingMetricsFromArgs({ metrics: '["loss"]' })).toEqual(['loss'])
+        expect(filterTrainingSeries([loss, { id: 'acc', name: 'acc', points: [] }], ['loss']).map((row) => row.id)).toEqual(['loss'])
+        expect(filterTrainingSeries([loss], null)).toEqual([loss])
     })
 
     it('keeps the curve across a disconnect and appends the next history', () => {
