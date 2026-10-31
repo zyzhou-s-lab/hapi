@@ -1,4 +1,4 @@
-export const LAYOUT_REVISION = 1
+export const LAYOUT_REVISION = 2
 export const CARD_POLL_MIN_MS = 5_000
 
 export type WorkSurface = 'overview' | 'workbench'
@@ -55,6 +55,24 @@ export function mergeLayout(saved: WorkLayout | null, defaults: WorkLayout): Wor
         ]
     }
     return { revision: saved.revision, regions }
+}
+
+export function bindTrainingSlot(layout: WorkLayout, lineId: string, run: string): WorkLayout {
+    const main = layout.regions.main ?? []
+    const slot = { cardId: 'example.training-curves', args: { run, lineId } }
+    const index = main.findIndex((item) => item.cardId === slot.cardId && item.args?.lineId === lineId)
+    const next = index >= 0 ? main.map((item, itemIndex) => itemIndex === index ? slot : item) : [...main, slot]
+    return { revision: LAYOUT_REVISION, regions: { ...layout.regions, main: next } }
+}
+
+export function ensureTrainingSlot(layout: WorkLayout, lineId: string): WorkLayout {
+    if (!lineId) return layout
+    const main = layout.regions.main ?? []
+    if (main.some((item) => item.cardId === 'example.training-curves' && item.args?.lineId === lineId)) return layout
+    return {
+        ...layout,
+        regions: { ...layout.regions, main: [...main, { cardId: 'example.training-curves', args: { lineId } }] },
+    }
 }
 
 export function slotsForRegion(

@@ -10,6 +10,7 @@ import { registerCliHandlers } from './handlers/cli'
 import { registerTerminalHandlers } from './handlers/terminal'
 import { registerTrainingWebHandlers } from './trainingHandlers'
 import { RpcRegistry } from './rpcRegistry'
+import { setTrainingCardPush } from './trainingCardPush'
 import { SOCKET_MAX_HTTP_BUFFER_SIZE } from './socketLimits'
 import type { SyncEvent } from '../sync/syncEngine'
 import { TerminalRegistry } from './terminalRegistry'
@@ -189,6 +190,12 @@ export function createSocketServer(deps: SocketServerDeps): {
             getRun: (accountId, run) => deps.store.workLines.getTrainingRun(accountId, run),
             canAccessMachine: (accountId, machineId) => deps.canAccessMachine?.(accountId, machineId) ?? null
         })
+    })
+
+    setTrainingCardPush((accountId, update) => {
+        for (const socket of terminalNs.sockets.values()) {
+            if (socket.data.gatewayAccountId === accountId) socket.emit('training:card', update)
+        }
     })
 
     return { io, engine, rpcRegistry }

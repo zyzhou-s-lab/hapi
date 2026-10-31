@@ -532,6 +532,20 @@ export class ApiSessionClient extends EventEmitter {
     getMetadata(): Readonly<Metadata> | null {
         return this.metadata
     }
+    async workApi(path: string, init: { method?: string; body?: unknown } = {}): Promise<{ status: number; body: unknown }> {
+        const response = await axios.request({
+            url: `${configuration.apiUrl}${path}`,
+            method: init.method ?? 'GET',
+            data: init.body,
+            headers: buildHubRequestHeaders({
+                Authorization: `Bearer ${this.token}`,
+                'Content-Type': 'application/json',
+            }),
+            timeout: 20_000,
+            validateStatus: () => true,
+        })
+        return { status: response.status, body: response.data }
+    }
 
     isPending(): boolean {
         return this.state === 'pending' || this.state === 'materializing'

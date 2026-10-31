@@ -7,7 +7,7 @@ import { getSessionTitle } from '@/lib/sessionTitle'
 import { useTranslation } from '@/lib/use-translation'
 import { watchCardTopic } from './cardTopics'
 import { deriveWork, deriveWorkbench, type WorkbenchModel, type WorkMapData, type WorkModel } from './deriveWork'
-import { mergeLayout, slotsForRegion, visiblePollInterval, type WorkCardSize, type WorkLayout, type WorkLayoutSlot, type WorkSurface } from './layout'
+import { mergeLayout, ensureTrainingSlot, slotsForRegion, visiblePollInterval, type WorkCardSize, type WorkLayout, type WorkLayoutSlot, type WorkSurface } from './layout'
 import { overviewLayout, workbenchLayout } from './defaultLayouts'
 import { loadWorkCardMap, workCardMapKey, workMapQueryOptions } from './useWorkMap'
 
@@ -28,7 +28,7 @@ export type WorkCardDefinition = {
     id: string
     titleKey: string
     size: WorkCardSize
-    source: { kind: 'work-model' } | {
+    source: { kind: 'work-model' } | { kind: 'training' } | {
         kind: 'query'
         queryKey: readonly unknown[]
         queryFn: (args: { signal: AbortSignal; accountId: number; view: WorkView }) => Promise<unknown>
@@ -81,7 +81,10 @@ export function WorkCardHost(props: {
         enabled: Boolean(props.api),
     })
     const defaults = props.layoutFor?.(props.surface) ?? (props.surface === 'workbench' ? workbenchLayout : overviewLayout)
-    const layout = mergeLayout(saved.data?.source === 'saved' ? saved.data.layout : null, defaults)
+    const merged = mergeLayout(saved.data?.source === 'saved' ? saved.data.layout : null, defaults)
+    const layout = props.surface === 'workbench' && props.view.kind === 'line'
+        ? ensureTrainingSlot(merged, props.view.lineId)
+        : merged
     const regions = Object.keys(layout.regions)
     const workbench = props.surface === 'workbench'
     return (
@@ -131,7 +134,7 @@ function WorkRegion(props: {
                 if (!card) return null
                 return (
                     <CardSlot
-                        key={slot.cardId}
+                        key={slot.args?.lineId ? `${slot.cardId}:${slot.args.lineId}` : slot.cardId}
                         card={card}
                         slot={slot}
                         surface={props.surface}

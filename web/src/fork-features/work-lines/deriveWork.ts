@@ -26,6 +26,7 @@ export type WorkMapData = {
     directories: WorkDirectoryRecord[]
     sessions: WorkSessionRecord[]
     dismissed: string[]
+    canonicalPaths?: Record<string, string>
 }
 
 export type WorkSessionView = {
@@ -56,23 +57,24 @@ const EMPTY_MAP: WorkMapData = { lines: [], directories: [], sessions: [], dismi
 
 export function deriveWork(sessions: readonly SessionSummary[], map: WorkMapData | null, titleOf: (session: SessionSummary) => string, machineLabel: (session: SessionSummary) => string): WorkModel {
     const data = map ?? EMPTY_MAP
+    const canon = pathCanon(data.canonicalPaths)
     const lineIds = new Set(data.lines.map((line) => line.id))
-    const directoryByKey = new Map(data.directories.map((row) => [row.directoryKey, row]))
+    const directoryByKey = indexDirectories(data.directories, canon)
     const sessionById = new Map(data.sessions.map((row) => [row.sessionId, row]))
     const dismissed = new Set(data.dismissed)
-    const views = sessions.map((session) => classify(session, lineIds, directoryByKey, sessionById, titleOf, machineLabel))
+    const views = sessions.map((session) => classify(session, lineIds, directoryByKey, sessionById, titleOf, machineLabel, canon))
     const needsYou = views
         .filter((view) => view.pendingRequestsCount > 0 && !view.ignored && !dismissed.has(view.id))
         .sort((a, b) => b.updatedAt - a.updatedAt)
     const lineDirectories = new Set<string>()
     const machines = new Set<string>()
     for (const line of data.lines) {
-        lineDirectories.add(`${line.primaryMachineId}::${line.primaryPath}`)
+        lineDirectories.add(canonicalDirectoryKey(`${line.primaryMachineId}::${line.primaryPath}`, canon))
         machines.add(line.primaryMachineId)
     }
     for (const directory of data.directories) {
         if (directory.mode === 'line' && directory.lineId && lineIds.has(directory.lineId)) {
-            lineDirectories.add(directory.directoryKey)
+            lineDirectories.add(canonicalDirectoryKey(directory.directoryKey, canon))
             const machineId = directory.directoryKey.split('::')[0]
             if (machineId) machines.add(machineId)
         }
@@ -95,8 +97,9 @@ function classify(
     sessionById: Map<string, WorkSessionRecord>,
     titleOf: (session: SessionSummary) => string,
     machineLabel: (session: SessionSummary) => string,
+    canon: (path: string) => string,
 ): WorkSessionView {
-    const key = sessionDirectoryGroupKey(session)
+    const key = canonicalDirectoryKey(sessionDirectoryGroupKey(session), canon)
     const assignment = sessionById.get(session.id)
     const directory = directoryByKey.get(key)
     let lineId: string | null = null
@@ -116,7 +119,7 @@ function classify(
     return {
         id: session.id,
         title: titleOf(session),
-        directory: session.metadata?.worktree?.basePath ?? session.metadata?.path ?? '',
+        directory: splitDirectoryKey(key).path === 'Other' ? '' : splitDirectoryKey(key).path,
         machineId: session.metadata?.machineId ?? null,
         machineLabel: machineLabel(session),
         updatedAt: session.updatedAt,
@@ -147,11 +150,12 @@ export type WorkbenchModel = {
 
 export function deriveWorkbench(sessions: readonly SessionSummary[], map: WorkMapData | null, titleOf: (session: SessionSummary) => string, machineLabel: (session: SessionSummary) => string): WorkbenchModel {
     const data = map ?? EMPTY_MAP
+    const canon = pathCanon(data.canonicalPaths)
     const lineIds = new Set(data.lines.map((line) => line.id))
-    const directoryByKey = new Map(data.directories.map((row) => [row.directoryKey, row]))
+    const directoryByKey = indexDirectories(data.directories, canon)
     const sessionById = new Map(data.sessions.map((row) => [row.sessionId, row]))
     const dismissed = new Set(data.dismissed)
-    const views = sessions.map((session) => classify(session, lineIds, directoryByKey, sessionById, titleOf, machineLabel))
+    const views = sessions.map((session) => classify(session, lineIds, directoryByKey, sessionById, titleOf, machineLabel, canon))
     const inboxSessions = views.filter((view) => view.inbox)
     const inboxKeys = new Set<string>()
     for (const view of inboxSessions) {
@@ -183,9 +187,9 @@ export function deriveWorkbench(sessions: readonly SessionSummary[], map: WorkMa
         lineDirectories: (lineId) => {
             const line = data.lines.find((item) => item.id === lineId)
             if (!line) return []
-            const keys = new Set<string>([`${line.primaryMachineId}::${line.primaryPath}`])
+            const keys = new Set<string>([canonicalDirectoryKey(`${line.primaryMachineId}::${line.primaryPath}`, canon)])
             for (const directory of data.directories) {
-                if (directory.mode === 'line' && directory.lineId === lineId) keys.add(directory.directoryKey)
+                if (directory.mode === 'line' && directory.lineId === lineId) keys.add(canonicalDirectoryKey(directory.directoryKey, canon))
             }
             return [...keys].map(directoryView)
         },
@@ -201,4 +205,28 @@ export function deriveWorkbench(sessions: readonly SessionSummary[], map: WorkMa
 
 function directoryKeyOf(view: WorkSessionView): string {
     return `${view.machineId ?? '__unknown__'}::${view.directory || 'Other'}`
+}
+
+function pathCanon(canonicalPaths: Record<string, string> | undefined): (path: string) => string {
+    return (path: string) => canonicalPaths?.[path] ?? path
+}
+
+function splitDirectoryKey(key: string): { machineId: string, path: string } {
+    const split = key.indexOf('::')
+    if (split < 0) return { machineId: '', path: key }
+    return { machineId: key.slice(0, split), path: key.slice(split + 2) }
+}
+
+function canonicalDirectoryKey(key: string, canon: (path: string) => string): string {
+    const { machineId, path } = splitDirectoryKey(key)
+    return `${machineId}::${canon(path)}`
+}
+
+function indexDirectories(rows: readonly WorkDirectoryRecord[], canon: (path: string) => string): Map<string, WorkDirectoryRecord> {
+    const indexed = new Map<string, WorkDirectoryRecord>()
+    for (const row of rows) {
+        indexed.set(row.directoryKey, row)
+        indexed.set(canonicalDirectoryKey(row.directoryKey, canon), row)
+    }
+    return indexed
 }
