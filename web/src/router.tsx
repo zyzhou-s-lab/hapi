@@ -1138,6 +1138,7 @@ type SessionFileSearch = {
     tab?: 'changes' | 'directories'
     query?: string
     origin?: 'chat' | 'config'
+    line?: number
 }
 
 const sessionFileRoute = createRoute({
@@ -1161,6 +1162,8 @@ const sessionFileRoute = createRoute({
             ? search.query
             : undefined
         const origin = search.origin === 'chat' || search.origin === 'config' ? search.origin : undefined
+        const lineNumber = typeof search.line === 'number' ? search.line : typeof search.line === 'string' && /^\d+$/.test(search.line) ? Number(search.line) : undefined
+        const line = lineNumber !== undefined && lineNumber >= 1 && lineNumber <= 1_000_000 ? lineNumber : undefined
 
         const result: SessionFileSearch = { path }
         if (staged !== undefined) {
@@ -1174,6 +1177,9 @@ const sessionFileRoute = createRoute({
         }
         if (origin !== undefined) {
             result.origin = origin
+        }
+        if (line !== undefined) {
+            result.line = line
         }
         return result
     },

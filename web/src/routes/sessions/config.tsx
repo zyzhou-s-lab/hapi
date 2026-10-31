@@ -1,7 +1,5 @@
 import { useState } from 'react'
-import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useNavigate, useParams } from '@tanstack/react-router'
-import { FileMarkdownView } from '@/components/FileMarkdownView'
 import { SessionHeader } from '@/components/SessionHeader'
 import { SessionReadBanner } from '@/components/SessionReadBanner'
 import { LoadingState } from '@/components/LoadingState'
@@ -14,8 +12,6 @@ import { transferComposerDraftThenNavigate } from '@/lib/composer-draft-transfer
 import { useTranslation } from '@/lib/use-translation'
 import { formatSessionConfigError } from '@/lib/sessionConfigError'
 import { encodeBase64 } from '@/lib/utils'
-import { asMarkdownRedaction } from '@hapi/protocol/schemas'
-import { queryKeys } from '@/lib/query-keys'
 import {
     hooksSection,
     mcpSection,
@@ -24,7 +20,7 @@ import {
     type InventoryRow,
     type InventorySection,
 } from '@/lib/sessionInventoryView'
-import type { SessionConfigDetailResult } from '@hapi/protocol/schemas'
+
 
 function promptCopy(code: string | undefined, t: (key: string) => string): string | null {
     if (!code) return null
@@ -99,11 +95,37 @@ function ConfigSwitch(props: { row: InventoryRow; pending: boolean; onToggle: (e
     return reason ? <span title={reason} className="inline-flex">{button}</span> : button
 }
 
+function RowText(props: { item: InventoryRow }) {
+    const { t } = useTranslation()
+    return (
+        <>
+            <div className="flex min-w-0 items-baseline gap-2">
+                <span className="max-w-[45%] shrink-0 truncate text-sm text-[var(--app-fg)]">{promptTitle(props.item.title, t)}</span>
+                {props.item.detail ? (
+                    <span className="min-w-0 truncate text-xs text-[var(--app-hint)]">{promptPathLabel(props.item.detail, t)}</span>
+                ) : null}
+            </div>
+            {props.item.preview ? (
+                <div className="truncate text-xs text-[var(--app-hint)]">{props.item.preview}</div>
+            ) : null}
+            {props.item.load ? (
+                <div className="text-xs text-[var(--app-hint)]">
+                    {t(`session.config.prompt.load.${props.item.load}`)}{props.item.match ? ` · ${props.item.match}` : ''}
+                </div>
+            ) : null}
+            {props.item.codexCapped ? (
+                <div className="text-xs text-[var(--app-hint)]">{t('session.config.prompt.codexCap')}</div>
+            ) : null}
+        </>
+    )
+}
+
 function ConfigSection(props: {
     title: string
     section: InventorySection
     pendingKey: string | null
     onOpen: (row: InventoryRow) => void
+    onOpenScript: (row: InventoryRow) => void
     onToggle: (row: InventoryRow, enabled: boolean) => void
 }) {
     const { t } = useTranslation()
@@ -120,29 +142,25 @@ function ConfigSection(props: {
                             <li key={item.key} className={`flex items-center gap-3 border-b border-[var(--app-divider)] px-3 py-2 last:border-b-0 ${item.openable ? 'cursor-pointer hover:bg-[var(--app-subtle-bg)]' : ''}`}>
                                 {item.openable ? (
                                     <button type="button" className="min-w-0 flex-1 cursor-pointer text-left" onClick={() => props.onOpen(item)}>
-                                        <div className="flex min-w-0 items-baseline gap-2">
-                                            <span className="max-w-[45%] shrink-0 truncate text-sm text-[var(--app-fg)]">{promptTitle(item.title, t)}</span>
-                                            {item.detail ? (
-                                                <span className="min-w-0 truncate text-xs text-[var(--app-hint)]">{promptPathLabel(item.detail, t)}</span>
-                                            ) : null}
-                                        </div>
-                                        {item.preview ? (
-                                            <div className="truncate text-xs text-[var(--app-hint)]">{item.preview}</div>
-                                        ) : null}
-                                        {item.load ? (
-                                            <div className="text-xs text-[var(--app-hint)]">
-                                                {t(`session.config.prompt.load.${item.load}`)}{item.match ? ` · ${item.match}` : ''}
-                                            </div>
-                                        ) : null}
-                                        {item.codexCapped ? (
-                                            <div className="text-xs text-[var(--app-hint)]">{t('session.config.prompt.codexCap')}</div>
-                                        ) : null}
+                                        <RowText item={item} />
                                     </button>
                                 ) : (
                                     <div className="min-w-0 flex-1 text-left">
-                                        <div className="truncate text-sm text-[var(--app-fg)]">{promptTitle(item.title, t)}</div>
+                                        <RowText item={item} />
                                     </div>
                                 )}
+                                {item.scriptPath && item.filePath ? (
+                                    <button
+                                        type="button"
+                                        className="shrink-0 text-xs text-[var(--app-link)]"
+                                        onClick={(event) => {
+                                            event.stopPropagation()
+                                            props.onOpenScript(item)
+                                        }}
+                                    >
+                                        {t('session.config.openScript')}
+                                    </button>
+                                ) : null}
                                 {item.toggle ? (
                                     <ConfigSwitch
                                         row={item}
@@ -170,69 +188,17 @@ function ConfigSection(props: {
     )
 }
 
-function ConfigDetail(props: { detail: Extract<SessionConfigDetailResult, { success: true }> }) {
-    const { t } = useTranslation()
-    const detail = props.detail
-    return (
-        <div className="flex flex-col gap-4">
-            {detail.kind === 'skill' || detail.kind === 'prompt' ? (
-                <>
-                    {detail.kind === 'prompt' && detail.note && detail.note !== 'no-import' && detail.note !== 'agents-inferred' ? <p className="text-xs text-[var(--app-hint)]">{promptCopy(detail.note, t)}</p> : null}
-                    {detail.kind === 'prompt' && detail.codexCapped ? <p className="text-xs text-[var(--app-hint)]">{t('session.config.prompt.codexCap')}</p> : null}
-                    {detail.kind === 'prompt' && detail.frontmatter ? (
-                        <pre className="overflow-x-auto whitespace-pre-wrap font-mono text-xs text-[var(--app-hint)]">{t('session.config.prompt.frontmatter')}{'\n'}{detail.frontmatter}</pre>
-                    ) : null}
-                    {detail.truncated ? <p className="text-xs text-[var(--app-hint)]">{t('session.config.truncated')}</p> : null}
-                    <FileMarkdownView content={asMarkdownRedaction(detail.markdown)} />
-                </>
-            ) : null}
-            {detail.kind === 'mcp' ? (
-                detail.tools.length === 0 ? (
-                    <p className="text-sm text-[var(--app-hint)]">{detail.toolsUnavailable ? t('session.config.mcp.toolsUnavailable') : t('session.config.empty')}</p>
-                ) : (
-                    <ul className="flex flex-col gap-2">
-                        {detail.tools.map((tool) => (
-                            <li key={tool.name}>
-                                <div className="text-sm text-[var(--app-fg)]">{tool.name}</div>
-                                {tool.description ? <div className="text-xs text-[var(--app-hint)]">{tool.description}</div> : null}
-                            </li>
-                        ))}
-                    </ul>
-                )
-            ) : null}
-            {detail.kind === 'hook' ? (
-                <>
-                    <p className="text-sm text-[var(--app-fg)]">{detail.event}{detail.matcher ? ` · ${detail.matcher}` : ''}</p>
-                    {detail.truncated ? <p className="text-xs text-[var(--app-hint)]">{t('session.config.truncated')}</p> : null}
-                    <pre className="overflow-x-auto whitespace-pre-wrap break-words text-xs text-[var(--app-fg)]">{detail.script}</pre>
-                </>
-            ) : null}
-        </div>
-    )
-}
 
 export default function SessionConfigPage() {
     const { api, titleSuggestionAvailable = false } = useAppContext()
     const { t } = useTranslation()
     const navigate = useNavigate()
-    const queryClient = useQueryClient()
     const goBack = useAppGoBack()
     const { sessionId } = useParams({ from: '/sessions/$sessionId/config' })
     const { session } = useSession(api, sessionId)
     const { config, error, isLoading, isFetching, refetch } = useSessionConfig(api, sessionId)
-    const [selected, setSelected] = useState<InventoryRow | null>(null)
     const [pendingKey, setPendingKey] = useState<string | null>(null)
     const [toggleError, setToggleError] = useState<string | null>(null)
-    const detailQuery = useQuery({
-        queryKey: queryKeys.sessionConfigItem(sessionId, selected?.key ?? ''),
-        enabled: Boolean(api && selected),
-        queryFn: async () => {
-            if (!api || !selected) throw new Error('Session unavailable')
-            const response = await api.getSessionConfigItem(sessionId, selected.ref)
-            if (!response.success) return { detail: null, error: response.error ?? 'Session config unavailable' }
-            return { detail: response, error: null }
-        },
-    })
 
     if (!session || isLoading) {
         return (
@@ -248,10 +214,6 @@ export default function SessionConfigPage() {
     const mcp = mcpSection(config, flavor)
     const skills = skillsSection(config, flavor)
     const hooks = hooksSection(config, flavor)
-    const detailError = detailQuery.error instanceof Error
-        ? detailQuery.error.message
-        : detailQuery.data?.error ?? null
-    const detail = detailQuery.data?.detail ?? null
 
     const toggle = async (row: InventoryRow, enabled: boolean) => {
         if (!api || !row.mutable) return
@@ -264,7 +226,6 @@ export default function SessionConfigPage() {
                 return
             }
             await refetch()
-            await queryClient.invalidateQueries({ queryKey: queryKeys.sessionConfigItem(sessionId, row.key) })
         } catch (toggleFailure) {
             setToggleError(toggleFailure instanceof Error ? toggleFailure.message : 'Failed to update session config')
         } finally {
@@ -272,19 +233,25 @@ export default function SessionConfigPage() {
         }
     }
 
-    const openRow = (row: InventoryRow) => {
-        if (!row.filePath) {
-            setSelected(row)
-            return
-        }
+    const openFile = (path: string, line?: number) => {
         void navigate({
             to: '/sessions/$sessionId/file',
             params: { sessionId },
-            search: { path: encodeBase64(row.filePath), origin: 'config' },
+            search: { path: encodeBase64(path), origin: 'config', ...(line ? { line } : {}) },
             ...PRESERVE_SESSION_SIDEBAR_SCROLL,
         })
     }
 
+    const openRow = (row: InventoryRow) => {
+        const path = row.filePath ?? row.scriptPath
+        if (!path) return
+        openFile(path, row.filePath ? row.line : undefined)
+    }
+
+    const openScript = (row: InventoryRow) => {
+        if (!row.scriptPath) return
+        openFile(row.scriptPath)
+    }
 
     const pageError = error ?? toggleError
     return (
@@ -340,43 +307,13 @@ export default function SessionConfigPage() {
                         onRetry={() => { void refetch() }}
                         retrying={isFetching}
                     />
-                ) : selected ? (
-                    <div className="mx-auto flex w-full max-w-content flex-col gap-4 p-4">
-                        <button type="button" className="self-start text-sm text-[var(--app-link)]" onClick={() => setSelected(null)}>
-                            {t('session.config.backToList')}
-                        </button>
-                        <div className="flex items-center justify-between gap-3">
-                            <h2 className="min-w-0 truncate text-base font-semibold text-[var(--app-fg)]">{promptTitle(selected.title, t)}</h2>
-                            {selected.toggle ? (
-                                <ConfigSwitch row={selected} pending={pendingKey === selected.key} onToggle={(enabled) => { void toggle(selected, enabled) }} />
-                            ) : null}
-                        </div>
-                        {selected.lock ? (
-                            <p className="text-sm text-[var(--app-hint)]">
-                                {selected.lock === 'unsupported' ? t('session.config.unsupported') : t('session.config.locked')}
-                            </p>
-                        ) : selected.toggle ? (
-                            <p className="text-xs text-[var(--app-hint)]">{t('session.config.effect')}</p>
-                        ) : null}
-                        {detailError ? (
-                            <SessionReadBanner
-                                message={formatSessionConfigError(detailError, t)}
-                                onRetry={() => { void detailQuery.refetch() }}
-                                retrying={detailQuery.isFetching}
-                            />
-                        ) : detailQuery.isLoading || !detail ? (
-                            <LoadingState label={t('session.config.loading')} className="text-sm" />
-                        ) : (
-                            <ConfigDetail detail={detail} />
-                        )}
-                    </div>
                 ) : (
                     <div className="mx-auto flex w-full max-w-content flex-col gap-6 p-4">
-                        <ConfigSection title={t('session.config.systemPrompt')} section={systemPrompt} pendingKey={pendingKey} onOpen={openRow} onToggle={(row, enabled) => { void toggle(row, enabled) }} />
-                        <ConfigSection title={t('session.config.userPrompt')} section={userPrompt} pendingKey={pendingKey} onOpen={openRow} onToggle={(row, enabled) => { void toggle(row, enabled) }} />
-                        <ConfigSection title={t('session.config.mcp')} section={mcp} pendingKey={pendingKey} onOpen={openRow} onToggle={(row, enabled) => { void toggle(row, enabled) }} />
-                        <ConfigSection title={t('session.config.skills')} section={skills} pendingKey={pendingKey} onOpen={openRow} onToggle={(row, enabled) => { void toggle(row, enabled) }} />
-                        <ConfigSection title={t('session.config.hooks')} section={hooks} pendingKey={pendingKey} onOpen={openRow} onToggle={(row, enabled) => { void toggle(row, enabled) }} />
+                        <ConfigSection title={t('session.config.systemPrompt')} section={systemPrompt} pendingKey={pendingKey} onOpen={openRow} onOpenScript={openScript} onToggle={(row, enabled) => { void toggle(row, enabled) }} />
+                        <ConfigSection title={t('session.config.userPrompt')} section={userPrompt} pendingKey={pendingKey} onOpen={openRow} onOpenScript={openScript} onToggle={(row, enabled) => { void toggle(row, enabled) }} />
+                        <ConfigSection title={t('session.config.mcp')} section={mcp} pendingKey={pendingKey} onOpen={openRow} onOpenScript={openScript} onToggle={(row, enabled) => { void toggle(row, enabled) }} />
+                        <ConfigSection title={t('session.config.skills')} section={skills} pendingKey={pendingKey} onOpen={openRow} onOpenScript={openScript} onToggle={(row, enabled) => { void toggle(row, enabled) }} />
+                        <ConfigSection title={t('session.config.hooks')} section={hooks} pendingKey={pendingKey} onOpen={openRow} onOpenScript={openScript} onToggle={(row, enabled) => { void toggle(row, enabled) }} />
                     </div>
                 )}
             </div>

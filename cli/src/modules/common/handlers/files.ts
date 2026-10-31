@@ -1,5 +1,5 @@
 import { logger } from '@/ui/logger'
-import { readFile, stat, writeFile } from 'fs/promises'
+import { readFile, realpath, stat, writeFile } from 'fs/promises'
 import { createHash } from 'crypto'
 import { resolve } from 'path'
 import type { FileReadResponse, FileWriteResponse, GeneratedFileResponse, GeneratedImageResponse } from '@hapi/protocol/apiTypes'
@@ -34,17 +34,33 @@ interface WriteFileRequest {
     expectedHash?: string | null
 }
 
-export function registerFileHandlers(rpcHandlerManager: RpcHandlerManager, workingDirectory: string): void {
+export function registerFileHandlers(
+    rpcHandlerManager: RpcHandlerManager,
+    workingDirectory: string,
+    listedConfigPaths?: () => Promise<ReadonlySet<string>>,
+): void {
+    const resolveAllowed = async (requested: string): Promise<{ path: string } | { error: string }> => {
+        const validation = validatePath(requested, workingDirectory)
+        if (validation.valid) return { path: resolve(workingDirectory, requested) }
+        const denied = validation.error ?? 'Invalid file path'
+        if (!listedConfigPaths) return { error: denied }
+        let real: string
+        try {
+            real = await realpath(resolve(requested))
+        } catch {
+            return { error: denied }
+        }
+        const allowed = await listedConfigPaths()
+        return allowed.has(real) ? { path: real } : { error: denied }
+    }
     rpcHandlerManager.registerHandler<ReadFileRequest, ReadFileResponse>(RPC_METHODS.ReadFile, async (data) => {
         logger.debug('Read file request:', data.path)
 
-        const validation = validatePath(data.path, workingDirectory)
-        if (!validation.valid) {
-            return rpcError(validation.error ?? 'Invalid file path')
-        }
+        const allowed = await resolveAllowed(data.path)
+        if ('error' in allowed) return rpcError(allowed.error)
 
         try {
-            const resolvedPath = resolve(workingDirectory, data.path)
+            const resolvedPath = allowed.path
             const stats = await stat(resolvedPath)
             const buffer = await readFile(resolvedPath)
             const content = buffer.toString('base64')
@@ -109,13 +125,11 @@ export function registerFileHandlers(rpcHandlerManager: RpcHandlerManager, worki
     rpcHandlerManager.registerHandler<WriteFileRequest, FileWriteResponse>(RPC_METHODS.WriteFile, async (data) => {
         logger.debug('Write file request:', data.path)
 
-        const validation = validatePath(data.path, workingDirectory)
-        if (!validation.valid) {
-            return rpcError(validation.error ?? 'Invalid file path')
-        }
+        const allowed = await resolveAllowed(data.path)
+        if ('error' in allowed) return rpcError(allowed.error)
 
         try {
-            const resolvedPath = resolve(workingDirectory, data.path)
+            const resolvedPath = allowed.path
             if (data.expectedHash !== null && data.expectedHash !== undefined) {
                 try {
                     const existingBuffer = await readFile(resolvedPath)

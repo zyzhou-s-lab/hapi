@@ -255,6 +255,7 @@ export default {
   'session.config.unsupported': '此 agent 不认这项的开关，改了也不会停用。',
   'session.config.toggle': '启用 {name}',
   'session.config.backToList': '返回列表',
+  'session.config.openScript': '脚本',
   'session.config.truncated': '只显示前面一部分。',
   'session.config.mcp.toolsUnavailable': '会话未上报工具列表',
   'session.config.hooks.none': '此 flavor 无 hooks',

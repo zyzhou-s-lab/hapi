@@ -16,6 +16,7 @@ import { registerRipgrepHandlers } from './handlers/ripgrep'
 import { registerSlashCommandHandlers } from './handlers/slashCommands'
 import { registerSkillsHandlers } from './handlers/skills'
 import { registerSessionConfigHandlers, type SessionConfigContext } from './handlers/sessionConfig'
+import { listedSessionConfigRealpaths } from './sessionInventory'
 import { registerUploadHandlers } from './handlers/uploads'
 import { registerImportableSessionHandlers } from '../../../../fork-features/history-import/cli/register'
 
@@ -33,7 +34,10 @@ export function registerCommonHandlers(
     registerPiModelHandlers(rpcHandlerManager)
     registerGrokModelHandlers(rpcHandlerManager)
     registerCopilotModelHandlers(rpcHandlerManager)
-    registerFileHandlers(rpcHandlerManager, workingDirectory)
+    registerFileHandlers(rpcHandlerManager, workingDirectory, () => listedSessionConfigRealpaths({
+        cwd: workingDirectory,
+        ...options?.getSessionConfigContext?.(),
+    }))
     registerDirectoryHandlers(rpcHandlerManager, workingDirectory)
     registerRipgrepHandlers(rpcHandlerManager, workingDirectory)
     registerDifftasticHandlers(rpcHandlerManager, workingDirectory)

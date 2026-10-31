@@ -1,3 +1,6 @@
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import {
     commandBasename,
@@ -9,6 +12,7 @@ import {
     ompInventoryFromTools,
     parseCodexConfigInventory,
     projectMcpPaths,
+    readLiveSessionConfig,
 } from './sessionInventory'
 
 describe('session inventory collectors', () => {
@@ -81,7 +85,8 @@ command = "my-hook --token abc"
 `)
 
         expect(parsed.servers.map((server) => server.name)).toEqual(['docs', 'hapi'])
-        expect(parsed.hooks).toEqual([{ event: 'PreToolUse', source: 'user' }])
+        expect(parsed.hooks[0]).toMatchObject({ event: 'PreToolUse', source: 'user' })
+        expect(parsed.hooks[0]?.line).toBeGreaterThan(0)
         expect(JSON.stringify(parsed)).not.toContain('http')
         expect(JSON.stringify(parsed)).not.toContain('abc')
     })
@@ -122,5 +127,22 @@ command = "my-hook --token abc"
             '/home/dev/proj/app/.mcp.json',
             '/home/dev/proj/.mcp.json',
         ])
+    })
+
+    it('attaches the on-disk skill file when a catalog entry has no path', async () => {
+        const root = mkdtempSync(join(tmpdir(), 'hapi-skill-path-'))
+        try {
+            const skillDir = join(root, '.claude', 'skills', 'docs')
+            mkdirSync(skillDir, { recursive: true })
+            writeFileSync(join(skillDir, 'SKILL.md'), '---\nname: docs\ndescription: Read docs\n---\nBody\n')
+            const config = await readLiveSessionConfig({
+                flavor: 'claude',
+                cwd: root,
+                skills: inventorySkills([{ name: 'docs', description: 'Read docs', source: 'project' }]),
+            })
+            expect(config.skills?.items.find((skill) => skill.name === 'docs')?.filePath).toBe('.claude/skills/docs/SKILL.md')
+        } finally {
+            rmSync(root, { recursive: true, force: true })
+        }
     })
 })

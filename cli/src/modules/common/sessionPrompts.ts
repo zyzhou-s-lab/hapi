@@ -1,4 +1,4 @@
-import { closeSync, lstatSync, openSync, readdirSync, readFileSync, readSync, statSync } from 'node:fs'
+import { closeSync, existsSync, lstatSync, openSync, readFileSync, readdirSync, readSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { redactConfigSecrets, type SessionInventory, type SessionPromptItem, type SessionPromptScope } from '@hapi/protocol/schemas'
@@ -7,7 +7,7 @@ import { displayedCodexDeveloperInstructions } from '@/codex/utils/appServerConf
 import { getSystemPrompt } from '@/claude/utils/systemPrompt'
 import { getGrokTitleInstruction } from '@/grok/utils/systemPrompt'
 import { getOpencodeNativeToolInstruction, getTitleInstruction, PLAN_MODE_INSTRUCTION } from '@/opencode/utils/systemPrompt'
-
+import { listedConfigFilePath } from './configFilePath'
 const TEXT_LIMIT = 128 * 1024
 const PREVIEW_LIMIT = 120
 
@@ -311,7 +311,7 @@ function pushFile(drafts: Draft[], input: {
         scope: input.scope,
         title: input.title,
         pathLabel: displayPath(input.path, input.cwd, input.home),
-        ...(sessionRelativePath(input.path, input.cwd) ? { filePath: sessionRelativePath(input.path, input.cwd) } : {}),
+        ...(listedConfigFilePath(input.path, input.cwd) ? { filePath: listedConfigFilePath(input.path, input.cwd) } : {}),
         ...(input.load ? { load: input.load } : {}),
         ...(input.match ? { match: input.match } : {}),
         note: hasImport(body.text) ? 'no-import' : input.note,
@@ -341,7 +341,7 @@ function finish(drafts: Draft[], note?: string): { items: SessionPromptItem[]; b
             ...(draft.note ? { note: clip(draft.note, 80) } : {}),
             ...(draft.hasText === false ? { hasText: false } : {}),
             ...(draft.codexCapped ? { codexCapped: true } : {}),
-            ...(draft.filePath ? { filePath: clip(draft.filePath, 500) } : {}),
+            ...(draft.filePath ? { filePath: clip(draft.filePath, 4096) } : {}),
         }
         items.push(item)
         if (draft.hasText !== false && draft.text !== undefined) {
@@ -660,7 +660,7 @@ function collectCursor(input: CollectInput, demandOnly: boolean): Draft[] {
             drafts.push({
                 ...draft,
                 pathLabel: displayPath(abs, cwd, home),
-                ...(sessionRelativePath(abs, cwd) ? { filePath: sessionRelativePath(abs, cwd) } : {}),
+                ...(listedConfigFilePath(abs, cwd) ? { filePath: listedConfigFilePath(abs, cwd) } : {}),
                 scope: insideProject ? 'project' : 'user',
                 ...(demandOnly ? { load: 'demand' as const } : {}),
             })
@@ -711,7 +711,7 @@ function collectOpencode(input: CollectInput, live: SessionPromptLive | undefine
             role: 'system',
             scope: 'injected',
             title: 'hapi-instructions.md',
-            ...(file && body ? { pathLabel: displayPath(file, cwd, home), ...(sessionRelativePath(file, cwd) ? { filePath: sessionRelativePath(file, cwd) } : {}) } : {}),
+            ...(file && body ? { pathLabel: displayPath(file, cwd, home), ...(listedConfigFilePath(file, cwd) ? { filePath: listedConfigFilePath(file, cwd) } : {}) } : {}),
             text: redactConfigSecrets(body?.text ?? getTitleInstruction()),
             ...(body?.truncated ? { truncated: true } : {}),
         })
@@ -813,7 +813,7 @@ function collectOmp(input: CollectInput, live: SessionPromptLive | undefined): C
                 scope: resolve(path).startsWith(resolve(home) + sep) && !resolve(path).startsWith(cwd) ? 'user' : 'project',
                 title: path.split(sep).pop() || 'instructions.md',
                 pathLabel: displayPath(path, cwd, home),
-                ...(sessionRelativePath(path, cwd) ? { filePath: sessionRelativePath(path, cwd) } : {}),
+                ...(listedConfigFilePath(path, cwd) ? { filePath: listedConfigFilePath(path, cwd) } : {}),
                 load: 'demand',
                 match,
                 text: redactConfigSecrets(body.text),
@@ -888,7 +888,7 @@ function collectOmp(input: CollectInput, live: SessionPromptLive | undefined): C
                 scope: dir === cwd || dir.startsWith(`${cwd}${sep}`) ? 'project' : 'user',
                 title: path.split(sep).pop() || 'rule.md',
                 pathLabel: displayPath(path, cwd, home),
-                ...(sessionRelativePath(path, cwd) ? { filePath: sessionRelativePath(path, cwd) } : {}),
+                ...(listedConfigFilePath(path, cwd) ? { filePath: listedConfigFilePath(path, cwd) } : {}),
                 load: 'demand',
                 match: triggers.join(' | '),
                 text: redactConfigSecrets(body.text),

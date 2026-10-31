@@ -14,6 +14,8 @@ export const SessionInventoryMcpServerSchema = z.object({
     name: z.string().min(1).max(200),
     source: SessionInventorySourceSchema,
     enabled: z.boolean().optional(),
+    filePath: z.string().min(1).max(4096).optional(),
+    line: z.number().int().min(1).max(1_000_000).optional(),
 })
 
 export const SessionInventoryHookSchema = z.object({
@@ -23,6 +25,9 @@ export const SessionInventoryHookSchema = z.object({
     commandName: z.string().min(1).max(80).optional(),
     index: z.number().int().min(0).max(50).optional(),
     enabled: z.boolean().optional(),
+    filePath: z.string().min(1).max(4096).optional(),
+    line: z.number().int().min(1).max(1_000_000).optional(),
+    scriptPath: z.string().min(1).max(4096).optional(),
 })
 
 export const SessionInventorySkillSchema = z.object({
@@ -30,7 +35,7 @@ export const SessionInventorySkillSchema = z.object({
     description: z.string().max(500).optional(),
     source: SessionInventorySourceSchema.optional(),
     enabled: z.boolean().optional(),
-    filePath: z.string().min(1).max(500).optional(),
+    filePath: z.string().min(1).max(4096).optional(),
 })
 
 export const SessionPromptScopeSchema = z.enum(['injected', 'user', 'project', 'managed'])
@@ -50,7 +55,7 @@ export const SessionPromptItemSchema = z.object({
     note: z.string().max(80).optional(),
     hasText: z.boolean().optional(),
     codexCapped: z.boolean().optional(),
-    filePath: z.string().min(1).max(500).optional(),
+    filePath: z.string().min(1).max(4096).optional(),
 })
 
 const SessionPromptBlockSchema = z.object({
@@ -205,9 +210,19 @@ function shouldRedactValue(key: string, value: string): boolean {
     return !NON_SECRET_VALUE.test(inner)
 }
 
-/** Wrap redaction markers so Markdown does not treat a line of stars as emphasis. */
+/** Wrap a redaction placeholder. Leave emphasis and thematic breaks alone. */
 export function asMarkdownRedaction(value: string): string {
-    return value.replaceAll('`***`', '***').replaceAll('***', '`***`')
+    const normalized = value.replaceAll('`***`', '***')
+    return normalized.split('\n').map((line) => {
+        if (/^\s*([*\-_])\1{2,}\s*$/.test(line)) return line
+        const spans: string[] = []
+        const masked = line.replace(/\*\*\*[^*\n]+?\*\*\*/g, (span) => {
+            const token = `\u0000${spans.length}\u0000`
+            spans.push(span)
+            return token
+        })
+        return masked.replaceAll('***', '`***`').replace(/\u0000(\d+)\u0000/g, (_match, index: string) => spans[Number(index)] ?? '')
+    }).join('\n')
 }
 
 export function redactConfigSecrets(value: string): string {

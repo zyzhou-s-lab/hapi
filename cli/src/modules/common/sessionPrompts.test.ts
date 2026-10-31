@@ -58,7 +58,7 @@ describe('session prompts', () => {
         expect(userFile?.preview).toContain('user home file')
         expect(projectFile?.pathLabel).toBe('~/repo/CLAUDE.md')
         expect(projectFile?.filePath).toBe('CLAUDE.md')
-        expect(userFile?.filePath).toBeUndefined()
+        expect(userFile?.filePath).toMatch(/\/\.claude\/CLAUDE\.md$/)
     })
 
     it('strips rule frontmatter from the detail and keeps it as metadata', () => {

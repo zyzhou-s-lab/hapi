@@ -34,6 +34,7 @@ describe('session inventory view', () => {
         expect(preview).toContain('useToken = true')
         expect(preview).toContain(`CLI_API_TOKEN=${hidden}`)
         expect(preview).not.toContain(secret)
+        expect(visibleInventoryText('see file://secret and kept')).toBeUndefined()
         expect(mcpSection(reported)).toMatchObject({
             status: 'list',
             rows: [{ title: 'hapi', source: 'injected' }],
@@ -88,7 +89,7 @@ describe('session inventory view', () => {
                 title: 'api.mdc',
                 detail: '.cursor/rules/api.mdc',
                 toggle: false,
-                openable: true,
+                openable: false,
                 load: 'path',
                 match: 'src/**/*.ts',
                 ref: { kind: 'prompt', id: 'rule' },

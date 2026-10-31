@@ -1,8 +1,8 @@
-import { access, open, readdir, readFile, stat } from 'fs/promises';
+import { access, lstat, open, readdir, readFile, realpath, stat } from 'fs/promises';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'path';
 import { homedir } from 'os';
 import { parse as parseYaml } from 'yaml';
-
+import { listedConfigFilePath } from './configFilePath';
 export interface SkillSummary {
     name: string;
     description?: string;
@@ -174,6 +174,21 @@ function extractSkillSummary(skillDir: string, fileContent: string): SkillSummar
     return { name, description };
 }
 
+async function skillDirAllowed(entryPath: string, skillsRoot: string): Promise<boolean> {
+    try {
+        const linked = await lstat(entryPath);
+        if (linked.isSymbolicLink()) {
+            const real = await realpath(entryPath);
+            const root = await realpath(skillsRoot);
+            const prefix = root.endsWith(sep) ? root : `${root}${sep}`;
+            if (real !== root && !real.startsWith(prefix)) return false;
+        }
+    } catch {
+        return false;
+    }
+    return isDirectory(entryPath);
+}
+
 async function listTopLevelSkillDirs(skillsRoot: string, options: { includeCodexSystem?: boolean } = {}): Promise<string[]> {
     try {
         const entries = await readdir(skillsRoot);
@@ -181,7 +196,7 @@ async function listTopLevelSkillDirs(skillsRoot: string, options: { includeCodex
 
         for (const entry of entries) {
             const entryPath = join(skillsRoot, entry);
-            if (!await isDirectory(entryPath)) {
+            if (!await skillDirAllowed(entryPath, skillsRoot)) {
                 continue;
             }
 
@@ -190,7 +205,7 @@ async function listTopLevelSkillDirs(skillsRoot: string, options: { includeCodex
                     const systemEntries = await readdir(entryPath).catch(() => []);
                     for (const systemEntry of systemEntries) {
                         const systemEntryPath = join(entryPath, systemEntry);
-                        if (!systemEntry.startsWith('.') && await isDirectory(systemEntryPath)) {
+                        if (!systemEntry.startsWith('.') && await skillDirAllowed(systemEntryPath, skillsRoot)) {
                             result.push(systemEntryPath);
                         }
                     }
@@ -331,14 +346,13 @@ async function discoverSkills(workingDirectory?: string, options: { flavor?: str
 export async function listInventorySkills(workingDirectory?: string, options: { flavor?: string } = {}): Promise<Array<SkillSummary & { enabled?: boolean; filePath?: string }>> {
     const skills = await discoverSkills(workingDirectory, options);
     return skills.map(({ name, description, source, enabled, filePath }) => {
-        const rel = workingDirectory ? relative(resolve(workingDirectory), resolve(filePath)) : ''
-        const inside = Boolean(rel) && !rel.startsWith('..') && !isAbsolute(rel)
+        const listed = workingDirectory ? listedConfigFilePath(filePath, workingDirectory) : undefined
         return {
             name,
             ...(description ? { description } : {}),
             ...(source ? { source } : {}),
             ...(enabled ? {} : { enabled: false }),
-            ...(inside ? { filePath: rel.split(sep).join('/') } : {}),
+            ...(listed ? { filePath: listed } : {}),
         }
     });
 }

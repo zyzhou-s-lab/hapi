@@ -158,161 +158,61 @@ describe('SessionConfigPage', () => {
         expect(screen.queryByText(/Failed to read/)).toBeNull()
     })
 
-    it('opens a skill, locks an injected switch, and returns to the list', async () => {
+    it('keeps a file-less skill and injected server on the list', async () => {
         mocks.getSessionConfig.mockResolvedValue({
             success: true,
             mcp: { kind: 'servers', servers: [{ name: 'hapi', source: 'injected' }] },
             skills: { items: [{ name: 'docs', source: 'user', description: 'Read docs' }] },
             hooks: { availability: 'listed', items: [] },
         })
-        mocks.getSessionConfigItem.mockResolvedValue({
-            success: true,
-            kind: 'skill',
-            name: 'docs',
-            source: 'user',
-            enabled: true,
-            mutable: true,
-            markdown: '# Docs\n\nHello',
-            truncated: false,
-        })
         renderPage()
-        expect(await screen.findByRole('switch', { name: 'Enable hapi' })).toBeDisabled()
-        fireEvent.click(screen.getByRole('button', { name: /^docs/ }))
-        expect(await screen.findByText(/# Docs/)).toBeTruthy()
-        expect(screen.getAllByText('This agent does not honor a per-item switch, so turning it off here would not stop it.')).toHaveLength(1)
-        expect(screen.queryByText('Changes apply the next time you start a session or restart the agent.')).toBeNull()
-        expect(screen.queryByText('Injected, system, tool, and plugin items cannot be changed here.')).toBeNull()
-        fireEvent.click(screen.getByRole('button', { name: 'Back to list' }))
-        expect(await screen.findByRole('heading', { name: 'MCP' })).toBeTruthy()
+        const locked = await screen.findByRole('switch', { name: 'Enable hapi' })
+        expect(locked).toBeDisabled()
+        expect(locked.parentElement?.getAttribute('title')).toContain('cannot be changed')
+        expect(screen.queryByRole('button', { name: /^docs/ })).toBeNull()
+        expect(screen.queryByRole('button', { name: /^hapi/ })).toBeNull()
+        expect(screen.getByText('docs')).toBeTruthy()
+        expect(screen.queryByText('›')).toBeNull()
     })
 
-    it('shows a redacted hook script from the live detail', async () => {
+    it('opens a hook settings file and its script without an in-page detail', async () => {
         mocks.getSessionConfig.mockResolvedValue({
             success: true,
-            mcp: { kind: 'servers', servers: [] },
+            mcp: { kind: 'servers', servers: [{ name: 'docs', source: 'user', filePath: '.mcp.json', line: 4 }] },
             skills: { items: [] },
-            hooks: { availability: 'listed', items: [{ event: 'PreToolUse', matcher: 'Bash', source: 'user', commandName: 'my-hook' }] },
-        })
-        mocks.getSessionConfigItem.mockResolvedValue({
-            success: true,
-            kind: 'hook',
-            event: 'PreToolUse',
-            matcher: 'Bash',
-            commandName: 'my-hook',
-            source: 'user',
-            enabled: true,
-            mutable: true,
-            script: 'run --token=***',
-            truncated: false,
+            hooks: {
+                availability: 'listed',
+                items: [{ event: 'PreToolUse', matcher: 'Bash', source: 'user', commandName: 'my-hook', filePath: '.claude/settings.json', line: 12, scriptPath: 'hooks/my-hook.sh' }],
+            },
         })
         renderPage()
         fireEvent.click(await screen.findByRole('button', { name: /PreToolUse/ }))
-        expect(await screen.findByText('run --token=***')).toBeTruthy()
-        expect(screen.getAllByText('This agent does not honor a per-item switch, so turning it off here would not stop it.')).toHaveLength(1)
-        expect(screen.queryByText('Changes apply the next time you start a session or restart the agent.')).toBeNull()
-        expect(screen.queryByText('Injected, system, tool, and plugin items cannot be changed here.')).toBeNull()
-        expect(screen.queryByText(/127\.0\.0\.1/)).toBeNull()
+        expect(mocks.navigate).toHaveBeenCalledWith(expect.objectContaining({
+            to: '/sessions/$sessionId/file',
+            search: expect.objectContaining({ origin: 'config', line: 12 }),
+        }))
+        fireEvent.click(screen.getByRole('button', { name: 'Script' }))
+        expect(mocks.navigate).toHaveBeenLastCalledWith(expect.objectContaining({
+            to: '/sessions/$sessionId/file',
+            search: expect.objectContaining({ origin: 'config' }),
+        }))
+        fireEvent.click(screen.getByRole('button', { name: /^docs/ }))
+        expect(mocks.navigate).toHaveBeenLastCalledWith(expect.objectContaining({
+            search: expect.objectContaining({ origin: 'config', line: 4 }),
+        }))
+        expect(screen.queryByText('Back to list')).toBeNull()
     })
 
-    it('shows the injected lock reason once', async () => {
+    it('shows the injected lock on the switch and does not open a file-less prompt', async () => {
         mocks.getSessionConfig.mockResolvedValue({
             success: true,
             mcp: { kind: 'servers', servers: [{ name: 'hapi', source: 'injected' }] },
             skills: { items: [] },
             hooks: { availability: 'listed', items: [] },
-        })
-        mocks.getSessionConfigItem.mockResolvedValue({
-            success: true,
-            kind: 'mcp',
-            name: 'hapi',
-            source: 'injected',
-            enabled: true,
-            mutable: false,
-            tools: [],
-        })
-        renderPage()
-        fireEvent.click(await screen.findByRole('button', { name: /hapi/ }))
-        expect(await screen.findAllByText('Injected, system, tool, and plugin items cannot be changed here.')).toHaveLength(1)
-        expect(screen.queryByText('Changes apply the next time you start a session or restart the agent.')).toBeNull()
-    })
-
-    it('disables retry while a refetch is in flight', async () => {
-        let release: (value: unknown) => void = () => undefined
-        mocks.getSessionConfig
-            .mockResolvedValueOnce({ success: false, error: 'RPC handler not registered: session-1:listSessionConfig' })
-            .mockImplementationOnce(() => new Promise((resolve) => { release = resolve }))
-        renderPage()
-        fireEvent.click(await screen.findByRole('button', { name: 'Retry' }))
-        await waitFor(() => expect(screen.getByRole('button', { name: 'Retry' })).toBeDisabled())
-        release({ success: false, error: 'RPC handler not registered: session-1:listSessionConfig' })
-        await waitFor(() => expect(screen.getByRole('button', { name: 'Retry' })).not.toBeDisabled())
-    })
-
-    it('opens a prompt without a switch and shows the truncation note', async () => {
-        mocks.getSessionConfig.mockResolvedValue({
-            success: true,
-            mcp: { kind: 'servers', servers: [] },
-            skills: { items: [] },
-            hooks: { availability: 'listed', items: [] },
             prompts: {
                 system: {
                     availability: 'listed',
-                    note: 'claude-builtin',
-                    items: [{ id: 'sys', role: 'system', scope: 'injected', title: 'system-prompt', pathLabel: 'segment:1', hasText: true }],
-                },
-                user: {
-                    availability: 'listed',
-                    items: [{
-                        id: 'claude',
-                        role: 'user',
-                        scope: 'project',
-                        title: 'CLAUDE.md',
-                        pathLabel: '~/.claude/CLAUDE.md',
-                        preview: 'Use bun.',
-                        load: 'path',
-                        match: 'src/**/*.ts',
-                        hasText: true,
-                    }],
-                },
-            },
-        })
-        mocks.getSessionConfigItem.mockResolvedValue({
-            success: true,
-            kind: 'prompt',
-            id: 'claude',
-            title: 'CLAUDE.md',
-            markdown: '# Project\n\nUse bun.',
-            truncated: true,
-            note: 'no-import',
-            frontmatter: 'alwaysApply: true',
-        })
-        renderPage()
-        expect(await screen.findByRole('heading', { name: 'System prompt' })).toBeTruthy()
-        expect(screen.getByRole('heading', { name: 'User prompt' })).toBeTruthy()
-        expect(screen.queryByText('Does not include Claude Code’s built-in system prompt.')).toBeNull()
-        expect(screen.getByText('Part 1')).toBeTruthy()
-        expect(screen.getByRole('button', { name: /CLAUDE\.md\s+~\/\.claude\/CLAUDE\.md/ })).toBeTruthy()
-        expect(screen.getByText('Loads for matching paths · src/**/*.ts')).toBeTruthy()
-        expect(screen.queryByRole('switch', { name: 'Enable CLAUDE.md' })).toBeNull()
-        fireEvent.click(screen.getByRole('button', { name: /CLAUDE\.md/ }))
-        expect(await screen.findByText('Showing the first part only.')).toBeTruthy()
-        expect(screen.queryByText('@import lines are not expanded.')).toBeNull()
-        expect(screen.getByText(/Frontmatter/)).toBeTruthy()
-        expect(screen.getByText(/alwaysApply: true/)).toBeTruthy()
-        expect(screen.getByText(/# Project/)).toBeTruthy()
-        expect(screen.queryByRole('switch')).toBeNull()
-    })
-
-    it('opens an in-workspace file from the list and keeps injected prompts in the detail', async () => {
-        mocks.getSessionConfig.mockResolvedValue({
-            success: true,
-            mcp: { kind: 'servers', servers: [] },
-            skills: { items: [{ name: 'docs', source: 'project', description: 'Read docs', filePath: '.agents/skills/docs/SKILL.md' }] },
-            hooks: { availability: 'listed', items: [] },
-            prompts: {
-                system: {
-                    availability: 'listed',
-                    items: [{ id: 'sys', role: 'system', scope: 'injected', title: 'append-system-prompt', hasText: true }],
+                    items: [{ id: 'sys', role: 'system', scope: 'injected', title: 'append-system-prompt', preview: 'Use the title tool.', hasText: true }],
                 },
                 user: {
                     availability: 'listed',
@@ -322,32 +222,25 @@ describe('SessionConfigPage', () => {
                         scope: 'project',
                         title: 'CLAUDE.md',
                         pathLabel: 'CLAUDE.md',
+                        preview: 'Use bun.',
                         filePath: 'CLAUDE.md',
                         hasText: true,
                     }],
                 },
             },
         })
-        mocks.getSessionConfigItem.mockResolvedValue({
-            success: true,
-            kind: 'prompt',
-            id: 'sys',
-            title: 'append-system-prompt',
-            markdown: 'Use the title tool.',
-            truncated: false,
-        })
         renderPage()
-        const locked = await screen.findByRole('switch', { name: 'Enable docs' })
-        expect(locked.parentElement?.getAttribute('title')).toContain('does not honor')
-        fireEvent.click(await screen.findByRole('button', { name: /^CLAUDE\.md/ }))
-        expect(screen.getAllByText('›').length).toBeGreaterThan(0)
+        const locked = await screen.findByRole('switch', { name: 'Enable hapi' })
+        expect(locked.parentElement?.getAttribute('title')).toContain('cannot be changed')
+        expect(screen.getByText('Use the title tool.')).toBeTruthy()
+        expect(screen.queryByRole('button', { name: /append-system-prompt|追加/ })).toBeNull()
+        expect(screen.queryByText('›')).toBeTruthy()
+        fireEvent.click(screen.getByRole('button', { name: /^CLAUDE\.md/ }))
         expect(mocks.navigate).toHaveBeenCalledWith(expect.objectContaining({
             to: '/sessions/$sessionId/file',
             params: { sessionId: 'session-1' },
             search: expect.objectContaining({ origin: 'config', path: expect.any(String) }),
         }))
-        fireEvent.click(screen.getByRole('button', { name: /append-system-prompt/ }))
-        expect(await screen.findByText('Use the title tool.')).toBeTruthy()
     })
 
 })

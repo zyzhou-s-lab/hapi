@@ -1,6 +1,6 @@
 import { existsSync, lstatSync, readFileSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { dirname, join, resolve, sep } from 'node:path';
+import { dirname, extname, isAbsolute, join, resolve, sep } from 'node:path';
 import { logger } from '@/ui/logger';
 import {
     type SessionInventory,
@@ -12,6 +12,7 @@ import {
 import { buildHookSettings, readMachineClaudeSettings } from '@/modules/common/hooks/generateHookSettings';
 import { listInventorySkills } from '@/modules/common/skills';
 import { collectSessionPrompts, getSessionPromptLive, type SessionPromptLive } from './sessionPrompts';
+import { lineOfJsonKey, lineOfSnippet, listedConfigFilePath, tryRealpath } from './configFilePath';
 
 const MAX_CONFIG_BYTES = 1_000_000;
 const SOURCE_RANK: Record<SessionInventorySource, number> = {
@@ -151,6 +152,8 @@ export function dedupeServers(servers: readonly SessionInventoryMcpServer[]): Se
                 name,
                 source: server.source,
                 ...(server.enabled === false ? { enabled: false } : {}),
+                ...(server.filePath ? { filePath: server.filePath } : {}),
+                ...(server.line ? { line: server.line } : {}),
             });
         }
     }
@@ -174,6 +177,9 @@ export function dedupeHooks(items: readonly SessionInventoryHook[]): SessionInve
             ...(commandName ? { commandName } : {}),
             ...(index > 0 ? { index } : {}),
             ...(item.enabled === false ? { enabled: false } : {}),
+            ...(item.filePath ? { filePath: item.filePath } : {}),
+            ...(item.line ? { line: item.line } : {}),
+            ...(item.scriptPath ? { scriptPath: item.scriptPath } : {}),
         };
         const key = `${next.event}\0${next.matcher ?? ''}\0${next.source}\0${next.commandName ?? ''}\0${index}`;
         const previous = byKey.get(key);
@@ -182,6 +188,72 @@ export function dedupeHooks(items: readonly SessionInventoryHook[]): SessionInve
         }
     }
     return [...byKey.values()].slice(0, 400);
+}
+
+const SCRIPT_EXTENSIONS: Record<string, true> = {
+    '.js': true, '.mjs': true, '.cjs': true, '.ts': true, '.tsx': true,
+    '.sh': true, '.bash': true, '.zsh': true, '.py': true, '.rb': true, '.pl': true,
+};
+
+type ConfigFileOrigin = {
+    file: string;
+    cwd: string;
+    text: string;
+    source?: SessionInventorySource;
+};
+
+function publishFilePath(filePath: string | undefined): string | undefined {
+    if (!filePath || filePath.split(/[\\/]/).includes('..') || filePath.length > 4096) return undefined;
+    return filePath;
+}
+
+function fileLocation(origin: ConfigFileOrigin | undefined, key: string): { filePath?: string; line?: number } {
+    if (!origin) return {};
+    const filePath = listedConfigFilePath(origin.file, origin.cwd);
+    if (!filePath) return {};
+    const line = lineOfJsonKey(origin.text, key) ?? lineOfSnippet(origin.text, key);
+    return { filePath, ...(line ? { line } : {}) };
+}
+
+function hookScriptPath(command: string, cwd: string): string | undefined {
+    const tokens = command.match(/"([^"]*)"|'([^']*)'|(\S+)/g)?.map((token) => token.replace(/^['"]|['"]$/g, '')) ?? [];
+    for (const token of tokens) {
+        if (!(isAbsolute(token) || token.startsWith('.'))) continue;
+        const candidate = isAbsolute(token) ? token : resolve(cwd, token);
+        const listed = listedConfigFilePath(candidate, cwd);
+        if (!listed) continue;
+        const real = tryRealpath(isAbsolute(listed) ? listed : resolve(cwd, listed));
+        if (!real) continue;
+        try {
+            const info = statSync(real);
+            if (!info.isFile() || info.size > MAX_CONFIG_BYTES) continue;
+            if ((info.mode & 0o111) === 0 && !SCRIPT_EXTENSIONS[extname(real).toLowerCase()]) continue;
+            return listed;
+        } catch {
+            continue;
+        }
+    }
+    return undefined;
+}
+
+function jsonServersFromFile(path: string, cwd: string, source: SessionInventorySource, allowSymlink = false): SessionInventoryMcpServer[] {
+    const text = readTextFile(path, { allowSymlink });
+    if (!text) return [];
+    try {
+        return mcpServersFromConfig(JSON.parse(text) as unknown, source, { file: path, cwd, text });
+    } catch {
+        return [];
+    }
+}
+
+function hooksFromFile(path: string, cwd: string, source: SessionInventorySource): SessionInventoryHook[] {
+    const text = readTextFile(path);
+    if (!text) return [];
+    try {
+        return hooksFromClaudeSettings(JSON.parse(text) as unknown, { file: path, cwd, text, source });
+    } catch {
+        return [];
+    }
 }
 
 export function inventorySkills(
@@ -199,7 +271,7 @@ export function inventorySkills(
             ...(description ? { description } : {}),
             ...(source ? { source } : {}),
             ...(skill.enabled === false ? { enabled: false } : {}),
-            ...(skill.filePath && !skill.filePath.startsWith('/') && !skill.filePath.includes('..') ? { filePath: skill.filePath } : {}),
+            ...(publishFilePath(skill.filePath) ? { filePath: publishFilePath(skill.filePath) } : {}),
         });
         if (items.length >= 400) break;
     }
@@ -209,7 +281,7 @@ export function inventorySkills(
     };
 }
 
-export function mcpServersFromConfig(value: unknown, source: SessionInventorySource): SessionInventoryMcpServer[] {
+export function mcpServersFromConfig(value: unknown, source: SessionInventorySource, origin?: ConfigFileOrigin): SessionInventoryMcpServer[] {
     const servers = asRecord(asRecord(value).mcpServers);
     return Object.keys(servers)
         .filter((name) => isSafeInventoryName(name))
@@ -219,6 +291,7 @@ export function mcpServersFromConfig(value: unknown, source: SessionInventorySou
                 name: name.trim(),
                 source,
                 ...(disabled ? { enabled: false as const } : {}),
+                ...fileLocation(origin, name.trim()),
             };
         });
 }
@@ -236,7 +309,7 @@ export function mcpServersFromClaudeJson(value: unknown, cwd: string): SessionIn
     return items;
 }
 
-export function hooksFromClaudeSettings(settings: unknown): SessionInventoryHook[] {
+export function hooksFromClaudeSettings(settings: unknown, origin?: ConfigFileOrigin): SessionInventoryHook[] {
     const hooks = asRecord(asRecord(settings).hooks);
     const items: SessionInventoryHook[] = [];
     const seen = new Map<string, number>();
@@ -251,10 +324,11 @@ export function hooksFromClaudeSettings(settings: unknown): SessionInventoryHook
                 const command = commandRecord.command;
                 if (typeof command !== 'string' || command.trim().length === 0) continue;
                 const commandName = commandBasename(command);
-                const source = command.includes('hook-forwarder') ? 'injected' : 'user';
+                const source = command.includes('hook-forwarder') ? 'injected' : (origin?.source ?? 'user');
                 const identity = `${event}\0${matcher ?? ''}\0${source}\0${commandName ?? ''}`;
                 const index = seen.get(identity) ?? 0;
                 seen.set(identity, index + 1);
+                const scriptPath = origin && source !== 'injected' ? hookScriptPath(command, origin.cwd) : undefined;
                 items.push({
                     event,
                     source,
@@ -262,6 +336,8 @@ export function hooksFromClaudeSettings(settings: unknown): SessionInventoryHook
                     ...(commandName ? { commandName } : {}),
                     ...(index > 0 ? { index } : {}),
                     ...(commandRecord.disabled === true ? { enabled: false } : {}),
+                    ...(source === 'injected' ? {} : fileLocation(origin, command)),
+                    ...(scriptPath ? { scriptPath } : {}),
                 });
             }
         }
@@ -269,7 +345,7 @@ export function hooksFromClaudeSettings(settings: unknown): SessionInventoryHook
     return dedupeHooks(items);
 }
 
-export function parseCodexConfigInventory(toml: string): {
+export function parseCodexConfigInventory(toml: string, cwd?: string): {
     servers: SessionInventoryMcpServer[];
     hooks: SessionInventoryHook[];
 } {
@@ -289,7 +365,9 @@ export function parseCodexConfigInventory(toml: string): {
             return;
         }
     };
+    let lineNo = 0;
     for (const rawLine of toml.split(/\r?\n/)) {
+        lineNo += 1;
         const line = rawLine.trim();
         if (!line || line.startsWith('#')) continue;
         const table = /^\[\[?([^\]\s]+)\]\]?$/.exec(line);
@@ -300,16 +378,22 @@ export function parseCodexConfigInventory(toml: string): {
             const exact = !key.slice(key.indexOf('.') + 1).includes('.');
             if (server?.[1] && isSafeInventoryName(server[1])) {
                 section = exact ? { kind: 'server', name: server[1] } : null;
-                servers.push({ name: server[1], source: 'user' });
+                servers.push({ name: server[1], source: 'user', line: lineNo });
             } else if (hook?.[1] && isSafeInventoryName(hook[1])) {
                 const index = hookCounts.get(hook[1]) ?? 0;
                 hookCounts.set(hook[1], index + 1);
                 section = exact ? { kind: 'hook', name: hook[1] } : null;
-                hooks.push({ event: hook[1], source: 'user', ...(index > 0 ? { index } : {}) });
+                hooks.push({ event: hook[1], source: 'user', line: lineNo, ...(index > 0 ? { index } : {}) });
             } else {
                 section = null;
             }
             continue;
+        }
+        const command = /^command\s*=\s*"([^"]*)"/.exec(line);
+        if (section?.kind === 'hook' && command?.[1] && cwd) {
+            const scriptPath = hookScriptPath(command[1], cwd);
+            const hook = hooks[hooks.length - 1];
+            if (scriptPath && hook && hook.event === section.name) hook.scriptPath = scriptPath;
         }
         if (section && /^enabled\s*=\s*false\b/.test(line)) disableLast(section.kind, section.name);
     }
@@ -411,37 +495,62 @@ export function loadClaudeInventory(cwd: string): SessionInventoryPatch {
         buildHookSettings(machine, 'hook-forwarder', undefined, true),
         buildHookSettings(machine, 'hook-forwarder', undefined, false, true),
     ];
+    const claudeJson = join(homedir(), '.claude.json');
+    const claudeText = readTextFile(claudeJson, { allowSymlink: true }) ?? '';
+    let claudeParsed: unknown = null;
+    if (claudeText) {
+        try {
+            claudeParsed = JSON.parse(claudeText) as unknown;
+        } catch {
+            claudeParsed = null;
+        }
+    }
+    const claudeOrigin = claudeText ? { file: claudeJson, cwd, text: claudeText } : undefined;
+    const settingsDir = process.env.CLAUDE_CONFIG_DIR?.trim() || join(homedir(), '.claude');
+    const userSettings = join(settingsDir, 'settings.json');
+    const projectSettings = [join(cwd, '.claude', 'settings.json'), join(cwd, '.claude', 'settings.local.json')];
     const servers = [
         { name: 'hapi', source: 'injected' as const },
-        ...mcpServersFromClaudeJson(readJsonFile(join(homedir(), '.claude.json'), { allowSymlink: true }), cwd),
+        ...mcpServersFromClaudeJson(claudeParsed, cwd).map((server) => ({ ...server, ...fileLocation(claudeOrigin, server.name) })),
+        ...projectMcpPaths(cwd).flatMap((path) => jsonServersFromFile(path, cwd, 'project')),
+        ...jsonServersFromFile(userSettings, cwd, 'user'),
+        ...projectSettings.flatMap((path) => jsonServersFromFile(path, cwd, 'project')),
     ];
-    for (const path of projectMcpPaths(cwd)) {
-        const parsed = readJsonFile(path);
-        if (parsed) servers.push(...mcpServersFromConfig(parsed, 'project'));
-    }
+    const injectedHooks = hookSettings.flatMap((settings) => hooksFromClaudeSettings(settings)).filter((hook) => hook.source === 'injected');
+    const fileHooks = [
+        ...hooksFromFile(userSettings, cwd, 'user'),
+        ...projectSettings.flatMap((path) => hooksFromFile(path, cwd, 'project')),
+    ];
     return {
         mcp: { kind: 'servers', servers: dedupeServers(servers) },
-        hooks: { availability: 'listed', items: dedupeHooks(hookSettings.flatMap((settings) => hooksFromClaudeSettings(settings))) },
+        hooks: { availability: 'listed', items: dedupeHooks([...injectedHooks, ...fileHooks]) },
     };
 }
 
-export function loadCodexInventory(includeInjectedHooks: boolean): SessionInventoryPatch {
+export function loadCodexInventory(includeInjectedHooks: boolean, cwd = ''): SessionInventoryPatch {
     const home = process.env.CODEX_HOME?.trim() || join(homedir(), '.codex');
-    const text = readTextFile(join(home, 'config.toml'), { allowSymlink: true }) ?? '';
-    const parsed = parseCodexConfigInventory(text);
+    const path = join(home, 'config.toml');
+    const text = readTextFile(path, { allowSymlink: true }) ?? '';
+    const parsed = parseCodexConfigInventory(text, cwd || undefined);
+    const origin = text && cwd ? { file: path, cwd, text } : undefined;
+    const withFile = <T extends { filePath?: string; line?: number }>(item: T, key: string): T => {
+        if (!origin || item.filePath) return item;
+        const located = fileLocation(origin, key);
+        return { ...item, ...located, ...(item.line ? { line: item.line } : {}) };
+    };
     return {
         mcp: {
             kind: 'servers',
             servers: dedupeServers([
                 { name: 'hapi', source: 'injected' },
-                ...parsed.servers,
+                ...parsed.servers.map((server) => withFile(server, server.name)),
             ]),
         },
         hooks: {
             availability: 'listed',
             items: dedupeHooks([
                 ...(includeInjectedHooks ? codexInjectedHooks() : []),
-                ...parsed.hooks,
+                ...parsed.hooks.map((hook) => withFile(hook, hook.event)),
             ]),
         },
     };
@@ -480,10 +589,25 @@ export function cursorServersFromMcpJson(value: unknown, sessionId?: string): Se
     return dedupeServers(items);
 }
 
-function loadCursorInventory(sessionId?: string): LiveSessionConfig {
-    const parsed = readJsonFile(join(homedir(), '.cursor', 'mcp.json'), { allowSymlink: true });
+function loadCursorInventory(sessionId: string | undefined, cwd: string): LiveSessionConfig {
+    const path = join(homedir(), '.cursor', 'mcp.json');
+    const text = readTextFile(path, { allowSymlink: true }) ?? '';
+    let parsed: unknown = null;
+    if (text) {
+        try {
+            parsed = JSON.parse(text) as unknown;
+        } catch {
+            parsed = null;
+        }
+    }
+    const origin = text ? { file: path, cwd, text } : undefined;
     return {
-        mcp: { kind: 'servers', servers: cursorServersFromMcpJson(parsed, sessionId) },
+        mcp: {
+            kind: 'servers',
+            servers: cursorServersFromMcpJson(parsed, sessionId).map((server) => (
+                server.source === 'injected' ? server : { ...server, ...fileLocation(origin, server.name) }
+            )),
+        },
         hooks: { availability: 'none', items: [] },
     };
 }
@@ -499,11 +623,23 @@ function flavorInventory(input: {
         case 'claude':
             return loadClaudeInventory(input.cwd);
         case 'codex':
-            return loadCodexInventory(input.startingMode === 'local');
+            return loadCodexInventory(input.startingMode === 'local', input.cwd);
         case 'cursor':
-            return loadCursorInventory(input.sessionId);
-        case 'omp':
-            return ompInventoryFromTools(input.tools ?? []);
+            return loadCursorInventory(input.sessionId, input.cwd);
+        case 'omp': {
+            const listed = ompInventoryFromTools(input.tools ?? []);
+            const dir = process.env.PI_CODING_AGENT_DIR?.trim() || join(homedir(), '.omp', 'agent');
+            const files = [join(dir, 'mcp.json'), join(dir, 'settings.json')];
+            const servers = (listed.mcp?.servers ?? []).map((server) => {
+                for (const file of files) {
+                    const text = readTextFile(file);
+                    if (!text || !lineOfJsonKey(text, server.name)) continue;
+                    return { ...server, ...fileLocation({ file, cwd: input.cwd, text }, server.name) };
+                }
+                return server;
+            });
+            return listed.mcp ? { ...listed, mcp: { ...listed.mcp, servers } } : listed;
+        }
         case 'copilot':
         case 'grok':
         case 'kimi':
@@ -534,11 +670,19 @@ export async function readLiveSessionConfig(input: {
     const flavor = (input.flavor ?? '').trim().toLowerCase();
     const sections = flavorInventory({ ...input, flavor });
     const diskSkills = await listInventorySkills(input.cwd, { flavor: flavor || undefined });
+    const filePathByName = new Map(diskSkills.flatMap((skill) => skill.filePath ? [[skill.name, skill.filePath] as const] : []));
     const disabledSkills = new Set(diskSkills.filter((skill) => skill.enabled === false).map((skill) => skill.name));
     const listed = input.skills ?? inventorySkills(diskSkills);
     const skills = {
         ...listed,
-        items: listed.items.map((item) => disabledSkills.has(item.name) ? { ...item, enabled: false as const } : item),
+        items: listed.items.map((item) => {
+            const filePath = item.filePath ?? filePathByName.get(item.name);
+            return {
+                ...item,
+                ...(disabledSkills.has(item.name) ? { enabled: false as const } : {}),
+                ...(filePath ? { filePath } : {}),
+            };
+        }),
     };
     const prompts = collectSessionPrompts({
         flavor,
@@ -548,4 +692,29 @@ export async function readLiveSessionConfig(input: {
         promptLive: { ...getSessionPromptLive(input.sessionId), ...input.promptLive },
     }).prompts;
     return { ...sections, skills, prompts };
+}
+
+export async function listedSessionConfigRealpaths(input: {
+    flavor?: string | null;
+    cwd: string;
+    tools?: readonly string[];
+    sessionId?: string;
+    startingMode?: string | null;
+    skills?: LiveSessionConfig['skills'];
+    promptLive?: SessionPromptLive;
+}): Promise<Set<string>> {
+    const config = await readLiveSessionConfig(input);
+    const paths = [
+        ...(config.mcp?.servers ?? []).flatMap((server) => server.filePath ? [server.filePath] : []),
+        ...(config.hooks?.items ?? []).flatMap((hook) => [hook.filePath, hook.scriptPath].filter((path): path is string => Boolean(path))),
+        ...(config.skills?.items ?? []).flatMap((skill) => skill.filePath ? [skill.filePath] : []),
+        ...(config.prompts?.system?.items ?? []).flatMap((item) => item.filePath ? [item.filePath] : []),
+        ...(config.prompts?.user?.items ?? []).flatMap((item) => item.filePath ? [item.filePath] : []),
+    ];
+    const allowed = new Set<string>();
+    for (const filePath of paths) {
+        const real = tryRealpath(resolve(input.cwd, filePath));
+        if (real) allowed.add(real);
+    }
+    return allowed;
 }

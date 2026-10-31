@@ -192,6 +192,37 @@ function extractCommandError(result: GitCommandResponse | undefined): string | n
     return result.error ?? result.stderr ?? 'Failed to load diff'
 }
 
+function LinedSource(props: { text: string; line: number; wrap: boolean }) {
+    const target = useRef<HTMLDivElement>(null)
+    useEffect(() => {
+        target.current?.scrollIntoView({ block: 'center' })
+    }, [props.line, props.text])
+    return (
+        <pre
+            data-testid="file-raw-pre"
+            data-word-wrap={props.wrap ? 'on' : 'off'}
+            className={`rounded-md bg-[var(--app-code-bg)] p-3 pr-8 text-xs font-mono ${props.wrap ? 'overflow-x-hidden whitespace-pre-wrap break-words' : 'overflow-auto'}`}
+        >
+            <code>
+                {props.text.split('\n').map((content, index) => {
+                    const number = index + 1
+                    const active = number === props.line
+                    return (
+                        <div
+                            key={number}
+                            ref={active ? target : undefined}
+                            data-line={number}
+                            className={active ? 'bg-[var(--app-subtle-bg)]' : undefined}
+                        >
+                            {content || ' '}
+                        </div>
+                    )
+                })}
+            </code>
+        </pre>
+    )
+}
+
 export default function FilePage() {
     const { api } = useAppContext()
     const { t, locale } = useTranslation()
@@ -204,6 +235,7 @@ export default function FilePage() {
     const search = useSearch({ from: '/sessions/$sessionId/file' })
     const encodedPath = typeof search.path === 'string' ? search.path : ''
     const staged = search.staged
+    const focusLine = typeof search.line === 'number' ? search.line : undefined
     const diffRequested = staged !== undefined
 
     const filePath = useMemo(() => decodePath(encodedPath), [encodedPath])
@@ -354,7 +386,7 @@ export default function FilePage() {
         && !imagePreviewUrl
         && !binaryFile
         && decodedContent.length > 0
-    const renderMarkdownPreview = showFileTextContent && isMarkdownFile && markdownPreview && !editing
+    const renderMarkdownPreview = showFileTextContent && isMarkdownFile && markdownPreview && !editing && !focusLine
     const showWordWrapToggle = showFileTextContent && !renderMarkdownPreview
 
     useEffect(() => {
@@ -607,6 +639,8 @@ export default function FilePage() {
                                         >
                                             <FileMarkdownView content={decodedContent} />
                                         </div>
+                                    ) : focusLine ? (
+                                        <LinedSource text={decodedContent} line={focusLine} wrap={wordWrap} />
                                     ) : (
                                         <pre
                                             data-testid="file-raw-pre"

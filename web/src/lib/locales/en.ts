@@ -251,6 +251,7 @@ export default {
   'session.config.unsupported': 'This agent does not honor a per-item switch, so turning it off here would not stop it.',
   'session.config.toggle': 'Enable {name}',
   'session.config.backToList': 'Back to list',
+  'session.config.openScript': 'Script',
   'session.config.truncated': 'Showing the first part only.',
   'session.config.mcp.toolsUnavailable': 'The session did not report a tool list.',
   'session.config.hooks.none': 'This flavor has no hooks',

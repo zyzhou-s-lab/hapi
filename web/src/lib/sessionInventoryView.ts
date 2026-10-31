@@ -18,6 +18,8 @@ export type InventoryRow = {
     codexCapped?: boolean
     ref: SessionConfigItemSelector
     filePath?: string
+    line?: number
+    scriptPath?: string
 }
 
 export type InventorySection =
@@ -45,10 +47,10 @@ function asSource(value: string | undefined): SessionInventorySource | undefined
 
 export function visibleInventoryText(value: string | undefined): string | undefined {
     if (!value) return undefined
-    const text = redactConfigSecrets(value)
-        .replace(/https?:\/\/\S+/gi, '')
-        .replace(/\s+/g, ' ')
-        .trim()
+    const redacted = redactConfigSecrets(value)
+    const withoutHttp = redacted.replace(/https?:\/\/\S+/gi, '')
+    if (/:\/\//.test(withoutHttp)) return undefined
+    const text = withoutHttp.replace(/\s+/g, ' ').trim()
     return text || undefined
 }
 
@@ -60,6 +62,8 @@ function row(
     enabled: boolean | undefined,
     flavor: string | null | undefined,
     filePath?: string,
+    line?: number,
+    scriptPath?: string,
 ): InventoryRow | null {
     const visibleTitle = visibleInventoryText(title)
     if (!visibleTitle) return null
@@ -75,9 +79,11 @@ function row(
         mutable: lock === null,
         lock,
         toggle: true,
-        openable: true,
+        openable: Boolean(filePath || scriptPath),
         ref: { ...ref, ...(visibleSource ? { source: visibleSource } : {}) },
         ...(filePath ? { filePath } : {}),
+        ...(line ? { line } : {}),
+        ...(scriptPath ? { scriptPath } : {}),
     }
 }
 
@@ -89,7 +95,7 @@ export function mcpSection(inventory: SessionInventory | null | undefined, flavo
     const mcp = inventory?.mcp
     if (!mcp) return { status: 'unreported' }
     const rows = mcp.servers.flatMap((server) => {
-        const next = row(server.name, server.source, undefined, { kind: 'mcp', name: server.name, source: server.source }, server.enabled, flavor)
+        const next = row(server.name, server.source, undefined, { kind: 'mcp', name: server.name, source: server.source }, server.enabled, flavor, server.filePath, server.line)
         return next ? [next] : []
     })
     if (mcp.kind === 'tools') return { status: 'list', rows, tools: true }
@@ -109,7 +115,7 @@ export function hooksSection(inventory: SessionInventory | null | undefined, fla
             ...(item.matcher ? { matcher: item.matcher } : {}),
             ...(item.commandName ? { commandName: item.commandName } : {}),
             ...(item.index ? { index: item.index } : {}),
-        }, item.enabled, flavor)
+        }, item.enabled, flavor, item.filePath, item.line, item.scriptPath)
         return next ? [next] : []
     })
     return rowsOrEmpty(rows)
@@ -140,7 +146,7 @@ function promptRow(item: SessionPromptItem): InventoryRow | null {
         mutable: false,
         lock: null,
         toggle: false,
-        openable: item.hasText !== false,
+        openable: Boolean(item.filePath),
         ...(item.load ? { load: item.load } : {}),
         ...(item.match ? { match: item.match } : {}),
         ...(item.codexCapped ? { codexCapped: true } : {}),
