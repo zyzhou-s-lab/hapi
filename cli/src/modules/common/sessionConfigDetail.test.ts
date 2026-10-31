@@ -160,10 +160,10 @@ describe('session config detail', () => {
             expect(readFileSync(join(ompDir, 'SKILL.md'), 'utf8')).not.toContain('disabled:')
 
             const linkedDir = join(home, '.agents', 'skills', 'linked')
-            const sharedDir = join(home, 'shared')
+            const claudeLinked = join(home, '.claude', 'skills', 'linked')
             mkdirSync(linkedDir, { recursive: true })
-            mkdirSync(sharedDir, { recursive: true })
-            const real = join(sharedDir, 'SKILL.md')
+            mkdirSync(claudeLinked, { recursive: true })
+            const real = join(claudeLinked, 'SKILL.md')
             writeFileSync(real, '---\nname: linked\ndescription: Linked\n---\n# Linked body\n')
             symlinkSync(real, join(linkedDir, 'SKILL.md'))
             const linked = await writeSessionConfigEnabled({
@@ -176,6 +176,22 @@ describe('session config detail', () => {
             expect(readFileSync(real, 'utf8')).toContain('disabled: true')
             expect(readFileSync(real, 'utf8')).toContain('# Linked body')
             expect(lstatSync(join(linkedDir, 'SKILL.md')).isSymbolicLink()).toBe(true)
+
+            const outsideDir = join(home, '.agents', 'skills', 'outside')
+            const sharedDir = join(home, 'shared')
+            mkdirSync(outsideDir, { recursive: true })
+            mkdirSync(sharedDir, { recursive: true })
+            const outsideFile = join(sharedDir, 'SKILL.md')
+            writeFileSync(outsideFile, '---\nname: outside\ndescription: Outside\n---\n# Outside\n')
+            symlinkSync(outsideFile, join(outsideDir, 'SKILL.md'))
+            const outside = await writeSessionConfigEnabled({
+                cwd,
+                flavor: 'omp',
+                enabled: false,
+                selector: { kind: 'skill', name: 'outside', source: 'user' },
+            })
+            expect(outside).toEqual({ error: 'Only a SKILL.md frontmatter disabled field can be changed' })
+            expect(readFileSync(outsideFile, 'utf8')).not.toContain('disabled:')
 
             const escapeDir = join(home, '.agents', 'skills', 'escape')
             mkdirSync(escapeDir, { recursive: true })

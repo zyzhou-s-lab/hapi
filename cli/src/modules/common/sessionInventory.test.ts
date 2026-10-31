@@ -222,7 +222,7 @@ command = "my-hook --token abc"
         }
     })
 
-    it('lists custom sub-agents and lets a project file override a bundled one', () => {
+    it('lists custom sub-agents and lets a project file override a bundled one', async () => {
         const workspace = mkdtempSync(join(tmpdir(), 'hapi-agents-project-'))
         const home = mkdtempSync(join(tmpdir(), 'hapi-agents-home-'))
         const bundled = mkdtempSync(join(tmpdir(), 'hapi-agents-bundled-'))
@@ -236,13 +236,13 @@ command = "my-hook --token abc"
         mkdirSync(join(workspace, '.omp', 'agents'), { recursive: true })
         mkdirSync(join(home, 'agents'), { recursive: true })
         mkdirSync(join(home, 'claude', 'agents'), { recursive: true })
-        writeFileSync(join(workspace, '.omp', 'agents', 'scout.md'), '---\nname: scout\ndescription: Project scout\n---\nDo not leak token=sekret\n')
+        writeFileSync(join(workspace, '.omp', 'agents', 'scout.md'), '---\nmeta:\n  name: hidden\n  description: Nested\nname: scout\ndescription: Project scout\n---\nDo not leak token=sekret\n')
         writeFileSync(join(home, 'agents', 'notes.md'), '---\nname: notes\ndescription: User notes https://example.test\n---\nbody\n')
         writeFileSync(join(home, 'claude', 'agents', 'claude-helper.md'), '---\nname: claude-helper\ndescription: Claude helper\n---\nbody\n')
         writeFileSync(join(bundled, 'scout.md'), '---\nname: scout\ndescription: Bundled scout\n---\nbody\n')
         writeFileSync(join(bundled, 'task.md'), '---\nname: task\ndescription: Bundled task\n---\nbody\n')
         try {
-            const agents = listSessionAgents(workspace)
+            const agents = await listSessionAgents(workspace)
             const byName = Object.fromEntries(agents.map((agent) => [agent.name, agent]))
             expect(byName.scout).toMatchObject({ source: 'project', description: 'Project scout' })
             expect(byName.scout?.filePath).toBe('.omp/agents/scout.md')

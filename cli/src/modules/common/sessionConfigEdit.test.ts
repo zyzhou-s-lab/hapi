@@ -91,6 +91,12 @@ description: Read docs
         expect(disabled).toContain('disabled: true')
         expect(disabled).toContain('# Hello token=keep')
         expect(setFrontmatterBoolean(disabled, 'disabled', false)).toContain('disabled: false')
+        const quoted = setFrontmatterBoolean('---\nname: docs\ndisabled: "true"\n---\n# Body\n', 'disabled', true)
+        expect(quoted.match(/disabled:/g)).toHaveLength(1)
+        expect(quoted).toContain('disabled: true\n')
+        const yes = setFrontmatterBoolean('---\nname: docs\ndisabled: yes # keep\n---\n# Body\n', 'disabled', false)
+        expect(yes).toContain('disabled: false # keep')
+        expect(yes.match(/disabled:/g)).toHaveLength(1)
         expect(() => setFrontmatterBoolean('# Hello only\n', 'disabled', true)).toThrow('Skill has no frontmatter')
     })
 

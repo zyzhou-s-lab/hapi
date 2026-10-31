@@ -282,8 +282,13 @@ export function setFrontmatterBoolean(text: string, field: string, value: boolea
         throw new Error('Skill has no frontmatter')
     }
     const block = match[1] ?? ''
-    const line = new RegExp(`^(${field}:\\s*)(?:true|false)\\s*$`, 'm')
-    const nextBlock = line.test(block) ? block.replace(line, `$1${literal}`) : `${block}\n${field}: ${literal}`
+    const line = new RegExp(`^(${field}:\\s*)(\\S.*)$`, 'm')
+    const nextBlock = line.test(block)
+        ? block.replace(line, (_match, prefix: string, rest: string) => {
+            const comment = /(?:\s+#.*)$/.exec(rest)?.[0] ?? ''
+            return `${prefix}${literal}${comment}`
+        })
+        : `${block}\n${field}: ${literal}`
     return `${text.slice(0, match.index)}---\n${nextBlock}\n---${text.slice(match.index + match[0].length)}`
 }
 

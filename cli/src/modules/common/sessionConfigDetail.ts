@@ -2,7 +2,7 @@ import { existsSync, readFileSync, realpathSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { basename, extname, isAbsolute, join, resolve, sep } from 'node:path'
 import { redactConfigSecrets, sessionConfigLock, type SessionConfigDetail, type SessionConfigItemSelector } from '@hapi/protocol/schemas'
-import { findSkill } from '@/modules/common/skills'
+import { findSkill, knownSkillRoots } from '@/modules/common/skills'
 import { commandBasename } from './sessionInventory'
 import { readSessionPromptDetail, type SessionPromptLive } from './sessionPrompts'
 import {
@@ -38,11 +38,20 @@ function lockError(flavor: string, kind: 'mcp' | 'skill' | 'hook' | 'prompt', so
     if (lock === 'unsupported') return UNSUPPORTED
     return null
 }
-function skillMarkdownPath(path: string): string | null {
+function skillMarkdownPath(path: string, roots: readonly string[]): string | null {
     try {
         const real = realpathSync(path)
         if (basename(real) !== 'SKILL.md' || !statSync(real).isFile()) return null
-        return real
+        const allowed = roots.some((root) => {
+            try {
+                const realRoot = realpathSync(root)
+                const prefix = realRoot.endsWith(sep) ? realRoot : `${realRoot}${sep}`
+                return real.startsWith(prefix)
+            } catch {
+                return false
+            }
+        })
+        return allowed ? real : null
     } catch {
         return null
     }
@@ -319,7 +328,7 @@ export async function writeSessionConfigEnabled(input: DetailInput): Promise<{ e
             const skill = await findSkill(input.selector.name, input.cwd, { flavor: (input.flavor ?? '').trim().toLowerCase() || undefined })
             if (!skill || skill.source !== input.selector.source) return { error: NOT_FOUND }
             if (skill.truncated) return { error: 'Skill is too large to update' }
-            const real = skillMarkdownPath(skill.filePath)
+            const real = skillMarkdownPath(skill.filePath, knownSkillRoots(input.cwd))
             if (!real) return { error: 'Only a SKILL.md frontmatter disabled field can be changed' }
             const text = readText(real)
             if (text === null) return { error: NOT_FOUND }

@@ -1,6 +1,6 @@
-import { spawnSync } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, statSync } from 'node:fs';
-import { homedir, tmpdir } from 'node:os';
+import { homedir } from 'node:os';
 import { dirname, extname, isAbsolute, join, resolve, sep } from 'node:path';
 import { logger } from '@/ui/logger';
 import {
@@ -411,6 +411,7 @@ export function codexInjectedHooks(): SessionInventoryHook[] {
     ];
 }
 
+/** `mcp__<server>__<tool>`. The server is the text before the first `__`, so a name like `a__b` is reported as `a`. */
 export function mcpServerNameFromTool(tool: string): string | undefined {
     if (!tool.startsWith('mcp__')) return undefined;
     const rest = tool.slice('mcp__'.length);
@@ -701,8 +702,8 @@ function agentFrontmatter(text: string): { name?: string; description?: string; 
     let description: string | undefined;
     let line: number | undefined;
     for (let index = 0; index < lines.length; index++) {
-        const nameMatch = /^name:\s*(.+)$/.exec(lines[index].trim());
-        const descriptionMatch = /^description:\s*(.+)$/.exec(lines[index].trim());
+        const nameMatch = /^name:\s*(.+)$/.exec(lines[index]);
+        const descriptionMatch = /^description:\s*(.+)$/.exec(lines[index]);
         if (nameMatch && !name) {
             name = unquoteAgentValue(nameMatch[1]);
             line = index + 1;
@@ -768,27 +769,62 @@ function userAgentDirectories(): string[] {
     ];
 }
 
-function bundledAgentDirectory(): string | undefined {
-    const override = process.env.HAPI_OMP_BUNDLED_AGENTS?.trim();
-    if (override === '0') return undefined;
-    if (override) return override;
-    if (process.env.VITEST) return undefined;
-    const version = spawnSync('omp', ['--version'], { encoding: 'utf8', timeout: 5000 });
-    if (version.status !== 0) return undefined;
-    const tag = (version.stdout || '').trim().split(/\s+/)[0]?.replace(/[^\w.-]/g, '') || 'unknown';
-    const dir = join(tmpdir(), 'hapi-omp-bundled-agents', tag);
+let bundledAgentsDir: Promise<string | undefined> | undefined;
+
+function bundledAgentCacheRoot(): string {
+    const xdg = process.env.XDG_CACHE_HOME?.trim();
+    return xdg ? join(xdg, 'hapi', 'omp-bundled-agents') : join(homedir(), '.hapi', 'omp-bundled-agents');
+}
+
+function spawnText(command: string, args: string[], timeoutMs: number): Promise<{ code: number | null; stdout: string }> {
+    const { promise, resolve } = Promise.withResolvers<{ code: number | null; stdout: string }>();
+    const child = spawn(command, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+    let stdout = '';
+    let settled = false;
+    const finish = (code: number | null) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        resolve({ code, stdout });
+    };
+    const timer = setTimeout(() => {
+        child.kill();
+        finish(null);
+    }, timeoutMs);
+    child.stdout.setEncoding('utf8');
+    child.stdout.on('data', (chunk: string) => { stdout += chunk; });
+    child.stderr.on('data', () => undefined);
+    child.on('error', () => finish(null));
+    child.on('close', (code) => finish(code));
+    return promise;
+}
+
+async function loadBundledAgentDirectory(): Promise<string | undefined> {
+    const version = await spawnText('omp', ['--version'], 5000);
+    if (version.code !== 0) return undefined;
+    const tag = version.stdout.trim().split(/\s+/)[0]?.replace(/[^\w.-]/g, '') || 'unknown';
+    const dir = join(bundledAgentCacheRoot(), tag);
     if (existsSync(join(dir, 'scout.md'))) return dir;
     try {
         mkdirSync(dir, { recursive: true });
     } catch {
         return undefined;
     }
-    const unpacked = spawnSync('omp', ['agents', 'unpack', '--dir', dir, '--force'], { encoding: 'utf8', timeout: 20000 });
-    return unpacked.status === 0 ? dir : undefined;
+    const unpacked = await spawnText('omp', ['agents', 'unpack', '--dir', dir, '--force'], 20000);
+    return unpacked.code === 0 ? dir : undefined;
+}
+
+async function bundledAgentDirectory(): Promise<string | undefined> {
+    const override = process.env.HAPI_OMP_BUNDLED_AGENTS?.trim();
+    if (override === '0') return undefined;
+    if (override) return override;
+    if (process.env.VITEST) return undefined;
+    bundledAgentsDir ??= loadBundledAgentDirectory();
+    return bundledAgentsDir;
 }
 
 /** Directories omp 18.12.6 actually scans: ~/.omp/agent/agents (PI_CODING_AGENT_DIR first), project .omp/agents, plus the same agents/ folder under .claude, .codex, and .gemini. Bundled agents are embedded in the omp binary and materialized with `omp agents unpack`. */
-export function listSessionAgents(cwd: string): SessionInventoryAgent[] {
+export async function listSessionAgents(cwd: string): Promise<SessionInventoryAgent[]> {
     const byName = new Map<string, SessionInventoryAgent>();
     const add = (agent: SessionInventoryAgent) => {
         if (!byName.has(agent.name)) byName.set(agent.name, agent);
@@ -799,7 +835,7 @@ export function listSessionAgents(cwd: string): SessionInventoryAgent[] {
     for (const dir of userAgentDirectories()) {
         for (const agent of agentsFromDirectory(dir, cwd, 'user')) add(agent);
     }
-    const bundled = bundledAgentDirectory();
+    const bundled = await bundledAgentDirectory();
     if (bundled) {
         for (const agent of agentsFromDirectory(bundled, cwd, 'system')) add(agent);
     }
@@ -842,7 +878,7 @@ export async function readLiveSessionConfig(input: {
         sessionId: input.sessionId,
         promptLive: { ...getSessionPromptLive(input.sessionId), ...input.promptLive },
     }).prompts;
-    const agents = { items: listSessionAgents(input.cwd) };
+    const agents = { items: await listSessionAgents(input.cwd) };
     return { ...sections, ...(mcp ? { mcp } : {}), agents, skills, prompts };
 }
 

@@ -1,6 +1,7 @@
+import { existsSync } from 'node:fs';
 import { access, lstat, open, readdir, readFile, realpath, stat } from 'fs/promises';
-import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'path';
 import { homedir } from 'os';
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'path';
 import { parse as parseYaml } from 'yaml';
 import { listedConfigFilePath } from './configFilePath';
 export interface SkillSummary {
@@ -105,6 +106,44 @@ function getProjectSkillsRoots(directory: string, flavor?: string): string[] {
     }
     return roots;
 }
+/** User and project skill directories a toggle may write. A symlink may land in any of them. */
+export function knownSkillRoots(workingDirectory?: string): string[] {
+    const home = getHomeDirectory();
+    const ompHome = process.env.PI_CODING_AGENT_DIR?.trim() || join(home, '.omp', 'agent');
+    const roots = [
+        join(home, '.agents', 'skills'),
+        join(ompHome, 'skills'),
+        join(process.env.CLAUDE_CONFIG_DIR?.trim() || join(home, '.claude'), 'skills'),
+        join(process.env.CODEX_HOME?.trim() || join(home, '.codex'), 'skills'),
+        join(process.env.GROK_HOME?.trim() || join(home, '.grok'), 'skills'),
+        join(home, '.copilot', 'skills'),
+    ];
+    if (!workingDirectory) return roots;
+    const start = resolve(workingDirectory);
+    const directories = [start];
+    let current = start;
+    while (!existsSync(join(current, '.git'))) {
+        const parent = dirname(current);
+        if (parent === current) return roots.concat(projectSkillRoots(start));
+        current = parent;
+        directories.push(current);
+    }
+    return roots.concat(directories.flatMap(projectSkillRoots));
+}
+
+function projectSkillRoots(directory: string): string[] {
+    return [
+        join(directory, '.agents', 'skills'),
+        join(directory, '.omp', 'skills'),
+        join(directory, '.omp', 'agent', 'skills'),
+        join(directory, '.claude', 'skills'),
+        join(directory, '.codex', 'skills'),
+        join(directory, '.grok', 'skills'),
+        join(directory, '.copilot', 'skills'),
+        join(directory, '.github', 'skills'),
+    ];
+}
+
 
 async function pathExists(path: string): Promise<boolean> {
     try {
