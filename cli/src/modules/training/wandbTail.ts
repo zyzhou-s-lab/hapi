@@ -181,7 +181,7 @@ async function wandbFile(runDir: string): Promise<string | null> {
     return file ? join(runDir, file) : null
 }
 
-export async function listWandbMetrics(runDir: string, policy?: Pick<MachinePathPolicy, 'resolveForCheck' | 'isWithinSpawnRoots'>): Promise<string[]> {
+export async function listWandbMetrics(runDir: string, policy?: Pick<MachinePathPolicy, 'resolveForCheck' | 'isWithinSpawnRoots'>): Promise<{ metrics: string[]; partial: boolean }> {
     const resolved = await resolveTrainingRunDir(runDir, policy)
     if (!resolved) throw new Error('cannot read this run')
     const file = await wandbFile(resolved)
@@ -191,15 +191,15 @@ export async function listWandbMetrics(runDir: string, policy?: Pick<MachinePath
     let buffer = ''
     return await new Promise((resolve, reject) => {
         let settled = false
-        const finish = (error?: Error) => {
+        const finish = (error?: Error, partial = false) => {
             if (settled) return
             settled = true
             clearTimeout(timer)
             child.kill()
             if (error) reject(error)
-            else resolve([...names].sort())
+            else resolve({ metrics: [...names].sort(), partial })
         }
-        const timer = setTimeout(() => finish(), 2_000)
+        const timer = setTimeout(() => finish(undefined, true), 2_000)
         child.stdout?.setEncoding('utf8')
         child.stdout?.on('data', (chunk: string) => {
             buffer += chunk

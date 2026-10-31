@@ -3,15 +3,15 @@ export type WorkHub = {
 }
 
 export async function registerTrainingRun(hub: WorkHub, input: { run: string; machineId: string; runDir: string }): Promise<{ status: number; body: unknown }> {
-    return hub.request('/api/work/training-runs', { method: 'POST', body: input })
+    return hub.request('/cli/work/training-runs', { method: 'POST', body: input })
 }
 
 export async function queryTrainingRun(hub: WorkHub, run: string): Promise<{ status: number; body: unknown }> {
-    return hub.request(`/api/work/training-runs/${encodeURIComponent(run)}`)
+    return hub.request(`/cli/work/training-runs/${encodeURIComponent(run)}`)
 }
 
 export async function bindTrainingCard(hub: WorkHub, input: { lineId: string; run: string; metrics?: string[] }): Promise<{ status: number; body: unknown }> {
-    return hub.request('/api/work/layout/workbench/training', { method: 'PUT', body: input })
+    return hub.request('/cli/work/training-card', { method: 'PUT', body: input })
 }
 
 export function formatWorkResult(status: number, body: unknown): { text: string; isError: boolean } {

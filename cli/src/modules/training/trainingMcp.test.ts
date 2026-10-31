@@ -18,9 +18,9 @@ describe('training MCP hub calls', () => {
         await queryTrainingRun(client, 'exp/1')
         await bindTrainingCard(client, { lineId: 'line-1', run: 'exp-1', metrics: ['loss'] })
         expect(seen).toEqual([
-            { path: '/api/work/training-runs', method: 'POST', body: { run: 'exp-1', machineId: 'gpu', runDir: '/data/wandb/offline-run-1' } },
-            { path: '/api/work/training-runs/exp%2F1', method: undefined, body: undefined },
-            { path: '/api/work/layout/workbench/training', method: 'PUT', body: { lineId: 'line-1', run: 'exp-1', metrics: ['loss'] } },
+            { path: '/cli/work/training-runs', method: 'POST', body: { run: 'exp-1', machineId: 'gpu', runDir: '/data/wandb/offline-run-1' } },
+            { path: '/cli/work/training-runs/exp%2F1', method: undefined, body: undefined },
+            { path: '/cli/work/training-card', method: 'PUT', body: { lineId: 'line-1', run: 'exp-1', metrics: ['loss'] } },
         ])
         expect(formatWorkResult(404, { error: '训练不存在' })).toEqual({ text: '训练不存在', isError: true })
         expect(formatWorkResult(200, { metrics: ['loss'] }).isError).toBe(false)

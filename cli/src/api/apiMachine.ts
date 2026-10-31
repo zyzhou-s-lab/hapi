@@ -183,11 +183,12 @@ export class ApiMachineClient {
             async () => getAgentAvailabilityResponse()
         )
 
-        this.rpcHandlerManager.registerHandler<{ run?: string; runDir?: string }, { metrics: string[] }>(
+        this.rpcHandlerManager.registerHandler<{ run?: string; runDir?: string }, { metrics: string[]; partial: boolean }>(
             RPC_METHODS.QueryWandbRun,
             async (params) => {
-                if (typeof params?.runDir !== 'string') throw new Error('cannot read this run')
-                return { metrics: await listWandbMetrics(params.runDir, this.pathPolicy) }
+                const run = typeof params?.run === 'string' ? params.run : ''
+                if (typeof params?.runDir !== 'string') throw new Error(run ? `cannot read this run: ${run}` : 'cannot read this run')
+                return await listWandbMetrics(params.runDir, this.pathPolicy)
             }
         )
 
