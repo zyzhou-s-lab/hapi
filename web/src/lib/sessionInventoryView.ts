@@ -124,14 +124,14 @@ export function skillsSection(inventory: SessionInventory | null | undefined, fl
 }
 
 function promptRow(item: SessionPromptItem): InventoryRow | null {
-    const title = visibleInventoryText(item.title) ?? item.title
-    if (!title) return null
-    const detail = visibleInventoryText(item.pathLabel)
+    const name = visibleInventoryText(item.title) ?? item.title
+    if (!name) return null
+    const path = visibleInventoryText(item.pathLabel)
     const preview = visibleInventoryText(item.preview)
     return {
         key: `prompt:${item.id}`,
-        title,
-        ...(detail ? { detail } : {}),
+        title: name,
+        ...(path ? { detail: path } : {}),
         ...(preview ? { preview } : {}),
         scopeLabel: item.scope,
         enabled: true,
@@ -141,7 +141,6 @@ function promptRow(item: SessionPromptItem): InventoryRow | null {
         openable: item.hasText !== false,
         ...(item.load ? { load: item.load } : {}),
         ...(item.match ? { match: item.match } : {}),
-        ...(item.note ? { note: item.note } : {}),
         ...(item.codexCapped ? { codexCapped: true } : {}),
         ref: { kind: 'prompt', id: item.id },
     }

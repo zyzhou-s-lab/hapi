@@ -75,7 +75,10 @@ function clip(value: string, max: number): string {
 
 function previewOf(text: string, stripFrontmatter = false): string | undefined {
     const parsed = stripFrontmatter ? matter(text) : undefined
-    const source = parsed?.fenced ? parsed.body : text
+    const source = (parsed?.fenced ? parsed.body : text)
+        .split(/\r?\n/)
+        .filter((line) => !/^---+\s*$/.test(line))
+        .join('\n')
     const flat = redactConfigSecrets(source).replace(/\s+/g, ' ').trim()
     if (!flat) return undefined
     return clip(flat, PREVIEW_LIMIT)

@@ -107,8 +107,10 @@ describe('SessionConfigPage', () => {
         expect(screen.getByText('PreToolUse')).toBeTruthy()
         expect(screen.getByText('Bash · my-hook')).toBeTruthy()
         expect(screen.getByText('None')).toBeTruthy()
-        expect(screen.getAllByText('This agent does not honor a per-item switch, so turning it off here would not stop it.').length).toBeGreaterThan(0)
-        expect(screen.getAllByText('Injected, system, tool, and plugin items cannot be changed here.').length).toBeGreaterThan(0)
+        expect(screen.queryByText('This agent does not honor a per-item switch, so turning it off here would not stop it.')).toBeNull()
+        expect(screen.queryByText('Injected, system, tool, and plugin items cannot be changed here.')).toBeNull()
+        expect(screen.queryByText('Changes apply the next time you start a session or restart the agent.')).toBeNull()
+        expect(screen.queryByText('Tool names, not servers')).toBeNull()
         expect(screen.queryByText(/127\.0\.0\.1/)).toBeNull()
         expect(screen.queryByText(/token/i)).toBeNull()
         expect(mocks.header?.configActive).toBe(true)
@@ -265,7 +267,7 @@ describe('SessionConfigPage', () => {
                         role: 'user',
                         scope: 'project',
                         title: 'CLAUDE.md',
-                        pathLabel: 'CLAUDE.md',
+                        pathLabel: '~/.claude/CLAUDE.md',
                         preview: 'Use bun.',
                         load: 'path',
                         match: 'src/**/*.ts',
@@ -287,13 +289,14 @@ describe('SessionConfigPage', () => {
         renderPage()
         expect(await screen.findByRole('heading', { name: 'System prompt' })).toBeTruthy()
         expect(screen.getByRole('heading', { name: 'User prompt' })).toBeTruthy()
-        expect(screen.getByText('Does not include Claude Code’s built-in system prompt.')).toBeTruthy()
+        expect(screen.queryByText('Does not include Claude Code’s built-in system prompt.')).toBeNull()
         expect(screen.getByText('Part 1')).toBeTruthy()
+        expect(screen.getByRole('button', { name: /CLAUDE\.md\s+~\/\.claude\/CLAUDE\.md/ })).toBeTruthy()
         expect(screen.getByText('Loads for matching paths · src/**/*.ts')).toBeTruthy()
         expect(screen.queryByRole('switch', { name: 'Enable CLAUDE.md' })).toBeNull()
-        fireEvent.click(screen.getByRole('button', { name: /CLAUDE.md/ }))
+        fireEvent.click(screen.getByRole('button', { name: /CLAUDE\.md/ }))
         expect(await screen.findByText('Showing the first part only.')).toBeTruthy()
-        expect(screen.getByText('@import lines are not expanded.')).toBeTruthy()
+        expect(screen.queryByText('@import lines are not expanded.')).toBeNull()
         expect(screen.getByText(/Frontmatter/)).toBeTruthy()
         expect(screen.getByText(/alwaysApply: true/)).toBeTruthy()
         expect(screen.getByText(/# Project/)).toBeTruthy()

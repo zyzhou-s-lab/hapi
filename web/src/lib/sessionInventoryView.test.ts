@@ -86,6 +86,7 @@ describe('session inventory view', () => {
             status: 'list',
             rows: [{
                 title: 'api.mdc',
+                detail: '.cursor/rules/api.mdc',
                 toggle: false,
                 openable: true,
                 load: 'path',

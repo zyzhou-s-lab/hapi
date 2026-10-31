@@ -94,7 +94,6 @@ function ConfigSwitch(props: { row: InventoryRow; pending: boolean; onToggle: (e
 function ConfigSection(props: {
     title: string
     section: InventorySection
-    toolsHint?: string
     pendingKey: string | null
     onOpen: (row: InventoryRow) => void
     onToggle: (row: InventoryRow, enabled: boolean) => void
@@ -104,12 +103,7 @@ function ConfigSection(props: {
     return (
         <section>
             <h2 className="mb-2 text-base font-semibold text-[var(--app-fg)]">{props.title}</h2>
-            {props.section.status === 'list' && props.section.note ? (
-                <p className="mb-2 text-xs text-[var(--app-hint)]">{promptCopy(props.section.note, t)}</p>
-            ) : null}
-            {props.section.status === 'list' && props.section.tools ? (
-                <p className="mb-2 text-xs text-[var(--app-hint)]">{props.toolsHint}</p>
-            ) : null}
+
             <div className="overflow-hidden rounded-lg border border-[var(--app-border)] bg-[var(--app-bg)]">
                 {message ? (
                     <p className="px-3 py-4 text-sm text-[var(--app-hint)]">{message}</p>
@@ -119,10 +113,12 @@ function ConfigSection(props: {
                             <li key={item.key} className="flex items-center gap-3 border-b border-[var(--app-divider)] px-3 py-2 last:border-b-0">
                                 {item.openable ? (
                                     <button type="button" className="min-w-0 flex-1 text-left" onClick={() => props.onOpen(item)}>
-                                        <div className="truncate text-sm text-[var(--app-fg)]">{promptTitle(item.title, t)}</div>
-                                        {item.detail ? (
-                                            <div className="truncate text-xs text-[var(--app-hint)]">{promptPathLabel(item.detail, t)}</div>
-                                        ) : null}
+                                        <div className="flex min-w-0 items-baseline gap-2">
+                                            <span className="max-w-[45%] shrink-0 truncate text-sm text-[var(--app-fg)]">{promptTitle(item.title, t)}</span>
+                                            {item.detail ? (
+                                                <span className="min-w-0 truncate text-xs text-[var(--app-hint)]">{promptPathLabel(item.detail, t)}</span>
+                                            ) : null}
+                                        </div>
                                         {item.preview ? (
                                             <div className="truncate text-xs text-[var(--app-hint)]">{item.preview}</div>
                                         ) : null}
@@ -131,24 +127,13 @@ function ConfigSection(props: {
                                                 {t(`session.config.prompt.load.${item.load}`)}{item.match ? ` · ${item.match}` : ''}
                                             </div>
                                         ) : null}
-                                        {item.note ? (
-                                            <div className="text-xs text-[var(--app-hint)]">{promptCopy(item.note, t)}</div>
-                                        ) : null}
                                         {item.codexCapped ? (
                                             <div className="text-xs text-[var(--app-hint)]">{t('session.config.prompt.codexCap')}</div>
-                                        ) : null}
-                                        {item.lock ? (
-                                            <div className="text-xs text-[var(--app-hint)]">
-                                                {item.lock === 'unsupported' ? t('session.config.unsupported') : t('session.config.locked')}
-                                            </div>
                                         ) : null}
                                     </button>
                                 ) : (
                                     <div className="min-w-0 flex-1 text-left">
                                         <div className="truncate text-sm text-[var(--app-fg)]">{promptTitle(item.title, t)}</div>
-                                        {item.note ? (
-                                            <div className="text-xs text-[var(--app-hint)]">{promptCopy(item.note, t)}</div>
-                                        ) : null}
                                     </div>
                                 )}
                                 {item.toggle ? (
@@ -184,7 +169,7 @@ function ConfigDetail(props: { detail: Extract<SessionConfigDetailResult, { succ
         <div className="flex flex-col gap-4">
             {detail.kind === 'skill' || detail.kind === 'prompt' ? (
                 <>
-                    {detail.kind === 'prompt' && detail.note ? <p className="text-xs text-[var(--app-hint)]">{promptCopy(detail.note, t)}</p> : null}
+                    {detail.kind === 'prompt' && detail.note && detail.note !== 'no-import' && detail.note !== 'agents-inferred' ? <p className="text-xs text-[var(--app-hint)]">{promptCopy(detail.note, t)}</p> : null}
                     {detail.kind === 'prompt' && detail.codexCapped ? <p className="text-xs text-[var(--app-hint)]">{t('session.config.prompt.codexCap')}</p> : null}
                     {detail.kind === 'prompt' && detail.frontmatter ? (
                         <pre className="overflow-x-auto whitespace-pre-wrap font-mono text-xs text-[var(--app-hint)]">{t('session.config.prompt.frontmatter')}{'\n'}{detail.frontmatter}</pre>
@@ -367,8 +352,7 @@ export default function SessionConfigPage() {
                     <div className="mx-auto flex w-full max-w-content flex-col gap-6 p-4">
                         <ConfigSection title={t('session.config.systemPrompt')} section={systemPrompt} pendingKey={pendingKey} onOpen={setSelected} onToggle={(row, enabled) => { void toggle(row, enabled) }} />
                         <ConfigSection title={t('session.config.userPrompt')} section={userPrompt} pendingKey={pendingKey} onOpen={setSelected} onToggle={(row, enabled) => { void toggle(row, enabled) }} />
-                        <p className="text-xs text-[var(--app-hint)]">{t('session.config.effect')}</p>
-                        <ConfigSection title={t('session.config.mcp')} section={mcp} toolsHint={t('session.config.mcp.toolsHint')} pendingKey={pendingKey} onOpen={setSelected} onToggle={(row, enabled) => { void toggle(row, enabled) }} />
+                        <ConfigSection title={t('session.config.mcp')} section={mcp} pendingKey={pendingKey} onOpen={setSelected} onToggle={(row, enabled) => { void toggle(row, enabled) }} />
                         <ConfigSection title={t('session.config.skills')} section={skills} pendingKey={pendingKey} onOpen={setSelected} onToggle={(row, enabled) => { void toggle(row, enabled) }} />
                         <ConfigSection title={t('session.config.hooks')} section={hooks} pendingKey={pendingKey} onOpen={setSelected} onToggle={(row, enabled) => { void toggle(row, enabled) }} />
                     </div>

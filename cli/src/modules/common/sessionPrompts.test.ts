@@ -86,6 +86,7 @@ describe('session prompts', () => {
         const project = prompts?.user?.items.find((item) => item.scope === 'project' && item.title === 'CLAUDE.md')
         expect(project?.preview).toContain('# Title')
         expect(project?.preview).toContain('kept after the rule')
+        expect(project?.preview).not.toContain('---')
         const claudeDetail = readSessionPromptDetail({ flavor: 'claude', cwd, home, env: {}, id: project?.id ?? '' })
         expect('markdown' in claudeDetail ? claudeDetail.markdown : '').toBe(claude)
         expect('frontmatter' in claudeDetail ? claudeDetail.frontmatter : undefined).toBeUndefined()
