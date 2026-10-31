@@ -84,6 +84,14 @@ describe('listSkewedMachines', () => {
         expect(skewed.map((m) => m.id)).toEqual(['old'])
     })
 
+    it('ignores a null machine instead of crashing', () => {
+        const skewed = listSkewedMachines([
+            null,
+            makeMachine({ id: 'old', metadata: { host: 'proxmox', platform: 'linux', happyCliVersion: '0.20.0' } }),
+        ])
+        expect(skewed.map((machine) => machine.id)).toEqual(['old'])
+    })
+
     it('uses displayName when present', () => {
         expect(machineDisplayHost(makeMachine({
             id: 'm1',

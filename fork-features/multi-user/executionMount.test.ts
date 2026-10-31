@@ -68,6 +68,34 @@ describe('createExecutionMiddleware', () => {
         store.close()
     })
 
+    it('omits a machine binding whose core row is gone', async () => {
+        const store = new MultiUserGatewayStore(':memory:')
+        const owner = store.createAccount('owner', 'user', 'owner-namespace', null)
+        store.bindResource({
+            resourceType: 'machine',
+            resourceId: 'gone',
+            ownerAccountId: owner.id,
+            coreNamespace: owner.defaultNamespace,
+        })
+        const jwtSecret = new TextEncoder().encode('test-secret-test-secret-test-secret')
+        const token = await new SignJWT({ gaid: owner.id }).setProtectedHeader({ alg: 'HS256' }).sign(jwtSecret)
+        const engine = {
+            getOnlineMachinesByNamespace: () => [undefined],
+            getMachine: () => undefined,
+        } as unknown as SyncEngine
+        const app = new Hono<WebAppEnv>()
+        mountExecutionRoutes(app, {
+            store,
+            jwtSecret,
+            getSyncEngine: () => engine,
+            getSseManager: () => null,
+        })
+        const response = await app.request('/api/machines', { headers: { authorization: `Bearer ${token}` } })
+        expect(response.status).toBe(200)
+        expect(await response.json()).toEqual({ machines: [] })
+        store.close()
+    })
+
     it('binds the returned fork session when the caller owns the source session', async () => {
         const store = new MultiUserGatewayStore(':memory:')
         const owner = store.createAccount('owner', 'user', 'owner-namespace', null)

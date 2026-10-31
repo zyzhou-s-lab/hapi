@@ -53,6 +53,31 @@ describe('workbench create line', () => {
         logged.mockRestore()
     })
 
+    it('keeps the create form when the machine list contains null', async () => {
+        const api = {
+            getWorkMap: async () => emptyMap,
+            getWorkLayout: async () => ({ source: 'default', layout: null }),
+            getMachines: async () => ({ machines: [null, { id: 'gpu', metadata: { displayName: 'GPU' } }] }),
+        } as unknown as ApiClient
+        render(
+            <AppContextProvider value={{ api, token: 't', baseUrl: 'http://hub', user: { id: 7 } }}>
+                <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+                    <I18nProvider>
+                        <WorkCardHost
+                            surface="workbench"
+                            view={{ kind: 'line', lineId: '' }}
+                            sessions={[]}
+                            api={api}
+                            layoutFor={() => ({ revision: 1, regions: { rail: [{ cardId: 'workbench.line-list' }] } })}
+                        />
+                    </I18nProvider>
+                </QueryClientProvider>
+            </AppContextProvider>,
+        )
+        expect(await screen.findByRole('option', { name: 'GPU' })).toBeTruthy()
+        expect(screen.queryByText('No machine you can use. A line needs one.')).toBeNull()
+    })
+
     it('says when the open line does not exist', async () => {
         const api = {
             getSessions: async () => ({ sessions: [] }),

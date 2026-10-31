@@ -21,11 +21,11 @@ export function machineDisplayHost(machine: Machine): string {
         ?? machine.id
 }
 
-export function listSkewedMachines(machines: Machine[]): Machine[] {
-    return machines.filter((machine) => (
-        machine.active
-        && isMachineCapabilitySkewed(machine.metadata?.capabilities)
-    ))
+export function listSkewedMachines(machines: readonly (Machine | null | undefined)[]): Machine[] {
+    return machines.filter((machine): machine is Machine => {
+        if (!machine?.active) return false
+        return isMachineCapabilitySkewed(machine.metadata?.capabilities)
+    })
 }
 
 /**
