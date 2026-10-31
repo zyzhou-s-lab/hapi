@@ -15,3 +15,16 @@ export function pushTrainingChartData(chart: ZoomableChart, data: unknown, zoome
     if (x?.min != null && x.max != null) chart.setScale('x', { min: x.min, max: x.max })
     if (y?.min != null && y.max != null) chart.setScale('y', { min: y.min, max: y.max })
 }
+
+export function trainingSeriesShowsPoints(values: ArrayLike<number | null | undefined> | undefined): boolean {
+    if (!values) return true
+    let count = 0
+    for (let index = 0; index < values.length; index += 1) {
+        const value = values[index]
+        if (typeof value === 'number' && Number.isFinite(value)) {
+            count += 1
+            if (count >= 2) return false
+        }
+    }
+    return true
+}

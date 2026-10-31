@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
-import { applyTrainingBatch, filterTrainingSeries, prepareTrainingPlot, smoothPoints, trainingCustomXAxes, trainingMetricSelection, trainingMetricsFromArgs, type TrainingSeries } from './trainingSeries'
+import { applyTrainingBatch, filterTrainingSeries, prepareTrainingPlot, smoothPoints, trainingCustomXAxes, trainingCustomXReordered, trainingMetricSelection, trainingMetricsFromArgs, type TrainingSeries } from './trainingSeries'
+import { pushTrainingChartData, trainingSeriesShowsPoints } from './charts/chartUpdate'
 import { reduceTrainingDisconnect, reduceTrainingError, reduceTrainingFrame, emptyTrainingState, nextSubscribeDelay, trainingMessageKey } from '@/hooks/useTrainingSocket'
-import { pushTrainingChartData } from './charts/chartUpdate'
 
 const loss: TrainingSeries = {
     id: 'loss',
@@ -139,6 +139,19 @@ describe('training series', () => {
         })
         expect(custom.steps).toEqual([0, 1, 2])
         expect(custom.drawable.find((row) => row.id === 'eval')?.values).toEqual([0.8, null, 0.3])
+    })
+
+    it('marks only a direction-changing custom axis as reordered', () => {
+        const epoch = [{ id: 'epoch', name: 'epoch', points: [{ step: 1, value: 0 }, { step: 2, value: 1 }, { step: 3, value: 2 }] }]
+        const decay = [{ id: 'lr', name: 'lr', points: [{ step: 1, value: 0.1 }, { step: 2, value: 0.05 }, { step: 3, value: 0.01 }] }]
+        const bump = [{ id: 'lr', name: 'lr', points: [{ step: 1, value: 0.1 }, { step: 2, value: 0.01 }, { step: 3, value: 0.05 }] }]
+        expect(trainingCustomXReordered(epoch, 'epoch')).toBe(false)
+        expect(trainingCustomXReordered(decay, 'lr')).toBe(false)
+        expect(trainingCustomXReordered(bump, 'lr')).toBe(true)
+        expect(trainingCustomXReordered(bump, '_step')).toBe(false)
+        expect(trainingSeriesShowsPoints([null, 0.4, null])).toBe(true)
+        expect(trainingSeriesShowsPoints([1, 0.5, 0.2])).toBe(false)
+        expect(trainingSeriesShowsPoints([1, null, 2])).toBe(false)
     })
 
     it('names one or two selected metrics and counts the rest', () => {

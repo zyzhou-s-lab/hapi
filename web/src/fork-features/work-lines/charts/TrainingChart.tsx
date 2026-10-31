@@ -2,9 +2,9 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import uPlot from 'uplot'
 import 'uplot/dist/uPlot.min.css'
 import { useTranslation } from '@/lib/use-translation'
-import { TRAINING_X_RUNTIME, TRAINING_X_STEP, TRAINING_X_WALL, prepareTrainingPlot, trainingCustomXAxes, trainingMetricSelection, type TrainingSeries } from '../trainingSeries'
-import { pushTrainingChartData, type ZoomableChart } from './chartUpdate'
-import { readTrainingHidden, readTrainingXAxis, trainingBrowserStore, writeTrainingHidden, writeTrainingXAxis } from './trainingPrefs'
+import { TRAINING_X_RUNTIME, TRAINING_X_STEP, TRAINING_X_WALL, prepareTrainingPlot, trainingCustomXAxes, trainingCustomXReordered, trainingMetricSelection, type TrainingSeries } from '../trainingSeries'
+import { pushTrainingChartData, trainingSeriesShowsPoints, type ZoomableChart } from './chartUpdate'
+import { readTrainingHidden, readTrainingXAxis, trainingBrowserStore, trainingPrefId, writeTrainingHidden, writeTrainingXAxis } from './trainingPrefs'
 
 const STROKES = ['#2563eb', '#dc2626', '#059669', '#d97706', '#7c3aed', '#0891b2']
 const SMOOTH_ALPHA = 0.6
@@ -14,19 +14,18 @@ function span(min: number, max: number, log: boolean): { min: number; max: numbe
     return log ? { min: min / 2, max: min * 2 } : { min: min - 1, max: max + 1 }
 }
 
-export function TrainingChart(props: { series: TrainingSeries[], xSource?: readonly TrainingSeries[], run?: string }): ReactNode {
+export function TrainingChart(props: { series: TrainingSeries[], xSource?: readonly TrainingSeries[], run?: string, lineId?: string }): ReactNode {
     const { t } = useTranslation()
-    const run = props.run ?? ''
-    const store = trainingBrowserStore()
-    const [prefsRun, setPrefsRun] = useState(run)
-    const [hidden, setHidden] = useState<ReadonlySet<string>>(() => readTrainingHidden(run, store))
+    const prefId = trainingPrefId(props.lineId ?? '', props.run ?? '')
+    const [prefsId, setPrefsId] = useState(prefId)
+    const [hidden, setHidden] = useState<ReadonlySet<string>>(() => readTrainingHidden(prefId, trainingBrowserStore()))
     const [smooth, setSmooth] = useState(false)
     const [log, setLog] = useState(false)
-    const [xAxis, setXAxis] = useState(() => readTrainingXAxis(run, store))
-    if (prefsRun !== run) {
-        setPrefsRun(run)
-        setHidden(readTrainingHidden(run, store))
-        setXAxis(readTrainingXAxis(run, store))
+    const [xAxis, setXAxis] = useState(() => readTrainingXAxis(prefId, trainingBrowserStore()))
+    if (prefsId !== prefId) {
+        setPrefsId(prefId)
+        setHidden(readTrainingHidden(prefId, trainingBrowserStore()))
+        setXAxis(readTrainingXAxis(prefId, trainingBrowserStore()))
     }
     const host = useRef<HTMLDivElement>(null)
     const metricsRef = useRef<HTMLDivElement>(null)
@@ -71,7 +70,7 @@ export function TrainingChart(props: { series: TrainingSeries[], xSource?: reado
                     stroke: STROKES[index % STROKES.length],
                     width: 2,
                     spanGaps: true,
-                    points: { show: false },
+                    points: { show: (chart: uPlot, seriesIdx: number) => trainingSeriesShowsPoints(chart.data[seriesIdx]) },
                 })),
             ],
             cursor: { drag: { x: true, y: true, setScale: true } },
@@ -127,12 +126,17 @@ export function TrainingChart(props: { series: TrainingSeries[], xSource?: reado
     }, [metricsOpen])
 
     const toggle = (id: string) => {
-        const next = new Set(hidden)
-        if (next.has(id)) next.delete(id)
-        else next.add(id)
-        setHidden(next)
-        writeTrainingHidden(run, next, store)
+        setHidden((current) => {
+            const next = new Set(current)
+            if (next.has(id)) next.delete(id)
+            else next.add(id)
+            return next
+        })
     }
+
+    useEffect(() => {
+        writeTrainingHidden(prefId, hidden, trainingBrowserStore())
+    }, [prefId, hidden])
 
     return (
         <div>
@@ -142,11 +146,11 @@ export function TrainingChart(props: { series: TrainingSeries[], xSource?: reado
                     <select
                         className="rounded border border-[var(--app-divider)] bg-transparent px-1 py-0.5"
                         value={activeX}
-                        title={prepared.pointsOnly ? t('work.trainingXSorted') : undefined}
+                        title={trainingCustomXReordered(xSource, activeX) ? t('work.trainingXSorted') : undefined}
                         onChange={(event) => {
                             const value = event.target.value
                             setXAxis(value)
-                            writeTrainingXAxis(run, value, store)
+                            writeTrainingXAxis(prefId, value, trainingBrowserStore())
                         }}
                     >
                         <option value={TRAINING_X_STEP}>{t('work.trainingXStep')}</option>

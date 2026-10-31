@@ -1,49 +1,77 @@
 import { TRAINING_X_STEP } from '../trainingSeries'
 
-export function trainingXAxisStorageKey(run: string): string {
-    return `hapi.training.xAxis:${run}`
+const AXIS_PREFIX = 'hapi.training.xAxis:'
+const HIDDEN_PREFIX = 'hapi.training.hidden:'
+const INDEX_KEY = 'hapi.training.prefs'
+
+export const TRAINING_PREF_LIMIT = 32
+export const TRAINING_PREF_TTL_MS = 90 * 24 * 60 * 60 * 1000
+
+export function trainingPrefId(lineId: string, run: string): string {
+    if (lineId.length === 0 || run.length === 0) return ''
+    return `${encodeURIComponent(lineId)}:${encodeURIComponent(run)}`
 }
 
-export function trainingHiddenStorageKey(run: string): string {
-    return `hapi.training.hidden:${run}`
+export function trainingXAxisStorageKey(prefId: string): string {
+    return `${AXIS_PREFIX}${prefId}`
+}
+
+export function trainingHiddenStorageKey(prefId: string): string {
+    return `${HIDDEN_PREFIX}${prefId}`
 }
 
 export type TrainingPrefStore = {
     getItem(key: string): string | null
     setItem(key: string, value: string): void
+    removeItem(key: string): void
+    keys(): string[]
 }
 
 export function trainingBrowserStore(): TrainingPrefStore | null {
     try {
-        return window.localStorage
+        const storage = window.localStorage
+        return {
+            getItem: (key) => storage.getItem(key),
+            setItem: (key, value) => storage.setItem(key, value),
+            removeItem: (key) => storage.removeItem(key),
+            keys: () => {
+                const names: string[] = []
+                for (let index = 0; index < storage.length; index += 1) {
+                    const key = storage.key(index)
+                    if (key) names.push(key)
+                }
+                return names
+            },
+        }
     } catch {
         return null
     }
 }
 
-export function readTrainingXAxis(run: string, store: TrainingPrefStore | null): string {
-    if (!store || run.length === 0) return TRAINING_X_STEP
+export function readTrainingXAxis(prefId: string, store: TrainingPrefStore | null): string {
+    if (!store || prefId.length === 0) return TRAINING_X_STEP
     try {
-        const value = store.getItem(trainingXAxisStorageKey(run))
+        const value = store.getItem(trainingXAxisStorageKey(prefId))
         return value && value.length > 0 ? value : TRAINING_X_STEP
     } catch {
         return TRAINING_X_STEP
     }
 }
 
-export function writeTrainingXAxis(run: string, value: string, store: TrainingPrefStore | null): void {
-    if (!store || run.length === 0) return
+export function writeTrainingXAxis(prefId: string, value: string, store: TrainingPrefStore | null, now = Date.now()): void {
+    if (!store || prefId.length === 0) return
     try {
-        store.setItem(trainingXAxisStorageKey(run), value)
+        store.setItem(trainingXAxisStorageKey(prefId), value)
+        pruneTrainingPrefs(store, prefId, now)
     } catch {
         // Private mode or a full quota. The in-memory choice still applies.
     }
 }
 
-export function readTrainingHidden(run: string, store: TrainingPrefStore | null): ReadonlySet<string> {
-    if (!store || run.length === 0) return new Set()
+export function readTrainingHidden(prefId: string, store: TrainingPrefStore | null): ReadonlySet<string> {
+    if (!store || prefId.length === 0) return new Set()
     try {
-        const raw = store.getItem(trainingHiddenStorageKey(run))
+        const raw = store.getItem(trainingHiddenStorageKey(prefId))
         if (!raw) return new Set()
         const parsed = JSON.parse(raw) as unknown
         if (!Array.isArray(parsed)) return new Set()
@@ -53,11 +81,57 @@ export function readTrainingHidden(run: string, store: TrainingPrefStore | null)
     }
 }
 
-export function writeTrainingHidden(run: string, hidden: ReadonlySet<string>, store: TrainingPrefStore | null): void {
-    if (!store || run.length === 0) return
+export function writeTrainingHidden(prefId: string, hidden: ReadonlySet<string>, store: TrainingPrefStore | null, now = Date.now()): void {
+    if (!store || prefId.length === 0) return
     try {
-        store.setItem(trainingHiddenStorageKey(run), JSON.stringify([...hidden].sort()))
+        store.setItem(trainingHiddenStorageKey(prefId), JSON.stringify([...hidden].sort()))
+        pruneTrainingPrefs(store, prefId, now)
     } catch {
         // Private mode or a full quota. The in-memory choice still applies.
     }
+}
+
+function prefIdFromStorageKey(key: string): string | null {
+    if (key.startsWith(AXIS_PREFIX)) return key.slice(AXIS_PREFIX.length)
+    if (key.startsWith(HIDDEN_PREFIX)) return key.slice(HIDDEN_PREFIX.length)
+    return null
+}
+
+function readPrefIndex(store: TrainingPrefStore): { rows: { id: string; at: number }[]; ok: boolean } {
+    const raw = store.getItem(INDEX_KEY)
+    if (!raw) return { rows: [], ok: true }
+    const parsed = JSON.parse(raw) as unknown
+    if (!Array.isArray(parsed)) return { rows: [], ok: false }
+    const rows: { id: string; at: number }[] = []
+    for (const item of parsed) {
+        const touch = prefTouch(item)
+        if (touch) rows.push(touch)
+    }
+    return { rows, ok: true }
+}
+
+function prefTouch(item: unknown): { id: string; at: number } | null {
+    if (!item || typeof item !== 'object' || !('id' in item) || !('at' in item)) return null
+    const id = item.id
+    const at = item.at
+    if (typeof id !== 'string' || id.length === 0 || typeof at !== 'number' || !Number.isFinite(at)) return null
+    return { id, at }
+}
+
+function pruneTrainingPrefs(store: TrainingPrefStore, touchedId: string, now: number): void {
+    const index = readPrefIndex(store)
+    const kept = index.ok
+        ? index.rows.filter((row) => row.id !== touchedId && now - row.at <= TRAINING_PREF_TTL_MS)
+        : []
+    kept.push({ id: touchedId, at: now })
+    kept.sort((left, right) => left.at - right.at)
+    if (kept.length > TRAINING_PREF_LIMIT) kept.splice(0, kept.length - TRAINING_PREF_LIMIT)
+    if (index.ok) {
+        const live = new Set(kept.map((row) => row.id))
+        for (const key of store.keys()) {
+            const id = prefIdFromStorageKey(key)
+            if (id != null && id.length > 0 && !live.has(id)) store.removeItem(key)
+        }
+    }
+    store.setItem(INDEX_KEY, JSON.stringify(kept))
 }

@@ -7,7 +7,7 @@ import { filterTrainingSeries, trainingMetricsFromArgs, type TrainingSeries } fr
 
 const TrainingChart = lazy(() => import('./charts/TrainingChart').then((mod) => ({ default: mod.TrainingChart })))
 
-export function TrainingCurvesBody(props: { state: TrainingSocketState, xSource?: TrainingSeries[], run?: string }): ReactNode {
+export function TrainingCurvesBody(props: { state: TrainingSocketState, xSource?: TrainingSeries[], run?: string, lineId?: string }): ReactNode {
     const { t } = useTranslation()
     const statusKey = props.state.status === 'reconnecting' && !props.state.message
         ? 'work.trainingReconnecting'
@@ -21,7 +21,7 @@ export function TrainingCurvesBody(props: { state: TrainingSocketState, xSource?
             {props.state.finished ? <p className="text-xs text-[var(--app-hint)]">{t('work.trainingFinished')}</p> : null}
             {props.state.series.length === 0 ? <p className="text-sm text-[var(--app-hint)]">{t('work.trainingEmpty')}</p> : (
                 <Suspense fallback={<p className="text-sm text-[var(--app-hint)]">{t('work.trainingEmpty')}</p>}>
-                    <TrainingChart series={props.state.series} xSource={props.xSource} run={props.run} />
+                    <TrainingChart series={props.state.series} xSource={props.xSource} run={props.run} lineId={props.lineId} />
                 </Suspense>
             )}
         </>
@@ -43,6 +43,7 @@ function TrainingCurvesCard(props: { ctx: WorkCardContext }): ReactNode {
     const { token, baseUrl } = useAppContext()
     const { t } = useTranslation()
     const bound = trainingRunBound(props.ctx)
+    const lineId = bound ? props.ctx.slot.args?.lineId ?? '' : ''
     const run = bound ? props.ctx.slot.args?.run ?? '' : ''
     const metrics = trainingMetricsFromArgs(props.ctx.slot.args)
     const state = useTrainingSocket({ baseUrl, token, run })
@@ -52,7 +53,7 @@ function TrainingCurvesCard(props: { ctx: WorkCardContext }): ReactNode {
     }
     return (
         <CardFrame title={t('work.trainingCurves')}>
-            {bound ? <TrainingCurvesBody state={shown} xSource={state.series} run={run} /> : <p className="text-sm text-[var(--app-hint)]">{t('work.trainingUnbound')}</p>}
+            {bound ? <TrainingCurvesBody state={shown} xSource={state.series} run={run} lineId={lineId} /> : <p className="text-sm text-[var(--app-hint)]">{t('work.trainingUnbound')}</p>}
         </CardFrame>
     )
 }

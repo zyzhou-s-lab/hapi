@@ -63,6 +63,29 @@ export function trainingCustomXAxes(series: readonly TrainingSeries[]): string[]
         .map((row) => row.id)
 }
 
+export function trainingCustomXReordered(series: readonly TrainingSeries[], xAxis: string): boolean {
+    if (xAxis.length === 0 || xAxis === TRAINING_X_STEP || xAxis === TRAINING_X_RUNTIME || xAxis === TRAINING_X_WALL) return false
+    const byStep = new Map<number, number>()
+    for (const point of series.find((row) => row.id === xAxis)?.points ?? []) {
+        if (Number.isFinite(point.value)) byStep.set(point.step, point.value)
+    }
+    const values = [...byStep.entries()].sort((left, right) => left[0] - right[0]).map((entry) => entry[1])
+    let previous: number | null = null
+    let direction = 0
+    for (const value of values) {
+        if (previous == null) {
+            previous = value
+            continue
+        }
+        if (value === previous) continue
+        const next = value > previous ? 1 : -1
+        if (direction !== 0 && next !== direction) return true
+        direction = next
+        previous = value
+    }
+    return false
+}
+
 export function trainingMetricSelection(names: readonly string[]): { kind: 'none' } | { kind: 'names', text: string } | { kind: 'count', count: number } {
     if (names.length === 0) return { kind: 'none' }
     if (names.length <= 2) return { kind: 'names', text: names.join(', ') }
