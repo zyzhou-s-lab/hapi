@@ -125,6 +125,15 @@ command = "my-hook --token abc"
                 flavor: 'omp',
                 cwd: workspace,
                 tools: ['read', 'mcp__notion__search', 'mcp__extra_probe'],
+                promptLive: {
+                    omp: {
+                        systemPrompt: [
+                            '## MCP Server Instructions\n### notion\nSearch pages.',
+                            'Mounted route mcp__android_remote_control_mi10pro_android_tap.',
+                            'Warning: MCP server "idle" failed to connect: timeout. Its tools are unavailable.',
+                        ],
+                    },
+                },
             })
             const byName = Object.fromEntries((config.mcp?.servers ?? []).map((server) => [server.name, server]))
             expect(byName.notion).toMatchObject({ source: 'user', loaded: true })
@@ -134,12 +143,47 @@ command = "my-hook --token abc"
             expect(byName.fromSettings?.filePath).toContain('settings.json')
             expect(byName.fromSettings?.loaded).toBe(false)
             expect(byName.projectServer).toMatchObject({ source: 'project', loaded: false, filePath: '.mcp.json' })
-            expect(byName.extra_probe).toMatchObject({ source: 'tool', loaded: true })
+            expect(byName.extra_probe).toBeUndefined()
             const encoded = JSON.stringify(config.mcp)
             expect(encoded).not.toContain('sekret')
             expect(encoded).not.toContain('127.0.0.1')
             expect(encoded).not.toContain('Bearer')
             expect(encoded).not.toContain('hidden')
+        } finally {
+            if (previous === undefined) delete process.env.PI_CODING_AGENT_DIR
+            else process.env.PI_CODING_AGENT_DIR = previous
+            rmSync(workspace, { recursive: true, force: true })
+            rmSync(agent, { recursive: true, force: true })
+        }
+    })
+
+    it('does not treat an omp dumpTools mcp prefix as loaded when the prompt never names the server', async () => {
+        const workspace = mkdtempSync(join(tmpdir(), 'hapi-omp-mcp-prompt-'))
+        const agent = mkdtempSync(join(tmpdir(), 'hapi-omp-agent-prompt-'))
+        const previous = process.env.PI_CODING_AGENT_DIR
+        process.env.PI_CODING_AGENT_DIR = agent
+        writeFileSync(join(agent, 'mcp.json'), JSON.stringify({
+            mcpServers: {
+                notion: { command: 'true' },
+                'android-remote-control-mi10pro': { command: 'true' },
+            },
+        }))
+        try {
+            const missingPrompt = await readLiveSessionConfig({
+                flavor: 'omp',
+                cwd: workspace,
+                tools: ['mcp__notion__search'],
+            })
+            expect(missingPrompt.mcp?.servers.find((server) => server.name === 'notion')?.loaded).toBeUndefined()
+            const config = await readLiveSessionConfig({
+                flavor: 'omp',
+                cwd: workspace,
+                tools: ['mcp__notion__search'],
+                promptLive: { omp: { systemPrompt: ['device mcp__android_remote_control_mi10pro_android_tap'] } },
+            })
+            const byName = Object.fromEntries((config.mcp?.servers ?? []).map((server) => [server.name, server]))
+            expect(byName.notion?.loaded).toBe(false)
+            expect(byName['android-remote-control-mi10pro']?.loaded).toBe(true)
         } finally {
             if (previous === undefined) delete process.env.PI_CODING_AGENT_DIR
             else process.env.PI_CODING_AGENT_DIR = previous

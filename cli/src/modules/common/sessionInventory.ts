@@ -432,6 +432,25 @@ export function withMcpLoadState(servers: readonly SessionInventoryMcpServer[], 
     return dedupeServers([...servers, ...extras]).map((server) => ({ ...server, loaded: loaded.has(server.name) }));
 }
 
+const MCP_FAILURE_MENTION = /MCP server "[^"]+"[^\n.]*(?:failed|not ready|timed out|unavailable)[^\n.]*/gi
+
+/** omp 18.12.6 keeps MCP tools out of dumpTools. A server counts as loaded when its name is in the live system prompt, not when a failure line mentions it. */
+export function ompSystemPromptNamesServer(name: string, parts: readonly string[]): boolean {
+    const text = parts.join('\n').replace(MCP_FAILURE_MENTION, ' ')
+    const forms = new Set([name, name.replaceAll('-', '_'), name.replaceAll('_', '-')])
+    for (const form of forms) {
+        if (!form) continue
+        const escaped = form.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+        if (new RegExp(`(?<![A-Za-z0-9])${escaped}(?![A-Za-z0-9])`).test(text)) return true
+    }
+    return false
+}
+
+export function withOmpPromptLoadState(servers: readonly SessionInventoryMcpServer[], prompt: readonly string[] | undefined): SessionInventoryMcpServer[] {
+    if (!prompt) return servers.map((server) => ({ ...server }))
+    return servers.map((server) => ({ ...server, loaded: ompSystemPromptNamesServer(server.name, prompt) }))
+}
+
 export function ompInventoryFromTools(tools: readonly string[]): SessionInventoryPatch {
     const servers = dedupeServers(tools.flatMap((tool) => {
         const name = mcpServerNameFromTool(tool);
@@ -859,8 +878,14 @@ export async function readLiveSessionConfig(input: {
 }): Promise<LiveSessionConfig> {
     const flavor = (input.flavor ?? '').trim().toLowerCase();
     const sections = flavorInventory({ ...input, flavor });
+    const promptLive = { ...getSessionPromptLive(input.sessionId), ...input.promptLive };
     const mcp = sections.mcp
-        ? { kind: 'servers' as const, servers: withMcpLoadState(sections.mcp.servers, input.tools) }
+        ? {
+            kind: 'servers' as const,
+            servers: flavor === 'omp'
+                ? withOmpPromptLoadState(sections.mcp.servers, promptLive.omp?.systemPrompt)
+                : withMcpLoadState(sections.mcp.servers, input.tools),
+        }
         : undefined;
     const diskSkills = await listInventorySkills(input.cwd, { flavor: flavor || undefined });
     const filePathByName = new Map(diskSkills.flatMap((skill) => skill.filePath ? [[skill.name, skill.filePath] as const] : []));
@@ -882,7 +907,7 @@ export async function readLiveSessionConfig(input: {
         cwd: input.cwd,
         startingMode: input.startingMode,
         sessionId: input.sessionId,
-        promptLive: { ...getSessionPromptLive(input.sessionId), ...input.promptLive },
+        promptLive,
     }).prompts;
     const agents = { items: await listSessionAgents(input.cwd) };
     return { ...sections, ...(mcp ? { mcp } : {}), agents, skills, prompts };

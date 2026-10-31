@@ -77,17 +77,17 @@ function lockReason(row: InventoryRow, t: (key: string) => string): string | und
 function ConfigSwitch(props: { row: InventoryRow; pending: boolean; onToggle: (enabled: boolean) => void }) {
     const { t } = useTranslation()
     const reason = lockReason(props.row, t)
-    const hint = props.row.mutable && props.row.ref.kind === 'skill' ? t('session.config.skillHint') : reason
+    const skillHint = props.row.mutable && props.row.ref.kind === 'skill' ? t('session.config.skillHint') : undefined
     return (
-        <span className={`inline-flex items-center gap-2 ${props.row.mutable ? '' : 'max-w-56'}`}>
-            {hint ? <span className={`text-right text-[11px] leading-4 text-[var(--app-hint)] ${props.row.mutable ? 'whitespace-nowrap' : ''}`}>{hint}</span> : null}
+        <span className="inline-flex shrink-0 items-center gap-2">
+            {skillHint ? <span className="whitespace-nowrap text-right text-[11px] leading-4 text-[var(--app-hint)]">{skillHint}</span> : null}
             <button
                 type="button"
                 role="switch"
                 aria-checked={props.row.enabled}
                 aria-label={t('session.config.toggle', { name: props.row.title })}
                 disabled={!props.row.mutable || props.pending}
-                title={hint ?? t('session.config.effect')}
+                title={reason ?? skillHint ?? t('session.config.effect')}
                 onClick={(event) => {
                     event.stopPropagation()
                     props.onToggle(!props.row.enabled)
@@ -105,7 +105,7 @@ function RowText(props: { item: InventoryRow }) {
     return (
         <>
             <div className="flex min-w-0 items-baseline gap-2">
-                <span className="max-w-[45%] shrink-0 truncate text-sm text-[var(--app-fg)]">{promptTitle(props.item.title, t)}</span>
+                <span className="min-w-0 flex-1 truncate text-sm text-[var(--app-fg)]">{promptTitle(props.item.title, t)}</span>
                 {props.item.detail ? (
                     <span className="min-w-0 truncate text-xs text-[var(--app-hint)]">{promptPathLabel(props.item.detail, t)}</span>
                 ) : null}
