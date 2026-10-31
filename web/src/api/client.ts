@@ -72,6 +72,8 @@ import type { AgentFlavor, MessageDeliveryMode } from '@hapi/protocol'
 import type { CancelMessageResponse, ProbeAgentSkillsResponse, SteerQueuedMessageResponse } from '@hapi/protocol/schemas'
 import type { TranscriptionMode, TranscriptionProvider, TranscriptionProviderInfo } from '@hapi/protocol/voice'
 import type { ForkRouteResult } from '../../../fork-features/session-fork/rpcPayloads'
+import type { WorkMapData } from '@/fork-features/work-lines/deriveWork'
+import type { WorkLayout } from '@/fork-features/work-lines/layout'
 
 export type RetryIndeterminateMessageResponse =
     | { status: 'retried' | 'already-queued' | 'retry-unavailable'; localId: string | null }
@@ -270,6 +272,42 @@ export class ApiClient {
 
     async getSessions(): Promise<SessionsResponse> {
         return await this.request<SessionsResponse>('/api/sessions')
+    }
+
+    async getWorkMap(): Promise<WorkMapData> {
+        return await this.request('/api/work/map')
+    }
+
+    async getWorkLayout(surface: 'overview' | 'workbench'): Promise<{ source: 'saved'; layout: WorkLayout } | { source: 'default'; layout: null }> {
+        return await this.request(`/api/work/layout/${surface}`)
+    }
+
+    async putWorkLayout(surface: 'overview' | 'workbench', layout: WorkLayout): Promise<void> {
+        await this.request(`/api/work/layout/${surface}`, { method: 'PUT', body: JSON.stringify(layout) })
+    }
+
+
+    async putWorkDismissed(sessionId: string, dismissed: boolean): Promise<void> {
+        await this.request('/api/work/dismissed', {
+            method: 'PUT',
+            body: JSON.stringify({ sessionId, dismissed }),
+        })
+    }
+
+    async createWorkLine(body: { name: string; goal?: string | null; primaryMachineId: string; primaryPath: string }): Promise<{ line: { id: string } }> {
+        return await this.request('/api/work/lines', { method: 'POST', body: JSON.stringify(body) })
+    }
+
+    async deleteWorkLine(id: string): Promise<void> {
+        await this.request(`/api/work/lines/${encodeURIComponent(id)}`, { method: 'DELETE' })
+    }
+
+    async putWorkDirectory(body: { directoryKey: string; mode: 'line' | 'mixed' | 'ignored' | null; lineId?: string | null }): Promise<void> {
+        await this.request('/api/work/directories', { method: 'PUT', body: JSON.stringify(body) })
+    }
+
+    async putWorkSession(body: { sessionId: string; state: 'line' | 'ignored' | 'follow'; lineId?: string | null }): Promise<void> {
+        await this.request('/api/work/sessions', { method: 'PUT', body: JSON.stringify(body) })
     }
 
     async getHealth(): Promise<HubHealthResponse> {

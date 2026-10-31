@@ -1,0 +1,236 @@
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { cleanup, render, screen, waitFor } from '@testing-library/react'
+import type { ReactNode } from 'react'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import type { ApiClient } from '@/api/client'
+import { AppContextProvider } from '@/lib/app-context'
+import { I18nProvider } from '@/lib/i18n-context'
+import type { SessionSummary } from '@/types/api'
+import { registerWorkCards, WorkCardHost } from './WorkCardHost'
+import type { WorkMapData } from './deriveWork'
+
+const loader = vi.hoisted(() => ({
+    impl: null as null | ((api: { getWorkMap: () => Promise<WorkMapData> }, queryClient: QueryClient) => Promise<WorkMapData>),
+}))
+
+vi.mock('./useWorkMap', async () => {
+    const actual = await vi.importActual<typeof import('./useWorkMap')>('./useWorkMap')
+    return {
+        ...actual,
+        loadWorkCardMap: (api: { getWorkMap: () => Promise<WorkMapData> }, queryClient: QueryClient) =>
+            loader.impl ? loader.impl(api, queryClient) : actual.loadWorkCardMap(api as ApiClient, queryClient),
+    }
+})
+
+import './cards'
+
+const map = {
+    lines: [],
+    directories: [],
+    sessions: [],
+    dismissed: [],
+}
+
+function session(active: boolean): SessionSummary {
+    return {
+        id: 's1',
+        seq: 1,
+        createdAt: 1,
+        updatedAt: 1,
+        active,
+        activeAt: 1,
+        metadata: { path: '/repo', machineId: 'gpu' },
+        metadataVersion: 1,
+        agentState: null,
+        agentStateVersion: 1,
+        pendingRequestsCount: 0,
+    } as unknown as SessionSummary
+}
+
+function host(sessions: SessionSummary[], api: ApiClient): ReactNode {
+    return (
+        <WorkCardHost
+            surface="overview"
+            view={{ kind: 'overview' }}
+            sessions={sessions}
+            api={api}
+            layoutFor={() => ({
+                revision: 1,
+                regions: {
+                    stats: [{ cardId: 'overview.running-count' }, { cardId: 'test.boom' }],
+                    body: [{ cardId: 'test.query' }],
+                },
+            })}
+        />
+    )
+}
+
+describe('WorkCardHost', () => {
+    afterEach(() => {
+        loader.impl = null
+        cleanup()
+    })
+
+    it('updates a stat from the session list without fetching the map again, and isolates a broken card', async () => {
+        const getWorkMap = vi.fn(async () => map)
+        const api = {
+            getWorkMap,
+            getWorkLayout: async () => ({ source: 'default', layout: null }),
+        } as unknown as ApiClient
+        const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+        const wrap = (sessions: SessionSummary[]) => (
+            <AppContextProvider value={{ api, token: 't', baseUrl: 'http://hub', user: { id: 7 } }}>
+                <QueryClientProvider client={client}>
+                    <I18nProvider>
+                        {host(sessions, api)}
+                    </I18nProvider>
+                </QueryClientProvider>
+            </AppContextProvider>
+        )
+        registerWorkCards([
+            {
+                id: 'test.boom',
+                titleKey: 'work.lineCount',
+                size: 'stat',
+                source: { kind: 'work-model' },
+                Component: () => { throw new Error('boom') },
+            },
+            {
+                id: 'test.query',
+                titleKey: 'work.retry',
+                size: 'full',
+                source: {
+                    kind: 'query',
+                    queryKey: ['test', 'broken-query'],
+                    queryFn: async () => { throw new Error('query broke') },
+                },
+                Component: () => <span>query-body</span>,
+            },
+        ])
+        const error = vi.spyOn(console, 'error').mockImplementation(() => {})
+        const { rerender } = render(wrap([session(false)]))
+        await waitFor(() => expect(screen.getByText('0')).toBeTruthy())
+        expect(screen.getByText('This card failed.')).toBeTruthy()
+        expect(screen.queryByText(/boom/)).toBeNull()
+        expect(screen.queryByText('test.boom')).toBeNull()
+        await waitFor(() => expect(screen.getAllByText('This card failed.').length).toBeGreaterThan(0))
+        expect(screen.queryByText('query broke')).toBeNull()
+
+        rerender(wrap([session(true)]))
+        await waitFor(() => expect(screen.getByText('1')).toBeTruthy())
+        expect(getWorkMap).toHaveBeenCalledTimes(1)
+        expect(screen.getAllByText('This card failed.').length).toBeGreaterThan(0)
+        error.mockRestore()
+    })
+
+    it('renders card hooks after the map query recovers', async () => {
+        let fail = true
+        const getWorkMap = vi.fn(async () => {
+            if (fail) throw new Error('map down')
+            return map
+        })
+        const api = {
+            getWorkMap,
+            getWorkLayout: async () => ({ source: 'default', layout: null }),
+        } as unknown as ApiClient
+        const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+        const error = vi.spyOn(console, 'error').mockImplementation(() => {})
+        render(
+            <AppContextProvider value={{ api, token: 't', baseUrl: 'http://hub', user: { id: 7 } }}>
+                <QueryClientProvider client={client}>
+                    <I18nProvider>
+                        <WorkCardHost
+                            surface="overview"
+                            view={{ kind: 'overview' }}
+                            sessions={[session(false)]}
+                            api={api}
+                            layoutFor={() => ({ revision: 1, regions: { stats: [{ cardId: 'overview.running-count' }] } })}
+                        />
+                    </I18nProvider>
+                </QueryClientProvider>
+            </AppContextProvider>,
+        )
+        await waitFor(() => expect(screen.getByText('This card failed.')).toBeTruthy())
+        expect(screen.queryByText('map down')).toBeNull()
+        fail = false
+        screen.getByText('Retry').click()
+        await waitFor(() => expect(screen.getByText('0')).toBeTruthy())
+        expect(error.mock.calls.some((call) => String(call[0]).includes('Rendered more hooks'))).toBe(false)
+        error.mockRestore()
+    })
+
+    it('loads the map once and retries only the card that asks', async () => {
+        let fail = true
+        const getWorkMap = vi.fn(async () => {
+            if (fail) throw new Error('secret map failure')
+            return map
+        })
+        const api = {
+            getWorkMap,
+            getWorkLayout: async () => ({ source: 'default', layout: null }),
+        } as unknown as ApiClient
+        const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+        render(
+            <AppContextProvider value={{ api, token: 't', baseUrl: 'http://hub', user: { id: 7 } }}>
+                <QueryClientProvider client={client}>
+                    <I18nProvider>
+                        <WorkCardHost
+                            surface="overview"
+                            view={{ kind: 'overview' }}
+                            sessions={[session(true)]}
+                            api={api}
+                            layoutFor={() => ({ revision: 1, regions: { stats: [{ cardId: 'overview.running-count' }, { cardId: 'overview.line-count' }] } })}
+                        />
+                    </I18nProvider>
+                </QueryClientProvider>
+            </AppContextProvider>,
+        )
+        await waitFor(() => expect(screen.getAllByText('This card failed.')).toHaveLength(2))
+        expect(getWorkMap).toHaveBeenCalledTimes(1)
+        expect(screen.queryByText('secret map failure')).toBeNull()
+        fail = false
+        screen.getAllByText('Retry')[0]?.click()
+        await waitFor(() => expect(screen.getByText('1')).toBeTruthy())
+        expect(screen.getAllByText('This card failed.')).toHaveLength(1)
+        expect(getWorkMap).toHaveBeenCalledTimes(2)
+    })
+
+    it('refetches the card query before showing it again after bad data', async () => {
+        let explode = true
+        const getWorkMap = vi.fn(async () => ({ ...map, explode }))
+        const api = { getWorkMap, getWorkLayout: async () => ({ source: 'default', layout: null }) } as unknown as ApiClient
+        const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+        const error = vi.spyOn(console, 'error').mockImplementation(() => {})
+        registerWorkCards([{
+            id: 'test.bad-data',
+            titleKey: 'work.lineCount',
+            size: 'stat',
+            source: { kind: 'work-model' },
+            Component: ({ ctx }) => {
+                if ((ctx.query.data as { explode?: boolean } | undefined)?.explode) throw new Error('bad data')
+                return <span>recovered</span>
+            },
+        }])
+        render(
+            <AppContextProvider value={{ api, token: 't', baseUrl: 'http://hub', user: { id: 7 } }}>
+                <QueryClientProvider client={client}>
+                    <I18nProvider>
+                        <WorkCardHost
+                            surface="overview"
+                            view={{ kind: 'overview' }}
+                            sessions={[]}
+                            api={api}
+                            layoutFor={() => ({ revision: 1, regions: { stats: [{ cardId: 'test.bad-data' }] } })}
+                        />
+                    </I18nProvider>
+                </QueryClientProvider>
+            </AppContextProvider>,
+        )
+        await waitFor(() => expect(screen.getByText('This card failed.')).toBeTruthy())
+        explode = false
+        screen.getByText('Retry').click()
+        await waitFor(() => expect(screen.getByText('recovered')).toBeTruthy())
+        expect(getWorkMap.mock.calls.length).toBeGreaterThan(1)
+        error.mockRestore()
+    })
+})

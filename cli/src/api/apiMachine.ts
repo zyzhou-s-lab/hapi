@@ -61,6 +61,7 @@ import { homedir } from 'node:os'
 import type { CursorChatStoreStatus } from '@hapi/protocol/apiTypes'
 import { MachinePathPolicy } from './machinePathPolicy'
 import { getAgentAvailabilityResponse } from '@/agent/agentAvailability'
+import { attachTrainingHandlers, listWandbMetrics } from '../modules/training/wandbTail'
 
 import { normalizeWindowsDriveRoot } from './machinePathPolicy'
 
@@ -139,6 +140,7 @@ export class ApiMachineClient {
     private readonly ompMachineIntegration: OmpMachineIntegration | null
 
     private readonly pathPolicy: MachinePathPolicy
+    private stopTraining: (() => void) | null = null
 
     constructor(
         private readonly token: string,
@@ -181,23 +183,34 @@ export class ApiMachineClient {
             async () => getAgentAvailabilityResponse()
         )
 
+        this.rpcHandlerManager.registerHandler<{ run?: string; runDir?: string }, { metrics: string[]; partial: boolean }>(
+            RPC_METHODS.QueryWandbRun,
+            async (params) => {
+                const run = typeof params?.run === 'string' ? params.run : ''
+                if (typeof params?.runDir !== 'string') throw new Error(run ? `cannot read this run: ${run}` : 'cannot read this run')
+                return await listWandbMetrics(params.runDir, this.pathPolicy)
+            }
+        )
+
         this.rpcHandlerManager.registerHandler<PathExistsRequest, PathExistsResponse>(RPC_METHODS.PathExists, async (params) => {
             const rawPaths = Array.isArray(params?.paths) ? params.paths : []
             const uniquePaths = Array.from(new Set(rawPaths.filter((path): path is string => typeof path === 'string')))
             const exists: Record<string, boolean> = {}
+            const resolved: Record<string, string> = {}
             const outsideWorkspaceRoots: string[] = []
 
             await Promise.all(uniquePaths.map(async (path) => {
                 const trimmed = path.trim()
                 if (!trimmed) return
-                const resolved = await this.pathPolicy.resolveForCheck(trimmed)
-                if (!this.pathPolicy.isWithinSpawnRoots(resolved)) {
+                const canonical = await this.pathPolicy.resolveForCheck(trimmed)
+                if (canonical !== trimmed) resolved[trimmed] = canonical
+                if (!this.pathPolicy.isWithinSpawnRoots(canonical)) {
                     exists[trimmed] = false
                     outsideWorkspaceRoots.push(trimmed)
                     return
                 }
                 try {
-                    const stats = await stat(resolved)
+                    const stats = await stat(canonical)
                     exists[trimmed] = stats.isDirectory()
                 } catch {
                     exists[trimmed] = false
@@ -206,6 +219,7 @@ export class ApiMachineClient {
 
             return {
                 exists,
+                ...(Object.keys(resolved).length > 0 ? { resolved } : {}),
                 ...(outsideWorkspaceRoots.length > 0 ? { outsideWorkspaceRoots } : {}),
             }
         })
@@ -594,6 +608,8 @@ export class ApiMachineClient {
     }
 
     connect(): void {
+        this.stopTraining?.()
+        this.stopTraining = null
         this.socket = io(`${configuration.apiUrl}/cli`, {
             transports: ['websocket'],
             auth: {
@@ -744,6 +760,14 @@ export class ApiMachineClient {
         this.socket.on('error', (payload) => {
             logger.debug('[API MACHINE] Socket error:', payload)
         })
+        this.stopTraining = attachTrainingHandlers({
+            on: (event, handler) => {
+                this.socket.on(event as 'training:subscribe', handler as (data: { run: string; runDir: string; machineId: string }) => void)
+            },
+            emit: (event, payload) => {
+                this.socket.emit(event, payload)
+            },
+        }, this.machine.id, { policy: this.pathPolicy })
     }
 
     private startKeepAlive(): void {
