@@ -100,7 +100,8 @@ describe('createExecutionMiddleware', () => {
         expect(await again.json()).toEqual({ machines: [] })
         expect(warn).toHaveBeenCalledTimes(1)
         present = true
-        expect((await (await app.request('/api/machines', { headers })).json()).machines).toEqual([{ id: 'gone' }])
+        const returned = await (await app.request('/api/machines', { headers })).json() as { machines: { id: string }[] }
+        expect(returned.machines).toEqual([{ id: 'gone' }])
         present = false
         await app.request('/api/machines', { headers })
         expect(warn).toHaveBeenCalledTimes(2)
