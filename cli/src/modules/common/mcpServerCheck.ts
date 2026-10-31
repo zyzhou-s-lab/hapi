@@ -110,6 +110,10 @@ async function checkStdio(target: McpProbeTarget): Promise<boolean> {
             resolve()
         })
     })
+    child.stdin.on('error', () => {
+        exited = true
+        wake()
+    })
     const waitFor = async (id: number, budgetMs: number): Promise<RpcMsg | undefined> => {
         const deadline = Date.now() + budgetMs
         while (Date.now() < deadline) {
@@ -127,6 +131,7 @@ async function checkStdio(target: McpProbeTarget): Promise<boolean> {
         return undefined
     }
     const send = (body: string) => {
+        if (exited || child.exitCode !== null || child.stdin.destroyed || !child.stdin.writable) return
         child.stdin.write(`${body}\n`)
     }
     try {
@@ -141,7 +146,12 @@ async function checkStdio(target: McpProbeTarget): Promise<boolean> {
         return false
     } finally {
         reader.close()
-        child.kill()
+        if (!exited && child.exitCode === null && child.stdin.writable) child.stdin.end()
+        const closed = await Promise.race([
+            exit.then(() => true),
+            new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 1_000)),
+        ])
+        if (!closed) child.kill()
         await Promise.race([exit, new Promise((resolve) => setTimeout(resolve, 3_000))])
     }
 }

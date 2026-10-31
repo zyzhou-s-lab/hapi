@@ -102,7 +102,8 @@ describe('OMP host presentation policy', () => {
                 sendClaudeSessionMessage,
                 updateAgentState: (handler) => { state = handler(state); },
                 updateMetadata: (handler) => { metadata = handler(metadata); },
-                rpcHandlerManager
+                rpcHandlerManager,
+                workApi: vi.fn()
             },
             onFatal
         });
@@ -158,7 +159,8 @@ describe('OMP host presentation policy', () => {
                 sendClaudeSessionMessage,
                 updateAgentState: vi.fn(),
                 updateMetadata: vi.fn(),
-                rpcHandlerManager: new RpcHandlerManager({ scopePrefix: 'policy-test' })
+                rpcHandlerManager: new RpcHandlerManager({ scopePrefix: 'policy-test' }),
+                workApi: vi.fn()
             },
             onFatal: vi.fn()
         });
@@ -200,6 +202,7 @@ describe('OMP host tool bridge', () => {
         const bridge = new OmpHostToolBridge({
             client: fake.client,
             cwd: sourceDir,
+            workApi: vi.fn(),
             sendAgentMessage: (message) => messages.push(message as Record<string, unknown>),
             sendSummary: vi.fn(),
             onFatal
@@ -283,6 +286,7 @@ describe('OMP host tool bridge', () => {
         const bridge = new OmpHostToolBridge({
             client: fake.client,
             cwd: sourceDir,
+            workApi: vi.fn(),
             sendAgentMessage,
             sendSummary: vi.fn(),
             onFatal: vi.fn()
@@ -318,6 +322,7 @@ describe('OMP host tool bridge', () => {
         const bridge = new OmpHostToolBridge({
             client: fake.client,
             cwd: sourceDir,
+            workApi: vi.fn(),
             sendAgentMessage,
             sendSummary: vi.fn(),
             onFatal
@@ -360,6 +365,48 @@ describe('OMP host tool bridge', () => {
         bridge.close();
     });
 
+    it('calls the three training host tools through workApi', async () => {
+        const fake = createFakeClient();
+        const workApi = vi.fn(async (path: string) => {
+            if (path === '/cli/work/training-runs') return { status: 200, body: { run: 'exp' } };
+            if (path.startsWith('/cli/work/training-runs/')) return { status: 200, body: { metrics: ['loss'] } };
+            if (path === '/cli/work/training-card') return { status: 404, body: { error: 'no such line' } };
+            return { status: 500, body: { error: 'unexpected' } };
+        });
+        const bridge = new OmpHostToolBridge({
+            client: fake.client,
+            cwd: sourceDir,
+            workApi,
+            sendAgentMessage: vi.fn(),
+            sendSummary: vi.fn(),
+            onFatal: vi.fn()
+        });
+        await bridge.register();
+        const registered = fake.requests.find((request) => request.type === 'set_host_tools');
+        expect(registered).toMatchObject({
+            tools: expect.arrayContaining([
+                expect.objectContaining({ name: 'register_training_run', loadMode: 'discoverable' }),
+                expect.objectContaining({ name: 'query_training_run', loadMode: 'discoverable' }),
+                expect.objectContaining({ name: 'bind_training_card', loadMode: 'discoverable' })
+            ])
+        });
+        const calls: JsonObject[] = [
+            { type: 'host_tool_call', id: 'register-call', toolCallId: 't1', toolName: 'register_training_run', arguments: { run: 'exp', runDir: '/tmp/wandb/run-exp', machineId: 'machine-1' } },
+            { type: 'host_tool_call', id: 'query-call', toolCallId: 't2', toolName: 'query_training_run', arguments: { run: 'exp' } },
+            { type: 'host_tool_call', id: 'bind-call', toolCallId: 't3', toolName: 'bind_training_card', arguments: { lineId: 'line-1', run: 'exp', metrics: [] } }
+        ]
+        for (const call of calls) bridge.handleCall(call);
+        await vi.waitFor(() => {
+            expect(fake.frames.filter((frame) => frame.type === 'host_tool_result')).toHaveLength(3);
+        });
+        expect(workApi).toHaveBeenCalledWith('/cli/work/training-runs', { method: 'POST', body: { run: 'exp', machineId: 'machine-1', runDir: '/tmp/wandb/run-exp' } });
+        expect(workApi).toHaveBeenCalledWith('/cli/work/training-runs/exp', {});
+        expect(workApi).toHaveBeenCalledWith('/cli/work/training-card', { method: 'PUT', body: { lineId: 'line-1', run: 'exp', metrics: [] } });
+        const bind = fake.frames.find((frame) => frame.type === 'host_tool_result' && frame.id === 'bind-call');
+        expect(bind).toMatchObject({ isError: true });
+        bridge.close();
+    });
+
     it('discards registered media and file snapshots when the terminal frame write fails', async () => {
         const fake = createFakeClient({
             sendControlFrame: async (frame) => {
@@ -371,6 +418,7 @@ describe('OMP host tool bridge', () => {
         const bridge = new OmpHostToolBridge({
             client: fake.client,
             cwd: sourceDir,
+            workApi: vi.fn(),
             sendAgentMessage,
             sendSummary: vi.fn(),
             onFatal
