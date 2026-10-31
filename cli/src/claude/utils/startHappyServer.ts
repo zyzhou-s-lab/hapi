@@ -538,13 +538,13 @@ function createHapiMcpServer(
         return trainingResult(response.status, response.body);
     });
     mcp.registerTool<any, any>('bind_training_card', {
-        description: 'Add a training card for a registered run, or update one card when instanceId is set. Omit instanceId to add a card; the same line, run, metrics, and xAxis reuses the existing card. metrics empty means every metric. xAxis is the card default horizontal axis.',
+        description: 'Add a training card for a registered run, or update one card when instanceId is set. Omit instanceId to add a card. The same line, run, and metrics reuses the existing card; omit xAxis to match any axis, or pass xAxis to target that axis. metrics empty means every metric.',
         title: 'Bind Training Card',
         inputSchema: z.object({
             lineId: z.string().describe('Work line id'),
             run: z.string().describe('Registered run name'),
             metrics: z.array(z.string()).optional().describe('Metric names to draw. Omit or pass [] to draw every metric.'),
-            instanceId: z.string().optional().describe('Existing card id. Omit to create a card, or to reuse one with the same line, run, metrics, and xAxis.'),
+            instanceId: z.string().optional().describe('Existing card id. Omit to create a card, or to reuse one with the same line, run, and metrics.'),
             xAxis: z.string().optional().describe('Default x axis id, such as _step or a logged metric.'),
         }),
     }, async (args: { lineId: string; run: string; metrics?: string[]; instanceId?: string; xAxis?: string }) => {

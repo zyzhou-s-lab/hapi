@@ -3,7 +3,7 @@ import { z } from 'zod'
 import type { WebAppEnv } from '../../hub/src/web/middleware/auth'
 import type { SyncEngine } from '../../hub/src/sync/syncEngine'
 import type { SSEManager } from '../../hub/src/sse/sseManager'
-import { WorkMapError, type WorkLayout } from '../../hub/src/store/workLines'
+import { WorkMapError, trainingMetricList, type WorkLayout } from '../../hub/src/store/workLines'
 import { pushTrainingCard } from '../../hub/src/socket/trainingCardPush'
 import { getConfiguration } from '../../hub/src/configuration'
 import { parseAccessToken } from '../../hub/src/utils/accessToken'
@@ -153,12 +153,5 @@ function isHubBaseCliToken(token: string): boolean {
 
 function storedTrainingMetrics(layout: WorkLayout, instanceId: string): string[] {
     const slot = layout.regions.main?.find((item) => item.cardId === 'example.training-curves' && item.args?.instanceId === instanceId)
-    const raw = slot?.args?.metrics
-    if (!raw) return []
-    try {
-        const parsed = JSON.parse(raw) as unknown
-        return Array.isArray(parsed) ? parsed.filter((item): item is string => typeof item === 'string') : []
-    } catch {
-        return []
-    }
+    return trainingMetricList(slot?.args?.metrics)
 }

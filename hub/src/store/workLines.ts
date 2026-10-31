@@ -385,7 +385,7 @@ export class WorkLinesStore {
                 },
             }
             const main = [...(current.regions.main ?? [])]
-            const wantedAxis = axisProvided ? cleanAxis : ''
+            const wantedAxis = axisProvided ? cleanAxis : null
             const index = requestedId.length > 0
                 ? main.findIndex((item) => item.cardId === 'example.training-curves' && item.args?.instanceId === requestedId)
                 : main.findIndex((item) => sameTrainingCard(item, cleanLine, cleanRun, cleanMetrics, wantedAxis))
@@ -410,6 +410,7 @@ export class WorkLinesStore {
                 if (cleanAxis.length > 0) args.xAxis = cleanAxis
                 else delete args.xAxis
             }
+            if (index < 0 && main.length >= LAYOUT_REGION_MAX) throw new WorkMapError(`工作台主区域最多 ${LAYOUT_REGION_MAX} 张卡`)
             const slot = { cardId: 'example.training-curves', args }
             if (index >= 0) main[index] = slot
             else main.push(slot)
@@ -614,7 +615,7 @@ function migrateTrainingInstanceIds(layout: WorkLayout): { layout: WorkLayout; c
     return { layout: { ...layout, regions: { ...layout.regions, main } }, changed: true }
 }
 
-function trainingMetricList(raw: string | undefined): string[] {
+export function trainingMetricList(raw: string | undefined): string[] {
     if (!raw) return []
     try {
         const parsed = JSON.parse(raw) as unknown
@@ -634,10 +635,10 @@ function trainingMetricList(raw: string | undefined): string[] {
     }
 }
 
-function sameTrainingCard(slot: WorkLayoutSlot, lineId: string, run: string, metrics: readonly string[], xAxis: string): boolean {
+function sameTrainingCard(slot: WorkLayoutSlot, lineId: string, run: string, metrics: readonly string[], xAxis: string | null): boolean {
     if (slot.cardId !== 'example.training-curves') return false
     if (slot.args?.lineId !== lineId || slot.args.run !== run) return false
-    if ((slot.args.xAxis?.trim() ?? '') !== xAxis) return false
+    if (xAxis !== null && (slot.args.xAxis?.trim() ?? '') !== xAxis) return false
     const stored = trainingMetricList(slot.args.metrics).sort()
     const wanted = [...metrics].sort()
     return stored.length === wanted.length && stored.every((metric, index) => metric === wanted[index])

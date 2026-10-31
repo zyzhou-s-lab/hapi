@@ -5,7 +5,7 @@ import type { SSEManager } from '../../hub/src/sse/sseManager'
 import type { WebAppEnv } from '../../hub/src/web/middleware/auth'
 import type { MultiUserGatewayStore } from '../multi-user/gatewayStore'
 import { gatewayAccountId } from '../multi-user/executionMount'
-import { WorkMapError } from '../../hub/src/store/workLines'
+import { WorkMapError, trainingMetricList } from '../../hub/src/store/workLines'
 import { pushTrainingCard } from '../../hub/src/socket/trainingCardPush'
 const lineCreateSchema = z.object({
     name: z.string(),
@@ -335,22 +335,7 @@ function mapError(c: { json: (body: unknown, status?: number) => Response }, err
 
 function storedTrainingMetrics(layout: { regions: { main?: { cardId: string; args?: { instanceId?: string; metrics?: string } }[] } }, instanceId: string): string[] {
     const slot = layout.regions.main?.find((item) => item.cardId === 'example.training-curves' && item.args?.instanceId === instanceId)
-    const raw = slot?.args?.metrics
-    if (!raw) return []
-    try {
-        const parsed = JSON.parse(raw) as unknown
-        if (!Array.isArray(parsed)) return []
-        const seen = new Set<string>()
-        const metrics: string[] = []
-        for (const item of parsed) {
-            if (typeof item !== 'string' || seen.has(item)) continue
-            seen.add(item)
-            metrics.push(item)
-        }
-        return metrics
-    } catch {
-        return []
-    }
+    return trainingMetricList(slot?.args?.metrics)
 }
 
 function trainingQueryBody(summary: unknown, cards: unknown): unknown {

@@ -136,7 +136,7 @@ describe('work lines', () => {
             revision: 1,
             regions: {
                 rail: [{ cardId: 'workbench.line-list' }],
-                main: [{ cardId: 'example.training-curves', args: { lineId: line.id, run: 'exp-1', metrics: '["loss","loss"]' } }],
+                main: [{ cardId: 'example.training-curves', args: { lineId: line.id, run: 'exp-1', metrics: '[" loss ","loss"]' } }],
                 side: [{ cardId: 'workbench.sessions' }, { cardId: 'workbench.continue' }],
             },
         })
@@ -154,6 +154,35 @@ describe('work lines', () => {
             { instanceId: added.instanceId, lineId: line.id, metrics: ['loss'], xAxis: '_step' },
         ])
         expect(lines.unbindTrainingCard(1, id!).regions.main.some((slot) => slot.args?.instanceId === id)).toBe(false)
+    })
+
+    it('reuses a card when a later bind omits xAxis', () => {
+        const lines = open().workLines
+        const line = lines.createLine(1, { name: 'a', primaryMachineId: 'gpu', primaryPath: '/data' })
+        lines.registerTrainingRun(1, { run: 'exp-1', machineId: 'gpu', runDir: '/data/wandb/offline-run-1' })
+        const first = lines.bindTrainingLine(1, { lineId: line.id, run: 'exp-1', metrics: ['loss'], xAxis: 'lr' })
+        const again = lines.bindTrainingLine(1, { lineId: line.id, run: 'exp-1', metrics: ['loss'] })
+        expect(again.instanceId).toBe(first.instanceId)
+        expect(again.layout.regions.main.filter((slot) => slot.cardId === 'example.training-curves')).toHaveLength(1)
+        expect(again.layout.regions.main.find((slot) => slot.args?.instanceId === first.instanceId)?.args?.xAxis).toBe('lr')
+    })
+
+    it('names the region limit when a new card would be the 41st', () => {
+        const lines = open().workLines
+        const line = lines.createLine(1, { name: 'a', primaryMachineId: 'gpu', primaryPath: '/data' })
+        lines.registerTrainingRun(1, { run: 'exp-1', machineId: 'gpu', runDir: '/data/wandb/offline-run-1' })
+        lines.putLayout(1, 'workbench', {
+            revision: 1,
+            regions: {
+                rail: [{ cardId: 'workbench.line-list' }],
+                main: Array.from({ length: 40 }, (_, index) => ({
+                    cardId: 'example.training-curves',
+                    args: { lineId: line.id, run: 'exp-1', instanceId: `card-${index}`, metrics: `["m${index}"]` },
+                })),
+                side: [{ cardId: 'workbench.sessions' }],
+            },
+        })
+        expect(() => lines.bindTrainingLine(1, { lineId: line.id, run: 'exp-1', metrics: ['fresh'] })).toThrow(/工作台主区域最多 40 张卡/)
     })
 })
 
