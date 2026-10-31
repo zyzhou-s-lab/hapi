@@ -92,8 +92,23 @@ describe('training series', () => {
             ],
         })
         expect(repeated.pointsOnly).toBe(true)
-        expect(repeated.steps).toEqual([0.1, 0.1, 0.01])
-        expect(repeated.drawable[0]?.values).toEqual([0.5, 0.4, 0.3])
+        expect(repeated.steps).toEqual([0.01, 0.1, 0.1])
+        expect(repeated.drawable[0]?.values).toEqual([0.3, 0.5, 0.4])
+        const decay = prepareTrainingPlot([
+            { id: 'loss', name: 'loss', points: [{ step: 1, value: 0.9 }, { step: 2, value: 0.5 }, { step: 3, value: 0.2 }] },
+        ], {
+            hidden: new Set(),
+            smooth: false,
+            log: false,
+            alpha: 0.6,
+            xAxis: 'lr',
+            xSource: [
+                { id: 'lr', name: 'lr', points: [{ step: 1, value: 0.1 }, { step: 2, value: 0.05 }, { step: 3, value: 0.01 }] },
+            ],
+        })
+        expect(decay.pointsOnly).toBe(true)
+        expect(decay.steps).toEqual([0.01, 0.05, 0.1])
+        expect(decay.drawable[0]?.values).toEqual([0.2, 0.5, 0.9])
     })
 
     it('auto-scales until the user zooms', () => {

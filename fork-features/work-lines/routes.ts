@@ -325,7 +325,22 @@ async function canonicalPath(engine: SyncEngine, machineId: string, path: string
 
 const PATH_CANON_TIMEOUT_MS = 2_000
 const PATH_CANON_TTL_MS = 10_000
+const PATH_CANON_CACHE_MAX = 64
 const pathCanonCache = new Map<string, { at: number, resolved: Record<string, string> }>()
+
+function rememberCanonicalPaths(key: string, resolved: Record<string, string>): void {
+    const now = Date.now()
+    for (const [cachedKey, entry] of pathCanonCache) {
+        if (now - entry.at >= PATH_CANON_TTL_MS) pathCanonCache.delete(cachedKey)
+    }
+    pathCanonCache.delete(key)
+    pathCanonCache.set(key, { at: now, resolved })
+    while (pathCanonCache.size > PATH_CANON_CACHE_MAX) {
+        const oldest = pathCanonCache.keys().next().value
+        if (oldest === undefined) break
+        pathCanonCache.delete(oldest)
+    }
+}
 
 async function canonicalPaths(engine: SyncEngine, items: Array<{ machineId: string, path: string }>): Promise<Record<string, string>> {
     const grouped = new Map<string, Set<string>>()
@@ -349,7 +364,7 @@ async function canonicalPaths(engine: SyncEngine, items: Array<{ machineId: stri
             for (const [raw, value] of Object.entries(result.resolved ?? {})) {
                 if (value && value !== raw) resolved[raw] = value
             }
-            pathCanonCache.set(key, { at: Date.now(), resolved })
+            rememberCanonicalPaths(key, resolved)
             Object.assign(canonical, resolved)
         } catch {
             // The machine is offline or slow. Comparison keeps the stored path.

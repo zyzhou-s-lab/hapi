@@ -85,6 +85,7 @@ export function prepareTrainingPlot(series: readonly TrainingSeries[], options: 
             if (Number.isFinite(point.value)) xByStep.set(point.step, point.value)
         }
     }
+    const xFor = (step: number): number | undefined => xAxis === TRAINING_X_STEP ? step : xByStep.get(step)
     let dropped = 0
     const visible = series.filter((row) => !options.hidden.has(row.id)).map((row) => {
         let points = row.points
@@ -101,29 +102,53 @@ export function prepareTrainingPlot(series: readonly TrainingSeries[], options: 
             id: row.id,
             name: row.name,
             points: points.flatMap((point) => {
-                const x = xAxis === TRAINING_X_STEP ? point.step : xByStep.get(point.step)
+                const x = xFor(point.step)
                 return x == null || !Number.isFinite(x) ? [] : [{ step: point.step, x, value: point.value }]
             }),
         }
     })
+    const byStep = visible.map((row) => new Map(row.points.map((point) => [point.step, point.value])))
     const orders = [...new Set(visible.flatMap((row) => row.points.map((point) => point.step)))].sort((left, right) => left - right)
-    const steps = pointsOnly
-        ? orders.map((step) => visible.flatMap((row) => row.points).find((point) => point.step === step)?.x ?? step)
-        : [...new Set(orders.map((step) => visible.flatMap((row) => row.points).find((point) => point.step === step)?.x ?? step))].sort((left, right) => left - right)
+    if (pointsOnly) {
+        const tuples = orders.flatMap((step) => {
+            const x = xByStep.get(step)
+            if (x == null || !Number.isFinite(x)) return []
+            return [{ step, x, values: byStep.map((values) => values.get(step) ?? null) }]
+        })
+        tuples.sort((left, right) => left.x - right.x || left.step - right.step)
+        return {
+            pointsOnly: true,
+            steps: tuples.map((tuple) => tuple.x),
+            dropped,
+            drawable: visible.map((row, index) => ({
+                id: row.id,
+                name: row.name,
+                values: tuples.map((tuple) => tuple.values[index] ?? null),
+            })),
+        }
+    }
+    const steps: number[] = []
+    const seen = new Set<number>()
+    for (const step of orders) {
+        const x = xFor(step)
+        if (x == null || seen.has(x)) continue
+        seen.add(x)
+        steps.push(x)
+    }
+    steps.sort((left, right) => left - right)
     return {
-        pointsOnly,
+        pointsOnly: false,
         steps,
         dropped,
-        drawable: visible.map((row) => {
-            const byStep = new Map(row.points.map((point) => [point.step, point.value]))
-            const values = orders.map((step) => byStep.get(step) ?? null)
-            if (pointsOnly) return { id: row.id, name: row.name, values }
-            const byX = new Map<number, number | null>()
-            orders.forEach((step, index) => {
-                const x = visible.flatMap((item) => item.points).find((point) => point.step === step)?.x ?? step
-                byX.set(x, values[index] ?? byX.get(x) ?? null)
-            })
-            return { id: row.id, name: row.name, values: steps.map((step) => byX.get(step) ?? null) }
+        drawable: visible.map((row, index) => {
+            const valueByX = new Map<number, number | null>()
+            for (const step of orders) {
+                const x = xFor(step)
+                if (x == null) continue
+                const value = byStep[index]?.get(step) ?? null
+                if (!valueByX.has(x) || value != null) valueByX.set(x, value)
+            }
+            return { id: row.id, name: row.name, values: steps.map((step) => valueByX.get(step) ?? null) }
         }),
     }
 }

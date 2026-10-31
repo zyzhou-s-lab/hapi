@@ -7,7 +7,23 @@ import { pushTrainingChartData, type ZoomableChart } from './chartUpdate'
 
 const STROKES = ['#2563eb', '#dc2626', '#059669', '#d97706', '#7c3aed', '#0891b2']
 const SMOOTH_ALPHA = 0.6
+const X_AXIS_STORAGE_KEY = 'hapi.training.xAxis'
 
+function storedXAxis(): string {
+    try {
+        return window.localStorage.getItem(X_AXIS_STORAGE_KEY) || TRAINING_X_STEP
+    } catch {
+        return TRAINING_X_STEP
+    }
+}
+
+function rememberXAxis(value: string): void {
+    try {
+        window.localStorage.setItem(X_AXIS_STORAGE_KEY, value)
+    } catch {
+        // Private mode or a full quota. The in-memory choice still applies.
+    }
+}
 function span(min: number, max: number, log: boolean): { min: number; max: number } {
     if (min !== max) return { min, max }
     return log ? { min: min / 2, max: min * 2 } : { min: min - 1, max: max + 1 }
@@ -18,7 +34,7 @@ export function TrainingChart(props: { series: TrainingSeries[], xSource?: reado
     const [hidden, setHidden] = useState<ReadonlySet<string>>(new Set())
     const [smooth, setSmooth] = useState(false)
     const [log, setLog] = useState(false)
-    const [xAxis, setXAxis] = useState(TRAINING_X_STEP)
+    const [xAxis, setXAxis] = useState(storedXAxis)
     const host = useRef<HTMLDivElement>(null)
     const chartRef = useRef<uPlot | null>(null)
     const zoomedRef = useRef(false)
@@ -107,7 +123,7 @@ export function TrainingChart(props: { series: TrainingSeries[], xSource?: reado
             <div className="mb-2 flex flex-wrap items-center gap-3 text-xs text-[var(--app-fg)]">
                 <label className="flex items-center gap-1">
                     {t('work.trainingXAxis')}
-                    <select className="rounded border border-[var(--app-divider)] bg-transparent px-1 py-0.5" value={activeX} onChange={(event) => setXAxis(event.target.value)}>
+                    <select className="rounded border border-[var(--app-divider)] bg-transparent px-1 py-0.5" value={activeX} onChange={(event) => { setXAxis(event.target.value); rememberXAxis(event.target.value) }}>
                         <option value={TRAINING_X_STEP}>{t('work.trainingXStep')}</option>
                         <option value={TRAINING_X_RUNTIME}>{t('work.trainingXRuntime')}</option>
                         <option value={TRAINING_X_WALL}>{t('work.trainingXWall')}</option>
