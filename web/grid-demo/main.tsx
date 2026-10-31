@@ -1,6 +1,5 @@
-import { AnimatePresence, LayoutGroup, MotionConfig, motion } from 'motion/react'
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import * as ToggleGroup from '@radix-ui/react-toggle-group'
-import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { createRoot } from 'react-dom/client'
 import '@/index.css'
 
@@ -105,77 +104,148 @@ function Rail(props: { selected: string; onSelect: (id: string) => void }): Reac
     )
 }
 
-function Verify(props: { cards: Card[]; columns: 1 | 2 | 3; onColumns: (value: 1 | 2 | 3) => void; onAdd: () => void; onDelete: (id: string) => void }): ReactNode {
+function Verify(props: { cards: Card[]; columns: 1 | 2 | 3; pinned: boolean; onColumns: (value: 1 | 2 | 3) => void; onAdd: () => void; onDelete: (id: string) => void }): ReactNode {
+    const grid = useRef<HTMLDivElement>(null)
+    const switchToken = useRef(0)
+    const switchAnimation = useRef<Animation | null>(null)
+    const pendingDirection = useRef<number | null>(null)
+    const seenCards = useRef(new Set<string>())
+    const cardsReady = useRef(false)
+    const [thumbReady, setThumbReady] = useState(false)
+    const columnIndex = Math.max(0, [3, 2, 1].indexOf(props.columns))
+
+    const playIncoming = (direction: number) => {
+        const list = grid.current
+        if (!list) return
+        switchAnimation.current = list.animate([
+            { opacity: 0, transform: `translate3d(${direction * 7}px, 0, 0)` },
+            { opacity: 1, transform: 'translate3d(0, 0, 0)' },
+        ], { duration: 190, easing: 'cubic-bezier(.22, 1, .36, 1)' })
+    }
+
+    useLayoutEffect(() => {
+        const direction = pendingDirection.current
+        if (direction == null) return
+        pendingDirection.current = null
+        playIncoming(direction)
+    }, [props.columns])
+
+    useEffect(() => { setThumbReady(true) }, [])
+
+    useLayoutEffect(() => {
+        const ids = new Set(props.cards.map((card) => card.id))
+        if (!cardsReady.current) {
+            for (const id of ids) seenCards.current.add(id)
+            cardsReady.current = true
+            return
+        }
+        for (const id of ids) {
+            if (seenCards.current.has(id)) continue
+            seenCards.current.add(id)
+            grid.current?.querySelector(`[data-card="${id}"]`)?.animate([
+                { opacity: 0, transform: 'translateY(-6px)' },
+                { opacity: 1, transform: 'translateY(0)' },
+            ], { duration: 260, easing: 'cubic-bezier(.22, 1, .36, 1)' })
+        }
+        for (const id of seenCards.current) if (!ids.has(id)) seenCards.current.delete(id)
+    }, [props.cards])
+
+    const switchColumns = (next: 1 | 2 | 3) => {
+        if (props.pinned || next === props.columns) {
+            props.onColumns(next)
+            return
+        }
+        const list = grid.current
+        if (!list) {
+            props.onColumns(next)
+            return
+        }
+        switchAnimation.current?.cancel()
+        const direction = next > props.columns ? 1 : -1
+        const token = ++switchToken.current
+        const outgoing = list.animate([
+            { opacity: 1, transform: 'translate3d(0, 0, 0)' },
+            { opacity: 0, transform: `translate3d(${-direction * 5}px, 0, 0)` },
+        ], { duration: 75, easing: 'cubic-bezier(.4, 0, 1, 1)', fill: 'forwards' })
+        switchAnimation.current = outgoing
+        outgoing.finished.then(() => {
+            if (switchToken.current !== token) return
+            outgoing.cancel()
+            pendingDirection.current = direction
+            props.onColumns(next)
+        }).catch(() => {})
+    }
+
+    const removeCard = (id: string) => {
+        const card = grid.current?.querySelector(`[data-card="${id}"]`)
+        if (!card) {
+            props.onDelete(id)
+            return
+        }
+        card.animate([
+            { opacity: 1 },
+            { opacity: 0 },
+        ], { duration: 160, easing: 'ease-in', fill: 'forwards' }).finished.then(() => {
+            props.onDelete(id)
+        }).catch(() => {})
+    }
+
     return (
-        <MotionConfig transition={{ type: 'spring', duration: 0.35, bounce: 0 }}>
-            <LayoutGroup>
-                <section>
-                    <div className="mb-2 flex items-center justify-between gap-2">
-                        <h2 className="text-xs font-semibold uppercase tracking-wide text-[var(--app-hint)]">验证</h2>
-                        <div className="flex items-center gap-1">
-                            <ToggleGroup.Root
-                                type="single"
-                                value={String(props.columns)}
-                                onValueChange={(value) => {
-                                    if (value === '1' || value === '2' || value === '3') props.onColumns(Number(value) as 1 | 2 | 3)
-                                }}
-                                aria-label="每行列数"
-                                className="relative grid grid-cols-3 rounded-lg bg-[var(--app-secondary-bg)] p-0.5"
+        <section>
+            <div className="mb-2 flex items-center justify-between gap-2">
+                <h2 className="text-xs font-semibold uppercase tracking-wide text-[var(--app-hint)]">验证</h2>
+                <div className="flex items-center gap-1">
+                    <ToggleGroup.Root
+                        type="single"
+                        value={String(props.columns)}
+                        onValueChange={(value) => {
+                            if (value === '1' || value === '2' || value === '3') switchColumns(Number(value) as 1 | 2 | 3)
+                        }}
+                        aria-label="每行列数"
+                        className="relative grid grid-cols-3 rounded-lg bg-[var(--app-secondary-bg)] p-0.5"
+                    >
+                        <span
+                            aria-hidden="true"
+                            className="pointer-events-none absolute bottom-0.5 left-0.5 top-0.5 w-[calc((100%-4px)/3)] rounded-md border border-[var(--app-divider)] bg-[var(--app-bg)]"
+                            style={{
+                                transform: `translateX(${columnIndex * 100}%)`,
+                                transition: thumbReady ? 'transform .3s cubic-bezier(.25, .9, .3, 1)' : 'none',
+                            }}
+                        />
+                        {([3, 2, 1] as const).map((count) => (
+                            <ToggleGroup.Item
+                                key={count}
+                                value={String(count)}
+                                title={`每行${count}张`}
+                                aria-label={`每行${count}张`}
+                                className="relative z-10 flex h-8 w-8 items-center justify-center text-[var(--app-hint)] data-[state=on]:text-[var(--app-fg)]"
                             >
-                                {([3, 2, 1] as const).map((count) => (
-                                    <ToggleGroup.Item
-                                        key={count}
-                                        value={String(count)}
-                                        title={`每行${count}张`}
-                                        aria-label={`每行${count}张`}
-                                        className="relative z-10 flex h-8 w-8 items-center justify-center text-[var(--app-hint)] data-[state=on]:text-[var(--app-fg)]"
-                                    >
-                                        {props.columns === count ? (
-                                            <motion.span
-                                                layoutId="columns-thumb"
-                                                aria-hidden="true"
-                                                className="absolute inset-0 rounded-md border border-[var(--app-divider)] bg-[var(--app-bg)]"
-                                            />
-                                        ) : null}
-                                        <span className="relative z-10">
-                                            <ColumnsIcon count={count} />
-                                        </span>
-                                    </ToggleGroup.Item>
-                                ))}
-                            </ToggleGroup.Root>
-                            <button type="button" title="加卡" className={iconButton} onClick={props.onAdd}>
-                                <PlusIcon />
+                                <ColumnsIcon count={count} />
+                            </ToggleGroup.Item>
+                        ))}
+                    </ToggleGroup.Root>
+                    <button type="button" title="加卡" className={iconButton} onClick={props.onAdd}>
+                        <PlusIcon />
+                    </button>
+                </div>
+            </div>
+            <div ref={grid} className="grid gap-3" style={{ gridTemplateColumns: `repeat(${props.columns}, minmax(0, 1fr))` }}>
+                {props.cards.map((card) => (
+                    <article key={card.id} data-card={card.id} className="min-w-0 rounded-lg border border-[var(--app-divider)] p-3">
+                        <div className="flex items-start justify-between gap-2">
+                            <div className="min-w-0">
+                                <div className="text-sm font-medium text-[var(--app-fg)]">训练曲线</div>
+                                <div className="truncate text-xs text-[var(--app-hint)]">{card.run} · {card.metric} · X {card.axis}</div>
+                            </div>
+                            <button type="button" title="删卡" className={iconButton} onClick={() => removeCard(card.id)}>
+                                <TrashIcon />
                             </button>
                         </div>
-                    </div>
-                    <div className="grid gap-3" style={{ gridTemplateColumns: `repeat(${props.columns}, minmax(0, 1fr))` }}>
-                        <AnimatePresence mode="popLayout" initial={false}>
-                            {props.cards.map((card) => (
-                                <motion.article
-                                    key={card.id}
-                                    layout
-                                    initial={{ opacity: 0 }}
-                                    animate={{ opacity: 1 }}
-                                    exit={{ opacity: 0 }}
-                                    className="min-w-0 rounded-lg border border-[var(--app-divider)] p-3"
-                                >
-                                    <div className="flex items-start justify-between gap-2">
-                                        <div className="min-w-0">
-                                            <div className="text-sm font-medium text-[var(--app-fg)]">训练曲线</div>
-                                            <div className="truncate text-xs text-[var(--app-hint)]">{card.run} · {card.metric} · X {card.axis}</div>
-                                        </div>
-                                        <button type="button" title="删卡" className={iconButton} onClick={() => props.onDelete(card.id)}>
-                                            <TrashIcon />
-                                        </button>
-                                    </div>
-                                    <Chart points={pointsFor(card.metric)} />
-                                </motion.article>
-                            ))}
-                        </AnimatePresence>
-                    </div>
-                </section>
-            </LayoutGroup>
-        </MotionConfig>
+                        <Chart points={pointsFor(card.metric)} />
+                    </article>
+                ))}
+            </div>
+        </section>
     )
 }
 
@@ -227,6 +297,7 @@ function Exploration(props: { id: string }): ReactNode {
             <Verify
                 cards={cards}
                 columns={shown}
+                pinned={narrow}
                 onColumns={setColumns}
                 onAdd={() => setCards((current) => [...current, { id: `card-${crypto.randomUUID()}`, run: 'exp-1', metric: 'acc', axis: 'step' }])}
                 onDelete={(id) => setCards((current) => current.filter((card) => card.id !== id))}
