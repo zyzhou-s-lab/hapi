@@ -451,7 +451,7 @@ function ompProbeTargets(cwd: string): McpProbeTarget[] {
         for (const target of probeTargetsFromConfig(parsed)) {
             if (seen.has(target.name)) continue;
             seen.add(target.name);
-            targets.push(target);
+            targets.push(target.cwd ? target : { ...target, cwd: resolve(cwd) });
         }
     }
     return targets;
@@ -512,14 +512,33 @@ export function ompInventoryFromTools(tools: readonly string[]): SessionInventor
     };
 }
 
+function keepFirstServers(servers: readonly SessionInventoryMcpServer[]): SessionInventoryMcpServer[] {
+    const byName = new Map<string, SessionInventoryMcpServer>();
+    for (const server of servers) {
+        if (!isSafeInventoryName(server.name)) continue;
+        const name = server.name.trim();
+        if (byName.has(name)) continue;
+        byName.set(name, {
+            name,
+            source: server.source,
+            ...(server.enabled === false ? { enabled: false } : {}),
+            ...(server.loaded !== undefined ? { loaded: server.loaded } : {}),
+            ...(server.filePath ? { filePath: server.filePath } : {}),
+            ...(server.line ? { line: server.line } : {}),
+        });
+    }
+    return [...byName.values()].sort((left, right) => left.name.localeCompare(right.name)).slice(0, 200);
+}
+
 function loadOmpInventory(cwd: string): SessionInventoryPatch {
     const dir = process.env.PI_CODING_AGENT_DIR?.trim() || join(homedir(), '.omp', 'agent');
-    const servers = dedupeServers([
+    // Same order as ompProbeTargets: native project, then user, then root .mcp.json.
+    // First name wins, matching omp. SOURCE_RANK would let the root file beat the user file.
+    const servers = keepFirstServers([
+        ...ompProjectMcpPaths(cwd).flatMap((path) => jsonServersFromFile(path, cwd, 'project')),
         ...jsonServersFromFile(join(dir, 'mcp.json'), cwd, 'user'),
         ...jsonServersFromFile(join(dir, 'settings.json'), cwd, 'user'),
         ...projectMcpPaths(cwd).flatMap((path) => jsonServersFromFile(path, cwd, 'project')),
-        // Same rank: the later row wins, so the closer .omp file is last.
-        ...ompProjectMcpPaths(cwd).reverse().flatMap((path) => jsonServersFromFile(path, cwd, 'project')),
     ]);
     return {
         mcp: { kind: 'servers', servers },

@@ -102,7 +102,16 @@ function down(timedOut = false): ProbeHit {
     return { ok: false, timedOut }
 }
 
-const probeCache = new Map<string, boolean>()
+const PROBE_TTL_MS = 10 * 60 * 1000
+const PROBE_CACHE_MAX = 200
+
+type CachedProbe = { ok: boolean; at: number }
+type Flight = { gen: number; fresh: boolean; promise: Promise<ProbeHit> }
+
+const probeCache = new Map<string, CachedProbe>()
+const flights = new Map<string, Flight>()
+const writtenGen = new Map<string, number>()
+let nextGen = 0
 
 function sortedPairs(record: Record<string, string> | undefined): Array<[string, string]> {
     if (!record) return []
@@ -122,20 +131,86 @@ export function probeConfigKey(target: McpProbeTarget): string {
     })
 }
 
+function readCache(key: string): boolean | undefined {
+    const row = probeCache.get(key)
+    if (!row) return undefined
+    if (Date.now() - row.at > PROBE_TTL_MS) {
+        probeCache.delete(key)
+        return undefined
+    }
+    return row.ok
+}
+
+function remember(key: string, gen: number, result: ProbeHit): void {
+    if (gen < (writtenGen.get(key) ?? 0)) return
+    writtenGen.set(key, gen)
+    probeCache.delete(key)
+    if (result.timedOut) return
+    probeCache.set(key, { ok: result.ok, at: Date.now() })
+    while (probeCache.size > PROBE_CACHE_MAX) {
+        const oldest = probeCache.keys().next().value
+        if (oldest === undefined) break
+        probeCache.delete(oldest)
+    }
+}
+
 export function cachedProbe(target: McpProbeTarget): boolean | undefined {
-    const key = probeConfigKey(target)
-    return probeCache.has(key) ? probeCache.get(key) : undefined
+    return readCache(probeConfigKey(target))
+}
+
+export function probeCacheSize(): number {
+    return probeCache.size
 }
 
 export function clearProbeCache(): void {
     probeCache.clear()
+    flights.clear()
+    writtenGen.clear()
+}
+
+function runProbe(target: McpProbeTarget): Promise<ProbeHit> {
+    return target.transport === 'stdio' ? checkStdio(target) : checkHttp(target)
+}
+
+function startFlight(target: McpProbeTarget, key: string, fresh: boolean): Promise<ProbeHit> {
+    const gen = ++nextGen
+    let settle: (result: ProbeHit) => void = () => undefined
+    const promise = new Promise<ProbeHit>((resolve) => {
+        settle = resolve
+    })
+    flights.set(key, { gen, fresh, promise })
+    void runProbe(target).then((result) => {
+        if (flights.get(key)?.gen === gen) flights.delete(key)
+        remember(key, gen, result)
+        settle(result)
+    }, () => {
+        if (flights.get(key)?.gen === gen) flights.delete(key)
+        const result = down()
+        remember(key, gen, result)
+        settle(result)
+    })
+    return promise
+}
+
+function probeShared(target: McpProbeTarget, fresh: boolean): Promise<ProbeHit> {
+    const key = probeConfigKey(target)
+    if (!fresh) {
+        const hit = readCache(key)
+        if (hit !== undefined) return Promise.resolve({ ok: hit, timedOut: false })
+        const flight = flights.get(key)
+        if (flight) return flight.promise
+        return startFlight(target, key, false)
+    }
+    const flight = flights.get(key)
+    if (flight?.fresh) return flight.promise
+    return startFlight(target, key, true)
 }
 
 async function checkStdio(target: McpProbeTarget): Promise<ProbeHit> {
     if (!target.command) return down()
-    // omp starts the server in the session directory, or the cwd written in the
-    // config. Magpie pins HOME only because its own cwd is often unusable.
-    // Pinning HOME here would check a different directory than omp launches.
+    // The session directory is filled in when the config omits cwd. An explicit
+    // cwd is kept. Magpie pins HOME because its own cwd is often unusable; omp
+    // starts the server in the session directory, so that is the default here.
     const group = process.platform !== 'win32'
     const child = spawn(target.command, target.args ?? [], {
         cwd: target.cwd,
@@ -344,10 +419,7 @@ export async function checkMcpServers(targets: readonly McpProbeTarget[], option
             cursor += 1
             const target = pending[index]
             if (!target) return
-            const result = target.transport === 'stdio' ? await checkStdio(target) : await checkHttp(target)
-            const key = probeConfigKey(target)
-            if (result.timedOut) probeCache.delete(key)
-            else probeCache.set(key, result.ok)
+            const result = await probeShared(target, options?.fresh === true)
             loaded.set(target.name, result.ok)
         }
     }

@@ -344,6 +344,94 @@ command = "my-hook --token abc"
         }
     })
 
+    it('runs a server with no cwd in the session directory and does not share it across projects', async () => {
+        clearProbeCache()
+        const left = mkdtempSync(join(tmpdir(), 'hapi-cwd-a-'))
+        const right = mkdtempSync(join(tmpdir(), 'hapi-cwd-b-'))
+        const agent = mkdtempSync(join(tmpdir(), 'hapi-cwd-agent-'))
+        const previous = process.env.PI_CODING_AGENT_DIR
+        process.env.PI_CODING_AGENT_DIR = agent
+        mkdirSync(join(left, '.git'))
+        mkdirSync(join(right, '.git'))
+        const log = join(agent, 'cwds.txt')
+        const script = join(agent, 'cwd.cjs')
+        writeFileSync(script, `
+            const fs = require('node:fs')
+            const readline = require('node:readline')
+            fs.appendFileSync(${JSON.stringify(log)}, process.cwd() + '\\n')
+            const rl = readline.createInterface({ input: process.stdin })
+            rl.on('line', (line) => {
+                let msg
+                try { msg = JSON.parse(line) } catch { return }
+                if (!msg || !msg.id) return
+                const result = msg.method === 'tools/list' ? { tools: [] } : { protocolVersion: '2025-06-18', capabilities: {} }
+                process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result }) + '\\n')
+            })
+        `)
+        writeFileSync(join(agent, 'mcp.json'), JSON.stringify({
+            mcpServers: { local: { command: process.execPath, args: [script] } },
+        }))
+        try {
+            await readLiveSessionConfig({ flavor: 'omp', cwd: left, tools: [] })
+            await readLiveSessionConfig({ flavor: 'omp', cwd: right, tools: [] })
+            const lines = readFileSync(log, 'utf8').trim().split('\n').map((line) => realpathSync(line))
+            expect(lines).toEqual([realpathSync(left), realpathSync(right)])
+        } finally {
+            if (previous === undefined) delete process.env.PI_CODING_AGENT_DIR
+            else process.env.PI_CODING_AGENT_DIR = previous
+            rmSync(left, { recursive: true, force: true })
+            rmSync(right, { recursive: true, force: true })
+            rmSync(agent, { recursive: true, force: true })
+            clearProbeCache()
+        }
+    })
+
+    it('shows and checks the user server when a root .mcp.json repeats its name', async () => {
+        clearProbeCache()
+        const workspace = mkdtempSync(join(tmpdir(), 'hapi-user-wins-'))
+        const agent = mkdtempSync(join(tmpdir(), 'hapi-user-wins-agent-'))
+        const previous = process.env.PI_CODING_AGENT_DIR
+        process.env.PI_CODING_AGENT_DIR = agent
+        mkdirSync(join(workspace, '.git'))
+        const hits = join(agent, 'project-hit.txt')
+        const script = join(agent, 'project.cjs')
+        writeFileSync(script, `
+            const fs = require('node:fs')
+            const readline = require('node:readline')
+            fs.writeFileSync(${JSON.stringify(hits)}, 'p')
+            const rl = readline.createInterface({ input: process.stdin })
+            rl.on('line', (line) => {
+                let msg
+                try { msg = JSON.parse(line) } catch { return }
+                if (!msg || !msg.id) return
+                const result = msg.method === 'tools/list' ? { tools: [] } : { protocolVersion: '2025-06-18', capabilities: {} }
+                process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result }) + '\\n')
+            })
+        `)
+        writeFileSync(join(agent, 'mcp.json'), JSON.stringify({
+            mcpServers: { shared: { command: 'true' } },
+        }))
+        writeFileSync(join(workspace, '.mcp.json'), JSON.stringify({
+            mcpServers: { shared: { command: process.execPath, args: [script] } },
+        }))
+        try {
+            const config = await readLiveSessionConfig({ flavor: 'omp', cwd: workspace, tools: [], check: 'shared' })
+            const shared = config.mcp?.servers.find((server) => server.name === 'shared')
+            expect(shared?.source).toBe('user')
+            expect(shared?.loaded).toBe(false)
+            expect(shared?.filePath?.endsWith('/mcp.json')).toBe(true)
+            expect(shared?.filePath?.endsWith('/.mcp.json')).toBe(false)
+            expect(existsSync(hits)).toBe(false)
+        } finally {
+            if (previous === undefined) delete process.env.PI_CODING_AGENT_DIR
+            else process.env.PI_CODING_AGENT_DIR = previous
+            rmSync(workspace, { recursive: true, force: true })
+            rmSync(agent, { recursive: true, force: true })
+            clearProbeCache()
+        }
+    })
+
+
 
     it('attaches the on-disk skill file when a catalog entry has no path', async () => {
         const root = mkdtempSync(join(tmpdir(), 'hapi-skill-path-'))

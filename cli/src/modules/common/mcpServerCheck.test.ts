@@ -1,9 +1,11 @@
 import { execFileSync } from 'node:child_process'
 import { createServer, type ServerResponse } from 'node:http'
-import { readFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import type { AddressInfo } from 'node:net'
-import { describe, expect, it } from 'vitest'
-import { checkMcpServer, checkMcpServers, clearProbeCache } from './mcpServerCheck'
+import { describe, expect, it, vi } from 'vitest'
+import { cachedProbe, checkMcpServer, checkMcpServers, clearProbeCache, probeCacheSize } from './mcpServerCheck'
 
 const HAPI_VERSION = (JSON.parse(readFileSync(new URL('../../../package.json', import.meta.url), 'utf8')) as { version: string }).version
 
@@ -178,5 +180,103 @@ describe('mcp server probe', () => {
             }
         }
     }, 20_000)
+
+    it('shares one spawn across concurrent probes of the same config', async () => {
+        clearProbeCache()
+        const dir = mkdtempSync(join(tmpdir(), 'hapi-probe-share-'))
+        const log = join(dir, 'starts.txt')
+        const script = join(dir, 'once.cjs')
+        writeFileSync(script, `
+            const fs = require('node:fs')
+            const readline = require('node:readline')
+            fs.appendFileSync(${JSON.stringify(log)}, 'x')
+            const rl = readline.createInterface({ input: process.stdin })
+            rl.on('line', (line) => {
+                let msg
+                try { msg = JSON.parse(line) } catch { return }
+                if (!msg || !msg.id) return
+                const result = msg.method === 'tools/list' ? { tools: [] } : { protocolVersion: '2025-06-18', capabilities: {} }
+                process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result }) + '\\n')
+            })
+        `)
+        const target = { name: 'once', transport: 'stdio' as const, command: process.execPath, args: [script], cwd: dir }
+        try {
+            await Promise.all([checkMcpServers([target]), checkMcpServers([target])])
+            expect(readFileSync(log, 'utf8')).toBe('x')
+        } finally {
+            rmSync(dir, { recursive: true, force: true })
+            clearProbeCache()
+        }
+    })
+
+    it('keeps a fresh result when an older probe finishes later', async () => {
+        clearProbeCache()
+        const dir = mkdtempSync(join(tmpdir(), 'hapi-probe-fresh-'))
+        const mode = join(dir, 'mode.txt')
+        const log = join(dir, 'starts.txt')
+        writeFileSync(mode, 'slow')
+        const script = join(dir, 'race.cjs')
+        writeFileSync(script, `
+            const fs = require('node:fs')
+            const readline = require('node:readline')
+            const kind = fs.readFileSync(${JSON.stringify(mode)}, 'utf8').trim()
+            fs.appendFileSync(${JSON.stringify(log)}, kind + '\\n')
+            if (kind === 'slow') {
+                setTimeout(() => process.exit(1), 400)
+                return
+            }
+            const rl = readline.createInterface({ input: process.stdin })
+            rl.on('line', (line) => {
+                let msg
+                try { msg = JSON.parse(line) } catch { return }
+                if (!msg || !msg.id) return
+                const result = msg.method === 'tools/list' ? { tools: [] } : { protocolVersion: '2025-06-18', capabilities: {} }
+                process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result }) + '\\n')
+            })
+        `)
+        const target = { name: 'race', transport: 'stdio' as const, command: process.execPath, args: [script], cwd: dir }
+        const older = checkMcpServers([target])
+        try {
+            while (!existsSync(log)) await new Promise((resolve) => setTimeout(resolve, 10))
+            writeFileSync(mode, 'fast')
+            const fresh = await checkMcpServers([target], { fresh: true })
+            expect(fresh.get('race')).toBe(true)
+            expect(readFileSync(log, 'utf8')).toContain('fast')
+            await older
+            expect(cachedProbe(target)).toBe(true)
+        } finally {
+            rmSync(dir, { recursive: true, force: true })
+            clearProbeCache()
+        }
+    })
+
+    it('drops a cached result after ten minutes', async () => {
+        clearProbeCache()
+        const target = { name: 'gone', transport: 'stdio' as const, command: '/nonexistent/hapi-ttl-bin' }
+        await checkMcpServers([target])
+        expect(cachedProbe(target)).toBe(false)
+        const realNow = Date.now()
+        vi.useFakeTimers()
+        try {
+            vi.setSystemTime(realNow + 11 * 60 * 1000)
+            expect(cachedProbe(target)).toBeUndefined()
+        } finally {
+            vi.useRealTimers()
+            clearProbeCache()
+        }
+    })
+
+    it('keeps at most 200 cached configs', async () => {
+        clearProbeCache()
+        const targets = Array.from({ length: 205 }, (_, index) => ({
+            name: `missing-${index}`,
+            transport: 'stdio' as const,
+            command: `/nonexistent/hapi-cap-${index}`,
+        }))
+        await checkMcpServers(targets)
+        expect(probeCacheSize()).toBe(200)
+        clearProbeCache()
+    })
+
 
 })
