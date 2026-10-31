@@ -62,6 +62,7 @@ import { clearCodexImportedSession } from '@/lib/codexImportedSessions'
 import { getSupersedingSessionId, prepareFollowSupersedingSession, shouldFollowSupersedingSession } from '@/routes/sessions/followSupersedingSession'
 import { migrateSuppressedSendError } from '@/lib/suppressed-send-error'
 import FilesPage from '@/routes/sessions/files'
+import SessionConfigPage from '@/routes/sessions/config'
 import FilePage from '@/routes/sessions/file'
 import TerminalPage from '@/routes/sessions/terminal'
 import SettingsLayout from '@/routes/settings/layout'
@@ -1119,6 +1120,12 @@ const sessionFilesRoute = createRoute({
     component: FilesPage,
 })
 
+const sessionConfigRoute = createRoute({
+    getParentRoute: () => sessionDetailRoute,
+    path: 'config',
+    component: SessionConfigPage,
+})
+
 const sessionTerminalRoute = createRoute({
     getParentRoute: () => sessionDetailRoute,
     path: 'terminal',
@@ -1130,7 +1137,8 @@ type SessionFileSearch = {
     staged?: boolean
     tab?: 'changes' | 'directories'
     query?: string
-    origin?: 'chat'
+    origin?: 'chat' | 'config'
+    line?: number
 }
 
 const sessionFileRoute = createRoute({
@@ -1153,7 +1161,9 @@ const sessionFileRoute = createRoute({
         const query = typeof search.query === 'string' && search.query.length > 0
             ? search.query
             : undefined
-        const origin = search.origin === 'chat' ? 'chat' : undefined
+        const origin = search.origin === 'chat' || search.origin === 'config' ? search.origin : undefined
+        const lineNumber = typeof search.line === 'number' ? search.line : typeof search.line === 'string' && /^\d+$/.test(search.line) ? Number(search.line) : undefined
+        const line = lineNumber !== undefined && lineNumber >= 1 && lineNumber <= 1_000_000 ? lineNumber : undefined
 
         const result: SessionFileSearch = { path }
         if (staged !== undefined) {
@@ -1167,6 +1177,9 @@ const sessionFileRoute = createRoute({
         }
         if (origin !== undefined) {
             result.origin = origin
+        }
+        if (line !== undefined) {
+            result.line = line
         }
         return result
     },
@@ -1321,6 +1334,7 @@ export const routeTree = rootRoute.addChildren([
         sessionDetailRoute.addChildren([
             sessionTerminalRoute,
             sessionFilesRoute,
+            sessionConfigRoute,
             sessionFileRoute,
         ]),
     ]),

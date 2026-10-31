@@ -28,6 +28,9 @@ import {
     toConversationHistoryCapabilities
 } from '@hapi/protocol/conversationHistory';
 import { listSkills, type SkillSummary } from '@/modules/common/skills';
+import { inventorySkills, readLiveSessionConfig } from '@/modules/common/sessionInventory';
+import { setSessionPromptLive } from '@/modules/common/sessionPrompts';
+import { getErrorMessage, rpcError } from '@/modules/common/rpcResponses';
 
 export interface StartOptions {
     model?: string
@@ -58,6 +61,8 @@ export async function runClaude(options: StartOptions = {}): Promise<void> {
         // TODO: Eventually we should error here instead of silently switching
         // throw new Error('Runner-spawned sessions cannot use local/interactive mode');
     }
+
+    const startingMode = options.startingMode ?? (startedBy === 'runner' ? 'remote' : 'local');
 
     const initialState: AgentState = {};
     const initialModel = normalizeClaudeSessionModel(options.model);
@@ -138,6 +143,24 @@ export async function runClaude(options: StartOptions = {}): Promise<void> {
         return result.sdkMetadata.slashCommands === undefined
             ? { success: false, error: 'Claude skill catalog unavailable' }
             : { success: true, skills: result.catalog.skills };
+    });
+    session.rpcHandlerManager.registerHandler(RPC_METHODS.ListSessionConfig, async () => {
+        try {
+            const result = await getCatalog();
+            const skills = result.sdkMetadata.slashCommands === undefined
+                ? inventorySkills([], { catalogUnavailable: true })
+                : inventorySkills(result.catalog.skills);
+            const config = await readLiveSessionConfig({
+                flavor: 'claude',
+                cwd: workingDirectory,
+                sessionId: session.sessionId,
+                startingMode,
+                skills,
+            });
+            return { success: true, ...config };
+        } catch (error) {
+            return rpcError(getErrorMessage(error, 'Failed to read session config'));
+        }
     });
 
     // Extract SDK metadata in background and update session when ready
@@ -262,7 +285,6 @@ export async function runClaude(options: StartOptions = {}): Promise<void> {
     })
 
     // Set initial agent state
-    const startingMode = options.startingMode ?? (startedBy === 'runner' ? 'remote' : 'local');
     setControlledByUser(session, startingMode);
 
     // Import MessageQueue2 and create message queue
@@ -287,6 +309,15 @@ export async function runClaude(options: StartOptions = {}): Promise<void> {
     let currentFallbackModel: string | undefined = undefined; // Track current fallback model
     let currentCustomSystemPrompt: string | undefined = undefined; // Track current custom system prompt
     let currentAppendSystemPrompt: string | undefined = undefined; // Track current append system prompt
+    const publishClaudePrompt = () => {
+        setSessionPromptLive(session.sessionId, {
+            claude: {
+                ...(currentCustomSystemPrompt ? { custom: currentCustomSystemPrompt } : {}),
+                ...(currentAppendSystemPrompt ? { append: currentAppendSystemPrompt } : {}),
+            },
+        })
+    }
+    publishClaudePrompt()
     let currentAllowedTools: string[] | undefined = undefined; // Track current allowed tools
     let currentDisallowedTools: string[] | undefined = undefined; // Track current disallowed tools
 
@@ -327,6 +358,7 @@ export async function runClaude(options: StartOptions = {}): Promise<void> {
         if (message.meta?.hasOwnProperty('customSystemPrompt')) {
             messageCustomSystemPrompt = message.meta.customSystemPrompt || undefined; // null becomes undefined
             currentCustomSystemPrompt = messageCustomSystemPrompt;
+            publishClaudePrompt()
             logger.debug(`[loop] Custom system prompt updated from user message: ${messageCustomSystemPrompt ? 'set' : 'reset to none'}`);
         } else {
             logger.debug(`[loop] User message received with no custom system prompt override, using current: ${currentCustomSystemPrompt ? 'set' : 'none'}`);
@@ -347,6 +379,7 @@ export async function runClaude(options: StartOptions = {}): Promise<void> {
         if (message.meta?.hasOwnProperty('appendSystemPrompt')) {
             messageAppendSystemPrompt = message.meta.appendSystemPrompt || undefined; // null becomes undefined
             currentAppendSystemPrompt = messageAppendSystemPrompt;
+            publishClaudePrompt()
             logger.debug(`[loop] Append system prompt updated from user message: ${messageAppendSystemPrompt ? 'set' : 'reset to none'}`);
         } else {
             logger.debug(`[loop] User message received with no append system prompt override, using current: ${currentAppendSystemPrompt ? 'set' : 'none'}`);

@@ -192,6 +192,37 @@ function extractCommandError(result: GitCommandResponse | undefined): string | n
     return result.error ?? result.stderr ?? 'Failed to load diff'
 }
 
+function LinedSource(props: { text: string; line: number; wrap: boolean }) {
+    const target = useRef<HTMLDivElement>(null)
+    useEffect(() => {
+        target.current?.scrollIntoView({ block: 'center' })
+    }, [props.line, props.text])
+    return (
+        <pre
+            data-testid="file-raw-pre"
+            data-word-wrap={props.wrap ? 'on' : 'off'}
+            className={`rounded-md bg-[var(--app-code-bg)] p-3 pr-8 text-xs font-mono ${props.wrap ? 'overflow-x-hidden whitespace-pre-wrap break-words' : 'overflow-auto'}`}
+        >
+            <code>
+                {props.text.split('\n').map((content, index) => {
+                    const number = index + 1
+                    const active = number === props.line
+                    return (
+                        <div
+                            key={number}
+                            ref={active ? target : undefined}
+                            data-line={number}
+                            className={active ? 'bg-[var(--app-subtle-bg)]' : undefined}
+                        >
+                            {content || ' '}
+                        </div>
+                    )
+                })}
+            </code>
+        </pre>
+    )
+}
+
 export default function FilePage() {
     const { api } = useAppContext()
     const { t, locale } = useTranslation()
@@ -204,6 +235,7 @@ export default function FilePage() {
     const search = useSearch({ from: '/sessions/$sessionId/file' })
     const encodedPath = typeof search.path === 'string' ? search.path : ''
     const staged = search.staged
+    const focusLine = typeof search.line === 'number' ? search.line : undefined
     const diffRequested = staged !== undefined
 
     const filePath = useMemo(() => decodePath(encodedPath), [encodedPath])
@@ -221,15 +253,47 @@ export default function FilePage() {
         enabled: Boolean(api && sessionId && filePath && diffRequested)
     })
 
+    const outsideWorkspace = filePath.startsWith('/') || /^[A-Za-z]:[\\/]/.test(filePath)
+    const [outsideDecision, setOutsideDecision] = useState<'pending' | 'allowed' | 'denied'>('pending')
+    const [outsideRealpath, setOutsideRealpath] = useState<string | null>(null)
+    const [outsideError, setOutsideError] = useState<string | null>(null)
+    const readPath = outsideDecision === 'allowed' && outsideRealpath ? outsideRealpath : filePath
+
+    useEffect(() => {
+        setOutsideDecision('pending')
+        setOutsideRealpath(null)
+        setOutsideError(null)
+    }, [filePath])
+
+    useEffect(() => {
+        if (!outsideWorkspace || !api || !sessionId || !filePath) return
+        let cancel = false
+        void api.readSessionFile(sessionId, filePath).then((result) => {
+            if (cancel) return
+            if (result.success) {
+                setOutsideDecision('allowed')
+                return
+            }
+            if (result.error === 'authorization_required' && result.realpath) {
+                setOutsideRealpath(result.realpath)
+                return
+            }
+            setOutsideError(result.error ?? t('file.error.readFailed'))
+        }).catch((error: unknown) => {
+            if (!cancel) setOutsideError(error instanceof Error ? error.message : t('file.error.readFailed'))
+        })
+        return () => { cancel = true }
+    }, [outsideWorkspace, api, sessionId, filePath, t])
+
     const fileQuery = useQuery({
-        queryKey: queryKeys.sessionFile(sessionId, filePath),
+        queryKey: queryKeys.sessionFile(sessionId, readPath),
         queryFn: async () => {
-            if (!api || !sessionId || !filePath) {
+            if (!api || !sessionId || !readPath) {
                 throw new Error('Missing session or path')
             }
-            return await api.readSessionFile(sessionId, filePath)
+            return await api.readSessionFile(sessionId, readPath)
         },
-        enabled: Boolean(api && sessionId && filePath)
+        enabled: Boolean(api && sessionId && readPath) && (!outsideWorkspace || outsideDecision === 'allowed'),
     })
 
     const diffContent = diffQuery.data?.success ? (diffQuery.data.stdout ?? '') : ''
@@ -265,6 +329,8 @@ export default function FilePage() {
         && typeof fileContentResult.hash === 'string'
         && !binaryFile
         && !imagePreviewUrl
+        && !outsideWorkspace
+
 
     const [displayMode, setDisplayMode] = useState<'diff' | 'file'>(() => diffRequested ? 'diff' : 'file')
     const fileScrollRef = useRef<HTMLDivElement>(null)
@@ -354,7 +420,7 @@ export default function FilePage() {
         && !imagePreviewUrl
         && !binaryFile
         && decodedContent.length > 0
-    const renderMarkdownPreview = showFileTextContent && isMarkdownFile && markdownPreview && !editing
+    const renderMarkdownPreview = showFileTextContent && isMarkdownFile && markdownPreview && !editing && !focusLine
     const showWordWrapToggle = showFileTextContent && !renderMarkdownPreview
 
     useEffect(() => {
@@ -412,6 +478,42 @@ export default function FilePage() {
 
     return (
         <div className="flex h-full min-h-0 flex-col">
+            {outsideWorkspace && outsideDecision === 'pending' && outsideRealpath ? (
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" role="dialog" aria-modal="true" aria-labelledby="outside-file-auth-title">
+                    <div className="w-full max-w-lg rounded-lg border border-[var(--app-border)] bg-[var(--app-bg)] p-4 shadow-lg">
+                        <h2 id="outside-file-auth-title" className="text-base font-semibold text-[var(--app-fg)]">{t('file.auth.title')}</h2>
+                        <p className="mt-2 text-sm text-[var(--app-hint)]">{t('file.auth.body')}</p>
+                        <pre className="mt-3 overflow-x-auto whitespace-pre-wrap break-all rounded-md bg-[var(--app-subtle-bg)] p-3 font-mono text-xs text-[var(--app-fg)]">{outsideRealpath}</pre>
+                        {outsideError ? <p className="mt-2 text-sm text-[var(--app-hint)]">{outsideError}</p> : null}
+                        <div className="mt-4 flex justify-end gap-2">
+                            <button type="button" className="rounded-md px-3 py-1.5 text-sm text-[var(--app-hint)]" onClick={() => setOutsideDecision('denied')}>{t('file.auth.deny')}</button>
+                            <button
+                                type="button"
+                                className="rounded-md bg-[var(--app-button)] px-3 py-1.5 text-sm font-semibold text-[var(--app-button-text)]"
+                                onClick={() => {
+                                    if (!api || !sessionId || !outsideRealpath) return
+                                    void api.authorizeSessionFile(sessionId, outsideRealpath).then((granted) => {
+                                        if (!granted.success || !granted.realpath) {
+                                            setOutsideError(granted.error ?? t('file.error.readFailed'))
+                                            return
+                                        }
+                                        setOutsideRealpath(granted.realpath)
+                                        setOutsideDecision('allowed')
+                                    }).catch((error: unknown) => {
+                                        setOutsideError(error instanceof Error ? error.message : t('file.error.readFailed'))
+                                    })
+                                }}
+                            >{t('file.auth.allow')}</button>
+                        </div>
+                    </div>
+                </div>
+            ) : null}
+            {outsideWorkspace && outsideDecision === 'denied' ? (
+                <div className="mx-auto w-full max-w-content p-4 text-sm text-[var(--app-hint)]">{t('file.auth.denied')}</div>
+            ) : null}
+            {outsideError && outsideDecision !== 'allowed' && !outsideRealpath ? (
+                <div className="mx-auto w-full max-w-content p-4 text-sm text-[var(--app-hint)]">{outsideError}</div>
+            ) : null}
             <div data-safe-top className="bg-[var(--app-bg)] pt-[env(safe-area-inset-top)]">
                 <div className="mx-auto w-full max-w-content flex items-center gap-2 p-3 border-b border-[var(--app-border)]">
                     <button
@@ -607,6 +709,8 @@ export default function FilePage() {
                                         >
                                             <FileMarkdownView content={decodedContent} />
                                         </div>
+                                    ) : focusLine ? (
+                                        <LinedSource text={decodedContent} line={focusLine} wrap={wordWrap} />
                                     ) : (
                                         <pre
                                             data-testid="file-raw-pre"

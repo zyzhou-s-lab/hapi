@@ -15,10 +15,16 @@ import { registerGitHandlers } from './handlers/git'
 import { registerRipgrepHandlers } from './handlers/ripgrep'
 import { registerSlashCommandHandlers } from './handlers/slashCommands'
 import { registerSkillsHandlers } from './handlers/skills'
+import { registerSessionConfigHandlers, type SessionConfigContext } from './handlers/sessionConfig'
+import { listedSessionConfigRealpaths } from './sessionInventory'
 import { registerUploadHandlers } from './handlers/uploads'
 import { registerImportableSessionHandlers } from '../../../../fork-features/history-import/cli/register'
 
-export function registerCommonHandlers(rpcHandlerManager: RpcHandlerManager, workingDirectory: string): void {
+export function registerCommonHandlers(
+    rpcHandlerManager: RpcHandlerManager,
+    workingDirectory: string,
+    options?: { getSessionConfigContext?: () => SessionConfigContext }
+): void {
     registerAgyModelHandlers(rpcHandlerManager)
     registerBashHandlers(rpcHandlerManager, workingDirectory)
     registerCodexModelHandlers(rpcHandlerManager)
@@ -28,12 +34,16 @@ export function registerCommonHandlers(rpcHandlerManager: RpcHandlerManager, wor
     registerPiModelHandlers(rpcHandlerManager)
     registerGrokModelHandlers(rpcHandlerManager)
     registerCopilotModelHandlers(rpcHandlerManager)
-    registerFileHandlers(rpcHandlerManager, workingDirectory)
+    registerFileHandlers(rpcHandlerManager, workingDirectory, () => listedSessionConfigRealpaths({
+        cwd: workingDirectory,
+        ...options?.getSessionConfigContext?.(),
+    }))
     registerDirectoryHandlers(rpcHandlerManager, workingDirectory)
     registerRipgrepHandlers(rpcHandlerManager, workingDirectory)
     registerDifftasticHandlers(rpcHandlerManager, workingDirectory)
     registerSlashCommandHandlers(rpcHandlerManager, workingDirectory)
     registerSkillsHandlers(rpcHandlerManager, workingDirectory)
+    registerSessionConfigHandlers(rpcHandlerManager, workingDirectory, options?.getSessionConfigContext)
     registerGitHandlers(rpcHandlerManager, workingDirectory)
     registerUploadHandlers(rpcHandlerManager)
     registerImportableSessionHandlers(rpcHandlerManager)

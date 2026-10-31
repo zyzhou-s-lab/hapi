@@ -1,5 +1,5 @@
 import { logger } from '@/ui/logger'
-import { readFile, stat, writeFile } from 'fs/promises'
+import { readFile, realpath, stat, writeFile } from 'fs/promises'
 import { createHash } from 'crypto'
 import { resolve } from 'path'
 import type { FileReadResponse, FileWriteResponse, GeneratedFileResponse, GeneratedImageResponse } from '@hapi/protocol/apiTypes'
@@ -12,6 +12,7 @@ import { getErrorMessage, rpcError } from '../rpcResponses'
 
 interface ReadFileRequest {
     path: string
+    authorized?: boolean
 }
 
 type ReadFileResponse = FileReadResponse
@@ -34,17 +35,47 @@ interface WriteFileRequest {
     expectedHash?: string | null
 }
 
-export function registerFileHandlers(rpcHandlerManager: RpcHandlerManager, workingDirectory: string): void {
+export function registerFileHandlers(
+    rpcHandlerManager: RpcHandlerManager,
+    workingDirectory: string,
+    listedConfigPaths?: () => Promise<ReadonlySet<string>>,
+): void {
+    const listedRealpath = async (requested: string): Promise<string | { error: string }> => {
+        if (!listedConfigPaths) return { error: 'Reading files outside the working directory is not allowed' }
+        let real: string
+        try {
+            real = await realpath(resolve(requested))
+        } catch (error) {
+            return { error: getErrorMessage(error, 'Invalid file path') }
+        }
+        const allowed = await listedConfigPaths()
+        return allowed.has(real) ? real : { error: 'Reading files outside the working directory is not allowed' }
+    }
+    const resolveWritable = (requested: string): { path: string } | { error: string } => {
+        const validation = validatePath(requested, workingDirectory)
+        if (!validation.valid) return { error: validation.error ?? 'Invalid file path' }
+        return { path: resolve(workingDirectory, requested) }
+    }
+    rpcHandlerManager.registerHandler<{ path: string }, { success: true; realpath: string } | { success: false; error: string }>(RPC_METHODS.ResolveListedConfigFile, async (data) => {
+        const listed = await listedRealpath(data.path)
+        return typeof listed === 'string' ? { success: true, realpath: listed } : rpcError(listed.error)
+    })
     rpcHandlerManager.registerHandler<ReadFileRequest, ReadFileResponse>(RPC_METHODS.ReadFile, async (data) => {
         logger.debug('Read file request:', data.path)
 
         const validation = validatePath(data.path, workingDirectory)
-        if (!validation.valid) {
-            return rpcError(validation.error ?? 'Invalid file path')
-        }
+        const readable = validation.valid
+            ? { path: resolve(workingDirectory, data.path) }
+            : await listedRealpath(data.path)
+        const allowed = typeof readable === 'string'
+            ? data.authorized === true
+                ? { path: readable }
+                : { error: 'authorization_required' as const }
+            : readable
+        if ('error' in allowed) return rpcError(allowed.error)
 
         try {
-            const resolvedPath = resolve(workingDirectory, data.path)
+            const resolvedPath = allowed.path
             const stats = await stat(resolvedPath)
             const buffer = await readFile(resolvedPath)
             const content = buffer.toString('base64')
@@ -109,13 +140,11 @@ export function registerFileHandlers(rpcHandlerManager: RpcHandlerManager, worki
     rpcHandlerManager.registerHandler<WriteFileRequest, FileWriteResponse>(RPC_METHODS.WriteFile, async (data) => {
         logger.debug('Write file request:', data.path)
 
-        const validation = validatePath(data.path, workingDirectory)
-        if (!validation.valid) {
-            return rpcError(validation.error ?? 'Invalid file path')
-        }
+        const allowed = resolveWritable(data.path)
+        if ('error' in allowed) return rpcError(allowed.error)
 
         try {
-            const resolvedPath = resolve(workingDirectory, data.path)
+            const resolvedPath = allowed.path
             if (data.expectedHash !== null && data.expectedHash !== undefined) {
                 try {
                     const existingBuffer = await readFile(resolvedPath)

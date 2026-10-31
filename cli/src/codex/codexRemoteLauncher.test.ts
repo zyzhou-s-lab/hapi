@@ -1576,7 +1576,7 @@ describe('codexRemoteLauncher', () => {
         expect(Array.from(rpcHandlers.keys())).toContain('listSkills');
         expect(await rpcHandlers.get('listSkills')?.({})).toEqual({
             success: true,
-            skills: [{ name: 'hapi', description: 'Manage HAPI' }]
+            skills: [{ name: 'hapi', description: 'Manage HAPI', source: 'user' }]
         });
         expect(harness.startTurnParams[0]?.input).toEqual([
             { type: 'skill', name: 'hapi', path: '/home/user/.agents/skills/hapi/SKILL.md' },

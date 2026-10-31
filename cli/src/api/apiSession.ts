@@ -9,6 +9,7 @@ import { apiValidationError } from '@/utils/errorUtils'
 import { AsyncLock } from '@/utils/lock'
 import type { RawJSONLines } from '@/claude/types'
 import { configuration } from '@/configuration'
+import { clearSessionPromptLive } from '@/modules/common/sessionPrompts'
 import { extractUserRequest } from '@/agy/utils/agyMessageText'
 import { AGENT_MESSAGE_PAYLOAD_TYPE } from "@hapi/protocol"
 import type { SessionEndReason } from '@hapi/protocol'
@@ -309,7 +310,14 @@ export class ApiSessionClient extends EventEmitter {
         })
 
         if (this.metadata?.path) {
-            registerCommonHandlers(this.rpcHandlerManager, this.metadata.path)
+            registerCommonHandlers(this.rpcHandlerManager, this.metadata.path, {
+                getSessionConfigContext: () => ({
+                    flavor: this.metadata?.flavor,
+                    startingMode: this.metadata?.startingMode,
+                    sessionId: this.sessionId,
+                    tools: this.metadata?.tools,
+                }),
+            })
         }
 
         this.socket = io(`${configuration.apiUrl}/cli`, {
@@ -1540,6 +1548,7 @@ export class ApiSessionClient extends EventEmitter {
         if (this.state === 'closed') {
             return
         }
+        clearSessionPromptLive(this.sessionId)
         this.state = 'closed'
         this.materializationAbortController?.abort()
         this.materializationAbortController = null

@@ -3,6 +3,7 @@ import { MessageQueue2 } from '@/utils/MessageQueue2';
 import { AgentSessionBase } from '@/agent/sessionBase';
 import type { OpencodeHookEvent, OpencodeMode, PermissionMode } from './types';
 import type { LocalLaunchExitReason } from '@/agent/localLaunchPolicy';
+import { setSessionPromptLive } from '@/modules/common/sessionPrompts';
 
 type LocalLaunchFailure = {
     message: string;
@@ -52,8 +53,14 @@ export class OpencodeSession extends AgentSessionBase<OpencodeMode> {
         this.startedBy = opts.startedBy;
         this.startingMode = opts.startingMode;
         this.permissionMode = opts.permissionMode;
+        if (opts.permissionMode) {
+            setSessionPromptLive(opts.client.sessionId, {
+                opencode: { plan: opts.permissionMode === 'plan', remote: opts.startingMode !== 'local' },
+            })
+        }
         this.modelReasoningEffort = opts.modelReasoningEffort;
     }
+
 
     addHookEventHandler(cb: (event: OpencodeHookEvent) => void): void {
         this.hookEventHandlers.push(cb);
@@ -74,6 +81,9 @@ export class OpencodeSession extends AgentSessionBase<OpencodeMode> {
 
     setPermissionMode = (mode: PermissionMode): void => {
         this.permissionMode = mode;
+        setSessionPromptLive(this.client.sessionId, {
+            opencode: { plan: mode === 'plan', remote: this.startingMode !== 'local' },
+        })
     };
 
     setModel = (model: string | null): void => {

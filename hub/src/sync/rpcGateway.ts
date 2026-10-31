@@ -1,6 +1,6 @@
 import type { AgentFlavor, ClaudeLaunch, CodexCollaborationMode, CopilotAgentMode, PermissionMode } from '@hapi/protocol/types'
 import { RPC_METHODS } from '@hapi/protocol/rpcMethods'
-import { PROBE_AGENT_SKILLS_RPC_METHOD, ProbeAgentSkillsResponseSchema, type ProbeAgentSkillsResponse } from '@hapi/protocol/schemas'
+import { PROBE_AGENT_SKILLS_RPC_METHOD, ProbeAgentSkillsResponseSchema, parseSessionConfigDetail, parseSessionConfigRpc, parseSessionConfigToggle, type ProbeAgentSkillsResponse, type SessionConfigItemSelector } from '@hapi/protocol/schemas'
 import {
     ArchiveCodexSessionRpcResponseSchema,
     AgentAvailabilityResponseSchema,
@@ -393,8 +393,12 @@ export class RpcGateway {
         return await this.sessionRpc(sessionId, RPC_METHODS.GitDiffFile, options) as RpcCommandResponse
     }
 
-    async readSessionFile(sessionId: string, path: string): Promise<RpcReadFileResponse> {
-        return await this.sessionRpc(sessionId, RPC_METHODS.ReadFile, { path }) as RpcReadFileResponse
+    async readSessionFile(sessionId: string, path: string, authorized = false): Promise<RpcReadFileResponse> {
+        return await this.sessionRpc(sessionId, RPC_METHODS.ReadFile, { path, authorized }) as RpcReadFileResponse
+    }
+
+    async resolveListedConfigFile(sessionId: string, path: string): Promise<{ success: true; realpath: string } | { success: false; error: string }> {
+        return await this.sessionRpc(sessionId, RPC_METHODS.ResolveListedConfigFile, { path }) as { success: true; realpath: string } | { success: false; error: string }
     }
 
     async writeSessionFile(sessionId: string, path: string, content: string, expectedHash: string): Promise<RpcWriteFileResponse> {
@@ -445,6 +449,20 @@ export class RpcGateway {
         }
     }
 
+    async listSessionConfig(sessionId: string) {
+        const raw = await this.sessionRpc(sessionId, RPC_METHODS.ListSessionConfig, {})
+        return parseSessionConfigRpc(raw)
+    }
+
+    async getSessionConfigItem(sessionId: string, selector: SessionConfigItemSelector) {
+        const raw = await this.sessionRpc(sessionId, RPC_METHODS.GetSessionConfigItem, selector)
+        return parseSessionConfigDetail(raw)
+    }
+
+    async setSessionConfigItemEnabled(sessionId: string, selector: SessionConfigItemSelector, enabled: boolean) {
+        const raw = await this.sessionRpc(sessionId, RPC_METHODS.SetSessionConfigItemEnabled, { ...selector, enabled })
+        return parseSessionConfigToggle(raw)
+    }
     async listCodexModelsForMachine(machineId: string): Promise<RpcListCodexModelsResponse> {
         return await this.machineRpc(machineId, RPC_METHODS.ListCodexModels, {}, MODEL_LIST_RPC_TIMEOUT_MS) as RpcListCodexModelsResponse
     }

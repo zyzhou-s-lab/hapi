@@ -136,6 +136,19 @@ function appendCollaborationInstructions(developerInstructions: string, proactiv
     return `${developerInstructions}\n\n${codexCollaborationSpawnAgentInstructions}\n\n<multi_agent_mode>${multiAgentMode}</multi_agent_mode>`;
 }
 
+/** Text HAPI actually sends as Codex developer instructions. Plan mode returns null. */
+export function displayedCodexDeveloperInstructions(args: {
+    local: boolean
+    plan: boolean
+    extra?: string
+    proactiveMultiAgent?: boolean
+}): string | null {
+    if (!args.local && args.plan) return null
+    const extra = args.extra?.trim()
+    const base = extra ? `${getCodexSystemPrompt()}\n\n${extra}` : getCodexSystemPrompt()
+    return args.local ? base : appendCollaborationInstructions(base, args.proactiveMultiAgent)
+}
+
 function mentionNameFromPath(path: string): string {
     const parts = path.split(/[\\/]/).filter(Boolean);
     return parts[parts.length - 1] ?? path;

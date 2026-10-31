@@ -63,7 +63,11 @@ export function classifyClaudeSlashCatalog(
         const localName = name.slice(name.lastIndexOf(':') + 1)
         const discoveredSkill = skillsByName.get(name) ?? skillsByName.get(localName)
         if (loadedSkills?.has(name) || (!loadedSkills && discoveredSkill)) {
-            skills.push({ name, description: discoveredSkill?.description })
+            skills.push({
+                name,
+                description: discoveredSkill?.description,
+                ...(discoveredSkill?.source ? { source: discoveredSkill.source } : {}),
+            })
         } else {
             commands.push(name)
         }

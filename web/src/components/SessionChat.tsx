@@ -1739,6 +1739,15 @@ function SessionChatInner(props: SessionChatProps) {
         })
     }, [navigate, props.session.id])
 
+    const handleToggleConfig = useCallback(() => {
+        setOutlineOpen(false)
+        navigate({
+            to: '/sessions/$sessionId/config',
+            params: { sessionId: props.session.id },
+            ...PRESERVE_SESSION_SIDEBAR_SCROLL,
+        })
+    }, [navigate, props.session.id])
+
     const handleToggleOutline = useCallback(() => {
         setOutlineOpen((open) => !open)
     }, [])
@@ -1986,6 +1995,8 @@ function SessionChatInner(props: SessionChatProps) {
                 filesActive={false}
                 onToggleOutline={handleToggleOutline}
                 outlineActive={outlineOpen}
+                onToggleConfig={handleToggleConfig}
+                configActive={false}
                 onToggleTerminal={canViewAgentTerminal ? () => setTerminalVisible(v => !v) : undefined}
                 terminalActive={terminalVisible}
                 api={props.api}

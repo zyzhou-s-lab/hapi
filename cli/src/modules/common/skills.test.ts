@@ -66,19 +66,17 @@ describe('listSkills', () => {
         expect(skills.map((skill) => skill.name)).toEqual(['amis'])
     })
 
-    it('lists symlinked skill directories and ignores invalid symlink targets', async () => {
+    it('ignores skill directory symlinks that point outside the skills root', async () => {
         const skillsRoot = join(homeDir, '.agents', 'skills')
         const source = join(sandboxDir, 'shared-skills', 'linked')
         await writeSkill(source, 'linked', 'Linked skill')
-        await mkdir(skillsRoot, { recursive: true })
+        await writeSkill(join(skillsRoot, 'local'), 'local', 'Local skill')
         await symlink(source, join(skillsRoot, 'linked'), 'dir')
         await symlink(join(sandboxDir, 'missing'), join(skillsRoot, 'broken'), 'dir')
-        await writeFile(join(sandboxDir, 'not-a-directory'), 'not a skill')
-        await symlink(join(sandboxDir, 'not-a-directory'), join(skillsRoot, 'file-link'))
 
         const skills = await listSkills()
 
-        expect(skills).toEqual([{ name: 'linked', description: 'Linked skill' }])
+        expect(skills.map((skill) => skill.name)).toEqual(['local'])
     })
 
     it('lists user skills from ~/.claude/skills', async () => {
@@ -254,7 +252,7 @@ describe('listSkills', () => {
 
         const skills = await listSkills(undefined, { flavor: 'codex' })
 
-        expect(skills).toEqual([{ name: 'plugin-skill', description: 'New marketplace skill' }])
+        expect(skills).toEqual([{ name: 'plugin-skill', description: 'New marketplace skill', source: 'plugin' }])
     })
 
     it('falls back to directory name when frontmatter is missing', async () => {
@@ -263,7 +261,7 @@ describe('listSkills', () => {
         await writeFile(join(skillDir, 'SKILL.md'), '# No Frontmatter\n')
 
         await expect(listSkills()).resolves.toEqual([
-            { name: 'no-frontmatter', description: undefined }
+            { name: 'no-frontmatter', description: undefined, source: 'user' }
         ])
     })
 
@@ -321,7 +319,7 @@ describe('listSkills', () => {
         const skills = await listSkills(workingDirectory)
 
         expect(skills).toHaveLength(1)
-        expect(skills[0]).toEqual({ name: 'shared', description: 'From agents' })
+        expect(skills[0]).toEqual({ name: 'shared', description: 'From agents', source: 'project' })
     })
 
     it('uses only cwd project skills outside a git repository', async () => {
@@ -351,7 +349,8 @@ describe('listSkills', () => {
         expect(sharedSkills).toHaveLength(1)
         expect(sharedSkills[0]).toEqual({
             name: 'shared',
-            description: 'Local shared skill'
+            description: 'Local shared skill',
+            source: 'project'
         })
     })
 
@@ -428,7 +427,8 @@ describe('listSkills', () => {
 
         await expect(listSkills()).resolves.toContainEqual({
             name: 'huge',
-            description: 'Huge skill'
+            description: 'Huge skill',
+            source: 'user'
         })
         await expect(resolveSkill('huge')).rejects.toThrow('Skill is too large to load')
     })

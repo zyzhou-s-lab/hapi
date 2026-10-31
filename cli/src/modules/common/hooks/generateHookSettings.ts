@@ -60,7 +60,7 @@ export type HookSettingsOptions = {
     includePreToolUse?: boolean;
 };
 
-function readMachineClaudeSettings(): ClaudeSettings {
+export function readMachineClaudeSettings(): ClaudeSettings {
     const configDir = process.env.CLAUDE_CONFIG_DIR || join(homedir(), '.claude');
     const settingsPath = join(configDir, 'settings.json');
 

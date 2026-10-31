@@ -5,6 +5,7 @@ import type { EnhancedMode, PermissionMode } from './loop';
 import type { CodexCliOverrides } from './utils/codexCliOverrides';
 import type { LocalLaunchExitReason } from '@/agent/localLaunchPolicy';
 import type { Metadata, SessionModel, SessionModelReasoningEffort } from '@/api/types';
+import { setSessionPromptLive } from '@/modules/common/sessionPrompts';
 
 type LocalLaunchFailure = {
     message: string;
@@ -74,6 +75,11 @@ export class CodexSession extends AgentSessionBase<EnhancedMode> {
         this.model = opts.model;
         this.modelReasoningEffort = opts.modelReasoningEffort;
         this.collaborationMode = opts.collaborationMode;
+        if (opts.collaborationMode) {
+            setSessionPromptLive(opts.client.sessionId, {
+                codex: { collaboration: opts.collaborationMode === 'plan' ? 'plan' : 'default' },
+            })
+        }
     }
 
     shouldReplayTranscriptHistory(): boolean {
@@ -140,6 +146,11 @@ export class CodexSession extends AgentSessionBase<EnhancedMode> {
 
     setCollaborationMode = (mode: EnhancedMode['collaborationMode']): void => {
         this.collaborationMode = mode;
+        setSessionPromptLive(this.client.sessionId, {
+            codex: {
+                collaboration: mode === 'plan' ? 'plan' : 'default',
+            },
+        })
         this.pushKeepAlive();
     };
 

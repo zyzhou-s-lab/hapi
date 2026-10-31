@@ -121,7 +121,7 @@ export async function buildHapiMcpBridge(
         };
     }
 
-    return {
+    const bridge = {
         server: {
             url: happyServer.url,
             stop: happyServer.stop
@@ -134,4 +134,5 @@ export async function buildHapiMcpBridge(
             }
         }
     };
+    return bridge;
 }

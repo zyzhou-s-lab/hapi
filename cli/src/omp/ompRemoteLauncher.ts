@@ -13,6 +13,7 @@ import type { OmpRuntimeConfigApplied, OmpRuntimeConfigRequest } from './session
 import type { PermissionMode } from './types';
 import { RPC_METHODS } from '@hapi/protocol/rpcMethods';
 import { buildOmpEnv } from './utils/config';
+import { setSessionPromptLive } from '@/modules/common/sessionPrompts';
 import { OmpRpcClient } from './rpc/OmpRpcClient';
 import { OmpRpcEventAdapter } from './rpc/OmpRpcEventAdapter';
 import { loadOmpEventAllowlist } from './rpc/eventAllowlist';
@@ -654,6 +655,9 @@ class OmpRemoteLauncher extends RemoteLauncherBase {
         this.currentModel = state.model ?? null;
         this.contextUsage = state.contextUsage ?? null;
         this.isStreaming = state.isStreaming;
+        if (state.systemPrompt) {
+            setSessionPromptLive(this.session.client.sessionId, { omp: { systemPrompt: state.systemPrompt } })
+        }
         this.thinkingState = {
             ...this.thinkingState,
             thinkingLevel: state.thinkingLevel ?? null

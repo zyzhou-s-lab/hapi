@@ -1,4 +1,5 @@
-import { resolve, sep } from 'path';
+import { dirname, resolve, sep } from 'path';
+import { pathInside, tryRealpath } from './configFilePath';
 
 export interface PathValidationResult {
     valid: boolean;
@@ -12,22 +13,37 @@ export interface PathValidationResult {
  * @returns Validation result
  */
 export function validatePath(targetPath: string, workingDirectory: string): PathValidationResult {
-    // Resolve both paths to absolute paths to handle path traversal attempts
     const resolvedTarget = resolve(workingDirectory, targetPath);
     const resolvedWorkingDir = resolve(workingDirectory);
+    const denied = {
+        valid: false,
+        error: `Access denied: Path '${targetPath}' is outside the working directory`,
+    };
+    if (!lexicalInside(resolvedTarget, resolvedWorkingDir)) return denied;
 
-    // Check if the resolved target path starts with the working directory
-    // This prevents access to files outside the working directory
-    const normalizedTarget = process.platform === 'win32' ? resolvedTarget.toLowerCase() : resolvedTarget
-    const normalizedWorkingDir = process.platform === 'win32' ? resolvedWorkingDir.toLowerCase() : resolvedWorkingDir
-    const workingDirPrefix = normalizedWorkingDir.endsWith(sep) ? normalizedWorkingDir : normalizedWorkingDir + sep
+    const realRoot = tryRealpath(resolvedWorkingDir);
+    if (!realRoot) return { valid: true };
 
-    if (normalizedTarget !== normalizedWorkingDir && !normalizedTarget.startsWith(workingDirPrefix)) {
-        return {
-            valid: false,
-            error: `Access denied: Path '${targetPath}' is outside the working directory`
-        };
+    const realTarget = tryRealpath(resolvedTarget);
+    if (realTarget) {
+        return pathInside(realTarget, realRoot) ? { valid: true } : denied;
     }
 
-    return { valid: true };
+    let current = resolvedTarget;
+    while (true) {
+        const parent = dirname(current);
+        if (parent === current) return { valid: true };
+        const realParent = tryRealpath(parent);
+        if (realParent) {
+            return pathInside(realParent, realRoot) ? { valid: true } : denied;
+        }
+        current = parent;
+    }
+}
+
+function lexicalInside(target: string, root: string): boolean {
+    const normalizedTarget = process.platform === 'win32' ? target.toLowerCase() : target;
+    const normalizedRoot = process.platform === 'win32' ? root.toLowerCase() : root;
+    const prefix = normalizedRoot.endsWith(sep) ? normalizedRoot : `${normalizedRoot}${sep}`;
+    return normalizedTarget === normalizedRoot || normalizedTarget.startsWith(prefix);
 }

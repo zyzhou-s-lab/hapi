@@ -5,6 +5,7 @@ import type {
     Machine,
     RunnerState,
     Session,
+    SessionInventory,
     SessionSummary,
     SyncEvent as ProtocolSyncEvent,
     WorktreeMetadata
@@ -172,12 +173,22 @@ export type GitStatusFiles = {
 export type SkillSummary = {
     name: string
     description?: string
+    source?: 'user' | 'project' | 'plugin' | 'system'
 }
 
 export type SkillsResponse = {
     success: boolean
     skills?: SkillSummary[]
     error?: string
+}
+
+export type SessionConfigResponse = {
+    success: boolean
+    error?: string
+    mcp?: SessionInventory['mcp']
+    hooks?: SessionInventory['hooks']
+    skills?: SessionInventory['skills']
+    prompts?: SessionInventory['prompts']
 }
 
 export type PushSubscriptionKeys = {

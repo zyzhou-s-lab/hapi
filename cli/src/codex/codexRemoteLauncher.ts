@@ -22,6 +22,8 @@ import { shouldIgnoreTerminalEvent } from './utils/terminalEventGuard';
 import { parseCodexSpecialCommand } from './codexSpecialCommands';
 import { extractErrorInfo } from '@/utils/errorUtils';
 import { RPC_METHODS } from '@hapi/protocol/rpcMethods';
+import { codexSkillSource, inventorySkills, readLiveSessionConfig } from '@/modules/common/sessionInventory';
+import { getErrorMessage, rpcError } from '@/modules/common/rpcResponses';
 import { createCodexSessionScanner, type CodexSessionScanner } from './utils/codexSessionScanner';
 import { createCodexTranscriptLocator, type CodexTranscriptLocator } from './utils/codexTranscriptLocator';
 import { convertCodexEvent, isCodexEventFromCurrentProcess } from './utils/codexEventConverter';
@@ -3587,6 +3589,7 @@ class CodexRemoteLauncher extends RemoteLauncherBase {
         });
 
         let nativeSkills: SkillMetadata[] = [];
+        let reportedSkills: Array<{ name: string; description: string; source?: 'user' | 'project' | 'plugin' | 'system' }> = [];
         let nativeSkillsAvailable = false;
         const refreshNativeSkills = async (forceReload: boolean): Promise<void> => {
             const response = await appServerClient.listSkills({
@@ -3599,14 +3602,38 @@ class CodexRemoteLauncher extends RemoteLauncherBase {
                 throw new Error('skills/list returned no usable inventory');
             }
             nativeSkills = inventory.skills.filter(skill => skill.enabled);
+            reportedSkills = nativeSkills.map(skill => {
+                const source = codexSkillSource(skill.scope);
+                return {
+                    name: skill.name,
+                    description: skill.description,
+                    ...(source ? { source } : {}),
+                };
+            });
+            // registerHandler overwrites. The common session handler answers
+            // until the first native skills/list succeeds, using a filesystem
+            // scan. This registration then wins and reports the native enabled
+            // list. Later refreshes replace it again so the closure sees the
+            // latest reportedSkills.
+            session.client.rpcHandlerManager.registerHandler(RPC_METHODS.ListSessionConfig, async () => {
+                try {
+                    const config = await readLiveSessionConfig({
+                        flavor: 'codex',
+                        cwd: session.path,
+                        sessionId: session.client.sessionId,
+                        startingMode: session.startingMode,
+                        skills: inventorySkills(reportedSkills),
+                    });
+                    return { success: true, ...config };
+                } catch (error) {
+                    return rpcError(getErrorMessage(error, 'Failed to read session config'));
+                }
+            });
             if (!nativeSkillsAvailable) {
                 nativeSkillsAvailable = true;
                 session.client.rpcHandlerManager.registerHandler(RPC_METHODS.ListSkills, async () => ({
                     success: true,
-                    skills: nativeSkills.map(skill => ({
-                        name: skill.name,
-                        description: skill.description
-                    }))
+                    skills: reportedSkills
                 }));
             }
         };

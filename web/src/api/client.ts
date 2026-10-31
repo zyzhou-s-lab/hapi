@@ -28,6 +28,7 @@ import type {
     HapiSessionExportResponse,
     HubHealthResponse,
     SessionResponse,
+    SessionConfigResponse,
     SessionTitleSuggestionResponse,
     SessionsResponse
 } from '@/types/api'
@@ -69,7 +70,7 @@ import type {
     UploadFileResponse
 } from '@hapi/protocol/apiTypes'
 import type { AgentFlavor, MessageDeliveryMode } from '@hapi/protocol'
-import type { CancelMessageResponse, ProbeAgentSkillsResponse, SteerQueuedMessageResponse } from '@hapi/protocol/schemas'
+import type { CancelMessageResponse, ProbeAgentSkillsResponse, SessionConfigDetailResult, SessionConfigItemSelector, SessionConfigToggleResult, SteerQueuedMessageResponse } from '@hapi/protocol/schemas'
 import type { TranscriptionMode, TranscriptionProvider, TranscriptionProviderInfo } from '@hapi/protocol/voice'
 import type { ForkRouteResult } from '../../../fork-features/session-fork/rpcPayloads'
 
@@ -428,6 +429,24 @@ export class ApiClient {
         return await this.request<GitCommandResponse>(`/api/sessions/${encodeURIComponent(sessionId)}/git-status`)
     }
 
+    async getSessionConfig(sessionId: string): Promise<SessionConfigResponse> {
+        return await this.request<SessionConfigResponse>(`/api/sessions/${encodeURIComponent(sessionId)}/config`)
+    }
+
+    async getSessionConfigItem(sessionId: string, item: SessionConfigItemSelector): Promise<SessionConfigDetailResult> {
+        return await this.request<SessionConfigDetailResult>(`/api/sessions/${encodeURIComponent(sessionId)}/config/item`, {
+            method: 'POST',
+            body: JSON.stringify(item),
+        })
+    }
+
+    async setSessionConfigItemEnabled(sessionId: string, item: SessionConfigItemSelector, enabled: boolean): Promise<SessionConfigToggleResult> {
+        return await this.request<SessionConfigToggleResult>(`/api/sessions/${encodeURIComponent(sessionId)}/config/item/enabled`, {
+            method: 'POST',
+            body: JSON.stringify({ ...item, enabled }),
+        })
+    }
+
     async getGitDiffNumstat(sessionId: string, staged: boolean): Promise<GitCommandResponse> {
         const params = new URLSearchParams()
         params.set('staged', staged ? 'true' : 'false')
@@ -513,6 +532,13 @@ export class ApiClient {
         const params = new URLSearchParams()
         params.set('path', path)
         return await this.request<FileReadResponse>(`/api/sessions/${encodeURIComponent(sessionId)}/file?${params.toString()}`)
+    }
+
+    async authorizeSessionFile(sessionId: string, path: string): Promise<{ success: boolean; realpath?: string; error?: string }> {
+        return await this.request(`/api/sessions/${encodeURIComponent(sessionId)}/file-authorization`, {
+            method: 'POST',
+            body: JSON.stringify({ path }),
+        })
     }
 
     async writeSessionFile(sessionId: string, path: string, content: string, expectedHash: string): Promise<FileWriteResponse> {

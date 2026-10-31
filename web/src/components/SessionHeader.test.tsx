@@ -83,6 +83,34 @@ describe('resolveSessionHeaderMachineLabel', () => {
     })
 })
 
+describe('SessionHeader config toggle', () => {
+    it('places a pressed config button that returns to the conversation', () => {
+        const onToggleConfig = vi.fn()
+        render(
+            <QueryClientProvider client={new QueryClient()}>
+                <ToastProvider>
+                    <I18nProvider>
+                        <SessionHeader
+                            session={baseSession()}
+                            onBack={vi.fn()}
+                            onToggleOutline={vi.fn()}
+                            onToggleConfig={onToggleConfig}
+                            configActive
+                            api={null}
+                        />
+                    </I18nProvider>
+                </ToastProvider>
+            </QueryClientProvider>
+        )
+
+        const button = screen.getByRole('button', { name: 'Return to conversation' })
+        expect(screen.getByRole('button', { name: 'Back' })).toBeTruthy()
+        expect(button).toHaveAttribute('aria-pressed', 'true')
+        fireEvent.click(button)
+        expect(onToggleConfig).toHaveBeenCalledOnce()
+    })
+})
+
 describe('SessionHeader', () => {
     it('hides title generation when the Hub does not advertise the capability', () => {
         const api = {

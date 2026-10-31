@@ -5,6 +5,29 @@ import { AgentConfigDescriptorSchema } from './agentConfig'
 import { OMP_EFFORT_LEVELS, OMP_THINKING_LEVELS } from './omp'
 import { MachineAgentSkillsSchema } from './forkAgentSkills'
 
+export {
+    SessionInventorySchema,
+    parseSessionConfigRpc,
+    SessionConfigItemSelectorSchema,
+    parseSessionConfigDetail,
+    parseSessionConfigToggle,
+    redactConfigSecrets,
+    asMarkdownRedaction,
+    sessionConfigLock,
+    type SessionInventory,
+    type SessionInventoryHook,
+    type SessionInventoryMcpServer,
+    type SessionInventorySkill,
+    type SessionInventorySource,
+    type SessionPromptItem,
+    type SessionPromptLoad,
+    type SessionPromptScope,
+    type SessionConfigRpcResult,
+    type SessionConfigDetail,
+    type SessionConfigDetailResult,
+    type SessionConfigToggleResult,
+    type SessionConfigItemSelector,
+} from './sessionInventory'
 export * from './forkAgentSkills'
 
 export const PermissionModeSchema = z.enum(PERMISSION_MODES)
