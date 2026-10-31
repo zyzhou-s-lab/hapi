@@ -57,10 +57,14 @@ export function mergeLayout(saved: WorkLayout | null, defaults: WorkLayout): Wor
     return { revision: saved.revision, regions }
 }
 
-export function bindTrainingSlot(layout: WorkLayout, lineId: string, run: string): WorkLayout {
+export function bindTrainingSlot(layout: WorkLayout, input: { lineId: string; run: string; instanceId: string; xAxis?: string; metrics?: string }): WorkLayout {
     const main = layout.regions.main ?? []
-    const slot = { cardId: 'example.training-curves', args: { run, lineId } }
-    const index = main.findIndex((item) => item.cardId === slot.cardId && item.args?.lineId === lineId)
+    const index = main.findIndex((item) => item.cardId === 'example.training-curves' && item.args?.instanceId === input.instanceId)
+    const args: Record<string, string> = { ...(index >= 0 ? main[index]?.args : {}), run: input.run, lineId: input.lineId, instanceId: input.instanceId }
+    if (input.metrics && input.metrics.length > 0) args.metrics = input.metrics
+    else delete args.metrics
+    if (input.xAxis && input.xAxis.length > 0) args.xAxis = input.xAxis
+    const slot = { cardId: 'example.training-curves', args }
     const next = index >= 0 ? main.map((item, itemIndex) => itemIndex === index ? slot : item) : [...main, slot]
     return { revision: LAYOUT_REVISION, regions: { ...layout.regions, main: next } }
 }

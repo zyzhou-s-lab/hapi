@@ -21,6 +21,12 @@ const bindSchema = z.object({
     lineId: z.string(),
     run: z.string(),
     metrics: z.array(z.string()).optional(),
+    instanceId: z.string().optional(),
+    xAxis: z.string().optional(),
+})
+
+const unbindSchema = z.object({
+    instanceId: z.string(),
 })
 
 function bearerToken(header: string | undefined): string | null {
@@ -87,8 +93,7 @@ export function mountCliWorkRoutes(app: Hono<WebAppEnv>, deps: {
         const parsed = bindSchema.safeParse(await c.req.json().catch(() => null))
         if (!parsed.success) return c.json({ error: 'Invalid body' }, 400)
         try {
-            const metrics = parsed.data.metrics ?? []
-            const layout = ready.engine.getWorkLines().bindTrainingLine(ready.account.id, parsed.data.lineId, parsed.data.run, metrics)
+            const bound = ready.engine.getWorkLines().bindTrainingLine(ready.account.id, parsed.data)
             deps.getSseManager()?.broadcast({
                 type: 'card-invalidated',
                 namespace: ready.account.defaultNamespace,
@@ -98,7 +103,27 @@ export function mountCliWorkRoutes(app: Hono<WebAppEnv>, deps: {
             pushTrainingCard(ready.account.id, {
                 lineId: parsed.data.lineId,
                 run: parsed.data.run,
-                metrics: storedTrainingMetrics(layout, parsed.data.lineId, parsed.data.run),
+                metrics: storedTrainingMetrics(bound.layout, bound.instanceId),
+                instanceId: bound.instanceId,
+            })
+            return c.json({ layout: bound.layout, instanceId: bound.instanceId })
+        } catch (error) {
+            return mapError(c, error)
+        }
+    })
+
+    routes.delete('/training-card/:instanceId', async (c) => {
+        const ready = open(c)
+        if (ready instanceof Response) return ready
+        const parsed = unbindSchema.safeParse({ instanceId: c.req.param('instanceId') })
+        if (!parsed.success) return c.json({ error: 'Invalid body' }, 400)
+        try {
+            const layout = ready.engine.getWorkLines().unbindTrainingCard(ready.account.id, parsed.data.instanceId)
+            deps.getSseManager()?.broadcast({
+                type: 'card-invalidated',
+                namespace: ready.account.defaultNamespace,
+                accountId: ready.account.id,
+                topic: 'work-layout',
             })
             return c.json({ layout })
         } catch (error) {
@@ -125,10 +150,8 @@ function isHubBaseCliToken(token: string): boolean {
     }
 }
 
-function storedTrainingMetrics(layout: WorkLayout, lineId: string, run: string): string[] {
-    const storedLine = lineId.trim()
-    const storedRun = run.trim()
-    const slot = layout.regions.main?.find((item) => item.cardId === 'example.training-curves' && item.args?.lineId === storedLine && item.args.run === storedRun)
+function storedTrainingMetrics(layout: WorkLayout, instanceId: string): string[] {
+    const slot = layout.regions.main?.find((item) => item.cardId === 'example.training-curves' && item.args?.instanceId === instanceId)
     const raw = slot?.args?.metrics
     if (!raw) return []
     try {

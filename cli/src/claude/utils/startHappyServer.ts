@@ -29,7 +29,7 @@ import {
 } from '@hapi/protocol/sessionCitation'
 import { PingPeerError, formatInspectPeerReport, formatPeerSessionsList, inspectPeer, listPeerSessions, peerListFetchLimit, pingPeer } from "@/modules/pingPeer/pingPeer";
 import { readSettings } from '@/persistence';
-import { bindTrainingCard, formatWorkResult, queryTrainingRun, registerTrainingRun } from '@/modules/training/trainingMcp';
+import { bindTrainingCard, formatWorkResult, queryTrainingRun, registerTrainingRun, unbindTrainingCard } from '@/modules/training/trainingMcp';
 type StartHappyServerOptions = {
     emitTitleSummary?: boolean;
     enableChangeTitle?: boolean;
@@ -538,15 +538,27 @@ function createHapiMcpServer(
         return trainingResult(response.status, response.body);
     });
     mcp.registerTool<any, any>('bind_training_card', {
-        description: 'Show a registered run on a work-line training card. metrics empty means every metric. The open workbench updates immediately.',
+        description: 'Add a training card for a registered run, or update one card when instanceId is set. Omit instanceId to add another card, even for the same run. metrics empty means every metric. xAxis is the card default horizontal axis.',
         title: 'Bind Training Card',
         inputSchema: z.object({
             lineId: z.string().describe('Work line id'),
             run: z.string().describe('Registered run name'),
             metrics: z.array(z.string()).optional().describe('Metric names to draw. Omit or pass [] to draw every metric.'),
+            instanceId: z.string().optional().describe('Existing card id. Omit to create a new card.'),
+            xAxis: z.string().optional().describe('Default x axis id, such as _step or a logged metric.'),
         }),
-    }, async (args: { lineId: string; run: string; metrics?: string[] }) => {
+    }, async (args: { lineId: string; run: string; metrics?: string[]; instanceId?: string; xAxis?: string }) => {
         const response = await bindTrainingCard(hub, args);
+        return trainingResult(response.status, response.body);
+    });
+    mcp.registerTool<any, any>('unbind_training_card', {
+        description: 'Remove one training card by its instanceId. Other cards for the same run stay.',
+        title: 'Unbind Training Card',
+        inputSchema: z.object({
+            instanceId: z.string().describe('Card instance id returned by bind_training_card'),
+        }),
+    }, async (args: { instanceId: string }) => {
+        const response = await unbindTrainingCard(hub, args.instanceId);
         return trainingResult(response.status, response.body);
     });
 
@@ -626,8 +638,8 @@ export async function startHappyServer(client: ApiSessionClient, options: StartH
     }));
 
     const toolNames = enableChangeTitle
-        ? ['change_title', 'display_image', 'display_video', 'display_media', 'list_peers', 'ping_peer', 'inspect_peer', 'send_file', 'register_training_run', 'query_training_run', 'bind_training_card']
-        : ['display_image', 'display_video', 'display_media', 'list_peers', 'ping_peer', 'inspect_peer', 'send_file', 'register_training_run', 'query_training_run', 'bind_training_card'];
+        ? ['change_title', 'display_image', 'display_video', 'display_media', 'list_peers', 'ping_peer', 'inspect_peer', 'send_file', 'register_training_run', 'query_training_run', 'bind_training_card', 'unbind_training_card']
+        : ['display_image', 'display_video', 'display_media', 'list_peers', 'ping_peer', 'inspect_peer', 'send_file', 'register_training_run', 'query_training_run', 'bind_training_card', 'unbind_training_card'];
     if (options.skillLookup) {
         toolNames.push('skill_lookup');
     }

@@ -355,17 +355,21 @@ export class WorkLinesStore {
         `).run(accountId, surface, JSON.stringify(normalized), Date.now())
         return normalized
     }
-    bindTrainingLine(accountId: number, lineId: string, run: string, metrics: string[] = []): WorkLayout {
-        const cleanLine = cleanRequired(lineId, 'lineId', LAYOUT_VALUE_MAX)
-        const cleanRun = cleanRequired(run, 'run', LAYOUT_VALUE_MAX)
-        const cleanMetrics = [...new Set(metrics.map((metric) => metric.trim()).filter((metric) => metric.length > 0))]
+    bindTrainingLine(accountId: number, input: { lineId: string; run: string; metrics?: string[]; instanceId?: string; xAxis?: string }): { layout: WorkLayout; instanceId: string } {
+        const cleanLine = cleanRequired(input.lineId, 'lineId', LAYOUT_VALUE_MAX)
+        const cleanRun = cleanRequired(input.run, 'run', LAYOUT_VALUE_MAX)
+        const cleanMetrics = [...new Set((input.metrics ?? []).map((metric) => metric.trim()).filter((metric) => metric.length > 0))]
         if (cleanMetrics.length > 32 || cleanMetrics.some((metric) => metric.length > LAYOUT_VALUE_MAX)) {
             throw new WorkMapError('metrics 不合法')
         }
+        const requestedId = input.instanceId?.trim() ?? ''
+        if (requestedId.length > LAYOUT_VALUE_MAX) throw new WorkMapError('instanceId 不合法')
+        const axisProvided = input.xAxis !== undefined
+        const cleanAxis = input.xAxis?.trim() ?? ''
+        if (cleanAxis.length > LAYOUT_VALUE_MAX) throw new WorkMapError('xAxis 不合法')
         return this.db.transaction(() => {
             this.requireLine(accountId, cleanLine)
             if (!this.getTrainingRun(accountId, cleanRun)) throw new WorkMapError('训练不存在', 404)
-            // revision stays below the client LAYOUT_REVISION so a later default card can still be merged.
             const current = this.getLayout(accountId, 'workbench') ?? {
                 revision: 1,
                 regions: {
@@ -375,12 +379,37 @@ export class WorkLinesStore {
                 },
             }
             const main = [...(current.regions.main ?? [])]
-            const args: Record<string, string> = { run: cleanRun, lineId: cleanLine }
+            const index = requestedId.length > 0
+                ? main.findIndex((item) => item.cardId === 'example.training-curves' && item.args?.instanceId === requestedId)
+                : -1
+            if (requestedId.length > 0 && (index < 0 || main[index]?.args?.lineId !== cleanLine)) {
+                throw new WorkMapError('卡片不存在', 404)
+            }
+            const id = requestedId.length > 0 ? requestedId : randomUUID()
+            const previous = index >= 0 ? main[index]?.args ?? {} : {}
+            const args: Record<string, string> = { ...previous, run: cleanRun, lineId: cleanLine, instanceId: id }
             if (cleanMetrics.length > 0) args.metrics = JSON.stringify(cleanMetrics)
+            else delete args.metrics
+            if (axisProvided) {
+                if (cleanAxis.length > 0) args.xAxis = cleanAxis
+                else delete args.xAxis
+            }
             const slot = { cardId: 'example.training-curves', args }
-            const index = main.findIndex((item) => item.cardId === slot.cardId && item.args?.lineId === cleanLine)
             if (index >= 0) main[index] = slot
             else main.push(slot)
+            const layout = this.putLayout(accountId, 'workbench', { revision: current.revision, regions: { ...current.regions, main } })
+            return { layout, instanceId: id }
+        })()
+    }
+
+    unbindTrainingCard(accountId: number, instanceId: string): WorkLayout {
+        const id = cleanRequired(instanceId, 'instanceId', LAYOUT_VALUE_MAX)
+        return this.db.transaction(() => {
+            const current = this.getLayout(accountId, 'workbench')
+            const main = [...(current?.regions.main ?? [])]
+            const index = main.findIndex((item) => item.cardId === 'example.training-curves' && item.args?.instanceId === id)
+            if (!current || index < 0) throw new WorkMapError('卡片不存在', 404)
+            main.splice(index, 1)
             return this.putLayout(accountId, 'workbench', { revision: current.revision, regions: { ...current.regions, main } })
         })()
     }

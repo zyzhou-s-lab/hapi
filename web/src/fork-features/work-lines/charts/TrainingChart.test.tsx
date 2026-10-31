@@ -38,10 +38,10 @@ const evalLoss: TrainingSeries = {
     points: [{ step: 2, value: 0.4 }],
 }
 
-function renderChart(run = 'exp-1', extra?: { lineId?: string; xSource?: readonly TrainingSeries[] }) {
+function renderChart(instanceId = 'card-1', extra?: { xSource?: readonly TrainingSeries[]; xAxisDefault?: string }) {
     return render(
         <I18nProvider>
-            <TrainingChart run={run} lineId={extra?.lineId ?? 'line-1'} series={[loss, evalLoss]} xSource={extra?.xSource} />
+            <TrainingChart instanceId={instanceId} xAxisDefault={extra?.xAxisDefault} series={[loss, evalLoss]} xSource={extra?.xSource} />
         </I18nProvider>,
     )
 }
@@ -82,16 +82,16 @@ describe('TrainingChart', () => {
         localStorage.setItem('hapi.training.xAxis', 'epoch')
         const opened = renderChart()
         expect(localStorage.getItem('hapi.training.prefs')).toBeNull()
-        expect(localStorage.getItem(trainingHiddenStorageKey(trainingPrefId('line-1', 'exp-1')))).toBeNull()
+        expect(localStorage.getItem(trainingHiddenStorageKey(trainingPrefId('card-1')))).toBeNull()
         expect(localStorage.getItem('hapi.training.xAxis')).toBe('epoch')
         opened.unmount()
         renderChart()
         expect(localStorage.getItem('hapi.training.xAxis')).toBe('epoch')
         fireEvent.change(screen.getByRole('combobox'), { target: { value: '_runtime' } })
         expect(localStorage.getItem('hapi.training.xAxis')).toBeNull()
-        expect(localStorage.getItem(trainingXAxisStorageKey(trainingPrefId('line-1', 'exp-1')))).toBe('_runtime')
+        expect(localStorage.getItem(trainingXAxisStorageKey(trainingPrefId('card-1')))).toBe('_runtime')
         fireEvent.change(screen.getByRole('combobox'), { target: { value: '_step' } })
-        expect(localStorage.getItem(trainingXAxisStorageKey(trainingPrefId('line-1', 'exp-1')))).toBeNull()
+        expect(localStorage.getItem(trainingXAxisStorageKey(trainingPrefId('card-1')))).toBeNull()
         expect(localStorage.getItem('hapi.training.prefs')).toBeNull()
     })
 
@@ -113,27 +113,29 @@ describe('TrainingChart', () => {
         expect(screen.queryByRole('checkbox', { name: 'loss' })).toBeNull()
     })
 
-    it('remembers hidden metrics and the x axis for that line and run only', () => {
-        const first = renderChart('exp-1', { lineId: 'line-1' })
+    it('remembers hidden metrics and the x axis for that card only', () => {
+        const first = renderChart('card-a')
         fireEvent.click(screen.getByRole('button', { name: 'loss, eval' }))
         fireEvent.click(screen.getByRole('checkbox', { name: 'eval' }))
         fireEvent.change(screen.getByRole('combobox'), { target: { value: '_runtime' } })
         first.unmount()
 
-        renderChart('exp-1', { lineId: 'line-1' })
+        renderChart('card-a')
         fireEvent.click(screen.getByRole('button', { name: 'loss' }))
         expect(screen.getByRole('checkbox', { name: 'eval' })).not.toBeChecked()
         expect(screen.getByRole('checkbox', { name: 'loss' })).toBeChecked()
         expect(screen.getByRole('combobox')).toHaveValue('_runtime')
         expect(localStorage.getItem('hapi.training.xAxis')).toBeNull()
-        expect(localStorage.getItem('hapi.training.xAxis:exp-1')).toBeNull()
-        expect(localStorage.getItem(trainingXAxisStorageKey(trainingPrefId('line-1', 'exp-1')))).toBe('_runtime')
+        expect(localStorage.getItem(trainingXAxisStorageKey(trainingPrefId('card-a')))).toBe('_runtime')
         cleanup()
 
-        renderChart('exp-1', { lineId: 'line-2' })
+        renderChart('card-b', {
+            xAxisDefault: 'epoch',
+            xSource: [loss, evalLoss, { id: 'epoch', name: 'epoch', points: [{ step: 1, value: 0 }, { step: 2, value: 1 }] }],
+        })
+        expect(screen.getByRole('combobox')).toHaveValue('epoch')
         fireEvent.click(screen.getByRole('button', { name: 'loss, eval' }))
         expect(screen.getByRole('checkbox', { name: 'eval' })).toBeChecked()
-        expect(screen.getByRole('combobox')).toHaveValue('_step')
     })
 
     it('explains a custom axis only when its values change direction', () => {
