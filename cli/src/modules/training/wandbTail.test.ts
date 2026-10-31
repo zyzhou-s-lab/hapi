@@ -417,9 +417,31 @@ write_file(path, payloads)
             const file = await writeRun(dir, 'dense')
             const bytes = readFileSync(file)
             const total = 4000
-            const pointsPerBlock = Math.ceil(32768 / (bytes.length / total))
-            expect(bytes.length).toBeGreaterThan(80_000)
-            bytes[40_000] ^= 0xff
+            const blockBytes = 32_768
+            let block = -1
+            for (let index = 0; (index + 1) * blockBytes + 6 < bytes.length; index += 1) {
+                const kind = bytes[(index + 1) * blockBytes + 6]
+                if (kind === 3 || kind === 4) {
+                    block = index
+                    break
+                }
+            }
+            expect(block).toBeGreaterThanOrEqual(0)
+            expect([3, 4]).toContain(bytes[(block + 1) * blockBytes + 6])
+            let completions = 0
+            let cursor = block === 0 ? 7 : block * blockBytes
+            const blockEnd = (block + 1) * blockBytes
+            while (cursor + 7 <= blockEnd && cursor + 7 <= bytes.length) {
+                const room = blockEnd - cursor
+                if (room < 7) break
+                const length = bytes.readUInt16LE(cursor + 4)
+                const kind = bytes[cursor + 6]
+                if (length < 0 || 7 + length > room) break
+                if (kind === 1 || kind === 4) completions += 1
+                cursor += 7 + length
+            }
+            const damaged = block === 0 ? 20 : block * blockBytes + 7
+            bytes[damaged] ^= 0xff
             writeFileSync(file, bytes)
             const flipped = await readFile(file)
             const points = flipped.lines.filter((line) => line.kind === 'point')
@@ -427,7 +449,7 @@ write_file(path, payloads)
             expect(flipped.code).toBe(0)
             expect(flipped.lines.at(-1)?.kind).toBe('exit')
             expect(skips).toHaveLength(1)
-            expect(points.length).toBeGreaterThanOrEqual(total - pointsPerBlock)
+            expect(points.length).toBeGreaterThanOrEqual(total - completions - 1)
         } finally {
             rmSync(dir, { recursive: true, force: true })
         }
