@@ -1,5 +1,6 @@
 import { lstatSync, realpathSync, statSync, type Stats } from 'node:fs'
-import { isAbsolute, relative, resolve, sep } from 'node:path'
+import { homedir } from 'node:os'
+import { isAbsolute, join, relative, resolve, sep } from 'node:path'
 
 export function pathInside(child: string, root: string): boolean {
     const prefix = root.endsWith(sep) ? root : `${root}${sep}`
@@ -14,13 +15,48 @@ export function tryRealpath(path: string): string | undefined {
     }
 }
 
+export type ListedConfigFileOptions = {
+    /** When false, a file outside the session directory is not openable. */
+    allowOutside?: boolean
+    /** Home used for user-config roots. Defaults to HOME or the OS home. */
+    home?: string
+}
+
+function configHome(home?: string): string {
+    const selected = home?.trim() || process.env.HOME || process.env.USERPROFILE || homedir()
+    return tryRealpath(selected) ?? resolve(selected)
+}
+
+/** User and global config locations. Repo-named files outside these roots stay closed. */
+export function isUserConfigRealpath(real: string, home?: string): boolean {
+    const base = configHome(home)
+    const roots = [
+        join(base, '.claude'),
+        join(base, '.claude.json'),
+        join(base, '.codex'),
+        join(base, '.config', 'opencode'),
+        join(base, '.agents'),
+        join(base, '.cursor'),
+        join(base, '.omp'),
+        join(base, '.grok'),
+        join(base, '.copilot'),
+    ]
+    for (const env of [process.env.CLAUDE_CONFIG_DIR, process.env.CODEX_HOME, process.env.GROK_HOME, process.env.PI_CODING_AGENT_DIR]) {
+        if (env?.trim()) roots.push(resolve(env.trim()))
+    }
+    return roots.some((root) => {
+        const realRoot = tryRealpath(root) ?? resolve(root)
+        return pathInside(real, realRoot)
+    })
+}
+
 /**
  * Path the file page can open.
  * Inside the session directory this is the relative path.
- * A real config file outside it is the absolute real path.
+ * Outside it, only a real file under a user or global config root.
  * A symlink whose target leaves its parent directory is omitted.
  */
-export function listedConfigFilePath(file: string, cwd: string): string | undefined {
+export function listedConfigFilePath(file: string, cwd: string, options: ListedConfigFileOptions = {}): string | undefined {
     let linked: Stats
     try {
         linked = lstatSync(file)
@@ -42,6 +78,8 @@ export function listedConfigFilePath(file: string, cwd: string): string | undefi
     }
     const rel = relative(root, real)
     if (rel && !rel.startsWith('..') && !isAbsolute(rel)) return rel.split(sep).join('/')
+    if (options.allowOutside === false) return undefined
+    if (!isUserConfigRealpath(real, options.home)) return undefined
     return real.length <= 4096 ? real : undefined
 }
 

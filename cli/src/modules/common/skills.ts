@@ -346,7 +346,7 @@ async function discoverSkills(workingDirectory?: string, options: { flavor?: str
 export async function listInventorySkills(workingDirectory?: string, options: { flavor?: string } = {}): Promise<Array<SkillSummary & { enabled?: boolean; filePath?: string }>> {
     const skills = await discoverSkills(workingDirectory, options);
     return skills.map(({ name, description, source, enabled, filePath }) => {
-        const listed = workingDirectory ? listedConfigFilePath(filePath, workingDirectory) : undefined
+        const listed = workingDirectory ? listedConfigFilePath(filePath, workingDirectory, { home: getHomeDirectory() }) : undefined
         return {
             name,
             ...(description ? { description } : {}),

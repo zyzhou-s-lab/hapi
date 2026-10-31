@@ -200,6 +200,7 @@ type ConfigFileOrigin = {
     cwd: string;
     text: string;
     source?: SessionInventorySource;
+    allowOutside?: boolean;
 };
 
 function publishFilePath(filePath: string | undefined): string | undefined {
@@ -215,12 +216,12 @@ function fileLocation(origin: ConfigFileOrigin | undefined, key: string): { file
     return { filePath, ...(line ? { line } : {}) };
 }
 
-function hookScriptPath(command: string, cwd: string): string | undefined {
+function hookScriptPath(command: string, cwd: string, allowOutside = true): string | undefined {
     const tokens = command.match(/"([^"]*)"|'([^']*)'|(\S+)/g)?.map((token) => token.replace(/^['"]|['"]$/g, '')) ?? [];
     for (const token of tokens) {
         if (!(isAbsolute(token) || token.startsWith('.'))) continue;
         const candidate = isAbsolute(token) ? token : resolve(cwd, token);
-        const listed = listedConfigFilePath(candidate, cwd);
+        const listed = listedConfigFilePath(candidate, cwd, { allowOutside });
         if (!listed) continue;
         const real = tryRealpath(isAbsolute(listed) ? listed : resolve(cwd, listed));
         if (!real) continue;
@@ -250,7 +251,7 @@ function hooksFromFile(path: string, cwd: string, source: SessionInventorySource
     const text = readTextFile(path);
     if (!text) return [];
     try {
-        return hooksFromClaudeSettings(JSON.parse(text) as unknown, { file: path, cwd, text, source });
+        return hooksFromClaudeSettings(JSON.parse(text) as unknown, { file: path, cwd, text, source, allowOutside: source !== 'project' });
     } catch {
         return [];
     }
@@ -328,7 +329,9 @@ export function hooksFromClaudeSettings(settings: unknown, origin?: ConfigFileOr
                 const identity = `${event}\0${matcher ?? ''}\0${source}\0${commandName ?? ''}`;
                 const index = seen.get(identity) ?? 0;
                 seen.set(identity, index + 1);
-                const scriptPath = origin && source !== 'injected' ? hookScriptPath(command, origin.cwd) : undefined;
+                const scriptPath = origin && source !== 'injected'
+                    ? hookScriptPath(command, origin.cwd, origin.allowOutside !== false)
+                    : undefined;
                 items.push({
                     event,
                     source,

@@ -292,11 +292,14 @@ export default function FilePage() {
         && decodedContent.length > 0
         && contentSizeBytes <= MAX_COPYABLE_FILE_BYTES
 
+    const outsideWorkspace = filePath.startsWith('/') || /^[A-Za-z]:[\\/]/.test(filePath)
     const canDownload = fileContentResult?.success === true && Boolean(fileContentResult.content)
     const canEdit = fileContentResult?.success === true
         && typeof fileContentResult.hash === 'string'
         && !binaryFile
         && !imagePreviewUrl
+        && !outsideWorkspace
+
 
     const [displayMode, setDisplayMode] = useState<'diff' | 'file'>(() => diffRequested ? 'diff' : 'file')
     const fileScrollRef = useRef<HTMLDivElement>(null)

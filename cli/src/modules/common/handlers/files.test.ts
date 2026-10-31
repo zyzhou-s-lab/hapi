@@ -120,4 +120,56 @@ describe('file RPC handlers', () => {
             await rm(outside, { recursive: true, force: true })
         }
     })
+
+    it('does not write a whitelisted file outside the working directory', async () => {
+        const outside = await mkdtemp(join(tmpdir(), 'hapi-file-write-'))
+        const allowedFile = join(outside, 'CLAUDE.md')
+        await writeFile(allowedFile, 'project rules')
+        const allowedReal = await realpath(allowedFile)
+        const rpcWithAllow = new RpcHandlerManager({ scopePrefix: 'session-write' })
+        registerFileHandlers(rpcWithAllow, rootDir, async () => new Set([allowedReal]))
+        try {
+            const response = await rpcWithAllow.handleRequest({
+                method: 'session-write:writeFile',
+                params: JSON.stringify({
+                    path: allowedFile,
+                    content: Buffer.from('pwned').toString('base64'),
+                    expectedHash: createHash('sha256').update('project rules').digest('hex'),
+                }),
+            })
+            const parsed = JSON.parse(response) as FileResponse
+            expect(parsed.success).toBe(false)
+            expect(parsed.error).toContain('outside the working directory')
+            expect(await readFile(allowedFile, 'utf8')).toBe('project rules')
+        } finally {
+            await rm(outside, { recursive: true, force: true })
+        }
+    })
+
+    it('reuses the outside-file whitelist for a short time', async () => {
+        const outside = await mkdtemp(join(tmpdir(), 'hapi-file-cache-'))
+        const allowedFile = join(outside, 'CLAUDE.md')
+        await writeFile(allowedFile, 'project rules')
+        const allowedReal = await realpath(allowedFile)
+        let calls = 0
+        const rpcWithAllow = new RpcHandlerManager({ scopePrefix: 'session-cache' })
+        registerFileHandlers(rpcWithAllow, rootDir, async () => {
+            calls += 1
+            return new Set([allowedReal])
+        })
+        const read = async () => {
+            const response = await rpcWithAllow.handleRequest({
+                method: 'session-cache:readFile',
+                params: JSON.stringify({ path: allowedFile }),
+            })
+            return JSON.parse(response) as FileResponse
+        }
+        try {
+            expect((await read()).success).toBe(true)
+            expect((await read()).success).toBe(true)
+            expect(calls).toBe(1)
+        } finally {
+            await rm(outside, { recursive: true, force: true })
+        }
+    })
 })

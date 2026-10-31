@@ -303,15 +303,17 @@ function pushFile(drafts: Draft[], input: {
     note?: string
     codexCapped?: boolean
     stripFrontmatter?: boolean
+    allowOutside?: boolean
 }): void {
     const body = readBody(input.path)
     if (!body || !body.text.trim()) return
+    const filePath = listedConfigFilePath(input.path, input.cwd, { allowOutside: input.allowOutside, home: input.home })
     drafts.push({
         role: 'user',
         scope: input.scope,
         title: input.title,
         pathLabel: displayPath(input.path, input.cwd, input.home),
-        ...(listedConfigFilePath(input.path, input.cwd) ? { filePath: listedConfigFilePath(input.path, input.cwd) } : {}),
+        ...(filePath ? { filePath } : {}),
         ...(input.load ? { load: input.load } : {}),
         ...(input.match ? { match: input.match } : {}),
         note: hasImport(body.text) ? 'no-import' : input.note,
@@ -768,7 +770,17 @@ function collectOpencode(input: CollectInput, live: SessionPromptLive | undefine
             const cwdAbs = resolve(cwd)
             const inside = (root: string) => abs === root || abs.startsWith(`${root}${sep}`)
             if (!isAbsolute(entry) && !inside(baseAbs) && !inside(cwdAbs)) return
-            pushFile(user, { scope: 'project', title: path.split(sep).pop() || 'instruction.md', path, cwd, home })
+            const cwdResolved = resolve(cwd)
+            const configResolved = resolve(configPath)
+            const configInRepo = configResolved === cwdResolved || configResolved.startsWith(`${cwdResolved}${sep}`)
+            pushFile(user, {
+                scope: 'project',
+                title: path.split(sep).pop() || 'instruction.md',
+                path,
+                cwd,
+                home,
+                allowOutside: !(configInRepo && isAbsolute(entry)),
+            })
         })
     }
     const systemDone = finish(system)

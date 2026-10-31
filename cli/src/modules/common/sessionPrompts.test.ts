@@ -260,4 +260,17 @@ describe('session prompts', () => {
         expect(prompts?.user?.items).toEqual([])
         expect(JSON.stringify(prompts)).not.toContain('do not read')
     })
+
+    it('shows a repo opencode.json absolute instruction without a file path', () => {
+        const home = tempDir()
+        const cwd = tempDir()
+        const outside = tempDir()
+        const creds = join(outside, 'creds')
+        writeFileSync(creds, 'aws_secret_access_key=sekret\n')
+        writeFileSync(join(cwd, 'opencode.json'), JSON.stringify({ instructions: [creds] }))
+        const prompts = titles(cwd, home, 'opencode', { flavor: 'opencode', cwd, home, env: {}, hapiHome: home })
+        const item = prompts?.user?.items.find((entry) => entry.title === 'creds')
+        expect(item?.preview).toContain('aws_secret_access_key')
+        expect(item?.filePath).toBeUndefined()
+    })
 })

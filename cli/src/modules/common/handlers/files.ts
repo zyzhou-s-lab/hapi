@@ -34,29 +34,44 @@ interface WriteFileRequest {
     expectedHash?: string | null
 }
 
+const WHITELIST_TTL_MS = 5_000
+
 export function registerFileHandlers(
     rpcHandlerManager: RpcHandlerManager,
     workingDirectory: string,
     listedConfigPaths?: () => Promise<ReadonlySet<string>>,
 ): void {
-    const resolveAllowed = async (requested: string): Promise<{ path: string } | { error: string }> => {
+    let cachedWhitelist: { at: number; paths: ReadonlySet<string> } | undefined
+    const readWhitelist = async (): Promise<ReadonlySet<string>> => {
+        if (!listedConfigPaths) return new Set()
+        const now = Date.now()
+        if (cachedWhitelist && now - cachedWhitelist.at < WHITELIST_TTL_MS) return cachedWhitelist.paths
+        const paths = await listedConfigPaths()
+        cachedWhitelist = { at: now, paths }
+        return paths
+    }
+    const resolveReadable = async (requested: string): Promise<{ path: string } | { error: string }> => {
         const validation = validatePath(requested, workingDirectory)
         if (validation.valid) return { path: resolve(workingDirectory, requested) }
         const denied = validation.error ?? 'Invalid file path'
-        if (!listedConfigPaths) return { error: denied }
         let real: string
         try {
             real = await realpath(resolve(requested))
         } catch {
             return { error: denied }
         }
-        const allowed = await listedConfigPaths()
+        const allowed = await readWhitelist()
         return allowed.has(real) ? { path: real } : { error: denied }
+    }
+    const resolveWritable = (requested: string): { path: string } | { error: string } => {
+        const validation = validatePath(requested, workingDirectory)
+        if (!validation.valid) return { error: validation.error ?? 'Invalid file path' }
+        return { path: resolve(workingDirectory, requested) }
     }
     rpcHandlerManager.registerHandler<ReadFileRequest, ReadFileResponse>(RPC_METHODS.ReadFile, async (data) => {
         logger.debug('Read file request:', data.path)
 
-        const allowed = await resolveAllowed(data.path)
+        const allowed = await resolveReadable(data.path)
         if ('error' in allowed) return rpcError(allowed.error)
 
         try {
@@ -125,7 +140,7 @@ export function registerFileHandlers(
     rpcHandlerManager.registerHandler<WriteFileRequest, FileWriteResponse>(RPC_METHODS.WriteFile, async (data) => {
         logger.debug('Write file request:', data.path)
 
-        const allowed = await resolveAllowed(data.path)
+        const allowed = resolveWritable(data.path)
         if ('error' in allowed) return rpcError(allowed.error)
 
         try {
