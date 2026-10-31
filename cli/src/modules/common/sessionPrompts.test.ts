@@ -74,6 +74,30 @@ describe('session prompts', () => {
         expect('markdown' in detail ? detail.markdown : '').not.toContain('---')
     })
 
+    it('keeps a leading horizontal rule in CLAUDE.md and ignores loose rule fences', () => {
+        const home = tempDir()
+        const cwd = tempDir()
+        mkdirSync(join(cwd, '.claude', 'rules'), { recursive: true })
+        const claude = '---\n# Title\n\n---\nkept after the rule\n'
+        writeFileSync(join(cwd, 'CLAUDE.md'), claude)
+        writeFileSync(join(cwd, '.claude', 'rules', 'loose.md'), '----\nalwaysApply: true\n----\n# Stay\n')
+        writeFileSync(join(cwd, '.claude', 'rules', 'labeled.md'), '--- foo\nalwaysApply: true\n---\n# Stay\n')
+        const prompts = titles(cwd, home, 'claude', { flavor: 'claude', cwd, home, env: {} })
+        const project = prompts?.user?.items.find((item) => item.scope === 'project' && item.title === 'CLAUDE.md')
+        expect(project?.preview).toContain('# Title')
+        expect(project?.preview).toContain('kept after the rule')
+        const claudeDetail = readSessionPromptDetail({ flavor: 'claude', cwd, home, env: {}, id: project?.id ?? '' })
+        expect('markdown' in claudeDetail ? claudeDetail.markdown : '').toBe(claude)
+        expect('frontmatter' in claudeDetail ? claudeDetail.frontmatter : undefined).toBeUndefined()
+        for (const title of ['loose.md', 'labeled.md']) {
+            const rule = prompts?.user?.items.find((item) => item.title === title)
+            const detail = readSessionPromptDetail({ flavor: 'claude', cwd, home, env: {}, id: rule?.id ?? '' })
+            expect('markdown' in detail ? detail.markdown : '').toContain(title === 'loose.md' ? '----' : '--- foo')
+            expect('markdown' in detail ? detail.markdown : '').toContain('# Stay')
+            expect('frontmatter' in detail ? detail.frontmatter : undefined).toBeUndefined()
+        }
+    })
+
     it('does not follow a symlinked instruction file', () => {
         const home = tempDir()
         const cwd = tempDir()

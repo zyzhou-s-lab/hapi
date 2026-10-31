@@ -186,10 +186,12 @@ export function redactConfigSecrets(value: string): string {
     return value
         .replace(/([a-z][a-z0-9+.-]*:\/\/)[^\s/@]+:[^\s/@]+@/gi, '$1***@')
         .replace(/\b(bearer)\s+[^\s"']+/gi, '$1 ***')
-        .replace(/\b(sk-|ghp_|github_pat_|xox[baprs]-|hapi_[a-z0-9]+_)[A-Za-z0-9_-]{8,}/g, '***')
+        .replace(/\b(sk-|ghp_|github_pat_|xox[baprs]-)[A-Za-z0-9_-]{8,}/g, '***')
+        .replace(/\bhapi_mu_[A-Za-z0-9_-]{20,}/g, '***')
         .replace(/(^|[^A-Za-z0-9])([A-Za-z][A-Za-z0-9_]*(?:API_KEY|ACCESS_KEY|SECRET|TOKEN|PASSWORD))\s*=\s*[^\s"']+/g, '$1$2=***')
         .replace(/(--(?:api[-_]?key|token|secret|password|passwd|key))(=|\s+)\S+/gi, '$1$2***')
         .replace(/(^|[^A-Za-z0-9_])(token|api[_-]?key|secret|password|passwd|key)(\s*[:=]\s*)[^\s"']+/gi, '$1$2$3***')
+        .replace(/(^|[^A-Za-z0-9])([A-Za-z0-9_]*(?:Token|Secret|ApiKey|Password|API_KEY|ACCESS_KEY|SECRET|TOKEN|PASSWORD)"?\s*[:=]\s*)(?:"[^"]*"|'[^']*'|[^\s,}"']+)/g, '$1$2***')
 }
 
 /** null when that agent honors a per-item boolean. Otherwise the switch stays disabled. */

@@ -58,10 +58,11 @@ type Draft = {
     hasText?: boolean
     codexCapped?: boolean
     truncated?: boolean
+    stripFrontmatter?: boolean
     text?: string
 }
 
-type Body = { text: string; truncated: boolean }
+type Body = { text: string; truncated: boolean; stripFrontmatter?: boolean }
 
 type Collected = {
     prompts: NonNullable<SessionInventory['prompts']>
@@ -72,9 +73,10 @@ function clip(value: string, max: number): string {
     return value.length <= max ? value : value.slice(0, max)
 }
 
-function previewOf(text: string): string | undefined {
-    const parsed = matter(text)
-    const flat = redactConfigSecrets(parsed.raw ? parsed.body : text).replace(/\s+/g, ' ').trim()
+function previewOf(text: string, stripFrontmatter = false): string | undefined {
+    const parsed = stripFrontmatter ? matter(text) : undefined
+    const source = parsed?.raw ? parsed.body : text
+    const flat = redactConfigSecrets(source).replace(/\s+/g, ' ').trim()
     if (!flat) return undefined
     return clip(flat, PREVIEW_LIMIT)
 }
@@ -224,10 +226,12 @@ type Matter = { values: Record<string, string>; lists: Record<string, string[]>;
 function matter(text: string): Matter {
     const values: Record<string, string> = {}
     const lists: Record<string, string[]> = {}
-    if (!text.startsWith('---')) return { values, lists, body: text, raw: '' }
-    const end = text.indexOf('\n---', 3)
-    if (end < 0) return { values, lists, body: text, raw: '' }
-    const raw = text.slice(text.indexOf('\n', 0) + 1, end)
+    const open = /^---\r?\n/.exec(text)
+    if (!open) return { values, lists, body: text, raw: '' }
+    const rest = text.slice(open[0].length)
+    const close = /\r?\n---\r?(?:\n|$)/.exec(rest)
+    if (!close) return { values, lists, body: text, raw: '' }
+    const raw = rest.slice(0, close.index)
     let listKey: string | null = null
     for (const line of raw.split(/\r?\n/)) {
         const item = /^\s*-\s*(.*)$/.exec(line)
@@ -251,8 +255,7 @@ function matter(text: string): Matter {
         listKey = null
         values[key] = value
     }
-    const body = text.slice(end + 4).replace(/^\r?\n/, '')
-    return { values, lists, body, raw }
+    return { values, lists, body: rest.slice(close.index + close[0].length), raw }
 }
 
 function fieldList(parsed: Matter, key: string): string[] {
@@ -289,10 +292,10 @@ function pushFile(drafts: Draft[], input: {
     match?: string
     note?: string
     codexCapped?: boolean
+    stripFrontmatter?: boolean
 }): void {
     const body = readBody(input.path)
     if (!body || !body.text.trim()) return
-    const parsed = matter(body.text)
     drafts.push({
         role: 'user',
         scope: input.scope,
@@ -303,6 +306,7 @@ function pushFile(drafts: Draft[], input: {
         note: hasImport(body.text) ? 'no-import' : input.note,
         truncated: body.truncated,
         ...(input.codexCapped ? { codexCapped: true } : {}),
+        ...(input.stripFrontmatter ? { stripFrontmatter: true } : {}),
         text: redactConfigSecrets(body.text),
     })
 }
@@ -312,7 +316,7 @@ function finish(drafts: Draft[], note?: string): { items: SessionPromptItem[]; b
     const items: SessionPromptItem[] = []
     for (const [index, draft] of drafts.slice(0, 400).entries()) {
         const id = promptId(draft, index)
-        const preview = draft.text ? previewOf(draft.text) : undefined
+        const preview = draft.text ? previewOf(draft.text, draft.stripFrontmatter === true) : undefined
         const item: SessionPromptItem = {
             id,
             role: draft.role,
@@ -337,6 +341,7 @@ function finish(drafts: Draft[], note?: string): { items: SessionPromptItem[]; b
                 ...(draft.match ? { match: clip(draft.match, 300) } : {}),
                 ...(draft.note ? { note: draft.note } : {}),
                 ...(draft.codexCapped ? { codexCapped: true } : {}),
+                ...(draft.stripFrontmatter ? { stripFrontmatter: true } : {}),
             })
         }
     }
@@ -440,6 +445,7 @@ function collectClaude(input: CollectInput, live: SessionPromptLive | undefined)
                 cwd,
                 home,
                 ...(paths.length > 0 ? { load: 'path', match: paths.join(', ') } : {}),
+                stripFrontmatter: true,
             })
         }
     }
@@ -470,6 +476,7 @@ function collectClaude(input: CollectInput, live: SessionPromptLive | undefined)
                     cwd,
                     home,
                     ...(paths.length > 0 ? { load: 'path', match: paths.join(', ') } : {}),
+                    stripFrontmatter: true,
                 })
             }
             if (includeAgents) {
@@ -616,6 +623,7 @@ function cursorRules(dir: string): Draft[] {
             pathLabel: path,
             text: redactConfigSecrets(body.text),
             truncated: body.truncated,
+            stripFrontmatter: true,
             ...(always && globs.length === 0 ? {} : globs.length > 0
                 ? { load: 'path' as const, match: globs.join(', ') }
                 : { load: 'demand' as const }),
@@ -796,6 +804,7 @@ function collectOmp(input: CollectInput, live: SessionPromptLive | undefined): C
                 match,
                 text: redactConfigSecrets(body.text),
                 truncated: body.truncated,
+                stripFrontmatter: true,
                 ...(hasImport(body.text) ? { note: 'no-import' } : {}),
             })
         }
@@ -869,6 +878,7 @@ function collectOmp(input: CollectInput, live: SessionPromptLive | undefined): C
                 match: triggers.join(' | '),
                 text: redactConfigSecrets(body.text),
                 truncated: body.truncated,
+                stripFrontmatter: true,
             })
         }
     }
@@ -934,12 +944,12 @@ export function readSessionPromptDetail(input: CollectInput & { id: string }): {
 } | { error: string } {
     const found = collectSessionPrompts(input).body(input.id)
     if (!found) return { error: 'Config entry not found' }
-    const parsed = matter(found.text)
-    const frontmatter = parsed.raw.trim()
+    const parsed = found.stripFrontmatter ? matter(found.text) : undefined
+    const frontmatter = parsed?.raw.trim() ?? ''
     return {
         id: input.id,
         title: found.title,
-        markdown: parsed.raw ? parsed.body : found.text,
+        markdown: frontmatter ? parsed?.body ?? found.text : found.text,
         truncated: found.truncated,
         ...(found.load ? { load: found.load } : {}),
         ...(found.match ? { match: found.match } : {}),

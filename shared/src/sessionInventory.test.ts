@@ -82,14 +82,23 @@ describe('SessionInventorySchema', () => {
         expect(redactConfigSecrets(`prefix ${token}"`)).toBe('prefix ***"')
     })
 
-    it('redacts hapi tokens and common provider prefixes', () => {
-        const hapi = `hapi_mu_${'a'.repeat(16)}`
-        const sk = `sk-${'b'.repeat(12)}`
-        const ghp = `ghp_${'c'.repeat(12)}`
-        const pat = `github_pat_${'d'.repeat(12)}`
-        const slack = `xoxb-${'e'.repeat(12)}`
-        expect(redactConfigSecrets(`see ${hapi} ${sk} ${ghp} ${pat} ${slack} and hapi_change_title`))
-            .toBe('see *** *** *** *** *** and hapi_change_title')
+    it('redacts hapi_mu tokens without blanking ordinary names', () => {
+        const hapi = `hapi_mu_${'a'.repeat(20)}`
+        const short = `hapi_mu_${'b'.repeat(8)}`
+        const sk = `sk-${'c'.repeat(12)}`
+        const ghp = `ghp_${'d'.repeat(12)}`
+        const pat = `github_pat_${'e'.repeat(12)}`
+        const slack = `xoxb-${'f'.repeat(12)}`
+        expect(redactConfigSecrets(`see ${hapi} ${short} ${sk} ${ghp} ${pat} ${slack}`))
+            .toBe(`see *** ${short} *** *** *** ***`)
+        expect(redactConfigSecrets('hapi_session_config_detail')).toBe('hapi_session_config_detail')
+        expect(redactConfigSecrets('use hapi_change_title_now please')).toBe('use hapi_change_title_now please')
+        expect(redactConfigSecrets('mcp__hapi__change_title')).toBe('mcp__hapi__change_title')
+        const secret = ['plain', 'value'].join('-')
+        expect(redactConfigSecrets(`CLI_API_TOKEN=${secret}`)).toBe('CLI_API_TOKEN=***')
+        expect(redactConfigSecrets(`"cliApiToken": "${secret}"`)).toBe('"cliApiToken": ***')
+        expect(redactConfigSecrets(`"CLI_API_TOKEN": "${secret}"`)).toBe('"CLI_API_TOKEN": ***')
+        expect(redactConfigSecrets(`CLI_API_TOKEN=${secret}`)).not.toContain(secret)
     })
 
     it('keeps prompt labels, drops command text, and redacts prompt detail', () => {

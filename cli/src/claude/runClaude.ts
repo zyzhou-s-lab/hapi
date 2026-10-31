@@ -62,6 +62,8 @@ export async function runClaude(options: StartOptions = {}): Promise<void> {
         // throw new Error('Runner-spawned sessions cannot use local/interactive mode');
     }
 
+    const startingMode = options.startingMode ?? (startedBy === 'runner' ? 'remote' : 'local');
+
     const initialState: AgentState = {};
     const initialModel = normalizeClaudeSessionModel(options.model);
     const initialEffort = normalizeClaudeSessionEffort(options.effort);
@@ -152,7 +154,7 @@ export async function runClaude(options: StartOptions = {}): Promise<void> {
                 flavor: 'claude',
                 cwd: workingDirectory,
                 sessionId: session.sessionId,
-                startingMode: options.startingMode ?? (startedBy === 'runner' ? 'remote' : 'local'),
+                startingMode,
                 skills,
             });
             return { success: true, ...config };
@@ -283,7 +285,6 @@ export async function runClaude(options: StartOptions = {}): Promise<void> {
     })
 
     // Set initial agent state
-    const startingMode = options.startingMode ?? (startedBy === 'runner' ? 'remote' : 'local');
     setControlledByUser(session, startingMode);
 
     // Import MessageQueue2 and create message queue
