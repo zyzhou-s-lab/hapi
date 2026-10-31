@@ -12,9 +12,13 @@ function stripAbsolutePaths(value: string): string {
         .trim()
 }
 
-export function formatSessionConfigError(error: string | null | undefined, t: Translate): string {
+export function formatSessionConfigError(
+    error: string | null | undefined,
+    t: Translate,
+    action: 'read' | 'update' = 'read',
+): string {
     const detail = error?.trim() ?? ''
-    if (!detail || detail === 'Failed to read session config' || detail === 'Session config unavailable') {
+    if (!detail || detail === 'Failed to read session config' || detail === 'Failed to update session config' || detail === 'Session config unavailable') {
         return t('session.config.unavailable')
     }
     if (detail === 'Invalid session config') return t('session.config.invalid')
@@ -32,5 +36,5 @@ export function formatSessionConfigError(error: string | null | undefined, t: Tr
     const clipped = sanitized.length > DETAIL_LIMIT
         ? `${sanitized.slice(0, DETAIL_LIMIT - 1)}…`
         : sanitized
-    return t('session.config.errorWithDetail', { error: clipped })
+    return t(action === 'update' ? 'session.config.updateWithDetail' : 'session.config.errorWithDetail', { error: clipped })
 }

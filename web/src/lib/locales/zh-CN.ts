@@ -258,6 +258,8 @@ export default {
   'session.config.errorWithDetail': '无法读取会话配置：{error}',
   'session.config.invalid': '会话配置无法解析。',
   'session.config.effect': '一般下次新开会话或重启 agent 后生效。',
+  'session.config.skillHint': '新会话生效，对所有会话生效',
+  'session.config.updateWithDetail': '开关没有写入：{error}',
   'session.config.locked': '注入、系统、工具和插件项不能在这里改。',
   'session.config.unsupported': '此 agent 不认这项的开关，改了也不会停用。',
   'session.config.toggle': '启用 {name}',

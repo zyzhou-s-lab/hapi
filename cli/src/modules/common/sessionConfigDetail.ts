@@ -1,6 +1,6 @@
 import { existsSync, readFileSync, realpathSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { extname, isAbsolute, join, resolve, sep } from 'node:path'
+import { basename, extname, isAbsolute, join, resolve, sep } from 'node:path'
 import { redactConfigSecrets, sessionConfigLock, type SessionConfigDetail, type SessionConfigItemSelector } from '@hapi/protocol/schemas'
 import { findSkill } from '@/modules/common/skills'
 import { commandBasename } from './sessionInventory'
@@ -37,6 +37,15 @@ function lockError(flavor: string, kind: 'mcp' | 'skill' | 'hook' | 'prompt', so
     if (lock === 'source') return LOCKED
     if (lock === 'unsupported') return UNSUPPORTED
     return null
+}
+function skillMarkdownPath(path: string): string | null {
+    try {
+        const real = realpathSync(path)
+        if (basename(real) !== 'SKILL.md' || !statSync(real).isFile()) return null
+        return real
+    } catch {
+        return null
+    }
 }
 
 function readText(path: string): string | null {
@@ -310,9 +319,11 @@ export async function writeSessionConfigEnabled(input: DetailInput): Promise<{ e
             const skill = await findSkill(input.selector.name, input.cwd, { flavor: (input.flavor ?? '').trim().toLowerCase() || undefined })
             if (!skill || skill.source !== input.selector.source) return { error: NOT_FOUND }
             if (skill.truncated) return { error: 'Skill is too large to update' }
-            const text = readText(skill.filePath)
+            const real = skillMarkdownPath(skill.filePath)
+            if (!real) return { error: 'Only a SKILL.md frontmatter disabled field can be changed' }
+            const text = readText(real)
             if (text === null) return { error: NOT_FOUND }
-            writeTextAtomic(skill.filePath, setFrontmatterBoolean(text, 'disabled', !input.enabled))
+            writeTextAtomic(real, setFrontmatterBoolean(text, 'disabled', !input.enabled))
             return { enabled: input.enabled }
         }
         if (input.selector.kind === 'mcp') {

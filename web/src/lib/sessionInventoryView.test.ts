@@ -39,6 +39,15 @@ describe('session inventory view', () => {
             status: 'list',
             rows: [{ title: 'hapi', source: 'injected' }],
         })
+        expect(skillsSection(reported, 'omp')).toMatchObject({
+            status: 'list',
+            rows: [{ title: 'review', mutable: true, lock: null }],
+        })
+        expect(skillsSection({
+            skills: { items: [{ name: 'bundled', source: 'system' }] },
+        }, 'omp')).toMatchObject({
+            rows: [{ title: 'bundled', mutable: false, lock: 'source' }],
+        })
     })
 
     it('shows unreported, empty, tool names, and no-hooks states', () => {

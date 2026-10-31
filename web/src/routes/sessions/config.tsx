@@ -69,31 +69,35 @@ function sectionMessage(section: InventorySection, t: (key: string) => string, e
     }
 }
 
+function lockReason(row: InventoryRow, t: (key: string) => string): string | undefined {
+    if (!row.lock) return undefined
+    return row.lock === 'unsupported' ? t('session.config.unsupported') : t('session.config.locked')
+}
+
 function ConfigSwitch(props: { row: InventoryRow; pending: boolean; onToggle: (enabled: boolean) => void }) {
     const { t } = useTranslation()
-    const reason = props.row.lock === 'unsupported'
-        ? t('session.config.unsupported')
-        : props.row.lock
-            ? t('session.config.locked')
-            : undefined
-    const button = (
-        <button
-            type="button"
-            role="switch"
-            aria-checked={props.row.enabled}
-            aria-label={t('session.config.toggle', { name: props.row.title })}
-            disabled={!props.row.mutable || props.pending}
-            title={reason ?? t('session.config.effect')}
-            onClick={(event) => {
-                event.stopPropagation()
-                props.onToggle(!props.row.enabled)
-            }}
-            className={`relative h-5 w-9 shrink-0 rounded-full transition-colors ${props.row.enabled ? 'bg-[var(--app-link)]' : 'bg-[var(--app-border)]'} disabled:opacity-40`}
-        >
-            <span className={`absolute top-0.5 h-4 w-4 rounded-full bg-[var(--app-bg)] ${props.row.enabled ? 'left-4' : 'left-0.5'}`} />
-        </button>
+    const reason = lockReason(props.row, t)
+    const hint = props.row.mutable && props.row.ref.kind === 'skill' ? t('session.config.skillHint') : reason
+    return (
+        <span className={`inline-flex items-center gap-2 ${props.row.mutable ? '' : 'max-w-56'}`}>
+            {hint ? <span className={`text-right text-[11px] leading-4 text-[var(--app-hint)] ${props.row.mutable ? 'whitespace-nowrap' : ''}`}>{hint}</span> : null}
+            <button
+                type="button"
+                role="switch"
+                aria-checked={props.row.enabled}
+                aria-label={t('session.config.toggle', { name: props.row.title })}
+                disabled={!props.row.mutable || props.pending}
+                title={hint ?? t('session.config.effect')}
+                onClick={(event) => {
+                    event.stopPropagation()
+                    props.onToggle(!props.row.enabled)
+                }}
+                className={`relative h-5 w-9 shrink-0 rounded-full transition-colors ${props.row.enabled ? 'bg-[var(--app-link)]' : 'bg-[var(--app-border)]'} disabled:cursor-not-allowed disabled:opacity-40`}
+            >
+                <span className={`absolute top-0.5 h-4 w-4 rounded-full bg-[var(--app-bg)] ${props.row.enabled ? 'left-4' : 'left-0.5'}`} />
+            </button>
+        </span>
     )
-    return reason ? <span title={reason} className="inline-flex">{button}</span> : button
 }
 
 function RowText(props: { item: InventoryRow }) {
@@ -224,18 +228,29 @@ export default function SessionConfigPage() {
     const hooks = hooksSection(config, flavor)
 
     const toggle = async (row: InventoryRow, enabled: boolean) => {
-        if (!api || !row.mutable) return
+        if (!row.mutable) {
+            setToggleError(lockReason(row, t) ?? t('session.config.locked'))
+            return
+        }
+        if (!api) {
+            setToggleError(t('session.config.unavailable'))
+            return
+        }
         setPendingKey(row.key)
         setToggleError(null)
         try {
             const result = await api.setSessionConfigItemEnabled(sessionId, row.ref, enabled)
             if (!result.success) {
-                setToggleError(result.error ?? 'Failed to update session config')
+                setToggleError(formatSessionConfigError(result.error ?? 'Failed to update session config', t, 'update'))
                 return
             }
             await refetch()
         } catch (toggleFailure) {
-            setToggleError(toggleFailure instanceof Error ? toggleFailure.message : 'Failed to update session config')
+            setToggleError(formatSessionConfigError(
+                toggleFailure instanceof Error ? toggleFailure.message : 'Failed to update session config',
+                t,
+                'update',
+            ))
         } finally {
             setPendingKey(null)
         }
@@ -261,7 +276,7 @@ export default function SessionConfigPage() {
         openFile(row.scriptPath)
     }
 
-    const pageError = error ?? toggleError
+    const readError = error != null ? formatSessionConfigError(error, t) : null
     return (
         <div className="flex h-full min-h-0 flex-col">
             <SessionHeader
@@ -309,9 +324,16 @@ export default function SessionConfigPage() {
                 }}
             />
             <div className="app-scroll-y min-h-0 flex-1">
-                {pageError !== null ? (
+                {toggleError ? (
                     <SessionReadBanner
-                        message={formatSessionConfigError(pageError, t)}
+                        message={toggleError}
+                        onRetry={() => { setToggleError(null); void refetch() }}
+                        retrying={isFetching}
+                    />
+                ) : null}
+                {readError !== null ? (
+                    <SessionReadBanner
+                        message={readError}
                         onRetry={() => { void refetch() }}
                         retrying={isFetching}
                     />

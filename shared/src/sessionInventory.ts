@@ -259,7 +259,7 @@ export function redactConfigSecrets(value: string): string {
         ))
 }
 
-/** null when that agent honors a per-item boolean. Otherwise the switch stays disabled. */
+/** null when a per-item boolean is honored. Skill switches write only `disabled` in SKILL.md frontmatter. */
 export function sessionConfigLock(
     flavor: string | null | undefined,
     kind: 'mcp' | 'skill' | 'hook' | 'prompt',
@@ -267,6 +267,7 @@ export function sessionConfigLock(
 ): 'source' | 'unsupported' | null {
     if (kind === 'prompt') return 'source'
     if (source !== 'user' && source !== 'project') return 'source'
+    if (kind === 'skill') return null
     const name = (flavor ?? '').trim().toLowerCase()
     if (kind === 'mcp' && name === 'codex' && source === 'user') return null
     if (kind === 'mcp' && name === 'cursor' && source === 'user') return null

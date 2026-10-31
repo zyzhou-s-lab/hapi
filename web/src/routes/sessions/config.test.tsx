@@ -107,8 +107,8 @@ describe('SessionConfigPage', () => {
         expect(screen.getByText('PreToolUse')).toBeTruthy()
         expect(screen.getByText('Bash · my-hook')).toBeTruthy()
         expect(screen.getByText('No skills configured')).toBeTruthy()
-        expect(screen.queryByText('This agent does not honor a per-item switch, so turning it off here would not stop it.')).toBeNull()
-        expect(screen.queryByText('Injected, system, tool, and plugin items cannot be changed here.')).toBeNull()
+        expect(screen.getByText('This agent does not honor a per-item switch, so turning it off here would not stop it.')).toBeTruthy()
+        expect(screen.getByText('Injected, system, tool, and plugin items cannot be changed here.')).toBeTruthy()
         expect(screen.queryByText('Changes apply the next time you start a session or restart the agent.')).toBeNull()
         expect(screen.queryByText('Tool names, not servers')).toBeNull()
         expect(screen.queryByText(/127\.0\.0\.1/)).toBeNull()
@@ -195,7 +195,8 @@ describe('SessionConfigPage', () => {
         renderPage()
         const locked = await screen.findByRole('switch', { name: 'Enable hapi' })
         expect(locked).toBeDisabled()
-        expect(locked.parentElement?.getAttribute('title')).toContain('cannot be changed')
+        expect(locked.getAttribute('title')).toContain('cannot be changed')
+        expect(screen.getByText('Applies to new sessions, for every session.')).toBeTruthy()
         expect(screen.queryByRole('button', { name: /^docs/ })).toBeNull()
         expect(screen.queryByRole('button', { name: /^hapi/ })).toBeNull()
         expect(screen.getByText('docs')).toBeTruthy()
@@ -258,7 +259,7 @@ describe('SessionConfigPage', () => {
         })
         renderPage()
         const locked = await screen.findByRole('switch', { name: 'Enable hapi' })
-        expect(locked.parentElement?.getAttribute('title')).toContain('cannot be changed')
+        expect(locked.getAttribute('title')).toContain('cannot be changed')
         expect(screen.getByText('Use the title tool.')).toBeTruthy()
         expect(screen.queryByRole('button', { name: /append-system-prompt|追加/ })).toBeNull()
         expect(screen.queryByText('›')).toBeTruthy()
@@ -268,6 +269,39 @@ describe('SessionConfigPage', () => {
             params: { sessionId: 'session-1' },
             search: expect.objectContaining({ origin: 'config', path: expect.any(String) }),
         }))
+    })
+
+    it('toggles a user skill, explains a locked skill, and shows a write failure', async () => {
+        mocks.getSessionConfig.mockResolvedValue({
+            success: true,
+            mcp: { kind: 'servers', servers: [] },
+            skills: {
+                items: [
+                    { name: 'agent-browser', source: 'user', description: 'Drive a browser' },
+                    { name: 'bundled', source: 'system', description: 'Built in' },
+                ],
+            },
+            hooks: { availability: 'listed', items: [] },
+        })
+        mocks.setSessionConfigItemEnabled.mockResolvedValueOnce({ success: false, error: 'disk full' })
+        renderPage()
+        const userSwitch = await screen.findByRole('switch', { name: 'Enable agent-browser' })
+        const lockedSwitch = screen.getByRole('switch', { name: 'Enable bundled' })
+        expect(userSwitch).toBeEnabled()
+        expect(lockedSwitch).toBeDisabled()
+        expect(screen.getAllByText('Applies to new sessions, for every session.')).toHaveLength(1)
+        expect(screen.getByText('Injected, system, tool, and plugin items cannot be changed here.')).toBeTruthy()
+
+        expect(mocks.setSessionConfigItemEnabled).not.toHaveBeenCalled()
+
+
+        fireEvent.click(userSwitch)
+        expect(await screen.findByRole('alert')).toHaveTextContent('Could not update the switch: disk full')
+        expect(mocks.setSessionConfigItemEnabled).toHaveBeenCalledWith('session-1', {
+            kind: 'skill',
+            name: 'agent-browser',
+            source: 'user',
+        }, false)
     })
 
 })
