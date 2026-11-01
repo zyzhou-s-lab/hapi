@@ -77,8 +77,28 @@ export function sessionRelativePath(file: string, cwd: string): string | undefin
     return rel.split(sep).join('/')
 }
 
+/**
+ * Truncates `value` to at most `max` UTF-16 code units without splitting a
+ * surrogate pair. A raw `value.slice(0, max)` can cut an emoji in half and
+ * leave a lone surrogate that renders as `�`; when `max` lands between a high
+ * and a low surrogate the cut backs off one unit so the result stays valid
+ * UTF-16 and still within `max`.
+ */
+export function clipCodeUnits(value: string, max: number): string {
+    if (value.length <= max) return value
+    let end = max
+    if (end > 0 && end < value.length) {
+        const before = value.charCodeAt(end - 1)
+        const at = value.charCodeAt(end)
+        if (before >= 0xd800 && before <= 0xdbff && at >= 0xdc00 && at <= 0xdfff) {
+            end -= 1
+        }
+    }
+    return value.slice(0, end)
+}
+
 function clip(value: string, max: number): string {
-    return value.length <= max ? value : value.slice(0, max)
+    return clipCodeUnits(value, max)
 }
 
 function previewOf(text: string, stripFrontmatter = false): string | undefined {

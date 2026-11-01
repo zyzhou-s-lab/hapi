@@ -23,6 +23,21 @@ import {
     listedSessionConfigRealpaths,
 } from './sessionInventory'
 
+/** True when the string contains a UTF-16 surrogate that is not half of a valid pair (renders as `�`). */
+function hasLoneSurrogate(value: string): boolean {
+    for (let i = 0; i < value.length; i += 1) {
+        const code = value.charCodeAt(i)
+        if (code >= 0xd800 && code <= 0xdbff) {
+            const next = value.charCodeAt(i + 1)
+            if (!(next >= 0xdc00 && next <= 0xdfff)) return true
+        } else if (code >= 0xdc00 && code <= 0xdfff) {
+            const prev = value.charCodeAt(i - 1)
+            if (!(prev >= 0xd800 && prev <= 0xdbff)) return true
+        }
+    }
+    return false
+}
+
 describe('session inventory collectors', () => {
     it('keeps Claude server names and drops commands, urls, and tokens', () => {
         const servers = mcpServersFromClaudeJson({
@@ -786,6 +801,23 @@ command = "my-hook --token abc"
             rmSync(agent, { recursive: true, force: true })
             clearProbeCache()
         }
+    })
+
+    it('never splits an emoji at the path-label cut', () => {
+        // Head cut: the `😀` high surrogate sits exactly at the keep/2 boundary.
+        const headFile = `/custom/runner/${'a'.repeat(147)}😀${'b'.repeat(200)}`
+        const headLabel = displayHomePath(headFile, '/custom/runner')
+        expect(headLabel).toBeDefined()
+        expect(headLabel!.length).toBeLessThanOrEqual(300)
+        expect(headLabel).toContain('…')
+        expect(hasLoneSurrogate(headLabel!)).toBe(false)
+        // Tail cut: the `😀` low surrogate lands exactly at the tail start.
+        const tailFile = `/custom/runner/${'a'.repeat(200)}😀${'b'.repeat(148)}`
+        const tailLabel = displayHomePath(tailFile, '/custom/runner')
+        expect(tailLabel).toBeDefined()
+        expect(tailLabel!.length).toBeLessThanOrEqual(300)
+        expect(tailLabel).toContain('…')
+        expect(hasLoneSurrogate(tailLabel!)).toBe(false)
     })
 
 

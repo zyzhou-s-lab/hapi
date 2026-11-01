@@ -13,7 +13,7 @@ import {
 } from '@hapi/protocol/schemas';
 import { buildHookSettings, readMachineClaudeSettings } from '@/modules/common/hooks/generateHookSettings';
 import { listInventorySkills } from '@/modules/common/skills';
-import { collectSessionPrompts, getSessionPromptLive, type SessionPromptLive } from './sessionPrompts';
+import { clipCodeUnits, collectSessionPrompts, getSessionPromptLive, type SessionPromptLive } from './sessionPrompts';
 import { cachedProbe, cachedProbeTools, checkMcpServers, probeTargetsFromConfig, type McpProbeTarget } from './mcpServerCheck';
 import { lineOfJsonKey, lineOfSnippet, listedConfigFilePath, tryRealpath } from './configFilePath';
 
@@ -225,7 +225,19 @@ function clipPathLabel(label: string): string {
     const mark = '…';
     const keep = PATH_LABEL_MAX - mark.length;
     const head = Math.ceil(keep / 2);
-    return `${label.slice(0, head)}${mark}${label.slice(label.length - (keep - head))}`;
+    const tail = keep - head;
+    const headText = clipCodeUnits(label, head);
+    // The tail keeps the path suffix; when its start lands inside a surrogate
+    // pair, drop the lone low surrogate instead of rendering a broken emoji.
+    let tailStart = label.length - tail;
+    if (tailStart > 0) {
+        const before = label.charCodeAt(tailStart - 1);
+        const at = label.charCodeAt(tailStart);
+        if (before >= 0xd800 && before <= 0xdbff && at >= 0xdc00 && at <= 0xdfff) {
+            tailStart += 1;
+        }
+    }
+    return `${headText}${mark}${label.slice(tailStart)}`;
 }
 
 /** `~/...` when the file is under the runner home. A custom HOME is not always `/Users` or `/home`. */

@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSyn
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { clearSessionPromptLive, collectSessionPrompts, getSessionPromptLive, readSessionPromptDetail, setSessionPromptLive } from './sessionPrompts'
+import { clearSessionPromptLive, clipCodeUnits, collectSessionPrompts, getSessionPromptLive, readSessionPromptDetail, setSessionPromptLive } from './sessionPrompts'
 
 const dirs: string[] = []
 
@@ -22,6 +22,16 @@ function titles(cwd: string, home: string, flavor: string, extra: Parameters<typ
 }
 
 describe('session prompts', () => {
+    it('clips by UTF-16 units without splitting an emoji', () => {
+        expect(clipCodeUnits('short', 10)).toBe('short')
+        // Whole pairs are kept when the cut lands cleanly.
+        expect(clipCodeUnits('😀'.repeat(3), 4)).toBe('😀😀')
+        expect(clipCodeUnits('😀a', 2)).toBe('😀')
+        // A cut at 1 falls between the emoji's high and low surrogate, so it backs off to 0.
+        expect(clipCodeUnits('😀a', 1)).toBe('')
+        expect(clipCodeUnits('😀a'.repeat(20), 41).length).toBeLessThanOrEqual(41)
+    })
+
     it('skips AGENTS.md when a Claude project CLAUDE.md exists and marks path rules', () => {
         const home = tempDir()
         const cwd = tempDir()
