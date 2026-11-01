@@ -229,7 +229,7 @@ describe('SessionConfigPage', () => {
             to: '/sessions/$sessionId/file',
             search: expect.objectContaining({ origin: 'config' }),
         }))
-        fireEvent.click(screen.getByRole('button', { name: /^docs/ }))
+        fireEvent.click(screen.getByRole('button', { name: 'Open config file' }))
         expect(mocks.navigate).toHaveBeenLastCalledWith(expect.objectContaining({
             search: expect.objectContaining({ origin: 'config', line: 4 }),
         }))
@@ -365,8 +365,11 @@ describe('SessionConfigPage', () => {
         expect(screen.queryByText('Project')).toBeNull()
         expect(screen.getByRole('button', { name: 'Recheck' })).toBeTruthy()
         expect(screen.getByRole('button', { name: 'Check' })).toBeTruthy()
-        expect(screen.getAllByText('This agent does not honor a per-item switch, so turning it off here would not stop it.')).toHaveLength(2)
-        expect(screen.getAllByRole('img', { name: 'This agent does not honor a per-item switch, so turning it off here would not stop it.' })).toHaveLength(5)
+        const reason = 'This agent does not honor a per-item switch, so turning it off here would not stop it.'
+        const notes = screen.getAllByText(reason)
+        expect(notes).toHaveLength(5)
+        expect(notes.every((node) => node.getAttribute('role') === 'tooltip')).toBe(true)
+        expect(screen.getAllByRole('button', { name: reason })).toHaveLength(5)
     })
 
     it('shows a spinner and disables recheck until it finishes', async () => {
@@ -391,6 +394,39 @@ describe('SessionConfigPage', () => {
         expect(button.querySelector('.animate-spin')).toBeTruthy()
         release()
         await waitFor(() => expect(button).toBeEnabled())
+    })
+
+    it('expands a checked server into its tools and asks to check the others', async () => {
+        mocks.getSessionConfig.mockResolvedValue({
+            success: true,
+            mcp: {
+                kind: 'servers',
+                servers: [
+                    {
+                        name: 'docs',
+                        source: 'user',
+                        filePath: '/Users/dev/.omp/agent/mcp.json',
+                        loaded: true,
+                        tools: [
+                            { name: 'ping', description: 'Say ping' },
+                            { name: 'docs.read', description: 'Read a document' },
+                        ],
+                    },
+                    { name: 'pending', source: 'project', filePath: '.mcp.json' },
+                ],
+            },
+            skills: { items: [] },
+            hooks: { availability: 'none', items: [] },
+        })
+        renderPage()
+        expect(await screen.findByText('2 tools')).toBeTruthy()
+        expect(screen.queryByText('Say ping')).toBeNull()
+        fireEvent.click(screen.getByRole('button', { name: /^docs/ }))
+        expect(screen.getByText('Say ping')).toBeTruthy()
+        expect(screen.getByText('docs.read')).toBeTruthy()
+        fireEvent.click(screen.getByRole('button', { name: /^pending/ }))
+        expect(screen.getByText('Tools appear after a check')).toBeTruthy()
+        expect(screen.getAllByRole('button', { name: 'Check' }).length).toBeGreaterThan(0)
     })
 
 

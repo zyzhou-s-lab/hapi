@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useId, useRef, useState, type ReactNode } from 'react'
 import { useNavigate, useParams } from '@tanstack/react-router'
 import { SessionHeader } from '@/components/SessionHeader'
 import { SessionReadBanner } from '@/components/SessionReadBanner'
@@ -76,6 +76,87 @@ function lockReason(row: InventoryRow, t: (key: string) => string): string | und
     return row.lock === 'unsupported' ? t('session.config.unsupported') : t('session.config.locked')
 }
 
+
+function LockMark(props: { reason: string; children?: ReactNode }) {
+    const [pinned, setPinned] = useState(false)
+    const id = useId()
+    const root = useRef<HTMLSpanElement>(null)
+    useEffect(() => {
+        if (!pinned) return
+        const close = (event: PointerEvent) => {
+            if (root.current?.contains(event.target as Node)) return
+            setPinned(false)
+        }
+        document.addEventListener('pointerdown', close)
+        return () => document.removeEventListener('pointerdown', close)
+    }, [pinned])
+    return (
+        <span ref={root} className="group/lock relative inline-flex shrink-0 items-center gap-1.5">
+            {props.children ? (
+                <span className="relative inline-flex">
+                    {props.children}
+                    <span className="absolute inset-0" aria-hidden="true" />
+                </span>
+            ) : null}
+            <button
+                type="button"
+                aria-label={props.reason}
+                aria-describedby={id}
+                className="inline-flex text-[var(--app-hint)]"
+                onClick={(event) => {
+                    event.stopPropagation()
+                    setPinned((open) => !open)
+                }}
+            >
+                <svg aria-hidden="true" viewBox="0 0 16 16" className="h-3.5 w-3.5" fill="none">
+                    <rect x="3.5" y="7" width="9" height="6.5" rx="1" stroke="currentColor" strokeWidth="1.4" />
+                    <path d="M5.5 7V5.2a2.5 2.5 0 0 1 5 0V7" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+                </svg>
+            </button>
+            <span
+                role="tooltip"
+                id={id}
+                className={`pointer-events-none absolute bottom-full left-1/2 z-30 mb-1 w-max max-w-[16rem] -translate-x-1/2 rounded-md border border-[var(--app-border)] bg-[var(--app-secondary-bg)] px-2 py-1 text-xs leading-snug text-[var(--app-fg)] shadow-lg ${pinned ? 'visible opacity-100' : 'invisible opacity-0 group-hover/lock:visible group-hover/lock:opacity-100 group-focus-within/lock:visible group-focus-within/lock:opacity-100'}`}
+            >
+                {props.reason}
+            </span>
+        </span>
+    )
+}
+
+function McpToolList(props: { item: InventoryRow; pending: boolean; onCheck?: (row: InventoryRow) => void }) {
+    const { t } = useTranslation()
+    if (!props.item.tools) {
+        return (
+            <div className="border-t border-[var(--app-divider)] px-3 py-2">
+                <p className="text-xs text-[var(--app-hint)]">{t('session.config.mcp.toolsAfterCheck')}</p>
+                {props.item.checkable ? (
+                    <button
+                        type="button"
+                        className="mt-1 text-xs text-[var(--app-link)] disabled:opacity-50"
+                        disabled={props.pending}
+                        onClick={() => props.onCheck?.(props.item)}
+                    >
+                        {t(props.item.loaded === undefined ? 'session.config.mcp.check' : 'session.config.mcp.recheckOne')}
+                    </button>
+                ) : null}
+            </div>
+        )
+    }
+    if (props.item.tools.length === 0) {
+        return <p className="border-t border-[var(--app-divider)] px-3 py-2 text-xs text-[var(--app-hint)]">{t('session.config.mcp.noTools')}</p>
+    }
+    return (
+        <ul className="max-h-60 overflow-y-auto overscroll-contain border-t border-[var(--app-divider)]">
+            {props.item.tools.map((tool, index) => (
+                <li key={`${tool.name}:${index}`} className="border-b border-[var(--app-divider)] px-3 py-1.5 last:border-b-0">
+                    <div className="truncate text-xs text-[var(--app-fg)]">{tool.name}</div>
+                    {tool.description ? <div className="truncate text-[11px] leading-4 text-[var(--app-hint)]">{tool.description}</div> : null}
+                </li>
+            ))}
+        </ul>
+    )
+}
 function ConfigSwitch(props: { row: InventoryRow; pending: boolean; onToggle: (enabled: boolean) => void }) {
     const { t } = useTranslation()
     const reason = lockReason(props.row, t)
@@ -127,17 +208,6 @@ function RowText(props: { item: InventoryRow }) {
     )
 }
 
-function sectionNotices(rows: InventoryRow[], t: (key: string) => string): string[] {
-    const seen = new Set<string>()
-    const notices: string[] = []
-    for (const item of rows) {
-        const reason = lockReason(item, t)
-        if (!reason || seen.has(reason)) continue
-        seen.add(reason)
-        notices.push(reason)
-    }
-    return notices
-}
 
 function ConfigSection(props: {
     title: string
@@ -153,7 +223,7 @@ function ConfigSection(props: {
 }) {
     const { t } = useTranslation()
     const message = sectionMessage(props.section, t, props.emptyKey)
-    const notices = props.section.status === 'list' ? sectionNotices(props.section.rows, t) : []
+    const [openKey, setOpenKey] = useState<string | null>(null)
     const groups: InventoryGroup[] = props.section.status === 'list' && props.section.groups?.length
         ? props.section.groups
         : props.section.status === 'list'
@@ -170,10 +240,7 @@ function ConfigSection(props: {
                     </button>
                 ) : null}
             </div>
-            <div className="overflow-hidden rounded-lg border border-[var(--app-border)] bg-[var(--app-bg)]">
-                {notices.map((notice) => (
-                    <p key={notice} className="border-b border-[var(--app-divider)] px-3 py-2 text-[11px] leading-4 text-[var(--app-hint)]">{notice}</p>
-                ))}
+            <div className="rounded-lg border border-[var(--app-border)] bg-[var(--app-bg)]">
                 {message ? (
                     <p className="px-3 py-4 text-sm text-[var(--app-hint)]">{message}</p>
                 ) : props.section.status === 'list' ? (
@@ -184,76 +251,107 @@ function ConfigSection(props: {
                             ) : null}
                             <ul>
                                 {group.rows.map((item) => (
-                                    <li key={item.key} className={`flex items-center gap-3 border-b border-[var(--app-divider)] px-3 py-2 last:border-b-0 ${item.openable ? 'cursor-pointer hover:bg-[var(--app-subtle-bg)]' : ''}`}>
-                                        {item.openable ? (
-                                            <button type="button" className="min-w-0 flex-1 cursor-pointer text-left" onClick={() => props.onOpen(item)}>
-                                                <RowText item={item} />
-                                            </button>
-                                        ) : (
-                                            <div className="min-w-0 flex-1 text-left">
-                                                <RowText item={item} />
-                                            </div>
-                                        )}
-                                        {item.scriptPath && item.filePath ? (
-                                            <button
-                                                type="button"
-                                                className="shrink-0 text-xs text-[var(--app-link)]"
-                                                onClick={(event) => {
-                                                    event.stopPropagation()
-                                                    props.onOpenScript(item)
-                                                }}
-                                            >
-                                                {t('session.config.openScript')}
-                                            </button>
-                                        ) : null}
-                                        {item.lock ? (
-                                            <span role="img" aria-label={lockReason(item, t)} className="inline-flex shrink-0 text-[var(--app-hint)]">
-                                                <svg aria-hidden="true" viewBox="0 0 16 16" className="h-3.5 w-3.5" fill="none">
-                                                    <rect x="3.5" y="7" width="9" height="6.5" rx="1" stroke="currentColor" strokeWidth="1.4" />
-                                                    <path d="M5.5 7V5.2a2.5 2.5 0 0 1 5 0V7" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
-                                                </svg>
-                                            </span>
-                                        ) : null}
-                                        {item.toggle ? (
-                                            <ConfigSwitch
-                                                row={item}
-                                                pending={props.pendingKey === item.key}
-                                                onToggle={(enabled) => props.onToggle(item, enabled)}
-                                            />
-                                        ) : null}
-                                        {item.checkable ? (
-                                            <button
-                                                type="button"
-                                                className="shrink-0 text-xs text-[var(--app-link)] disabled:opacity-50"
-                                                disabled={props.pendingKey === item.key}
-                                                onClick={(event) => {
-                                                    event.stopPropagation()
-                                                    props.onCheck?.(item)
-                                                }}
-                                            >
-                                                {t(item.loaded === undefined ? 'session.config.mcp.check' : 'session.config.mcp.recheckOne')}
-                                            </button>
-                                        ) : null}
-                                        {item.checkable && item.loaded === undefined ? (
-                                            <span className="shrink-0 rounded-full bg-[var(--app-subtle-bg)] px-2 py-0.5 text-[11px] text-[var(--app-hint)]">
-                                                {t('session.config.mcp.unchecked')}
-                                            </span>
-                                        ) : item.loaded === undefined ? null : (
-                                            <span className="shrink-0 rounded-full bg-[var(--app-subtle-bg)] px-2 py-0.5 text-[11px] text-[var(--app-hint)]">
-                                                {t(item.loaded ? 'session.config.mcp.loaded' : 'session.config.mcp.notLoaded')}
-                                            </span>
-                                        )}
-                                        {item.source && !item.filePath ? (
-                                            <span className="shrink-0 rounded-full bg-[var(--app-subtle-bg)] px-2 py-0.5 text-[11px] text-[var(--app-hint)]">
-                                                {t(`session.config.source.${item.source}`)}
-                                            </span>
-                                        ) : null}
-                                        {item.scopeLabel ? (
-                                            <span className="shrink-0 rounded-full bg-[var(--app-subtle-bg)] px-2 py-0.5 text-[11px] text-[var(--app-hint)]">
-                                                {t(`session.config.prompt.scope.${item.scopeLabel}`)}
-                                            </span>
-                                        ) : null}
-                                        {item.openable ? <span aria-hidden="true" className="shrink-0 text-sm text-[var(--app-hint)]">›</span> : null}
+                                    <li key={item.key} className="border-b border-[var(--app-divider)] last:border-b-0">
+                                        {(() => {
+                                            const reason = item.lock ? lockReason(item, t) : undefined
+                                            const expands = item.ref.kind === 'mcp' && (item.tools !== undefined || item.checkable === true || Boolean(item.filePath))
+                                            const open = openKey === item.key
+                                            const switchEl = item.toggle ? (
+                                                <ConfigSwitch
+                                                    row={item}
+                                                    pending={props.pendingKey === item.key}
+                                                    onToggle={(enabled) => props.onToggle(item, enabled)}
+                                                />
+                                            ) : null
+                                            return (
+                                                <>
+                                                    <div className={`flex items-center gap-3 px-3 py-2 ${item.openable && !expands ? 'cursor-pointer hover:bg-[var(--app-subtle-bg)]' : ''}`}>
+                                                        {expands ? (
+                                                            <button
+                                                                type="button"
+                                                                aria-expanded={open}
+                                                                className="min-w-0 flex-1 cursor-pointer text-left"
+                                                                onClick={() => setOpenKey(open ? null : item.key)}
+                                                            >
+                                                                <RowText item={item} />
+                                                            </button>
+                                                        ) : item.openable ? (
+                                                            <button type="button" className="min-w-0 flex-1 cursor-pointer text-left" onClick={() => props.onOpen(item)}>
+                                                                <RowText item={item} />
+                                                            </button>
+                                                        ) : (
+                                                            <div className="min-w-0 flex-1 text-left">
+                                                                <RowText item={item} />
+                                                            </div>
+                                                        )}
+                                                        {item.tools ? (
+                                                            <span className="shrink-0 text-xs text-[var(--app-hint)]">{t('session.config.mcp.toolCount', { n: item.tools.length })}</span>
+                                                        ) : null}
+                                                        {expands && item.filePath ? (
+                                                            <button
+                                                                type="button"
+                                                                className="shrink-0 text-xs text-[var(--app-link)]"
+                                                                onClick={(event) => {
+                                                                    event.stopPropagation()
+                                                                    props.onOpen(item)
+                                                                }}
+                                                            >
+                                                                {t('session.config.mcp.openFile')}
+                                                            </button>
+                                                        ) : null}
+                                                        {item.scriptPath && item.filePath ? (
+                                                            <button
+                                                                type="button"
+                                                                className="shrink-0 text-xs text-[var(--app-link)]"
+                                                                onClick={(event) => {
+                                                                    event.stopPropagation()
+                                                                    props.onOpenScript(item)
+                                                                }}
+                                                            >
+                                                                {t('session.config.openScript')}
+                                                            </button>
+                                                        ) : null}
+                                                        {reason ? <LockMark reason={reason}>{switchEl}</LockMark> : switchEl}
+                                                        {item.checkable ? (
+                                                            <button
+                                                                type="button"
+                                                                className="shrink-0 text-xs text-[var(--app-link)] disabled:opacity-50"
+                                                                disabled={props.pendingKey === item.key}
+                                                                onClick={(event) => {
+                                                                    event.stopPropagation()
+                                                                    props.onCheck?.(item)
+                                                                }}
+                                                            >
+                                                                {t(item.loaded === undefined ? 'session.config.mcp.check' : 'session.config.mcp.recheckOne')}
+                                                            </button>
+                                                        ) : null}
+                                                        {item.checkable && item.loaded === undefined ? (
+                                                            <span className="shrink-0 rounded-full bg-[var(--app-subtle-bg)] px-2 py-0.5 text-[11px] text-[var(--app-hint)]">
+                                                                {t('session.config.mcp.unchecked')}
+                                                            </span>
+                                                        ) : item.loaded === undefined ? null : (
+                                                            <span className="shrink-0 rounded-full bg-[var(--app-subtle-bg)] px-2 py-0.5 text-[11px] text-[var(--app-hint)]">
+                                                                {t(item.loaded ? 'session.config.mcp.loaded' : 'session.config.mcp.notLoaded')}
+                                                            </span>
+                                                        )}
+                                                        {item.source && !item.filePath ? (
+                                                            <span className="shrink-0 rounded-full bg-[var(--app-subtle-bg)] px-2 py-0.5 text-[11px] text-[var(--app-hint)]">
+                                                                {t(`session.config.source.${item.source}`)}
+                                                            </span>
+                                                        ) : null}
+                                                        {item.scopeLabel ? (
+                                                            <span className="shrink-0 rounded-full bg-[var(--app-subtle-bg)] px-2 py-0.5 text-[11px] text-[var(--app-hint)]">
+                                                                {t(`session.config.prompt.scope.${item.scopeLabel}`)}
+                                                            </span>
+                                                        ) : null}
+                                                        {item.openable && !expands ? <span aria-hidden="true" className="shrink-0 text-sm text-[var(--app-hint)]">›</span> : null}
+                                                    </div>
+                                                    {expands && open ? (
+                                                        <McpToolList item={item} pending={props.pendingKey === item.key} onCheck={props.onCheck} />
+                                                    ) : null}
+                                                </>
+                                            )
+                                        })()}
                                     </li>
                                 ))}
                             </ul>

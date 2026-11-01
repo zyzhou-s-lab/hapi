@@ -1,3 +1,4 @@
+import { redactConfigSecrets } from '@hapi/protocol/schemas'
 import { spawn } from 'node:child_process'
 import { createRequire } from 'node:module'
 import { createInterface } from 'node:readline'
@@ -96,7 +97,34 @@ function toolsOk(message: RpcMsg): boolean {
     return Array.isArray(result.tools)
 }
 
-type ProbeHit = { ok: boolean; timedOut: boolean }
+export type ListedMcpTool = { name: string; description?: string }
+
+const TOOL_LIMIT = 200
+const TOOL_NAME_MAX = 120
+const TOOL_DESC_MAX = 160
+
+function oneLine(value: string, max: number): string {
+    return value.replace(/\s+/g, ' ').trim().slice(0, max)
+}
+
+function listedTools(message: RpcMsg): ListedMcpTool[] {
+    const result = message.result
+    if (!result || typeof result !== 'object' || !('tools' in result) || !Array.isArray(result.tools)) return []
+    const tools: ListedMcpTool[] = []
+    for (const item of result.tools) {
+        if (tools.length >= TOOL_LIMIT) break
+        if (!item || typeof item !== 'object' || !('name' in item) || typeof item.name !== 'string') continue
+        const name = oneLine(item.name, TOOL_NAME_MAX)
+        if (!name) continue
+        const raw = 'description' in item && typeof item.description === 'string'
+            ? oneLine(redactConfigSecrets(item.description), TOOL_DESC_MAX)
+            : ''
+        tools.push(raw ? { name, description: raw } : { name })
+    }
+    return tools
+}
+
+type ProbeHit = { ok: boolean; timedOut: boolean; tools?: ListedMcpTool[] }
 
 function down(timedOut = false): ProbeHit {
     return { ok: false, timedOut }
@@ -105,7 +133,7 @@ function down(timedOut = false): ProbeHit {
 const PROBE_TTL_MS = 10 * 60 * 1000
 const PROBE_CACHE_MAX = 200
 
-type CachedProbe = { ok: boolean; at: number }
+type CachedProbe = { ok: boolean; at: number; tools?: ListedMcpTool[] }
 type Flight = { gen: number; fresh: boolean; promise: Promise<ProbeHit> }
 
 const probeCache = new Map<string, CachedProbe>()
@@ -131,7 +159,7 @@ export function probeConfigKey(target: McpProbeTarget): string {
     })
 }
 
-function readCache(key: string): boolean | undefined {
+function readRow(key: string): CachedProbe | undefined {
     const row = probeCache.get(key)
     if (!row) return undefined
     if (Date.now() - row.at > PROBE_TTL_MS) {
@@ -139,7 +167,11 @@ function readCache(key: string): boolean | undefined {
         writtenGen.delete(key)
         return undefined
     }
-    return row.ok
+    return row
+}
+
+function readCache(key: string): boolean | undefined {
+    return readRow(key)?.ok
 }
 
 function trimGenerations(): void {
@@ -159,7 +191,7 @@ function remember(key: string, gen: number, result: ProbeHit): void {
     writtenGen.delete(key)
     writtenGen.set(key, gen)
     probeCache.delete(key)
-    if (!result.timedOut) probeCache.set(key, { ok: result.ok, at: Date.now() })
+    if (!result.timedOut) probeCache.set(key, { ok: result.ok, at: Date.now(), ...(result.ok ? { tools: result.tools ?? [] } : {}) })
     while (probeCache.size > PROBE_CACHE_MAX) {
         const oldest = probeCache.keys().next().value
         if (oldest === undefined) break
@@ -171,6 +203,13 @@ function remember(key: string, gen: number, result: ProbeHit): void {
 
 export function cachedProbe(target: McpProbeTarget): boolean | undefined {
     return readCache(probeConfigKey(target))
+}
+
+/** Tools from the last successful check of this config. Undefined until a check is stored. */
+export function cachedProbeTools(target: McpProbeTarget): ListedMcpTool[] | undefined {
+    const row = readRow(probeConfigKey(target))
+    if (!row?.ok) return undefined
+    return row.tools ?? []
 }
 
 export function probeCacheSize(): number {
@@ -304,7 +343,7 @@ async function checkStdio(target: McpProbeTarget): Promise<ProbeHit> {
         send(request(2, 'tools/list'))
         const tools = await waitFor(2, remaining())
         if (!tools || !toolsOk(tools)) return down(!tools && !processGone && child.exitCode === null)
-        return { ok: true, timedOut: false }
+        return { ok: true, timedOut: false, tools: listedTools(tools) }
     } catch {
         return down()
     } finally {
@@ -396,7 +435,7 @@ async function checkHttp(target: McpProbeTarget): Promise<ProbeHit> {
         if (listed.status === 401 || listed.status === 403 || listed.status < 200 || listed.status >= 300) return down()
         const tools = await readRpc(listed, 2)
         if (!tools || !toolsOk(tools)) return down()
-        return { ok: true, timedOut: false }
+        return { ok: true, timedOut: false, tools: listedTools(tools) }
     } catch (error) {
         const name = error instanceof Error ? error.name : ''
         return down(name === 'TimeoutError' || name === 'AbortError')

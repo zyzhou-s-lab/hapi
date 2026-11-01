@@ -10,6 +10,11 @@ export const SessionInventorySourceSchema = z.enum([
     'tool',
 ])
 
+export const SessionInventoryMcpToolSchema = z.object({
+    name: z.string().min(1).max(120),
+    description: z.string().max(160).optional(),
+})
+
 export const SessionInventoryMcpServerSchema = z.object({
     name: z.string().min(1).max(200),
     source: SessionInventorySourceSchema,
@@ -18,6 +23,8 @@ export const SessionInventoryMcpServerSchema = z.object({
     loaded: z.boolean().optional(),
     filePath: z.string().min(1).max(4096).optional(),
     line: z.number().int().min(1).max(1_000_000).optional(),
+    /** Names from tools/list. Present only after a successful check; cached with that result. */
+    tools: z.array(SessionInventoryMcpToolSchema).max(200).optional(),
 })
 
 export const SessionInventoryHookSchema = z.object({

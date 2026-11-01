@@ -14,7 +14,7 @@ import {
 import { buildHookSettings, readMachineClaudeSettings } from '@/modules/common/hooks/generateHookSettings';
 import { listInventorySkills } from '@/modules/common/skills';
 import { collectSessionPrompts, getSessionPromptLive, type SessionPromptLive } from './sessionPrompts';
-import { cachedProbe, checkMcpServers, probeTargetsFromConfig, type McpProbeTarget } from './mcpServerCheck';
+import { cachedProbe, cachedProbeTools, checkMcpServers, probeTargetsFromConfig, type McpProbeTarget } from './mcpServerCheck';
 import { lineOfJsonKey, lineOfSnippet, listedConfigFilePath, tryRealpath } from './configFilePath';
 
 const MAX_CONFIG_BYTES = 1_000_000;
@@ -498,16 +498,27 @@ async function withOmpCheckedLoadState(
         const again = await checkMcpServers(forced, { fresh: true });
         for (const [name, ok] of again) loaded.set(name, ok);
     }
+    const probed = (server: SessionInventoryMcpServer, ok: boolean): SessionInventoryMcpServer => {
+        const { tools: _tools, ...rest } = server;
+        if (!ok) return { ...rest, loaded: false };
+        const target = byName.get(server.name);
+        const tools = target ? cachedProbeTools(target) : undefined;
+        return { ...rest, loaded: true, ...(tools ? { tools } : {}) };
+    };
     return [
         ...servers.map((server) => {
-            if (server.enabled === false) return { ...server, loaded: false as const };
-            if (loaded.has(server.name)) return { ...server, loaded: loaded.get(server.name) === true };
-            if (cachedProject.has(server.name)) return { ...server, loaded: cachedProject.get(server.name) === true };
+            if (server.enabled === false) {
+                const { tools: _tools, ...rest } = server;
+                return { ...rest, loaded: false as const };
+            }
+            if (loaded.has(server.name)) return probed(server, loaded.get(server.name) === true);
+            if (cachedProject.has(server.name)) return probed(server, cachedProject.get(server.name) === true);
             if (server.source === 'project') {
-                const { loaded: _loaded, ...rest } = server;
+                const { loaded: _loaded, tools: _tools, ...rest } = server;
                 return rest;
             }
-            return { ...server, loaded: false as const };
+            const { tools: _tools, ...rest } = server;
+            return { ...rest, loaded: false as const };
         }),
         ...extras,
     ];

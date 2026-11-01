@@ -543,6 +543,60 @@ command = "my-hook --token abc"
         }
     })
 
+    it('keeps tools/list with the check and refreshes them on a fresh read', async () => {
+        clearProbeCache()
+        const workspace = mkdtempSync(join(tmpdir(), 'hapi-tools-'))
+        const agent = mkdtempSync(join(tmpdir(), 'hapi-tools-agent-'))
+        const previous = process.env.PI_CODING_AGENT_DIR
+        process.env.PI_CODING_AGENT_DIR = agent
+        mkdirSync(join(workspace, '.git'))
+        const hits = join(agent, 'hits.txt')
+        const mode = join(agent, 'mode.txt')
+        writeFileSync(mode, 'ping')
+        const script = join(agent, 'tools.cjs')
+        writeFileSync(script, `
+            const fs = require('node:fs')
+            const readline = require('node:readline')
+            fs.appendFileSync(${JSON.stringify(hits)}, 'x')
+            const rl = readline.createInterface({ input: process.stdin })
+            rl.on('line', (line) => {
+                let msg
+                try { msg = JSON.parse(line) } catch { return }
+                if (!msg || !msg.id) return
+                const name = fs.readFileSync(${JSON.stringify(mode)}, 'utf8').trim()
+                const result = msg.method === 'tools/list'
+                    ? { tools: [{ name, description: 'bearer SECRET-VALUE\\nsecond line' }, { name: '   ' }, { description: 'no name' }] }
+                    : { protocolVersion: '2025-06-18', capabilities: {} }
+                process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result }) + '\\n')
+            })
+        `)
+        writeFileSync(join(agent, 'mcp.json'), JSON.stringify({
+            mcpServers: { home: { command: process.execPath, args: [script] } },
+        }))
+        const read = (fresh?: boolean) => readLiveSessionConfig({ flavor: 'omp', cwd: workspace, tools: [], ...(fresh ? { fresh: true } : {}) })
+        try {
+            const first = await read()
+            const home = first.mcp?.servers.find((server) => server.name === 'home')
+            expect(home?.loaded).toBe(true)
+            expect(home?.tools).toEqual([{ name: 'ping', description: 'bearer *** second line' }])
+            expect(readFileSync(hits, 'utf8')).toBe('x')
+            const cached = await read()
+            expect(cached.mcp?.servers.find((server) => server.name === 'home')?.tools).toEqual(home?.tools)
+            expect(readFileSync(hits, 'utf8')).toBe('x')
+            writeFileSync(mode, 'pong')
+            const again = await read(true)
+            expect(again.mcp?.servers.find((server) => server.name === 'home')?.tools).toEqual([{ name: 'pong', description: 'bearer *** second line' }])
+            expect(readFileSync(hits, 'utf8')).toBe('xx')
+        } finally {
+            if (previous === undefined) delete process.env.PI_CODING_AGENT_DIR
+            else process.env.PI_CODING_AGENT_DIR = previous
+            rmSync(workspace, { recursive: true, force: true })
+            rmSync(agent, { recursive: true, force: true })
+            clearProbeCache()
+        }
+    })
+
+
 
 
 

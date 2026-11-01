@@ -23,6 +23,8 @@ export type InventoryRow = {
     loaded?: boolean
     /** Project server: the row can be probed again after the first check. */
     checkable?: boolean
+    /** Set after a successful check, including an empty list. */
+    tools?: { name: string; description?: string }[]
 }
 
 export type InventoryGroup = {
@@ -106,10 +108,17 @@ export function mcpSection(inventory: SessionInventory | null | undefined, flavo
         const next = row(server.name, server.source, undefined, { kind: 'mcp', name: server.name, source: server.source }, server.enabled, flavor, server.filePath, server.line)
         if (!next) return []
         const checkable = mcp.kind === 'servers' && server.source === 'project'
+        const tools = server.tools?.flatMap((tool) => {
+            const name = visibleInventoryText(tool.name)
+            if (!name) return []
+            const description = visibleInventoryText(tool.description)
+            return [description ? { name, description } : { name }]
+        })
         return [{
             ...next,
             ...(server.loaded === undefined ? {} : { loaded: server.loaded }),
             ...(checkable ? { checkable: true } : {}),
+            ...(tools ? { tools } : {}),
         }]
     })
     if (rows.length === 0) return { status: 'empty' }
