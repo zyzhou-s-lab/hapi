@@ -66,6 +66,7 @@ import { getSupersedingSessionId, prepareFollowSupersedingSession, shouldFollowS
 import { migrateSuppressedSendError } from '@/lib/suppressed-send-error'
 import FilesPage from '@/routes/sessions/files'
 import SessionConfigPage from '@/routes/sessions/config'
+import SessionConfigServerPage from '@/routes/sessions/configServer'
 import FilePage from '@/routes/sessions/file'
 import TerminalPage from '@/routes/sessions/terminal'
 import SettingsLayout from '@/routes/settings/layout'
@@ -1141,6 +1142,24 @@ const sessionConfigRoute = createRoute({
     component: SessionConfigPage,
 })
 
+const CONFIG_SERVER_SOURCES = ['injected', 'user', 'project', 'plugin', 'system', 'tool'] as const
+
+type SessionConfigServerSearch = {
+    name: string
+    source: typeof CONFIG_SERVER_SOURCES[number]
+}
+
+const sessionConfigServerRoute = createRoute({
+    getParentRoute: () => sessionDetailRoute,
+    path: 'config/server',
+    validateSearch: (search: Record<string, unknown>): SessionConfigServerSearch => {
+        const name = typeof search.name === 'string' ? search.name.slice(0, 200) : ''
+        const source = CONFIG_SERVER_SOURCES.find((item) => item === search.source) ?? 'user'
+        return { name, source }
+    },
+    component: SessionConfigServerPage,
+})
+
 const sessionTerminalRoute = createRoute({
     getParentRoute: () => sessionDetailRoute,
     path: 'terminal',
@@ -1152,7 +1171,9 @@ type SessionFileSearch = {
     staged?: boolean
     tab?: 'changes' | 'directories'
     query?: string
-    origin?: 'chat' | 'config'
+    origin?: 'chat' | 'config' | 'mcp'
+    mcpName?: string
+    mcpSource?: string
     line?: number
 }
 
@@ -1176,7 +1197,9 @@ const sessionFileRoute = createRoute({
         const query = typeof search.query === 'string' && search.query.length > 0
             ? search.query
             : undefined
-        const origin = search.origin === 'chat' || search.origin === 'config' ? search.origin : undefined
+        const origin = search.origin === 'chat' || search.origin === 'config' || search.origin === 'mcp' ? search.origin : undefined
+        const mcpName = typeof search.mcpName === 'string' && search.mcpName.length > 0 ? search.mcpName.slice(0, 200) : undefined
+        const mcpSource = typeof search.mcpSource === 'string' && search.mcpSource.length > 0 ? search.mcpSource.slice(0, 40) : undefined
         const lineNumber = typeof search.line === 'number' ? search.line : typeof search.line === 'string' && /^\d+$/.test(search.line) ? Number(search.line) : undefined
         const line = lineNumber !== undefined && lineNumber >= 1 && lineNumber <= 1_000_000 ? lineNumber : undefined
 
@@ -1192,6 +1215,10 @@ const sessionFileRoute = createRoute({
         }
         if (origin !== undefined) {
             result.origin = origin
+        }
+        if (origin === 'mcp' && mcpName && mcpSource) {
+            result.mcpName = mcpName
+            result.mcpSource = mcpSource
         }
         if (line !== undefined) {
             result.line = line
@@ -1360,6 +1387,7 @@ export const routeTree = rootRoute.addChildren([
             sessionTerminalRoute,
             sessionFilesRoute,
             sessionConfigRoute,
+            sessionConfigServerRoute,
             sessionFileRoute,
         ]),
     ]),

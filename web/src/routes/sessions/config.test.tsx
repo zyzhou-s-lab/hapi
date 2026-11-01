@@ -205,9 +205,9 @@ describe('SessionConfigPage', () => {
         expect(screen.getByRole('tooltip', { hidden: true, name: /cannot be changed/ })).toBeTruthy()
         expect(screen.getByText('Applies to new sessions, for every session.')).toBeTruthy()
         expect(screen.queryByRole('button', { name: /^docs/ })).toBeNull()
-        expect(screen.queryByRole('button', { name: /^hapi/ })).toBeNull()
+        expect(screen.getByRole('button', { name: /^hapi/ })).toBeTruthy()
         expect(screen.getByText('docs')).toBeTruthy()
-        expect(screen.queryByText('›')).toBeNull()
+        expect(screen.getAllByText('›').length).toBeGreaterThan(0)
     })
 
     it('opens a hook settings file and its script without an in-page detail', async () => {
@@ -231,10 +231,12 @@ describe('SessionConfigPage', () => {
             to: '/sessions/$sessionId/file',
             search: expect.objectContaining({ origin: 'config' }),
         }))
-        fireEvent.click(screen.getByRole('button', { name: 'Open config file' }))
+        fireEvent.click(screen.getByRole('button', { name: /^docs/ }))
         expect(mocks.navigate).toHaveBeenLastCalledWith(expect.objectContaining({
-            search: expect.objectContaining({ origin: 'config', line: 4 }),
+            to: '/sessions/$sessionId/config/server',
+            search: { name: 'docs', source: 'user' },
         }))
+        expect(screen.queryByText('Say ping')).toBeNull()
         expect(screen.queryByText('Back to list')).toBeNull()
     })
 
@@ -269,7 +271,7 @@ describe('SessionConfigPage', () => {
         expect(locked.getAttribute('title')).toBeNull()
         expect(screen.getByText('Use the title tool.')).toBeTruthy()
         expect(screen.queryByRole('button', { name: /append-system-prompt|追加/ })).toBeNull()
-        expect(screen.queryByText('›')).toBeTruthy()
+        expect(screen.getAllByText('›').length).toBeGreaterThan(0)
         fireEvent.click(screen.getByRole('button', { name: /^CLAUDE\.md/ }))
         expect(mocks.navigate).toHaveBeenCalledWith(expect.objectContaining({
             to: '/sessions/$sessionId/file',
@@ -398,7 +400,7 @@ describe('SessionConfigPage', () => {
         await waitFor(() => expect(button).toBeEnabled())
     })
 
-    it('expands a checked server into its tools and asks to check the others', async () => {
+    it('keeps the tool count on the row and opens the server page', async () => {
         mocks.getSessionConfig.mockResolvedValue({
             success: true,
             mcp: {
@@ -424,11 +426,12 @@ describe('SessionConfigPage', () => {
         expect(await screen.findByText('2 tools')).toBeTruthy()
         expect(screen.queryByText('Say ping')).toBeNull()
         fireEvent.click(screen.getByRole('button', { name: /^docs/ }))
-        expect(screen.getByText('Say ping')).toBeTruthy()
-        expect(screen.getByText('docs.read')).toBeTruthy()
-        fireEvent.click(screen.getByRole('button', { name: /^pending/ }))
-        expect(screen.getByText('Tools appear after a check')).toBeTruthy()
-        expect(screen.getAllByRole('button', { name: 'Check' }).length).toBeGreaterThan(0)
+        expect(mocks.navigate).toHaveBeenCalledWith(expect.objectContaining({
+            to: '/sessions/$sessionId/config/server',
+            search: { name: 'docs', source: 'user' },
+        }))
+        expect(screen.queryByText('Say ping')).toBeNull()
+        expect(screen.queryByText('Tools appear after a check')).toBeNull()
     })
 
     it('marks a partial tool list and uses the runner home label', async () => {
@@ -453,8 +456,12 @@ describe('SessionConfigPage', () => {
         expect(await screen.findByText('~/.omp/agent/mcp.json')).toBeTruthy()
         expect(screen.queryByText('/custom/runner/.omp/agent/mcp.json')).toBeNull()
         expect(screen.getByText('1+ tools')).toBeTruthy()
+        expect(screen.queryByText('Showing the first part only.')).toBeNull()
         fireEvent.click(screen.getByRole('button', { name: /^docs/ }))
-        expect(screen.getByText('Showing the first part only.')).toBeTruthy()
+        expect(mocks.navigate).toHaveBeenCalledWith(expect.objectContaining({
+            to: '/sessions/$sessionId/config/server',
+            search: { name: 'docs', source: 'user' },
+        }))
     })
 
 

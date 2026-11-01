@@ -124,44 +124,6 @@ function LockMark(props: { reason: string; children?: ReactNode }) {
     )
 }
 
-function McpToolList(props: { item: InventoryRow; pending: boolean; onCheck?: (row: InventoryRow) => void }) {
-    const { t } = useTranslation()
-    if (!props.item.tools) {
-        return (
-            <div className="border-t border-[var(--app-divider)] px-3 py-2">
-                <p className="text-xs text-[var(--app-hint)]">{t('session.config.mcp.toolsAfterCheck')}</p>
-                {props.item.checkable ? (
-                    <button
-                        type="button"
-                        className="mt-1 text-xs text-[var(--app-link)] disabled:opacity-50"
-                        disabled={props.pending}
-                        onClick={() => props.onCheck?.(props.item)}
-                    >
-                        {t(props.item.loaded === undefined ? 'session.config.mcp.check' : 'session.config.mcp.recheckOne')}
-                    </button>
-                ) : null}
-            </div>
-        )
-    }
-    if (props.item.tools.length === 0) {
-        return <p className="border-t border-[var(--app-divider)] px-3 py-2 text-xs text-[var(--app-hint)]">{t('session.config.mcp.noTools')}</p>
-    }
-    return (
-        <>
-            <ul className="max-h-60 overflow-y-auto overscroll-contain border-t border-[var(--app-divider)]">
-                {props.item.tools.map((tool, index) => (
-                    <li key={`${tool.name}:${index}`} className="border-b border-[var(--app-divider)] px-3 py-1.5 last:border-b-0">
-                        <div className="truncate text-xs text-[var(--app-fg)]">{tool.name}</div>
-                        {tool.description ? <div className="truncate text-[11px] leading-4 text-[var(--app-hint)]">{tool.description}</div> : null}
-                    </li>
-                ))}
-            </ul>
-            {props.item.toolsTruncated ? (
-                <p className="border-t border-[var(--app-divider)] px-3 py-1.5 text-[11px] text-[var(--app-hint)]">{t('session.config.truncated')}</p>
-            ) : null}
-        </>
-    )
-}
 function ConfigSwitch(props: { row: InventoryRow; pending: boolean; onToggle: (enabled: boolean) => void }) {
     const { t } = useTranslation()
     const reason = lockReason(props.row, t)
@@ -220,6 +182,7 @@ function ConfigSection(props: {
     section: InventorySection
     pendingKey: string | null
     onOpen: (row: InventoryRow) => void
+    onOpenServer: (row: InventoryRow) => void
     onOpenScript: (row: InventoryRow) => void
     onToggle: (row: InventoryRow, enabled: boolean) => void
     onCheck?: (row: InventoryRow) => void
@@ -228,7 +191,6 @@ function ConfigSection(props: {
 }) {
     const { t } = useTranslation()
     const message = sectionMessage(props.section, t, props.emptyKey)
-    const [openKey, setOpenKey] = useState<string | null>(null)
     const groups: InventoryGroup[] = props.section.status === 'list' && props.section.groups?.length
         ? props.section.groups
         : props.section.status === 'list'
@@ -259,8 +221,7 @@ function ConfigSection(props: {
                                     <li key={item.key} className="border-b border-[var(--app-divider)] last:border-b-0">
                                         {(() => {
                                             const reason = item.lock ? lockReason(item, t) : undefined
-                                            const expands = item.ref.kind === 'mcp' && (item.tools !== undefined || item.checkable === true || Boolean(item.filePath))
-                                            const open = openKey === item.key
+                                            const server = item.ref.kind === 'mcp'
                                             const switchEl = item.toggle ? (
                                                 <ConfigSwitch
                                                     row={item}
@@ -270,13 +231,12 @@ function ConfigSection(props: {
                                             ) : null
                                             return (
                                                 <>
-                                                    <div className={`flex flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2 ${item.openable && !expands ? 'cursor-pointer hover:bg-[var(--app-subtle-bg)]' : ''}`}>
-                                                        {expands ? (
+                                                    <div className={`flex flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2 ${(item.openable || server) ? 'hover:bg-[var(--app-subtle-bg)]' : ''}`}>
+                                                        {server ? (
                                                             <button
                                                                 type="button"
-                                                                aria-expanded={open}
                                                                 className="min-w-[12rem] max-w-full flex-1 cursor-pointer text-left"
-                                                                onClick={() => setOpenKey(open ? null : item.key)}
+                                                                onClick={() => props.onOpenServer(item)}
                                                             >
                                                                 <RowText item={item} />
                                                             </button>
@@ -293,18 +253,7 @@ function ConfigSection(props: {
                                                         {item.tools ? (
                                                             <span className="shrink-0 text-xs text-[var(--app-hint)]">{t(item.toolsTruncated ? 'session.config.mcp.toolCountPartial' : 'session.config.mcp.toolCount', { n: item.tools.length })}</span>
                                                         ) : null}
-                                                        {expands && item.filePath ? (
-                                                            <button
-                                                                type="button"
-                                                                className="shrink-0 text-xs text-[var(--app-link)]"
-                                                                onClick={(event) => {
-                                                                    event.stopPropagation()
-                                                                    props.onOpen(item)
-                                                                }}
-                                                            >
-                                                                {t('session.config.mcp.openFile')}
-                                                            </button>
-                                                        ) : null}
+
                                                         {item.scriptPath && item.filePath ? (
                                                             <button
                                                                 type="button"
@@ -350,12 +299,10 @@ function ConfigSection(props: {
                                                                 {t(`session.config.prompt.scope.${item.scopeLabel}`)}
                                                             </span>
                                                         ) : null}
-                                                        {item.openable && !expands ? <span aria-hidden="true" className="shrink-0 text-sm text-[var(--app-hint)]">›</span> : null}
+                                                        {(item.openable || server) ? <span aria-hidden="true" className="shrink-0 text-sm text-[var(--app-hint)]">›</span> : null}
                                                         </div>
                                                     </div>
-                                                    {expands && open ? (
-                                                        <McpToolList item={item} pending={props.pendingKey === item.key} onCheck={props.onCheck} />
-                                                    ) : null}
+
                                                 </>
                                             )
                                         })()}
@@ -477,6 +424,16 @@ export default function SessionConfigPage() {
         openFile(path, row.filePath ? row.line : undefined)
     }
 
+    const openServer = (row: InventoryRow) => {
+        if (!row.source) return
+        void navigate({
+            to: '/sessions/$sessionId/config/server',
+            params: { sessionId },
+            search: { name: row.title, source: row.source },
+            ...PRESERVE_SESSION_SIDEBAR_SCROLL,
+        })
+    }
+
     const openScript = (row: InventoryRow) => {
         if (!row.scriptPath) return
         openFile(row.scriptPath)
@@ -545,12 +502,12 @@ export default function SessionConfigPage() {
                     />
                 ) : (
                     <div className="mx-auto flex w-full max-w-content flex-col gap-6 p-4 max-sm:pb-24 max-sm:pr-20">
-                        <ConfigSection title={t('session.config.systemPrompt')} emptyKey="session.config.systemPrompt.empty" section={systemPrompt} pendingKey={pendingKey} onOpen={openRow} onOpenScript={openScript} onToggle={(row, enabled) => { void toggle(row, enabled) }} />
-                        <ConfigSection title={t('session.config.userPrompt')} emptyKey="session.config.userPrompt.empty" section={userPrompt} pendingKey={pendingKey} onOpen={openRow} onOpenScript={openScript} onToggle={(row, enabled) => { void toggle(row, enabled) }} />
-                        <ConfigSection title={t('session.config.mcp')} emptyKey="session.config.mcp.empty" section={mcp} pendingKey={pendingKey} onOpen={openRow} onOpenScript={openScript} onToggle={(row, enabled) => { void toggle(row, enabled) }} onCheck={(row) => { void checkRow(row) }} onRecheck={flavor === 'omp' ? () => { void recheck() } : undefined} rechecking={rechecking} />
-                        <ConfigSection title={t('session.config.agents')} emptyKey="session.config.agents.empty" section={agents} pendingKey={pendingKey} onOpen={openRow} onOpenScript={openScript} onToggle={(row, enabled) => { void toggle(row, enabled) }} />
-                        <ConfigSection title={t('session.config.skills')} emptyKey="session.config.skills.empty" section={skills} pendingKey={pendingKey} onOpen={openRow} onOpenScript={openScript} onToggle={(row, enabled) => { void toggle(row, enabled) }} />
-                        <ConfigSection title={t('session.config.hooks')} emptyKey="session.config.hooks.empty" section={hooks} pendingKey={pendingKey} onOpen={openRow} onOpenScript={openScript} onToggle={(row, enabled) => { void toggle(row, enabled) }} />
+                        <ConfigSection title={t('session.config.systemPrompt')} emptyKey="session.config.systemPrompt.empty" section={systemPrompt} pendingKey={pendingKey} onOpen={openRow} onOpenServer={openServer} onOpenScript={openScript} onToggle={(row, enabled) => { void toggle(row, enabled) }} />
+                        <ConfigSection title={t('session.config.userPrompt')} emptyKey="session.config.userPrompt.empty" section={userPrompt} pendingKey={pendingKey} onOpen={openRow} onOpenServer={openServer} onOpenScript={openScript} onToggle={(row, enabled) => { void toggle(row, enabled) }} />
+                        <ConfigSection title={t('session.config.mcp')} emptyKey="session.config.mcp.empty" section={mcp} pendingKey={pendingKey} onOpen={openRow} onOpenServer={openServer} onOpenScript={openScript} onToggle={(row, enabled) => { void toggle(row, enabled) }} onCheck={(row) => { void checkRow(row) }} onRecheck={flavor === 'omp' ? () => { void recheck() } : undefined} rechecking={rechecking} />
+                        <ConfigSection title={t('session.config.agents')} emptyKey="session.config.agents.empty" section={agents} pendingKey={pendingKey} onOpen={openRow} onOpenServer={openServer} onOpenScript={openScript} onToggle={(row, enabled) => { void toggle(row, enabled) }} />
+                        <ConfigSection title={t('session.config.skills')} emptyKey="session.config.skills.empty" section={skills} pendingKey={pendingKey} onOpen={openRow} onOpenServer={openServer} onOpenScript={openScript} onToggle={(row, enabled) => { void toggle(row, enabled) }} />
+                        <ConfigSection title={t('session.config.hooks')} emptyKey="session.config.hooks.empty" section={hooks} pendingKey={pendingKey} onOpen={openRow} onOpenServer={openServer} onOpenScript={openScript} onToggle={(row, enabled) => { void toggle(row, enabled) }} />
                     </div>
                 )}
             </div>
