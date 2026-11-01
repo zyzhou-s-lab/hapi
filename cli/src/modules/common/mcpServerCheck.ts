@@ -100,31 +100,85 @@ function toolsOk(message: RpcMsg): boolean {
 export type ListedMcpTool = { name: string; description?: string }
 
 const TOOL_LIMIT = 200
+const TOOL_PAGE_LIMIT = 8
 const TOOL_NAME_MAX = 120
 const TOOL_DESC_MAX = 160
+const CURSOR_MAX = 1024
 
 function oneLine(value: string, max: number): string {
     return value.replace(/\s+/g, ' ').trim().slice(0, max)
 }
 
-function listedTools(message: RpcMsg): ListedMcpTool[] {
+function listedTools(message: RpcMsg, room: number): { tools: ListedMcpTool[]; cut: boolean } {
     const result = message.result
-    if (!result || typeof result !== 'object' || !('tools' in result) || !Array.isArray(result.tools)) return []
+    if (!result || typeof result !== 'object' || !('tools' in result) || !Array.isArray(result.tools)) {
+        return { tools: [], cut: false }
+    }
     const tools: ListedMcpTool[] = []
+    let cut = false
     for (const item of result.tools) {
-        if (tools.length >= TOOL_LIMIT) break
+        if (tools.length >= room) {
+            cut = true
+            break
+        }
         if (!item || typeof item !== 'object' || !('name' in item) || typeof item.name !== 'string') continue
-        const name = oneLine(item.name, TOOL_NAME_MAX)
+        const name = oneLine(redactConfigSecrets(item.name), TOOL_NAME_MAX)
         if (!name) continue
         const raw = 'description' in item && typeof item.description === 'string'
             ? oneLine(redactConfigSecrets(item.description), TOOL_DESC_MAX)
             : ''
         tools.push(raw ? { name, description: raw } : { name })
     }
-    return tools
+    return { tools, cut }
 }
 
-type ProbeHit = { ok: boolean; timedOut: boolean; tools?: ListedMcpTool[] }
+function nextCursor(message: RpcMsg): string | undefined {
+    const result = message.result
+    if (!result || typeof result !== 'object' || !('nextCursor' in result)) return undefined
+    const cursor = result.nextCursor
+    if (typeof cursor !== 'string' || cursor.length > CURSOR_MAX || /[\r\n]/.test(cursor)) return undefined
+    const trimmed = cursor.trim()
+    return trimmed || undefined
+}
+
+type PageFetch = {
+    message?: RpcMsg
+    failed: boolean
+    timedOut: boolean
+}
+
+/** Follows `nextCursor` until the list ends, the 8s budget runs out, or the page cap is hit. */
+async function followToolPages(
+    remaining: () => number,
+    fetchPage: (id: number, cursor: string | undefined, budgetMs: number) => Promise<PageFetch>,
+): Promise<ProbeHit> {
+    const tools: ListedMcpTool[] = []
+    const seen = new Set<string>()
+    let cursor: string | undefined
+    for (let page = 0; page < TOOL_PAGE_LIMIT; page += 1) {
+        const budget = remaining()
+        if (budget <= 0) return page === 0 ? down(true) : { ok: true, timedOut: false, tools, toolsTruncated: true }
+        const got = await fetchPage(2 + page, cursor, budget)
+        if (got.failed || !got.message || !toolsOk(got.message)) {
+            return page === 0 ? down(got.timedOut) : { ok: true, timedOut: false, tools, toolsTruncated: true }
+        }
+        const taken = listedTools(got.message, TOOL_LIMIT - tools.length)
+        tools.push(...taken.tools)
+        const next = nextCursor(got.message)
+        if (taken.cut || tools.length >= TOOL_LIMIT) {
+            return { ok: true, timedOut: false, tools, ...(taken.cut || next ? { toolsTruncated: true } : {}) }
+        }
+        if (!next) return { ok: true, timedOut: false, tools }
+        if (seen.has(next) || page + 1 >= TOOL_PAGE_LIMIT) {
+            return { ok: true, timedOut: false, tools, toolsTruncated: true }
+        }
+        seen.add(next)
+        cursor = next
+    }
+    return { ok: true, timedOut: false, tools, toolsTruncated: true }
+}
+
+type ProbeHit = { ok: boolean; timedOut: boolean; tools?: ListedMcpTool[]; toolsTruncated?: boolean }
 
 function down(timedOut = false): ProbeHit {
     return { ok: false, timedOut }
@@ -133,7 +187,7 @@ function down(timedOut = false): ProbeHit {
 const PROBE_TTL_MS = 10 * 60 * 1000
 const PROBE_CACHE_MAX = 200
 
-type CachedProbe = { ok: boolean; at: number; tools?: ListedMcpTool[] }
+type CachedProbe = { ok: boolean; at: number; tools?: ListedMcpTool[]; toolsTruncated?: boolean }
 type Flight = { gen: number; fresh: boolean; promise: Promise<ProbeHit> }
 
 const probeCache = new Map<string, CachedProbe>()
@@ -191,7 +245,7 @@ function remember(key: string, gen: number, result: ProbeHit): void {
     writtenGen.delete(key)
     writtenGen.set(key, gen)
     probeCache.delete(key)
-    if (!result.timedOut) probeCache.set(key, { ok: result.ok, at: Date.now(), ...(result.ok ? { tools: result.tools ?? [] } : {}) })
+    if (!result.timedOut) probeCache.set(key, { ok: result.ok, at: Date.now(), ...(result.ok ? { tools: result.tools ?? [], ...(result.toolsTruncated ? { toolsTruncated: true } : {}) } : {}) })
     while (probeCache.size > PROBE_CACHE_MAX) {
         const oldest = probeCache.keys().next().value
         if (oldest === undefined) break
@@ -206,10 +260,10 @@ export function cachedProbe(target: McpProbeTarget): boolean | undefined {
 }
 
 /** Tools from the last successful check of this config. Undefined until a check is stored. */
-export function cachedProbeTools(target: McpProbeTarget): ListedMcpTool[] | undefined {
+export function cachedProbeTools(target: McpProbeTarget): { tools: ListedMcpTool[]; truncated: boolean } | undefined {
     const row = readRow(probeConfigKey(target))
     if (!row?.ok) return undefined
-    return row.tools ?? []
+    return { tools: row.tools ?? [], truncated: row.toolsTruncated === true }
 }
 
 export function probeCacheSize(): number {
@@ -340,10 +394,12 @@ async function checkStdio(target: McpProbeTarget): Promise<ProbeHit> {
         const init = await waitFor(1, remaining())
         if (!init || init.error) return down(!init && !processGone && child.exitCode === null)
         send(INITIALIZED)
-        send(request(2, 'tools/list'))
-        const tools = await waitFor(2, remaining())
-        if (!tools || !toolsOk(tools)) return down(!tools && !processGone && child.exitCode === null)
-        return { ok: true, timedOut: false, tools: listedTools(tools) }
+        return await followToolPages(remaining, async (id, cursor, budgetMs) => {
+            send(request(id, 'tools/list', cursor ? { cursor } : undefined))
+            const message = await waitFor(id, budgetMs)
+            if (!message) return { failed: true, timedOut: !processGone && child.exitCode === null }
+            return { message, failed: false, timedOut: false }
+        })
     } catch {
         return down()
     } finally {
@@ -413,6 +469,7 @@ async function readRpc(response: Response, id: number): Promise<RpcMsg | undefin
 
 async function checkHttp(target: McpProbeTarget): Promise<ProbeHit> {
     if (!target.url) return down()
+    const url = target.url
     const headers = target.headers ?? {}
     let session = ''
     const started = Date.now()
@@ -420,22 +477,29 @@ async function checkHttp(target: McpProbeTarget): Promise<ProbeHit> {
     try {
         const initBudget = remaining()
         if (initBudget <= 0) return down(true)
-        const init = await postJson(target.url, initializeReq(), headers, session, initBudget)
+        const init = await postJson(url, initializeReq(), headers, session, initBudget)
         if (init.status === 401 || init.status === 403 || init.status < 200 || init.status >= 300) return down()
         session = init.headers.get('Mcp-Session-Id') ?? ''
         const initMsg = await readRpc(init, 1)
         if (!initMsg || initMsg.error) return down()
         const noteBudget = remaining()
         if (noteBudget > 0) {
-            await postJson(target.url, INITIALIZED, headers, session, noteBudget).catch(() => undefined)
+            await postJson(url, INITIALIZED, headers, session, noteBudget).catch(() => undefined)
         }
-        const listBudget = remaining()
-        if (listBudget <= 0) return down(true)
-        const listed = await postJson(target.url, request(2, 'tools/list'), headers, session, listBudget)
-        if (listed.status === 401 || listed.status === 403 || listed.status < 200 || listed.status >= 300) return down()
-        const tools = await readRpc(listed, 2)
-        if (!tools || !toolsOk(tools)) return down()
-        return { ok: true, timedOut: false, tools: listedTools(tools) }
+        return await followToolPages(remaining, async (id, cursor, budgetMs) => {
+            try {
+                const listed = await postJson(url, request(id, 'tools/list', cursor ? { cursor } : undefined), headers, session, budgetMs)
+                if (listed.status === 401 || listed.status === 403 || listed.status < 200 || listed.status >= 300) {
+                    return { failed: true, timedOut: false }
+                }
+                const message = await readRpc(listed, id)
+                if (!message) return { failed: true, timedOut: false }
+                return { message, failed: false, timedOut: false }
+            } catch (error) {
+                const name = error instanceof Error ? error.name : ''
+                return { failed: true, timedOut: name === 'TimeoutError' || name === 'AbortError' }
+            }
+        })
     } catch (error) {
         const name = error instanceof Error ? error.name : ''
         return down(name === 'TimeoutError' || name === 'AbortError')

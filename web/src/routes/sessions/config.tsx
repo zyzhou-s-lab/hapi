@@ -147,14 +147,19 @@ function McpToolList(props: { item: InventoryRow; pending: boolean; onCheck?: (r
         return <p className="border-t border-[var(--app-divider)] px-3 py-2 text-xs text-[var(--app-hint)]">{t('session.config.mcp.noTools')}</p>
     }
     return (
-        <ul className="max-h-60 overflow-y-auto overscroll-contain border-t border-[var(--app-divider)]">
-            {props.item.tools.map((tool, index) => (
-                <li key={`${tool.name}:${index}`} className="border-b border-[var(--app-divider)] px-3 py-1.5 last:border-b-0">
-                    <div className="truncate text-xs text-[var(--app-fg)]">{tool.name}</div>
-                    {tool.description ? <div className="truncate text-[11px] leading-4 text-[var(--app-hint)]">{tool.description}</div> : null}
-                </li>
-            ))}
-        </ul>
+        <>
+            <ul className="max-h-60 overflow-y-auto overscroll-contain border-t border-[var(--app-divider)]">
+                {props.item.tools.map((tool, index) => (
+                    <li key={`${tool.name}:${index}`} className="border-b border-[var(--app-divider)] px-3 py-1.5 last:border-b-0">
+                        <div className="truncate text-xs text-[var(--app-fg)]">{tool.name}</div>
+                        {tool.description ? <div className="truncate text-[11px] leading-4 text-[var(--app-hint)]">{tool.description}</div> : null}
+                    </li>
+                ))}
+            </ul>
+            {props.item.toolsTruncated ? (
+                <p className="border-t border-[var(--app-divider)] px-3 py-1.5 text-[11px] text-[var(--app-hint)]">{t('session.config.truncated')}</p>
+            ) : null}
+        </>
     )
 }
 function ConfigSwitch(props: { row: InventoryRow; pending: boolean; onToggle: (enabled: boolean) => void }) {
@@ -170,7 +175,7 @@ function ConfigSwitch(props: { row: InventoryRow; pending: boolean; onToggle: (e
                 aria-checked={props.row.enabled}
                 aria-label={t('session.config.toggle', { name: props.row.title })}
                 disabled={!props.row.mutable || props.pending}
-                title={reason ?? skillHint ?? t('session.config.effect')}
+                title={reason ? undefined : skillHint ?? t('session.config.effect')}
                 onClick={(event) => {
                     event.stopPropagation()
                     props.onToggle(!props.row.enabled)
@@ -265,27 +270,28 @@ function ConfigSection(props: {
                                             ) : null
                                             return (
                                                 <>
-                                                    <div className={`flex items-center gap-3 px-3 py-2 ${item.openable && !expands ? 'cursor-pointer hover:bg-[var(--app-subtle-bg)]' : ''}`}>
+                                                    <div className={`flex flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2 ${item.openable && !expands ? 'cursor-pointer hover:bg-[var(--app-subtle-bg)]' : ''}`}>
                                                         {expands ? (
                                                             <button
                                                                 type="button"
                                                                 aria-expanded={open}
-                                                                className="min-w-0 flex-1 cursor-pointer text-left"
+                                                                className="min-w-[12rem] max-w-full flex-1 cursor-pointer text-left"
                                                                 onClick={() => setOpenKey(open ? null : item.key)}
                                                             >
                                                                 <RowText item={item} />
                                                             </button>
                                                         ) : item.openable ? (
-                                                            <button type="button" className="min-w-0 flex-1 cursor-pointer text-left" onClick={() => props.onOpen(item)}>
+                                                            <button type="button" className="min-w-[12rem] max-w-full flex-1 cursor-pointer text-left" onClick={() => props.onOpen(item)}>
                                                                 <RowText item={item} />
                                                             </button>
                                                         ) : (
-                                                            <div className="min-w-0 flex-1 text-left">
+                                                            <div className="min-w-[12rem] max-w-full flex-1 text-left">
                                                                 <RowText item={item} />
                                                             </div>
                                                         )}
+                                                        <div className="ml-auto flex max-w-full flex-wrap items-center justify-end gap-2">
                                                         {item.tools ? (
-                                                            <span className="shrink-0 text-xs text-[var(--app-hint)]">{t('session.config.mcp.toolCount', { n: item.tools.length })}</span>
+                                                            <span className="shrink-0 text-xs text-[var(--app-hint)]">{t(item.toolsTruncated ? 'session.config.mcp.toolCountPartial' : 'session.config.mcp.toolCount', { n: item.tools.length })}</span>
                                                         ) : null}
                                                         {expands && item.filePath ? (
                                                             <button
@@ -345,6 +351,7 @@ function ConfigSection(props: {
                                                             </span>
                                                         ) : null}
                                                         {item.openable && !expands ? <span aria-hidden="true" className="shrink-0 text-sm text-[var(--app-hint)]">›</span> : null}
+                                                        </div>
                                                     </div>
                                                     {expands && open ? (
                                                         <McpToolList item={item} pending={props.pendingKey === item.key} onCheck={props.onCheck} />
@@ -537,7 +544,7 @@ export default function SessionConfigPage() {
                         retrying={isFetching}
                     />
                 ) : (
-                    <div className="mx-auto flex w-full max-w-content flex-col gap-6 p-4">
+                    <div className="mx-auto flex w-full max-w-content flex-col gap-6 p-4 max-sm:pb-24 max-sm:pr-20">
                         <ConfigSection title={t('session.config.systemPrompt')} emptyKey="session.config.systemPrompt.empty" section={systemPrompt} pendingKey={pendingKey} onOpen={openRow} onOpenScript={openScript} onToggle={(row, enabled) => { void toggle(row, enabled) }} />
                         <ConfigSection title={t('session.config.userPrompt')} emptyKey="session.config.userPrompt.empty" section={userPrompt} pendingKey={pendingKey} onOpen={openRow} onOpenScript={openScript} onToggle={(row, enabled) => { void toggle(row, enabled) }} />
                         <ConfigSection title={t('session.config.mcp')} emptyKey="session.config.mcp.empty" section={mcp} pendingKey={pendingKey} onOpen={openRow} onOpenScript={openScript} onToggle={(row, enabled) => { void toggle(row, enabled) }} onCheck={(row) => { void checkRow(row) }} onRecheck={flavor === 'omp' ? () => { void recheck() } : undefined} rechecking={rechecking} />

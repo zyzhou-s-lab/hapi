@@ -25,6 +25,8 @@ export type InventoryRow = {
     checkable?: boolean
     /** Set after a successful check, including an empty list. */
     tools?: { name: string; description?: string }[]
+    toolsTruncated?: boolean
+    pathLabel?: string
 }
 
 export type InventoryGroup = {
@@ -119,6 +121,8 @@ export function mcpSection(inventory: SessionInventory | null | undefined, flavo
             ...(server.loaded === undefined ? {} : { loaded: server.loaded }),
             ...(checkable ? { checkable: true } : {}),
             ...(tools ? { tools } : {}),
+            ...(server.toolsTruncated ? { toolsTruncated: true } : {}),
+            ...(server.pathLabel ? { pathLabel: server.pathLabel } : {}),
         }]
     })
     if (rows.length === 0) return { status: 'empty' }
@@ -154,6 +158,8 @@ function mcpGroups(rows: InventoryRow[]): InventoryGroup[] | undefined {
 /** User files live outside the session, so the header shows `~/...` instead of the absolute path. The row still opens the original path. */
 function groupLabel(file: string, rows: InventoryRow[]): string {
     if (!rows.every((item) => item.source === 'user')) return file
+    const labeled = rows.find((item) => item.pathLabel)?.pathLabel
+    if (labeled) return labeled
     const unix = /^\/(?:Users|home)\/[^/]+(\/.*)$/.exec(file)
     if (unix?.[1]) return `~${unix[1]}`
     const win = /^[A-Za-z]:[\\/]Users[\\/][^\\/]+([\\/].*)$/.exec(file)

@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager'
 import { describe, expect, it } from 'vitest'
@@ -17,6 +17,7 @@ import {
     projectMcpPaths,
     ompProjectMcpPaths,
     readLiveSessionConfig,
+    displayHomePath,
     listSessionAgents,
     listedSessionConfigRealpaths,
 } from './sessionInventory'
@@ -595,6 +596,182 @@ command = "my-hook --token abc"
             clearProbeCache()
         }
     })
+
+    it('follows nextCursor and redacts a tool name', async () => {
+        clearProbeCache()
+        const workspace = mkdtempSync(join(tmpdir(), 'hapi-pages-'))
+        const agent = mkdtempSync(join(tmpdir(), 'hapi-pages-agent-'))
+        const previous = process.env.PI_CODING_AGENT_DIR
+        process.env.PI_CODING_AGENT_DIR = agent
+        mkdirSync(join(workspace, '.git'))
+        const script = join(agent, 'pages.cjs')
+        writeFileSync(script, `
+            const readline = require('node:readline')
+            const rl = readline.createInterface({ input: process.stdin })
+            rl.on('line', (line) => {
+                let msg
+                try { msg = JSON.parse(line) } catch { return }
+                if (!msg || !msg.id) return
+                if (msg.method !== 'tools/list') {
+                    process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result: { protocolVersion: '2025-06-18', capabilities: {} } }) + '\\n')
+                    return
+                }
+                const cursor = msg.params && msg.params.cursor
+                const result = cursor
+                    ? { tools: [{ name: 'bearer SECRET-VALUE', description: 'ok' }] }
+                    : { tools: [{ name: 'one', description: 'a' }], nextCursor: 'p2' }
+                process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result }) + '\\n')
+            })
+        `)
+        writeFileSync(join(agent, 'mcp.json'), JSON.stringify({
+            mcpServers: { home: { command: process.execPath, args: [script] } },
+        }))
+        try {
+            const config = await readLiveSessionConfig({ flavor: 'omp', cwd: workspace, tools: [] })
+            const home = config.mcp?.servers.find((server) => server.name === 'home')
+            expect(home?.tools).toEqual([
+                { name: 'one', description: 'a' },
+                { name: 'bearer ***', description: 'ok' },
+            ])
+            expect(home?.toolsTruncated).toBeUndefined()
+        } finally {
+            if (previous === undefined) delete process.env.PI_CODING_AGENT_DIR
+            else process.env.PI_CODING_AGENT_DIR = previous
+            rmSync(workspace, { recursive: true, force: true })
+            rmSync(agent, { recursive: true, force: true })
+            clearProbeCache()
+        }
+    })
+
+    it('stops after the page cap and marks the list partial', async () => {
+        clearProbeCache()
+        const workspace = mkdtempSync(join(tmpdir(), 'hapi-pagecap-'))
+        const agent = mkdtempSync(join(tmpdir(), 'hapi-pagecap-agent-'))
+        const previous = process.env.PI_CODING_AGENT_DIR
+        process.env.PI_CODING_AGENT_DIR = agent
+        mkdirSync(join(workspace, '.git'))
+        const countFile = join(agent, 'pages.txt')
+        const script = join(agent, 'cap.cjs')
+        writeFileSync(script, `
+            const fs = require('node:fs')
+            const readline = require('node:readline')
+            let pages = 0
+            const rl = readline.createInterface({ input: process.stdin })
+            rl.on('line', (line) => {
+                let msg
+                try { msg = JSON.parse(line) } catch { return }
+                if (!msg || !msg.id) return
+                if (msg.method !== 'tools/list') {
+                    process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result: { protocolVersion: '2025-06-18', capabilities: {} } }) + '\\n')
+                    return
+                }
+                pages += 1
+                fs.writeFileSync(${JSON.stringify(countFile)}, String(pages))
+                const result = { tools: [{ name: 't' + pages }], nextCursor: 'c' + pages }
+                process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result }) + '\\n')
+            })
+        `)
+        writeFileSync(join(agent, 'mcp.json'), JSON.stringify({
+            mcpServers: { home: { command: process.execPath, args: [script] } },
+        }))
+        try {
+            const config = await readLiveSessionConfig({ flavor: 'omp', cwd: workspace, tools: [] })
+            const home = config.mcp?.servers.find((server) => server.name === 'home')
+            expect(home?.tools?.map((tool) => tool.name)).toEqual(['t1', 't2', 't3', 't4', 't5', 't6', 't7', 't8'])
+            expect(home?.toolsTruncated).toBe(true)
+            expect(readFileSync(countFile, 'utf8')).toBe('8')
+        } finally {
+            if (previous === undefined) delete process.env.PI_CODING_AGENT_DIR
+            else process.env.PI_CODING_AGENT_DIR = previous
+            rmSync(workspace, { recursive: true, force: true })
+            rmSync(agent, { recursive: true, force: true })
+            clearProbeCache()
+        }
+    })
+
+    it('starts a named recheck without waiting for the other probes', async () => {
+        clearProbeCache()
+        const workspace = mkdtempSync(join(tmpdir(), 'hapi-parallel-'))
+        const agent = mkdtempSync(join(tmpdir(), 'hapi-parallel-agent-'))
+        const previous = process.env.PI_CODING_AGENT_DIR
+        process.env.PI_CODING_AGENT_DIR = agent
+        mkdirSync(join(workspace, '.git'))
+        const log = join(agent, 'starts.txt')
+        const userScript = join(agent, 'slow-user.cjs')
+        const projectScript = join(agent, 'fast-project.cjs')
+        const answer = `
+            const readline = require('node:readline')
+            const rl = readline.createInterface({ input: process.stdin })
+            rl.on('line', (line) => {
+                let msg
+                try { msg = JSON.parse(line) } catch { return }
+                if (!msg || !msg.id) return
+                const result = msg.method === 'tools/list' ? { tools: [] } : { protocolVersion: '2025-06-18', capabilities: {} }
+                process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result }) + '\\n')
+            })
+        `
+        writeFileSync(userScript, `
+            const fs = require('node:fs')
+            const started = Date.now()
+            fs.appendFileSync(${JSON.stringify(log)}, 'user ' + started + '\\n')
+            while (Date.now() - started < 400) {}
+            ${answer}
+        `)
+        writeFileSync(projectScript, `
+            const fs = require('node:fs')
+            fs.appendFileSync(${JSON.stringify(log)}, 'proj ' + Date.now() + '\\n')
+            ${answer}
+        `)
+        writeFileSync(join(agent, 'mcp.json'), JSON.stringify({
+            mcpServers: { home: { command: process.execPath, args: [userScript] } },
+        }))
+        writeFileSync(join(workspace, '.mcp.json'), JSON.stringify({
+            mcpServers: { flip: { command: process.execPath, args: [projectScript] } },
+        }))
+        try {
+            await readLiveSessionConfig({ flavor: 'omp', cwd: workspace, tools: [], check: 'flip' })
+            const lines = readFileSync(log, 'utf8').trim().split('\n')
+            const stamp = (prefix: string) => Number(lines.find((line) => line.startsWith(prefix))?.slice(prefix.length))
+            expect(Math.abs(stamp('user ') - stamp('proj '))).toBeLessThan(250)
+        } finally {
+            if (previous === undefined) delete process.env.PI_CODING_AGENT_DIR
+            else process.env.PI_CODING_AGENT_DIR = previous
+            rmSync(workspace, { recursive: true, force: true })
+            rmSync(agent, { recursive: true, force: true })
+            clearProbeCache()
+        }
+    })
+
+    it('shortens a user path with the runner home, not a fixed prefix', async () => {
+        expect(displayHomePath('/custom/runner/.omp/agent/mcp.json', '/custom/runner')).toBe('~/.omp/agent/mcp.json')
+        expect(displayHomePath('/custom/runner', '/custom/runner')).toBe('~')
+        expect(displayHomePath('/elsewhere/.omp/agent/mcp.json', '/custom/runner')).toBeUndefined()
+        clearProbeCache()
+        const home = homedir()
+        const agent = join(home, `.hapi-home-label-${process.pid}`)
+        const workspace = mkdtempSync(join(tmpdir(), 'hapi-home-label-'))
+        const previous = process.env.PI_CODING_AGENT_DIR
+        process.env.PI_CODING_AGENT_DIR = agent
+        mkdirSync(join(workspace, '.git'))
+        mkdirSync(agent, { recursive: true })
+        writeFileSync(join(agent, 'mcp.json'), JSON.stringify({
+            mcpServers: { home: { command: 'true', disabled: true } },
+        }))
+        try {
+            const config = await readLiveSessionConfig({ flavor: 'omp', cwd: workspace, tools: [] })
+            const homeServer = config.mcp?.servers.find((server) => server.name === 'home')
+            expect(homeServer?.pathLabel?.startsWith('~/')).toBe(true)
+            expect(homeServer?.pathLabel).not.toContain(home)
+            expect(homeServer?.filePath?.startsWith(realpathSync(home))).toBe(true)
+        } finally {
+            if (previous === undefined) delete process.env.PI_CODING_AGENT_DIR
+            else process.env.PI_CODING_AGENT_DIR = previous
+            rmSync(workspace, { recursive: true, force: true })
+            rmSync(agent, { recursive: true, force: true })
+            clearProbeCache()
+        }
+    })
+
 
 
 

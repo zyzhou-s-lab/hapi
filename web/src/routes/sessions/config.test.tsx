@@ -109,8 +109,8 @@ describe('SessionConfigPage', () => {
         expect(screen.getByText('PreToolUse')).toBeTruthy()
         expect(screen.getByText('Bash · my-hook')).toBeTruthy()
         expect(screen.getByText('No skills configured')).toBeTruthy()
-        expect(screen.getByRole('switch', { name: 'Enable PreToolUse' }).getAttribute('title')).toContain('does not honor a per-item switch')
-        expect(screen.getByRole('switch', { name: 'Enable hapi' }).getAttribute('title')).toContain('cannot be changed')
+        expect(screen.getByRole('switch', { name: 'Enable PreToolUse' }).getAttribute('title')).toBeNull()
+        expect(screen.getByRole('switch', { name: 'Enable hapi' }).getAttribute('title')).toBeNull()
         expect(screen.getByText('This agent does not honor a per-item switch, so turning it off here would not stop it.')).toBeTruthy()
         expect(screen.getByText('Injected, system, tool, and plugin items cannot be changed here.')).toBeTruthy()
         expect(screen.queryByText('Changes apply the next time you start a session or restart the agent.')).toBeNull()
@@ -200,7 +200,9 @@ describe('SessionConfigPage', () => {
         renderPage()
         const locked = await screen.findByRole('switch', { name: 'Enable hapi' })
         expect(locked).toBeDisabled()
-        expect(locked.getAttribute('title')).toContain('cannot be changed')
+        expect(locked.getAttribute('title')).toBeNull()
+        expect(screen.getByRole('button', { name: /cannot be changed/ })).toBeTruthy()
+        expect(screen.getByRole('tooltip', { hidden: true, name: /cannot be changed/ })).toBeTruthy()
         expect(screen.getByText('Applies to new sessions, for every session.')).toBeTruthy()
         expect(screen.queryByRole('button', { name: /^docs/ })).toBeNull()
         expect(screen.queryByRole('button', { name: /^hapi/ })).toBeNull()
@@ -264,7 +266,7 @@ describe('SessionConfigPage', () => {
         })
         renderPage()
         const locked = await screen.findByRole('switch', { name: 'Enable hapi' })
-        expect(locked.getAttribute('title')).toContain('cannot be changed')
+        expect(locked.getAttribute('title')).toBeNull()
         expect(screen.getByText('Use the title tool.')).toBeTruthy()
         expect(screen.queryByRole('button', { name: /append-system-prompt|追加/ })).toBeNull()
         expect(screen.queryByText('›')).toBeTruthy()
@@ -296,7 +298,7 @@ describe('SessionConfigPage', () => {
         expect(lockedSwitch).toBeDisabled()
         expect(screen.getAllByText('Applies to new sessions, for every session.')).toHaveLength(1)
         expect(screen.getByText('Injected, system, tool, and plugin items cannot be changed here.')).toBeTruthy()
-        expect(lockedSwitch.getAttribute('title')).toContain('cannot be changed')
+        expect(lockedSwitch.getAttribute('title')).toBeNull()
 
         expect(mocks.setSessionConfigItemEnabled).not.toHaveBeenCalled()
 
@@ -427,6 +429,32 @@ describe('SessionConfigPage', () => {
         fireEvent.click(screen.getByRole('button', { name: /^pending/ }))
         expect(screen.getByText('Tools appear after a check')).toBeTruthy()
         expect(screen.getAllByRole('button', { name: 'Check' }).length).toBeGreaterThan(0)
+    })
+
+    it('marks a partial tool list and uses the runner home label', async () => {
+        mocks.getSessionConfig.mockResolvedValue({
+            success: true,
+            mcp: {
+                kind: 'servers',
+                servers: [{
+                    name: 'docs',
+                    source: 'user',
+                    filePath: '/custom/runner/.omp/agent/mcp.json',
+                    pathLabel: '~/.omp/agent/mcp.json',
+                    loaded: true,
+                    toolsTruncated: true,
+                    tools: [{ name: 'ping', description: 'Say ping' }],
+                }],
+            },
+            skills: { items: [] },
+            hooks: { availability: 'none', items: [] },
+        })
+        renderPage()
+        expect(await screen.findByText('~/.omp/agent/mcp.json')).toBeTruthy()
+        expect(screen.queryByText('/custom/runner/.omp/agent/mcp.json')).toBeNull()
+        expect(screen.getByText('1+ tools')).toBeTruthy()
+        fireEvent.click(screen.getByRole('button', { name: /^docs/ }))
+        expect(screen.getByText('Showing the first part only.')).toBeTruthy()
     })
 
 

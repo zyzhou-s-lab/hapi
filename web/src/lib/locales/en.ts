@@ -272,6 +272,7 @@ export default {
   'session.config.mcp.recheckOne': 'Recheck',
   'session.config.mcp.recheck': 'Check again',
   'session.config.mcp.toolCount': '{n} tools',
+  'session.config.mcp.toolCountPartial': '{n}+ tools',
   'session.config.mcp.toolsAfterCheck': 'Tools appear after a check',
   'session.config.mcp.noTools': 'No tools',
   'session.config.mcp.openFile': 'Open config file',

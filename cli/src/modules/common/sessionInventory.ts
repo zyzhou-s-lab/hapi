@@ -157,6 +157,7 @@ export function dedupeServers(servers: readonly SessionInventoryMcpServer[]): Se
                 ...(server.enabled === false ? { enabled: false } : {}),
                 ...(server.loaded !== undefined ? { loaded: server.loaded } : {}),
                 ...(server.filePath ? { filePath: server.filePath } : {}),
+                ...(server.pathLabel ? { pathLabel: server.pathLabel } : {}),
                 ...(server.line ? { line: server.line } : {}),
             });
         }
@@ -211,12 +212,24 @@ function publishFilePath(filePath: string | undefined): string | undefined {
     return filePath;
 }
 
-function fileLocation(origin: ConfigFileOrigin | undefined, key: string): { filePath?: string; line?: number } {
+/** `~/...` when the file is under the runner home. A custom HOME is not always `/Users` or `/home`. */
+export function displayHomePath(file: string, home: string): string | undefined {
+    if (!isAbsolute(file) || !isAbsolute(home)) return undefined;
+    const fileNorm = resolve(file);
+    const homeNorm = resolve(home);
+    if (fileNorm === homeNorm) return '~';
+    const prefix = homeNorm.endsWith(sep) ? homeNorm : `${homeNorm}${sep}`;
+    if (!fileNorm.startsWith(prefix)) return undefined;
+    return `~/${fileNorm.slice(prefix.length).split(sep).join('/')}`;
+}
+
+function fileLocation(origin: ConfigFileOrigin | undefined, key: string): { filePath?: string; line?: number; pathLabel?: string } {
     if (!origin) return {};
     const filePath = listedConfigFilePath(origin.file, origin.cwd);
     if (!filePath) return {};
     const line = lineOfJsonKey(origin.text, key) ?? lineOfSnippet(origin.text, key);
-    return { filePath, ...(line ? { line } : {}) };
+    const pathLabel = displayHomePath(filePath, tryRealpath(homedir()) ?? homedir());
+    return { filePath, ...(line ? { line } : {}), ...(pathLabel ? { pathLabel } : {}) };
 }
 
 function hookScriptPath(command: string, cwd: string): string | undefined {
@@ -493,31 +506,35 @@ async function withOmpCheckedLoadState(
         }
         probing.push(target);
     }
-    const loaded = await checkMcpServers(probing, { fresh: options?.fresh === true });
-    if (forced.length > 0) {
-        const again = await checkMcpServers(forced, { fresh: true });
-        for (const [name, ok] of again) loaded.set(name, ok);
-    }
+    const [loaded, again] = await Promise.all([
+        checkMcpServers(probing, { fresh: options?.fresh === true }),
+        forced.length > 0 ? checkMcpServers(forced, { fresh: true }) : Promise.resolve(new Map<string, boolean>()),
+    ]);
+    for (const [name, ok] of again) loaded.set(name, ok);
     const probed = (server: SessionInventoryMcpServer, ok: boolean): SessionInventoryMcpServer => {
-        const { tools: _tools, ...rest } = server;
+        const { tools: _tools, toolsTruncated: _truncated, ...rest } = server;
         if (!ok) return { ...rest, loaded: false };
         const target = byName.get(server.name);
-        const tools = target ? cachedProbeTools(target) : undefined;
-        return { ...rest, loaded: true, ...(tools ? { tools } : {}) };
+        const listed = target ? cachedProbeTools(target) : undefined;
+        return {
+            ...rest,
+            loaded: true,
+            ...(listed ? { tools: listed.tools, ...(listed.truncated ? { toolsTruncated: true } : {}) } : {}),
+        };
     };
     return [
         ...servers.map((server) => {
             if (server.enabled === false) {
-                const { tools: _tools, ...rest } = server;
+                const { tools: _tools, toolsTruncated: _truncated, ...rest } = server;
                 return { ...rest, loaded: false as const };
             }
             if (loaded.has(server.name)) return probed(server, loaded.get(server.name) === true);
             if (cachedProject.has(server.name)) return probed(server, cachedProject.get(server.name) === true);
             if (server.source === 'project') {
-                const { loaded: _loaded, tools: _tools, ...rest } = server;
+                const { loaded: _loaded, tools: _tools, toolsTruncated: _truncated, ...rest } = server;
                 return rest;
             }
-            const { tools: _tools, ...rest } = server;
+            const { tools: _tools, toolsTruncated: _truncated, ...rest } = server;
             return { ...rest, loaded: false as const };
         }),
         ...extras,
@@ -547,6 +564,7 @@ function keepFirstServers(servers: readonly SessionInventoryMcpServer[]): Sessio
             ...(server.enabled === false ? { enabled: false } : {}),
             ...(server.loaded !== undefined ? { loaded: server.loaded } : {}),
             ...(server.filePath ? { filePath: server.filePath } : {}),
+            ...(server.pathLabel ? { pathLabel: server.pathLabel } : {}),
             ...(server.line ? { line: server.line } : {}),
         });
     }
