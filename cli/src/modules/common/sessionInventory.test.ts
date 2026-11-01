@@ -1,8 +1,9 @@
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, sep } from 'node:path'
 import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager'
 import { describe, expect, it } from 'vitest'
+import { parseSessionConfigRpc } from '@hapi/protocol/schemas'
 import { clearProbeCache } from './mcpServerCheck'
 import { registerFileHandlers } from './handlers/files'
 import {
@@ -746,6 +747,21 @@ command = "my-hook --token abc"
         expect(displayHomePath('/custom/runner/.omp/agent/mcp.json', '/custom/runner')).toBe('~/.omp/agent/mcp.json')
         expect(displayHomePath('/custom/runner', '/custom/runner')).toBe('~')
         expect(displayHomePath('/elsewhere/.omp/agent/mcp.json', '/custom/runner')).toBeUndefined()
+        expect(displayHomePath('/etc/hosts', '/')).toBeUndefined()
+        expect(displayHomePath('/etc/hosts', sep)).toBeUndefined()
+        const deep = `/custom/runner/${'nested/'.repeat(80)}mcp.json`
+        const label = displayHomePath(deep, '/custom/runner')
+        expect(label).toBeDefined()
+        expect(label!.length).toBeLessThanOrEqual(300)
+        expect(label!.startsWith('~/')).toBe(true)
+        expect(label).toContain('…')
+        expect(label!.endsWith('mcp.json')).toBe(true)
+        const parsed = parseSessionConfigRpc({
+            success: true,
+            mcp: { kind: 'servers', servers: [{ name: 'home', source: 'user', filePath: deep, pathLabel: label }] },
+        })
+        expect(parsed.success).toBe(true)
+        if (parsed.success) expect(parsed.mcp?.servers[0]?.pathLabel).toBe(label)
         clearProbeCache()
         const home = homedir()
         const agent = join(home, `.hapi-home-label-${process.pid}`)

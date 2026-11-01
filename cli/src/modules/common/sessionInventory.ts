@@ -212,15 +212,32 @@ function publishFilePath(filePath: string | undefined): string | undefined {
     return filePath;
 }
 
+/** Matches `pathLabel` on the session-config schema. A longer label fails the whole parse. */
+const PATH_LABEL_MAX = 300
+
+function isFilesystemRoot(path: string): boolean {
+    const norm = resolve(path);
+    return norm === '/' || norm === sep || /^[A-Za-z]:\\?$/.test(norm);
+}
+
+function clipPathLabel(label: string): string {
+    if (label.length <= PATH_LABEL_MAX) return label;
+    const mark = '…';
+    const keep = PATH_LABEL_MAX - mark.length;
+    const head = Math.ceil(keep / 2);
+    return `${label.slice(0, head)}${mark}${label.slice(label.length - (keep - head))}`;
+}
+
 /** `~/...` when the file is under the runner home. A custom HOME is not always `/Users` or `/home`. */
 export function displayHomePath(file: string, home: string): string | undefined {
-    if (!isAbsolute(file) || !isAbsolute(home)) return undefined;
+    if (!isAbsolute(file) || !isAbsolute(home) || isFilesystemRoot(home)) return undefined;
     const fileNorm = resolve(file);
     const homeNorm = resolve(home);
+    if (isFilesystemRoot(homeNorm)) return undefined;
     if (fileNorm === homeNorm) return '~';
     const prefix = homeNorm.endsWith(sep) ? homeNorm : `${homeNorm}${sep}`;
     if (!fileNorm.startsWith(prefix)) return undefined;
-    return `~/${fileNorm.slice(prefix.length).split(sep).join('/')}`;
+    return clipPathLabel(`~/${fileNorm.slice(prefix.length).split(sep).join('/')}`);
 }
 
 function fileLocation(origin: ConfigFileOrigin | undefined, key: string): { filePath?: string; line?: number; pathLabel?: string } {
