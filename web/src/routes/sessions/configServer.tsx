@@ -112,7 +112,7 @@ export default function SessionConfigServerPage() {
                 ) : !server ? (
                     <p className="px-4 py-6 text-sm text-[var(--app-hint)]">{t('session.config.unreported')}</p>
                 ) : (
-                    <div className="mx-auto flex w-full max-w-content flex-col gap-4 p-4 max-sm:pb-24 max-sm:pr-20">
+                    <div className="mx-auto flex w-full max-w-content flex-col gap-4 p-4 max-sm:pb-24">
                         <div className="flex flex-wrap items-center gap-2">
                             <h1 className="min-w-0 flex-1 break-words text-lg font-semibold text-[var(--app-fg)]">{server.name}</h1>
                             <span className="shrink-0 rounded-full bg-[var(--app-subtle-bg)] px-2 py-0.5 text-[11px] text-[var(--app-hint)]">{t(statusKey(server))}</span>

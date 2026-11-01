@@ -516,7 +516,7 @@ export default function SessionConfigPage() {
                         retrying={isFetching}
                     />
                 ) : (
-                    <div className="mx-auto flex w-full max-w-content flex-col gap-6 p-4 max-sm:pb-24 max-sm:pr-20">
+                    <div className="mx-auto flex w-full max-w-content flex-col gap-6 p-4 max-sm:pb-24">
                         <ConfigSection title={t('session.config.systemPrompt')} emptyKey="session.config.systemPrompt.empty" section={systemPrompt} pendingKey={pendingKey} onOpen={openRow} onOpenServer={openServer} onOpenScript={openScript} onToggle={(row, enabled) => { void toggle(row, enabled) }} />
                         <ConfigSection title={t('session.config.userPrompt')} emptyKey="session.config.userPrompt.empty" section={userPrompt} pendingKey={pendingKey} onOpen={openRow} onOpenServer={openServer} onOpenScript={openScript} onToggle={(row, enabled) => { void toggle(row, enabled) }} />
                         <ConfigSection title={t('session.config.mcp')} emptyKey="session.config.mcp.empty" section={mcp} pendingKey={pendingKey} onOpen={openRow} onOpenServer={openServer} onOpenScript={openScript} onToggle={(row, enabled) => { void toggle(row, enabled) }} onCheck={(row) => { void checkRow(row) }} onRecheck={flavor === 'omp' ? () => { void recheck() } : undefined} rechecking={rechecking} />
