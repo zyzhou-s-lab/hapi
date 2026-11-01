@@ -274,7 +274,7 @@ export default {
   'session.config.mcp.unchecked': '未检测',
   'session.config.mcp.check': '检测',
   'session.config.mcp.recheckOne': '重新检测',
-  'session.config.mcp.recheck': '重新检查',
+  'session.config.mcp.recheck': '重新检测',
   'session.config.mcp.toolCount': '{n} 个工具',
   'session.config.mcp.toolCountPartial': '{n}+ 个工具',
   'session.config.mcp.toolsAfterCheck': '检测后可见工具',

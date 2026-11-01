@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { fireEvent, render, screen } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { I18nProvider } from '@/lib/i18n-context'
 import SessionConfigServerPage from './configServer'
@@ -102,5 +102,54 @@ describe('SessionConfigServerPage', () => {
         expect(await screen.findByText('Tools appear after a check')).toBeTruthy()
         expect(screen.getByRole('button', { name: 'Check' })).toBeTruthy()
         expect(screen.queryByText('ping')).toBeNull()
+    })
+
+    it('keeps a recheck button after a project server is loaded', async () => {
+        mocks.search = { name: 'repo', source: 'project' }
+        mocks.getSessionConfig.mockResolvedValue({
+            success: true,
+            mcp: {
+                kind: 'servers',
+                servers: [{
+                    name: 'repo',
+                    source: 'project',
+                    filePath: '.mcp.json',
+                    loaded: true,
+                    tools: [{ name: 'ping', description: 'Say ping' }],
+                }],
+            },
+        })
+        renderPage()
+        expect(await screen.findByText('ping')).toBeTruthy()
+        expect(screen.getByRole('button', { name: 'Recheck' })).toBeTruthy()
+    })
+
+    it('shows a busy state while the check runs and rechecks after', async () => {
+        mocks.search = { name: 'repo', source: 'project' }
+        let release: () => void = () => undefined
+        const gate = new Promise<void>((resolve) => {
+            release = resolve
+        })
+        mocks.getSessionConfig.mockImplementation(async (_sessionId: string, options?: { check?: string }) => {
+            if (options?.check) {
+                await gate
+                return {
+                    success: true,
+                    mcp: {
+                        kind: 'servers',
+                        servers: [{ name: 'repo', source: 'project', filePath: '.mcp.json', loaded: true, tools: [{ name: 'ping' }] }],
+                    },
+                }
+            }
+            return { success: true, mcp: { kind: 'servers', servers: [{ name: 'repo', source: 'project', filePath: '.mcp.json' }] } }
+        })
+        renderPage()
+        const button = await screen.findByRole('button', { name: 'Check' })
+        fireEvent.click(button)
+        await waitFor(() => expect(button).toBeDisabled())
+        expect(button.getAttribute('aria-busy')).toBe('true')
+        expect(button.querySelector('.animate-spin')).toBeTruthy()
+        release()
+        expect(await screen.findByRole('button', { name: 'Recheck' })).toBeTruthy()
     })
 })

@@ -270,7 +270,7 @@ export default {
   'session.config.mcp.unchecked': 'Not checked',
   'session.config.mcp.check': 'Check',
   'session.config.mcp.recheckOne': 'Recheck',
-  'session.config.mcp.recheck': 'Check again',
+  'session.config.mcp.recheck': 'Recheck',
   'session.config.mcp.toolCount': '{n} tools',
   'session.config.mcp.toolCountPartial': '{n}+ tools',
   'session.config.mcp.toolsAfterCheck': 'Tools appear after a check',

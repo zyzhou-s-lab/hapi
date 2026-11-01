@@ -334,7 +334,7 @@ describe('SessionConfigPage', () => {
         await waitFor(() => {
             expect(mocks.getSessionConfig).toHaveBeenCalledWith('session-1', { check: 'repo' })
         })
-        fireEvent.click(screen.getByRole('button', { name: 'Check again' }))
+        fireEvent.click(screen.getByRole('button', { name: 'Recheck' }))
         await waitFor(() => {
             expect(mocks.getSessionConfig).toHaveBeenCalledWith('session-1', { fresh: true })
         })
@@ -367,13 +367,31 @@ describe('SessionConfigPage', () => {
         expect(screen.getByText('~/.omp/agent/settings.json')).toBeTruthy()
         expect(screen.queryByText('/Users/dev/.omp/agent/settings.json')).toBeNull()
         expect(screen.queryByText('Project')).toBeNull()
-        expect(screen.getByRole('button', { name: 'Recheck' })).toBeTruthy()
+        expect(screen.getAllByRole('button', { name: 'Recheck' })).toHaveLength(2)
         expect(screen.getByRole('button', { name: 'Check' })).toBeTruthy()
         const reason = 'This agent does not honor a per-item switch, so turning it off here would not stop it.'
         const notes = screen.getAllByText(reason)
         expect(notes).toHaveLength(5)
         expect(notes.every((node) => node.getAttribute('role') === 'tooltip')).toBe(true)
         expect(screen.getAllByRole('button', { name: reason })).toHaveLength(5)
+    })
+
+    it('clamps a long group label to two lines and expands on click', async () => {
+        mocks.flavor = 'omp'
+        const longPath = `${'a/'.repeat(300)}mcp.json`
+        mocks.getSessionConfig.mockResolvedValue({
+            success: true,
+            mcp: { kind: 'servers', servers: [{ name: 'docs', source: 'project', filePath: longPath }] },
+            skills: { items: [] },
+            hooks: { availability: 'none', items: [] },
+        })
+        renderPage()
+        const label = await screen.findByRole('button', { name: longPath })
+        expect(label.className).toContain('line-clamp-2')
+        expect(label.getAttribute('aria-expanded')).toBe('false')
+        fireEvent.click(label)
+        expect(label.getAttribute('aria-expanded')).toBe('true')
+        expect(label.className).not.toContain('line-clamp-2')
     })
 
     it('shows a spinner and disables recheck until it finishes', async () => {
@@ -392,7 +410,7 @@ describe('SessionConfigPage', () => {
             }
         })
         renderPage()
-        const button = await screen.findByRole('button', { name: 'Check again' })
+        const button = await screen.findByRole('button', { name: 'Recheck' })
         fireEvent.click(button)
         await waitFor(() => expect(button).toBeDisabled())
         expect(button.querySelector('.animate-spin')).toBeTruthy()

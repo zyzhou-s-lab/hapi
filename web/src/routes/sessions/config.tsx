@@ -176,6 +176,21 @@ function RowText(props: { item: InventoryRow }) {
 }
 
 
+function GroupLabel(props: { label: string }) {
+    const [expanded, setExpanded] = useState(false)
+    return (
+        <button
+            type="button"
+            className={`block w-full border-b border-[var(--app-divider)] bg-[var(--app-subtle-bg)] px-3 py-1.5 text-left text-xs text-[var(--app-hint)] ${expanded ? 'break-all' : 'line-clamp-2 break-all'}`}
+            title={expanded ? undefined : props.label}
+            aria-expanded={expanded}
+            onClick={() => setExpanded((value) => !value)}
+        >
+            {props.label}
+        </button>
+    )
+}
+
 function ConfigSection(props: {
     title: string
     emptyKey: string
@@ -214,7 +229,7 @@ function ConfigSection(props: {
                     groups.map((group) => (
                         <div key={group.label ?? '\u0000loose'}>
                             {group.label ? (
-                                <div className="border-b border-[var(--app-divider)] bg-[var(--app-subtle-bg)] px-3 py-1.5 text-xs text-[var(--app-hint)]">{group.label}</div>
+                                <GroupLabel label={group.label} />
                             ) : null}
                             <ul>
                                 {group.rows.map((item) => (

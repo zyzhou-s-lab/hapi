@@ -4,6 +4,7 @@ import type { SessionInventoryMcpServer, SessionInventorySource } from '@hapi/pr
 import { SessionHeader } from '@/components/SessionHeader'
 import { SessionReadBanner } from '@/components/SessionReadBanner'
 import { LoadingState } from '@/components/LoadingState'
+import { Spinner } from '@/components/Spinner'
 import { useAppContext } from '@/lib/app-context'
 import { useAppGoBack } from '@/hooks/useAppGoBack'
 import { useSession } from '@/hooks/queries/useSession'
@@ -142,15 +143,20 @@ export default function SessionConfigServerPage() {
                         ) : server.tools ? (
                             <p className="text-sm text-[var(--app-hint)]">{t('session.config.mcp.noTools')}</p>
                         ) : (
-                            <div className="flex flex-col items-start gap-2">
-                                <p className="text-sm text-[var(--app-hint)]">{t(checkable ? 'session.config.mcp.toolsAfterCheck' : 'session.config.mcp.toolsUnavailable')}</p>
-                                {checkable ? (
-                                    <button type="button" className="text-sm text-[var(--app-link)] disabled:opacity-50" disabled={checking} onClick={() => { void check() }}>
-                                        {t(server.loaded === undefined ? 'session.config.mcp.check' : 'session.config.mcp.recheckOne')}
-                                    </button>
-                                ) : null}
-                            </div>
+                            <p className="text-sm text-[var(--app-hint)]">{t(checkable ? 'session.config.mcp.toolsAfterCheck' : 'session.config.mcp.toolsUnavailable')}</p>
                         )}
+                        {checkable ? (
+                            <button
+                                type="button"
+                                className="inline-flex items-center gap-1.5 self-start text-sm text-[var(--app-link)] disabled:opacity-50"
+                                disabled={checking}
+                                aria-busy={checking}
+                                onClick={() => { void check() }}
+                            >
+                                {checking ? <Spinner size="sm" label={null} className="text-current" /> : null}
+                                {t(server.loaded === undefined ? 'session.config.mcp.check' : 'session.config.mcp.recheckOne')}
+                            </button>
+                        ) : null}
                     </div>
                 )}
             </div>
