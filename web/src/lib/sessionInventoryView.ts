@@ -21,7 +21,13 @@ export type InventoryRow = {
     line?: number
     scriptPath?: string
     loaded?: boolean
-    unchecked?: boolean
+    /** Project server: the row can be probed again after the first check. */
+    checkable?: boolean
+}
+
+export type InventoryGroup = {
+    label?: string
+    rows: InventoryRow[]
 }
 
 export type InventorySection =
@@ -29,7 +35,7 @@ export type InventorySection =
     | { status: 'empty' }
     | { status: 'none'; note?: string }
     | { status: 'catalogUnavailable' }
-    | { status: 'list'; rows: InventoryRow[]; tools?: boolean; note?: string }
+    | { status: 'list'; rows: InventoryRow[]; groups?: InventoryGroup[]; tools?: boolean; note?: string }
 
 
 
@@ -99,10 +105,41 @@ export function mcpSection(inventory: SessionInventory | null | undefined, flavo
     const rows = mcp.servers.flatMap((server) => {
         const next = row(server.name, server.source, undefined, { kind: 'mcp', name: server.name, source: server.source }, server.enabled, flavor, server.filePath, server.line)
         if (!next) return []
-        return [{ ...next, ...(server.loaded === undefined ? {} : { loaded: server.loaded }), ...(server.source === 'project' && server.loaded === undefined ? { unchecked: true } : {}) }]
+        const checkable = mcp.kind === 'servers' && server.source === 'project'
+        return [{
+            ...next,
+            ...(server.loaded === undefined ? {} : { loaded: server.loaded }),
+            ...(checkable ? { checkable: true } : {}),
+        }]
     })
+    if (rows.length === 0) return { status: 'empty' }
     if (mcp.kind === 'tools') return { status: 'list', rows, tools: true }
-    return rowsOrEmpty(rows)
+    const groups = mcpGroups(rows)
+    return { status: 'list', rows, ...(groups ? { groups } : {}) }
+}
+
+function mcpGroups(rows: InventoryRow[]): InventoryGroup[] | undefined {
+    if (!rows.some((item) => item.filePath)) return undefined
+    const order: string[] = []
+    const byFile = new Map<string, InventoryRow[]>()
+    const loose: InventoryRow[] = []
+    for (const item of rows) {
+        const file = item.filePath
+        if (!file) {
+            loose.push(item)
+            continue
+        }
+        const list = byFile.get(file)
+        if (list) list.push(item)
+        else {
+            order.push(file)
+            byFile.set(file, [item])
+        }
+    }
+    return [
+        ...order.map((label) => ({ label, rows: byFile.get(label) ?? [] })),
+        ...(loose.length > 0 ? [{ rows: loose }] : []),
+    ]
 }
 
 export function hooksSection(inventory: SessionInventory | null | undefined, flavor?: string | null): InventorySection {

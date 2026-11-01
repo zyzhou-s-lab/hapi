@@ -269,6 +269,7 @@ export default {
   'session.config.mcp.notLoaded': 'Not loaded',
   'session.config.mcp.unchecked': 'Not checked',
   'session.config.mcp.check': 'Check',
+  'session.config.mcp.recheckOne': 'Recheck',
   'session.config.mcp.recheck': 'Check again',
   'session.config.skills.catalogUnavailable': 'Skill catalog unavailable',
   'session.config.source.injected': 'Injected',

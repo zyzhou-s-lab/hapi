@@ -477,10 +477,13 @@ async function withOmpCheckedLoadState(
         const target = byName.get(server.name);
         if (!target) continue;
         if (server.source === 'project' && selected !== server.name) {
-            if (!options?.fresh) {
-                const hit = cachedProbe(target);
-                if (hit !== undefined) cachedProject.set(server.name, hit);
+            const hit = cachedProbe(target);
+            if (hit === undefined) continue;
+            if (options?.fresh) {
+                probing.push(target);
+                continue;
             }
+            cachedProject.set(server.name, hit);
             continue;
         }
         probing.push(target);

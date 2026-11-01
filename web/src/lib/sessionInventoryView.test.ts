@@ -50,6 +50,30 @@ describe('session inventory view', () => {
         })
     })
 
+    it('groups MCP servers by config file and keeps a checked project server checkable', () => {
+        const section = mcpSection({
+            mcp: {
+                kind: 'servers',
+                servers: [
+                    { name: 'near', source: 'project', filePath: '.omp/mcp.json', loaded: true },
+                    { name: 'root', source: 'project', filePath: '.mcp.json' },
+                    { name: 'home', source: 'user', filePath: '/Users/dev/.omp/agent/mcp.json', loaded: true },
+                    { name: 'hapi', source: 'injected' },
+                ],
+            },
+        }, 'omp')
+        expect(section).toMatchObject({
+            status: 'list',
+            groups: [
+                { label: '.omp/mcp.json', rows: [{ title: 'near', checkable: true, loaded: true }] },
+                { label: '.mcp.json', rows: [{ title: 'root', checkable: true }] },
+                { label: '/Users/dev/.omp/agent/mcp.json', rows: [{ title: 'home' }] },
+                { rows: [{ title: 'hapi', source: 'injected' }] },
+            ],
+        })
+    })
+
+
     it('shows unreported, empty, tool names, and no-hooks states', () => {
         expect(mcpSection(undefined)).toEqual({ status: 'unreported' })
         expect(hooksSection(undefined)).toEqual({ status: 'unreported' })

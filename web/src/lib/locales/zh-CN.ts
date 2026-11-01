@@ -273,6 +273,7 @@ export default {
   'session.config.mcp.notLoaded': '未加载',
   'session.config.mcp.unchecked': '未检测',
   'session.config.mcp.check': '检测',
+  'session.config.mcp.recheckOne': '重新检测',
   'session.config.mcp.recheck': '重新检查',
   'session.config.skills.catalogUnavailable': '技能目录不可用',
   'session.config.source.injected': '注入',

@@ -3,6 +3,7 @@ import { useNavigate, useParams } from '@tanstack/react-router'
 import { SessionHeader } from '@/components/SessionHeader'
 import { SessionReadBanner } from '@/components/SessionReadBanner'
 import { LoadingState } from '@/components/LoadingState'
+import { Spinner } from '@/components/Spinner'
 import { useAppContext } from '@/lib/app-context'
 import { useAppGoBack } from '@/hooks/useAppGoBack'
 import { useSession } from '@/hooks/queries/useSession'
@@ -19,6 +20,7 @@ import {
     promptSection,
     skillsSection,
     type InventoryRow,
+    type InventoryGroup,
     type InventorySection,
 } from '@/lib/sessionInventoryView'
 
@@ -102,7 +104,6 @@ function ConfigSwitch(props: { row: InventoryRow; pending: boolean; onToggle: (e
 
 function RowText(props: { item: InventoryRow }) {
     const { t } = useTranslation()
-    const reason = lockReason(props.item, t)
     return (
         <>
             <div className="flex min-w-0 items-baseline gap-2">
@@ -111,7 +112,6 @@ function RowText(props: { item: InventoryRow }) {
                     <span className="min-w-0 truncate text-xs text-[var(--app-hint)]">{promptPathLabel(props.item.detail, t)}</span>
                 ) : null}
             </div>
-            {reason ? <div className="text-[11px] leading-4 text-[var(--app-hint)]">{reason}</div> : null}
             {props.item.preview ? (
                 <div className="truncate text-xs text-[var(--app-hint)]">{props.item.preview}</div>
             ) : null}
@@ -125,6 +125,18 @@ function RowText(props: { item: InventoryRow }) {
             ) : null}
         </>
     )
+}
+
+function sectionNotices(rows: InventoryRow[], t: (key: string) => string): string[] {
+    const seen = new Set<string>()
+    const notices: string[] = []
+    for (const item of rows) {
+        const reason = lockReason(item, t)
+        if (!reason || seen.has(reason)) continue
+        seen.add(reason)
+        notices.push(reason)
+    }
+    return notices
 }
 
 function ConfigSection(props: {
@@ -141,87 +153,104 @@ function ConfigSection(props: {
 }) {
     const { t } = useTranslation()
     const message = sectionMessage(props.section, t, props.emptyKey)
+    const notices = props.section.status === 'list' ? sectionNotices(props.section.rows, t) : []
+    const groups: InventoryGroup[] = props.section.status === 'list' && props.section.groups?.length
+        ? props.section.groups
+        : props.section.status === 'list'
+            ? [{ rows: props.section.rows }]
+            : []
     return (
         <section>
             <div className="mb-2 flex items-center justify-between gap-3">
                 <h2 className="text-base font-semibold text-[var(--app-fg)]">{props.title}</h2>
                 {props.onRecheck ? (
-                    <button type="button" className="shrink-0 text-xs text-[var(--app-link)] disabled:opacity-50" disabled={props.rechecking} onClick={props.onRecheck}>
+                    <button type="button" className="inline-flex shrink-0 items-center gap-1.5 text-xs text-[var(--app-link)] disabled:opacity-50" disabled={props.rechecking} aria-busy={props.rechecking === true} onClick={props.onRecheck}>
+                        {props.rechecking ? <Spinner size="sm" label={null} className="text-current" /> : null}
                         {t('session.config.mcp.recheck')}
                     </button>
                 ) : null}
             </div>
             <div className="overflow-hidden rounded-lg border border-[var(--app-border)] bg-[var(--app-bg)]">
+                {notices.map((notice) => (
+                    <p key={notice} className="border-b border-[var(--app-divider)] px-3 py-2 text-[11px] leading-4 text-[var(--app-hint)]">{notice}</p>
+                ))}
                 {message ? (
                     <p className="px-3 py-4 text-sm text-[var(--app-hint)]">{message}</p>
                 ) : props.section.status === 'list' ? (
-                    <ul>
-                        {props.section.rows.map((item) => (
-                            <li key={item.key} className={`flex items-center gap-3 border-b border-[var(--app-divider)] px-3 py-2 last:border-b-0 ${item.openable ? 'cursor-pointer hover:bg-[var(--app-subtle-bg)]' : ''}`}>
-                                {item.openable ? (
-                                    <button type="button" className="min-w-0 flex-1 cursor-pointer text-left" onClick={() => props.onOpen(item)}>
-                                        <RowText item={item} />
-                                    </button>
-                                ) : (
-                                    <div className="min-w-0 flex-1 text-left">
-                                        <RowText item={item} />
-                                    </div>
-                                )}
-                                {item.scriptPath && item.filePath ? (
-                                    <button
-                                        type="button"
-                                        className="shrink-0 text-xs text-[var(--app-link)]"
-                                        onClick={(event) => {
-                                            event.stopPropagation()
-                                            props.onOpenScript(item)
-                                        }}
-                                    >
-                                        {t('session.config.openScript')}
-                                    </button>
-                                ) : null}
-                                {item.toggle ? (
-                                    <ConfigSwitch
-                                        row={item}
-                                        pending={props.pendingKey === item.key}
-                                        onToggle={(enabled) => props.onToggle(item, enabled)}
-                                    />
-                                ) : null}
-                                {item.unchecked ? (
-                                    <button
-                                        type="button"
-                                        className="shrink-0 text-xs text-[var(--app-link)] disabled:opacity-50"
-                                        disabled={props.pendingKey === item.key}
-                                        onClick={(event) => {
-                                            event.stopPropagation()
-                                            props.onCheck?.(item)
-                                        }}
-                                    >
-                                        {t('session.config.mcp.check')}
-                                    </button>
-                                ) : null}
-                                {item.unchecked ? (
-                                    <span className="shrink-0 rounded-full bg-[var(--app-subtle-bg)] px-2 py-0.5 text-[11px] text-[var(--app-hint)]">
-                                        {t('session.config.mcp.unchecked')}
-                                    </span>
-                                ) : item.loaded === undefined ? null : (
-                                    <span className="shrink-0 rounded-full bg-[var(--app-subtle-bg)] px-2 py-0.5 text-[11px] text-[var(--app-hint)]">
-                                        {t(item.loaded ? 'session.config.mcp.loaded' : 'session.config.mcp.notLoaded')}
-                                    </span>
-                                )}
-                                {item.source ? (
-                                    <span className="shrink-0 rounded-full bg-[var(--app-subtle-bg)] px-2 py-0.5 text-[11px] text-[var(--app-hint)]">
-                                        {t(`session.config.source.${item.source}`)}
-                                    </span>
-                                ) : null}
-                                {item.scopeLabel ? (
-                                    <span className="shrink-0 rounded-full bg-[var(--app-subtle-bg)] px-2 py-0.5 text-[11px] text-[var(--app-hint)]">
-                                        {t(`session.config.prompt.scope.${item.scopeLabel}`)}
-                                    </span>
-                                ) : null}
-                                {item.openable ? <span aria-hidden="true" className="shrink-0 text-sm text-[var(--app-hint)]">›</span> : null}
-                            </li>
-                        ))}
-                    </ul>
+                    groups.map((group) => (
+                        <div key={group.label ?? 'loose'}>
+                            {group.label ? (
+                                <div className="border-b border-[var(--app-divider)] bg-[var(--app-subtle-bg)] px-3 py-1.5 text-xs text-[var(--app-hint)]">{group.label}</div>
+                            ) : null}
+                            <ul>
+                                {group.rows.map((item) => (
+                                    <li key={item.key} className={`flex items-center gap-3 border-b border-[var(--app-divider)] px-3 py-2 last:border-b-0 ${item.openable ? 'cursor-pointer hover:bg-[var(--app-subtle-bg)]' : ''}`}>
+                                        {item.openable ? (
+                                            <button type="button" className="min-w-0 flex-1 cursor-pointer text-left" onClick={() => props.onOpen(item)}>
+                                                <RowText item={item} />
+                                            </button>
+                                        ) : (
+                                            <div className="min-w-0 flex-1 text-left">
+                                                <RowText item={item} />
+                                            </div>
+                                        )}
+                                        {item.scriptPath && item.filePath ? (
+                                            <button
+                                                type="button"
+                                                className="shrink-0 text-xs text-[var(--app-link)]"
+                                                onClick={(event) => {
+                                                    event.stopPropagation()
+                                                    props.onOpenScript(item)
+                                                }}
+                                            >
+                                                {t('session.config.openScript')}
+                                            </button>
+                                        ) : null}
+                                        {item.toggle ? (
+                                            <ConfigSwitch
+                                                row={item}
+                                                pending={props.pendingKey === item.key}
+                                                onToggle={(enabled) => props.onToggle(item, enabled)}
+                                            />
+                                        ) : null}
+                                        {item.checkable ? (
+                                            <button
+                                                type="button"
+                                                className="shrink-0 text-xs text-[var(--app-link)] disabled:opacity-50"
+                                                disabled={props.pendingKey === item.key}
+                                                onClick={(event) => {
+                                                    event.stopPropagation()
+                                                    props.onCheck?.(item)
+                                                }}
+                                            >
+                                                {t(item.loaded === undefined ? 'session.config.mcp.check' : 'session.config.mcp.recheckOne')}
+                                            </button>
+                                        ) : null}
+                                        {item.checkable && item.loaded === undefined ? (
+                                            <span className="shrink-0 rounded-full bg-[var(--app-subtle-bg)] px-2 py-0.5 text-[11px] text-[var(--app-hint)]">
+                                                {t('session.config.mcp.unchecked')}
+                                            </span>
+                                        ) : item.loaded === undefined ? null : (
+                                            <span className="shrink-0 rounded-full bg-[var(--app-subtle-bg)] px-2 py-0.5 text-[11px] text-[var(--app-hint)]">
+                                                {t(item.loaded ? 'session.config.mcp.loaded' : 'session.config.mcp.notLoaded')}
+                                            </span>
+                                        )}
+                                        {item.source && !item.filePath ? (
+                                            <span className="shrink-0 rounded-full bg-[var(--app-subtle-bg)] px-2 py-0.5 text-[11px] text-[var(--app-hint)]">
+                                                {t(`session.config.source.${item.source}`)}
+                                            </span>
+                                        ) : null}
+                                        {item.scopeLabel ? (
+                                            <span className="shrink-0 rounded-full bg-[var(--app-subtle-bg)] px-2 py-0.5 text-[11px] text-[var(--app-hint)]">
+                                                {t(`session.config.prompt.scope.${item.scopeLabel}`)}
+                                            </span>
+                                        ) : null}
+                                        {item.openable ? <span aria-hidden="true" className="shrink-0 text-sm text-[var(--app-hint)]">›</span> : null}
+                                    </li>
+                                ))}
+                            </ul>
+                        </div>
+                    ))
                 ) : null}
             </div>
         </section>

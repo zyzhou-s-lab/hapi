@@ -336,5 +336,61 @@ describe('SessionConfigPage', () => {
         })
     })
 
+    it('groups MCP servers by file, keeps a checked project server recheckable, and shows one switch note', async () => {
+        mocks.flavor = 'omp'
+        mocks.getSessionConfig.mockResolvedValue({
+            success: true,
+            mcp: {
+                kind: 'servers',
+                servers: [
+                    { name: 'near', source: 'project', filePath: '.omp/mcp.json', loaded: true },
+                    { name: 'root', source: 'project', filePath: '.mcp.json' },
+                    { name: 'home', source: 'user', filePath: '/Users/dev/.omp/agent/settings.json', loaded: false },
+                ],
+            },
+            hooks: {
+                availability: 'listed',
+                items: [
+                    { event: 'PreToolUse', matcher: 'Bash', source: 'user', commandName: 'one' },
+                    { event: 'PostToolUse', matcher: 'Edit', source: 'user', commandName: 'two' },
+                ],
+            },
+            skills: { items: [] },
+        })
+        renderPage()
+        expect(await screen.findByText('.omp/mcp.json')).toBeTruthy()
+        expect(screen.getByText('.mcp.json')).toBeTruthy()
+        expect(screen.getByText('/Users/dev/.omp/agent/settings.json')).toBeTruthy()
+        expect(screen.queryByText('Project')).toBeNull()
+        expect(screen.getByRole('button', { name: 'Recheck' })).toBeTruthy()
+        expect(screen.getByRole('button', { name: 'Check' })).toBeTruthy()
+        expect(screen.getAllByText('This agent does not honor a per-item switch, so turning it off here would not stop it.')).toHaveLength(2)
+    })
+
+    it('shows a spinner and disables recheck until it finishes', async () => {
+        mocks.flavor = 'omp'
+        let release: () => void = () => undefined
+        const gate = new Promise<void>((resolve) => {
+            release = resolve
+        })
+        mocks.getSessionConfig.mockImplementation(async (_sessionId: string, options?: { fresh?: boolean }) => {
+            if (options?.fresh) await gate
+            return {
+                success: true,
+                mcp: { kind: 'servers', servers: [{ name: 'notion', source: 'user', loaded: true }] },
+                skills: { items: [] },
+                hooks: { availability: 'listed', items: [] },
+            }
+        })
+        renderPage()
+        const button = await screen.findByRole('button', { name: 'Check again' })
+        fireEvent.click(button)
+        await waitFor(() => expect(button).toBeDisabled())
+        expect(button.querySelector('.animate-spin')).toBeTruthy()
+        release()
+        await waitFor(() => expect(button).toBeEnabled())
+    })
+
+
 
 })

@@ -333,8 +333,9 @@ command = "my-hook --token abc"
             expect(readFileSync(projectHits, 'utf8')).toBe('p')
             const fresh = await named({ fresh: true })
             expect(readFileSync(userHits, 'utf8')).toBe('uu')
-            expect(readFileSync(projectHits, 'utf8')).toBe('p')
-            expect(fresh.shared?.loaded).toBeUndefined()
+            expect(readFileSync(projectHits, 'utf8')).toBe('pp')
+            expect(fresh.shared?.loaded).toBe(true)
+            expect(fresh.parentOnly?.loaded).toBeUndefined()
         } finally {
             if (previous === undefined) delete process.env.PI_CODING_AGENT_DIR
             else process.env.PI_CODING_AGENT_DIR = previous
