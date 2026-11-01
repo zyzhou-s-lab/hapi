@@ -181,7 +181,7 @@ function GroupLabel(props: { label: string }) {
     return (
         <button
             type="button"
-            className={`block w-full border-b border-[var(--app-divider)] bg-[var(--app-subtle-bg)] px-3 py-1.5 text-left text-xs text-[var(--app-hint)] ${expanded ? 'break-all' : 'line-clamp-2 break-all'}`}
+            className={`w-full border-b border-[var(--app-divider)] bg-[var(--app-subtle-bg)] px-3 py-1.5 text-left text-xs text-[var(--app-hint)] ${expanded ? 'break-all' : 'line-clamp-2 break-all'}`}
             title={expanded ? undefined : props.label}
             aria-expanded={expanded}
             onClick={() => setExpanded((value) => !value)}

@@ -149,6 +149,8 @@ describe('SessionConfigServerPage', () => {
         await waitFor(() => expect(button).toBeDisabled())
         expect(button.getAttribute('aria-busy')).toBe('true')
         expect(button.querySelector('.animate-spin')).toBeTruthy()
+        // While the check is in flight, the guard prevents a second check.
+        expect(mocks.getSessionConfig.mock.calls.filter((call) => call[1]?.check === 'repo')).toHaveLength(1)
         release()
         expect(await screen.findByRole('button', { name: 'Recheck' })).toBeTruthy()
     })

@@ -60,7 +60,7 @@ export default function SessionConfigServerPage() {
     }
 
     const check = async () => {
-        if (!server) return
+        if (checking || !server) return
         setChecking(true)
         setCheckError(null)
         try {

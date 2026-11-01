@@ -334,7 +334,7 @@ describe('SessionConfigPage', () => {
         await waitFor(() => {
             expect(mocks.getSessionConfig).toHaveBeenCalledWith('session-1', { check: 'repo' })
         })
-        fireEvent.click(screen.getByRole('button', { name: 'Recheck' }))
+        fireEvent.click(screen.getByRole('button', { name: 'Recheck all' }))
         await waitFor(() => {
             expect(mocks.getSessionConfig).toHaveBeenCalledWith('session-1', { fresh: true })
         })
@@ -367,7 +367,8 @@ describe('SessionConfigPage', () => {
         expect(screen.getByText('~/.omp/agent/settings.json')).toBeTruthy()
         expect(screen.queryByText('/Users/dev/.omp/agent/settings.json')).toBeNull()
         expect(screen.queryByText('Project')).toBeNull()
-        expect(screen.getAllByRole('button', { name: 'Recheck' })).toHaveLength(2)
+        expect(screen.getByRole('button', { name: 'Recheck all' })).toBeTruthy()
+        expect(screen.getByRole('button', { name: 'Recheck' })).toBeTruthy()
         expect(screen.getByRole('button', { name: 'Check' })).toBeTruthy()
         const reason = 'This agent does not honor a per-item switch, so turning it off here would not stop it.'
         const notes = screen.getAllByText(reason)
@@ -388,6 +389,7 @@ describe('SessionConfigPage', () => {
         renderPage()
         const label = await screen.findByRole('button', { name: longPath })
         expect(label.className).toContain('line-clamp-2')
+        expect(label.className).not.toContain('block')
         expect(label.getAttribute('aria-expanded')).toBe('false')
         fireEvent.click(label)
         expect(label.getAttribute('aria-expanded')).toBe('true')
@@ -410,7 +412,7 @@ describe('SessionConfigPage', () => {
             }
         })
         renderPage()
-        const button = await screen.findByRole('button', { name: 'Recheck' })
+        const button = await screen.findByRole('button', { name: 'Recheck all' })
         fireEvent.click(button)
         await waitFor(() => expect(button).toBeDisabled())
         expect(button.querySelector('.animate-spin')).toBeTruthy()
