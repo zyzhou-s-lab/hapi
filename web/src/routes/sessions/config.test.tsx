@@ -360,11 +360,13 @@ describe('SessionConfigPage', () => {
         renderPage()
         expect(await screen.findByText('.omp/mcp.json')).toBeTruthy()
         expect(screen.getByText('.mcp.json')).toBeTruthy()
-        expect(screen.getByText('/Users/dev/.omp/agent/settings.json')).toBeTruthy()
+        expect(screen.getByText('~/.omp/agent/settings.json')).toBeTruthy()
+        expect(screen.queryByText('/Users/dev/.omp/agent/settings.json')).toBeNull()
         expect(screen.queryByText('Project')).toBeNull()
         expect(screen.getByRole('button', { name: 'Recheck' })).toBeTruthy()
         expect(screen.getByRole('button', { name: 'Check' })).toBeTruthy()
         expect(screen.getAllByText('This agent does not honor a per-item switch, so turning it off here would not stop it.')).toHaveLength(2)
+        expect(screen.getAllByRole('img', { name: 'This agent does not honor a per-item switch, so turning it off here would not stop it.' })).toHaveLength(5)
     })
 
     it('shows a spinner and disables recheck until it finishes', async () => {

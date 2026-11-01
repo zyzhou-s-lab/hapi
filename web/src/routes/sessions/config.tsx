@@ -178,7 +178,7 @@ function ConfigSection(props: {
                     <p className="px-3 py-4 text-sm text-[var(--app-hint)]">{message}</p>
                 ) : props.section.status === 'list' ? (
                     groups.map((group) => (
-                        <div key={group.label ?? 'loose'}>
+                        <div key={group.label ?? '\u0000loose'}>
                             {group.label ? (
                                 <div className="border-b border-[var(--app-divider)] bg-[var(--app-subtle-bg)] px-3 py-1.5 text-xs text-[var(--app-hint)]">{group.label}</div>
                             ) : null}
@@ -205,6 +205,14 @@ function ConfigSection(props: {
                                             >
                                                 {t('session.config.openScript')}
                                             </button>
+                                        ) : null}
+                                        {item.lock ? (
+                                            <span role="img" aria-label={lockReason(item, t)} className="inline-flex shrink-0 text-[var(--app-hint)]">
+                                                <svg aria-hidden="true" viewBox="0 0 16 16" className="h-3.5 w-3.5" fill="none">
+                                                    <rect x="3.5" y="7" width="9" height="6.5" rx="1" stroke="currentColor" strokeWidth="1.4" />
+                                                    <path d="M5.5 7V5.2a2.5 2.5 0 0 1 5 0V7" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+                                                </svg>
+                                            </span>
                                         ) : null}
                                         {item.toggle ? (
                                             <ConfigSwitch

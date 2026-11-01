@@ -471,12 +471,17 @@ async function withOmpCheckedLoadState(
     const byName = new Map(ompProbeTargets(cwd).map((target) => [target.name, target]));
     const selected = options?.check?.trim();
     const probing: McpProbeTarget[] = [];
+    const forced: McpProbeTarget[] = [];
     const cachedProject = new Map<string, boolean>();
     for (const server of servers) {
         if (server.enabled === false) continue;
         const target = byName.get(server.name);
         if (!target) continue;
-        if (server.source === 'project' && selected !== server.name) {
+        if (selected === server.name) {
+            forced.push(target);
+            continue;
+        }
+        if (server.source === 'project') {
             const hit = cachedProbe(target);
             if (hit === undefined) continue;
             if (options?.fresh) {
@@ -489,6 +494,10 @@ async function withOmpCheckedLoadState(
         probing.push(target);
     }
     const loaded = await checkMcpServers(probing, { fresh: options?.fresh === true });
+    if (forced.length > 0) {
+        const again = await checkMcpServers(forced, { fresh: true });
+        for (const [name, ok] of again) loaded.set(name, ok);
+    }
     return [
         ...servers.map((server) => {
             if (server.enabled === false) return { ...server, loaded: false as const };

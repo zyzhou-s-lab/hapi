@@ -67,7 +67,7 @@ describe('session inventory view', () => {
             groups: [
                 { label: '.omp/mcp.json', rows: [{ title: 'near', checkable: true, loaded: true }] },
                 { label: '.mcp.json', rows: [{ title: 'root', checkable: true }] },
-                { label: '/Users/dev/.omp/agent/mcp.json', rows: [{ title: 'home' }] },
+                { label: '~/.omp/agent/mcp.json', rows: [{ title: 'home' }] },
                 { rows: [{ title: 'hapi', source: 'injected' }] },
             ],
         })

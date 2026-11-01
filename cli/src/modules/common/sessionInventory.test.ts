@@ -472,6 +472,78 @@ command = "my-hook --token abc"
         }
     })
 
+    it('spawns again when the same project server is checked a second time', async () => {
+        clearProbeCache()
+        const workspace = mkdtempSync(join(tmpdir(), 'hapi-recheck-'))
+        const agent = mkdtempSync(join(tmpdir(), 'hapi-recheck-agent-'))
+        const previous = process.env.PI_CODING_AGENT_DIR
+        process.env.PI_CODING_AGENT_DIR = agent
+        mkdirSync(join(workspace, '.git'))
+        const hits = join(agent, 'hits.txt')
+        const mode = join(agent, 'mode.txt')
+        const userHits = join(agent, 'user-hits.txt')
+        const script = join(agent, 'flip.cjs')
+        const userScript = join(agent, 'user.cjs')
+        writeFileSync(mode, 'ok')
+        writeFileSync(script, `
+            const fs = require('node:fs')
+            const readline = require('node:readline')
+            fs.appendFileSync(${JSON.stringify(hits)}, 'x')
+            if (fs.readFileSync(${JSON.stringify(mode)}, 'utf8').trim() === 'die') process.exit(1)
+            const rl = readline.createInterface({ input: process.stdin })
+            rl.on('line', (line) => {
+                let msg
+                try { msg = JSON.parse(line) } catch { return }
+                if (!msg || !msg.id) return
+                const result = msg.method === 'tools/list' ? { tools: [] } : { protocolVersion: '2025-06-18', capabilities: {} }
+                process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result }) + '\\n')
+            })
+        `)
+        writeFileSync(userScript, `
+            const fs = require('node:fs')
+            const readline = require('node:readline')
+            fs.appendFileSync(${JSON.stringify(userHits)}, 'u')
+            const rl = readline.createInterface({ input: process.stdin })
+            rl.on('line', (line) => {
+                let msg
+                try { msg = JSON.parse(line) } catch { return }
+                if (!msg || !msg.id) return
+                const result = msg.method === 'tools/list' ? { tools: [] } : { protocolVersion: '2025-06-18', capabilities: {} }
+                process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result }) + '\\n')
+            })
+        `)
+        writeFileSync(join(agent, 'mcp.json'), JSON.stringify({
+            mcpServers: { home: { command: process.execPath, args: [userScript] } },
+        }))
+        writeFileSync(join(workspace, '.mcp.json'), JSON.stringify({
+            mcpServers: { flip: { command: process.execPath, args: [script] } },
+        }))
+        const read = (check?: string) => readLiveSessionConfig({
+            flavor: 'omp',
+            cwd: workspace,
+            tools: [],
+            ...(check ? { check } : {}),
+        })
+        try {
+            const first = await read('flip')
+            expect(first.mcp?.servers.find((server) => server.name === 'flip')?.loaded).toBe(true)
+            expect(readFileSync(hits, 'utf8')).toBe('x')
+            expect(readFileSync(userHits, 'utf8')).toBe('u')
+            writeFileSync(mode, 'die')
+            const second = await read('flip')
+            expect(readFileSync(hits, 'utf8')).toBe('xx')
+            expect(readFileSync(userHits, 'utf8')).toBe('u')
+            expect(second.mcp?.servers.find((server) => server.name === 'flip')?.loaded).toBe(false)
+        } finally {
+            if (previous === undefined) delete process.env.PI_CODING_AGENT_DIR
+            else process.env.PI_CODING_AGENT_DIR = previous
+            rmSync(workspace, { recursive: true, force: true })
+            rmSync(agent, { recursive: true, force: true })
+            clearProbeCache()
+        }
+    })
+
+
 
 
     it('attaches the on-disk skill file when a catalog entry has no path', async () => {

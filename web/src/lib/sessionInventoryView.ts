@@ -137,9 +137,19 @@ function mcpGroups(rows: InventoryRow[]): InventoryGroup[] | undefined {
         }
     }
     return [
-        ...order.map((label) => ({ label, rows: byFile.get(label) ?? [] })),
+        ...order.map((file) => ({ label: groupLabel(file, byFile.get(file) ?? []), rows: byFile.get(file) ?? [] })),
         ...(loose.length > 0 ? [{ rows: loose }] : []),
     ]
+}
+
+/** User files live outside the session, so the header shows `~/...` instead of the absolute path. The row still opens the original path. */
+function groupLabel(file: string, rows: InventoryRow[]): string {
+    if (!rows.every((item) => item.source === 'user')) return file
+    const unix = /^\/(?:Users|home)\/[^/]+(\/.*)$/.exec(file)
+    if (unix?.[1]) return `~${unix[1]}`
+    const win = /^[A-Za-z]:[\\/]Users[\\/][^\\/]+([\\/].*)$/.exec(file)
+    if (win?.[1]) return `~${win[1].replaceAll('\\', '/')}`
+    return file
 }
 
 export function hooksSection(inventory: SessionInventory | null | undefined, flavor?: string | null): InventorySection {
