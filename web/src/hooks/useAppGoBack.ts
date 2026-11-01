@@ -68,6 +68,22 @@ export function useAppGoBack(): () => void {
                 })
                 return
             }
+            if (origin === 'mcp') {
+                const mcpName = 'mcpName' in search && typeof (search as { mcpName?: unknown }).mcpName === 'string'
+                    ? (search as { mcpName: string }).mcpName
+                    : ''
+                const mcpSource = 'mcpSource' in search && typeof (search as { mcpSource?: unknown }).mcpSource === 'string'
+                    ? (search as { mcpSource: string }).mcpSource
+                    : ''
+                if (mcpName && mcpSource) {
+                    navigate({
+                        to: pathname.replace(/\/file$/, '/config/server'),
+                        search: { name: mcpName, source: mcpSource as 'user' },
+                        ...PRESERVE_SESSION_SIDEBAR_SCROLL,
+                    })
+                    return
+                }
+            }
 
             const filesPath = pathname.replace(/\/file$/, '/files')
             navigate({

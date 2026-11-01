@@ -519,6 +519,7 @@ export default function FilePage() {
                     <button
                         type="button"
                         onClick={handleBack}
+                        aria-label={t('common.back')}
                         className="flex h-8 w-8 items-center justify-center rounded-full text-[var(--app-hint)] transition-colors hover:bg-[var(--app-secondary-bg)] hover:text-[var(--app-fg)]"
                     >
                         <BackIcon />

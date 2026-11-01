@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
     getSessionConfig: vi.fn(),
     getSessionConfigItem: vi.fn(),
     setSessionConfigItemEnabled: vi.fn(),
+    flavor: undefined as string | undefined,
 }))
 
 vi.mock('@tanstack/react-router', () => ({
@@ -44,7 +45,7 @@ vi.mock('@/hooks/queries/useSession', () => ({
         session: {
             id: 'session-1',
             active: true,
-            metadata: { path: '/work' },
+            metadata: { path: '/work', ...(mocks.flavor ? { flavor: mocks.flavor } : {}) },
         },
     }),
 }))
@@ -73,6 +74,7 @@ describe('SessionConfigPage', () => {
         mocks.getSessionConfig.mockReset()
         mocks.getSessionConfigItem.mockReset()
         mocks.setSessionConfigItemEnabled.mockReset()
+        mocks.flavor = undefined
     })
 
     it('renders a live config response and hides urls and tokens', async () => {
@@ -107,6 +109,8 @@ describe('SessionConfigPage', () => {
         expect(screen.getByText('PreToolUse')).toBeTruthy()
         expect(screen.getByText('Bash · my-hook')).toBeTruthy()
         expect(screen.getByText('No skills configured')).toBeTruthy()
+        expect(screen.getByRole('switch', { name: 'Enable PreToolUse' }).getAttribute('title')).toBeNull()
+        expect(screen.getByRole('switch', { name: 'Enable hapi' }).getAttribute('title')).toBeNull()
         expect(screen.getByText('This agent does not honor a per-item switch, so turning it off here would not stop it.')).toBeTruthy()
         expect(screen.getByText('Injected, system, tool, and plugin items cannot be changed here.')).toBeTruthy()
         expect(screen.queryByText('Changes apply the next time you start a session or restart the agent.')).toBeNull()
@@ -141,6 +145,7 @@ describe('SessionConfigPage', () => {
         })
         renderPage()
         expect(await screen.findByText('Loaded')).toBeTruthy()
+        expect(screen.getByText('notion').className).toContain('min-w-0 flex-1 truncate')
         expect(screen.getByText('Not loaded')).toBeTruthy()
         expect(screen.getByText('No skills configured')).toBeTruthy()
         expect(screen.getByText('No hooks configured')).toBeTruthy()
@@ -195,12 +200,14 @@ describe('SessionConfigPage', () => {
         renderPage()
         const locked = await screen.findByRole('switch', { name: 'Enable hapi' })
         expect(locked).toBeDisabled()
-        expect(locked.getAttribute('title')).toContain('cannot be changed')
+        expect(locked.getAttribute('title')).toBeNull()
+        expect(screen.getByRole('button', { name: /cannot be changed/ })).toBeTruthy()
+        expect(screen.getByRole('tooltip', { hidden: true, name: /cannot be changed/ })).toBeTruthy()
         expect(screen.getByText('Applies to new sessions, for every session.')).toBeTruthy()
         expect(screen.queryByRole('button', { name: /^docs/ })).toBeNull()
-        expect(screen.queryByRole('button', { name: /^hapi/ })).toBeNull()
+        expect(screen.getByRole('button', { name: /^hapi/ })).toBeTruthy()
         expect(screen.getByText('docs')).toBeTruthy()
-        expect(screen.queryByText('›')).toBeNull()
+        expect(screen.getAllByText('›').length).toBeGreaterThan(0)
     })
 
     it('opens a hook settings file and its script without an in-page detail', async () => {
@@ -226,8 +233,10 @@ describe('SessionConfigPage', () => {
         }))
         fireEvent.click(screen.getByRole('button', { name: /^docs/ }))
         expect(mocks.navigate).toHaveBeenLastCalledWith(expect.objectContaining({
-            search: expect.objectContaining({ origin: 'config', line: 4 }),
+            to: '/sessions/$sessionId/config/server',
+            search: { name: 'docs', source: 'user' },
         }))
+        expect(screen.queryByText('Say ping')).toBeNull()
         expect(screen.queryByText('Back to list')).toBeNull()
     })
 
@@ -259,10 +268,10 @@ describe('SessionConfigPage', () => {
         })
         renderPage()
         const locked = await screen.findByRole('switch', { name: 'Enable hapi' })
-        expect(locked.getAttribute('title')).toContain('cannot be changed')
+        expect(locked.getAttribute('title')).toBeNull()
         expect(screen.getByText('Use the title tool.')).toBeTruthy()
         expect(screen.queryByRole('button', { name: /append-system-prompt|追加/ })).toBeNull()
-        expect(screen.queryByText('›')).toBeTruthy()
+        expect(screen.getAllByText('›').length).toBeGreaterThan(0)
         fireEvent.click(screen.getByRole('button', { name: /^CLAUDE\.md/ }))
         expect(mocks.navigate).toHaveBeenCalledWith(expect.objectContaining({
             to: '/sessions/$sessionId/file',
@@ -291,6 +300,7 @@ describe('SessionConfigPage', () => {
         expect(lockedSwitch).toBeDisabled()
         expect(screen.getAllByText('Applies to new sessions, for every session.')).toHaveLength(1)
         expect(screen.getByText('Injected, system, tool, and plugin items cannot be changed here.')).toBeTruthy()
+        expect(lockedSwitch.getAttribute('title')).toBeNull()
 
         expect(mocks.setSessionConfigItemEnabled).not.toHaveBeenCalled()
 
@@ -303,5 +313,177 @@ describe('SessionConfigPage', () => {
             source: 'user',
         }, false)
     })
+
+    it('checks one project server and can recheck omp without the cache', async () => {
+        mocks.flavor = 'omp'
+        mocks.getSessionConfig.mockResolvedValue({
+            success: true,
+            mcp: {
+                kind: 'servers',
+                servers: [
+                    { name: 'repo', source: 'project' },
+                    { name: 'notion', source: 'user', loaded: true },
+                ],
+            },
+            skills: { items: [] },
+            hooks: { availability: 'listed', items: [] },
+        })
+        renderPage()
+        expect(await screen.findByText('Not checked')).toBeTruthy()
+        fireEvent.click(screen.getByRole('button', { name: 'Check' }))
+        await waitFor(() => {
+            expect(mocks.getSessionConfig).toHaveBeenCalledWith('session-1', { check: 'repo' })
+        })
+        fireEvent.click(screen.getByRole('button', { name: 'Recheck all' }))
+        await waitFor(() => {
+            expect(mocks.getSessionConfig).toHaveBeenCalledWith('session-1', { fresh: true })
+        })
+    })
+
+    it('groups MCP servers by file, keeps a checked project server recheckable, and shows one switch note', async () => {
+        mocks.flavor = 'omp'
+        mocks.getSessionConfig.mockResolvedValue({
+            success: true,
+            mcp: {
+                kind: 'servers',
+                servers: [
+                    { name: 'near', source: 'project', filePath: '.omp/mcp.json', loaded: true },
+                    { name: 'root', source: 'project', filePath: '.mcp.json' },
+                    { name: 'home', source: 'user', filePath: '/Users/dev/.omp/agent/settings.json', loaded: false },
+                ],
+            },
+            hooks: {
+                availability: 'listed',
+                items: [
+                    { event: 'PreToolUse', matcher: 'Bash', source: 'user', commandName: 'one' },
+                    { event: 'PostToolUse', matcher: 'Edit', source: 'user', commandName: 'two' },
+                ],
+            },
+            skills: { items: [] },
+        })
+        renderPage()
+        expect(await screen.findByText('.omp/mcp.json')).toBeTruthy()
+        expect(screen.getByText('.mcp.json')).toBeTruthy()
+        expect(screen.getByText('~/.omp/agent/settings.json')).toBeTruthy()
+        expect(screen.queryByText('/Users/dev/.omp/agent/settings.json')).toBeNull()
+        expect(screen.queryByText('Project')).toBeNull()
+        expect(screen.getByRole('button', { name: 'Recheck all' })).toBeTruthy()
+        expect(screen.getByRole('button', { name: 'Recheck' })).toBeTruthy()
+        expect(screen.getByRole('button', { name: 'Check' })).toBeTruthy()
+        const reason = 'This agent does not honor a per-item switch, so turning it off here would not stop it.'
+        const notes = screen.getAllByText(reason)
+        expect(notes).toHaveLength(5)
+        expect(notes.every((node) => node.getAttribute('role') === 'tooltip')).toBe(true)
+        expect(screen.getAllByRole('button', { name: reason })).toHaveLength(5)
+    })
+
+    it('clamps a long group label to two lines and expands on click', async () => {
+        mocks.flavor = 'omp'
+        const longPath = `${'a/'.repeat(300)}mcp.json`
+        mocks.getSessionConfig.mockResolvedValue({
+            success: true,
+            mcp: { kind: 'servers', servers: [{ name: 'docs', source: 'project', filePath: longPath }] },
+            skills: { items: [] },
+            hooks: { availability: 'none', items: [] },
+        })
+        renderPage()
+        const label = await screen.findByRole('button', { name: longPath })
+        expect(label.className).toContain('line-clamp-2')
+        expect(label.className).not.toContain('block')
+        expect(label.getAttribute('aria-expanded')).toBe('false')
+        fireEvent.click(label)
+        expect(label.getAttribute('aria-expanded')).toBe('true')
+        expect(label.className).not.toContain('line-clamp-2')
+    })
+
+    it('shows a spinner and disables recheck until it finishes', async () => {
+        mocks.flavor = 'omp'
+        let release: () => void = () => undefined
+        const gate = new Promise<void>((resolve) => {
+            release = resolve
+        })
+        mocks.getSessionConfig.mockImplementation(async (_sessionId: string, options?: { fresh?: boolean }) => {
+            if (options?.fresh) await gate
+            return {
+                success: true,
+                mcp: { kind: 'servers', servers: [{ name: 'notion', source: 'user', loaded: true }] },
+                skills: { items: [] },
+                hooks: { availability: 'listed', items: [] },
+            }
+        })
+        renderPage()
+        const button = await screen.findByRole('button', { name: 'Recheck all' })
+        fireEvent.click(button)
+        await waitFor(() => expect(button).toBeDisabled())
+        expect(button.querySelector('.animate-spin')).toBeTruthy()
+        release()
+        await waitFor(() => expect(button).toBeEnabled())
+    })
+
+    it('keeps the tool count on the row and opens the server page', async () => {
+        mocks.getSessionConfig.mockResolvedValue({
+            success: true,
+            mcp: {
+                kind: 'servers',
+                servers: [
+                    {
+                        name: 'docs',
+                        source: 'user',
+                        filePath: '/Users/dev/.omp/agent/mcp.json',
+                        loaded: true,
+                        tools: [
+                            { name: 'ping', description: 'Say ping' },
+                            { name: 'docs.read', description: 'Read a document' },
+                        ],
+                    },
+                    { name: 'pending', source: 'project', filePath: '.mcp.json' },
+                ],
+            },
+            skills: { items: [] },
+            hooks: { availability: 'none', items: [] },
+        })
+        renderPage()
+        expect(await screen.findByText('2 tools')).toBeTruthy()
+        expect(screen.queryByText('Say ping')).toBeNull()
+        fireEvent.click(screen.getByRole('button', { name: /^docs/ }))
+        expect(mocks.navigate).toHaveBeenCalledWith(expect.objectContaining({
+            to: '/sessions/$sessionId/config/server',
+            search: { name: 'docs', source: 'user' },
+        }))
+        expect(screen.queryByText('Say ping')).toBeNull()
+        expect(screen.queryByText('Tools appear after a check')).toBeNull()
+    })
+
+    it('marks a partial tool list and uses the runner home label', async () => {
+        mocks.getSessionConfig.mockResolvedValue({
+            success: true,
+            mcp: {
+                kind: 'servers',
+                servers: [{
+                    name: 'docs',
+                    source: 'user',
+                    filePath: '/custom/runner/.omp/agent/mcp.json',
+                    pathLabel: '~/.omp/agent/mcp.json',
+                    loaded: true,
+                    toolsTruncated: true,
+                    tools: [{ name: 'ping', description: 'Say ping' }],
+                }],
+            },
+            skills: { items: [] },
+            hooks: { availability: 'none', items: [] },
+        })
+        renderPage()
+        expect(await screen.findByText('~/.omp/agent/mcp.json')).toBeTruthy()
+        expect(screen.queryByText('/custom/runner/.omp/agent/mcp.json')).toBeNull()
+        expect(screen.getByText('1+ tools')).toBeTruthy()
+        expect(screen.queryByText('Showing the first part only.')).toBeNull()
+        fireEvent.click(screen.getByRole('button', { name: /^docs/ }))
+        expect(mocks.navigate).toHaveBeenCalledWith(expect.objectContaining({
+            to: '/sessions/$sessionId/config/server',
+            search: { name: 'docs', source: 'user' },
+        }))
+    })
+
+
 
 })

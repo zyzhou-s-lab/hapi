@@ -12,6 +12,8 @@ import {
     unregisterGeneratedImage
 } from '../../cli/src/modules/common/generatedImages';
 import { resolveSkill } from '../../cli/src/modules/common/skills';
+import { readSettings } from '../../cli/src/persistence';
+import { bindTrainingCard, formatWorkResult, queryTrainingRun, registerTrainingRun } from '../../cli/src/modules/training/trainingMcp';
 import type { OmpRpcClient } from '../../cli/src/omp/rpc/OmpRpcClient';
 import { defaultOmpEventAllowlist } from '../../cli/src/omp/rpc/eventAllowlist';
 import type {
@@ -119,6 +121,17 @@ const PermissionResponseSchema = z.object({
 const MediaToolArgsSchema = z.object({ path: z.string().min(1), title: z.string().optional() });
 const ChangeTitleArgsSchema = z.object({ title: z.string().trim().min(1).max(255) });
 const SkillLookupArgsSchema = z.object({ name: z.string().trim().min(1).max(128) });
+const RegisterTrainingRunArgsSchema = z.object({
+    run: z.string(),
+    runDir: z.string(),
+    machineId: z.string().optional()
+});
+const QueryTrainingRunArgsSchema = z.object({ run: z.string() });
+const BindTrainingCardArgsSchema = z.object({
+    lineId: z.string(),
+    run: z.string(),
+    metrics: z.array(z.string()).optional()
+});
 
 const HOST_OPERATION_TIMEOUT_MS = 120_000;
 
@@ -199,6 +212,52 @@ const HOST_TOOL_DEFINITIONS: OmpHostToolDefinition[] = [
         loadMode: 'discoverable'
     },
     {
+        name: 'register_training_run',
+        label: 'Register Training Run',
+        description: 'Register a local W&B run with HAPI so it can be shown on a work-line training card. Call this after the run directory exists. machineId defaults to this machine.',
+        parameters: {
+            type: 'object',
+            properties: {
+                run: { type: 'string', description: 'Run name' },
+                runDir: { type: 'string', description: 'Absolute path of the wandb run directory (…/wandb/run-* or offline-run-*)' },
+                machineId: { type: 'string', description: 'Machine id. Defaults to this machine.' }
+            },
+            required: ['run', 'runDir'],
+            additionalProperties: false
+        },
+        loadMode: 'discoverable'
+    },
+    {
+        name: 'query_training_run',
+        label: 'Query Training Run',
+        description: 'Query one registered W&B run. Returns metric names when the runner can read the run.',
+        parameters: {
+            type: 'object',
+            properties: {
+                run: { type: 'string', description: 'Registered run name' }
+            },
+            required: ['run'],
+            additionalProperties: false
+        },
+        loadMode: 'discoverable'
+    },
+    {
+        name: 'bind_training_card',
+        label: 'Bind Training Card',
+        description: 'Show a registered run on a work-line training card. metrics empty means every metric. The open workbench updates immediately.',
+        parameters: {
+            type: 'object',
+            properties: {
+                lineId: { type: 'string', description: 'Work line id' },
+                run: { type: 'string', description: 'Registered run name' },
+                metrics: { type: 'array', items: { type: 'string' }, description: 'Metric names to draw. Omit or pass [] to draw every metric.' }
+            },
+            required: ['lineId', 'run'],
+            additionalProperties: false
+        },
+        loadMode: 'discoverable'
+    },
+    {
         name: 'skill_lookup',
         label: 'Look Up Skill',
         description: 'Load a HAPI skill by its exact discovered name before following that skill.',
@@ -240,6 +299,7 @@ export type OmpExtensionUiPresentationEvent =
 type OmpHostToolBridgeOptions = {
     client: OmpRpcClient;
     cwd: string;
+    workApi: ApiSessionClient['workApi'];
     sendAgentMessage: (message: unknown) => void;
     sendSummary: (title: string) => void;
     onFatal: (error: Error) => void;
@@ -399,9 +459,40 @@ export class OmpHostToolBridge {
                 ].join('\n');
                 return { result: textResult(`${header}\n\n${skill.body}`) };
             }
+            case 'register_training_run': {
+                const args = RegisterTrainingRunArgsSchema.parse(request.arguments);
+                throwIfAborted(signal, request.toolName);
+                const machineId = args.machineId?.trim() || (await readSettings()).machineId;
+                if (!machineId) throw new Error('machineId is required');
+                const response = await registerTrainingRun(this.workHub(), { run: args.run, machineId, runDir: args.runDir });
+                return this.trainingResult(request.toolName, signal, response.status, response.body);
+            }
+            case 'query_training_run': {
+                const args = QueryTrainingRunArgsSchema.parse(request.arguments);
+                throwIfAborted(signal, request.toolName);
+                const response = await queryTrainingRun(this.workHub(), args.run);
+                return this.trainingResult(request.toolName, signal, response.status, response.body);
+            }
+            case 'bind_training_card': {
+                const args = BindTrainingCardArgsSchema.parse(request.arguments);
+                throwIfAborted(signal, request.toolName);
+                const response = await bindTrainingCard(this.workHub(), args);
+                return this.trainingResult(request.toolName, signal, response.status, response.body);
+            }
             default:
                 throw new Error(`HAPI host tool is not registered: ${request.toolName}`);
         }
+    }
+
+    private workHub() {
+        return { request: (path: string, init?: { method?: string; body?: unknown }) => this.options.workApi(path, init ?? {}) };
+    }
+
+    private trainingResult(toolName: string, signal: AbortSignal, status: number, body: unknown): HostToolExecution {
+        throwIfAborted(signal, toolName);
+        const formatted = formatWorkResult(status, body);
+        if (formatted.isError) throw new Error(formatted.text);
+        return { result: textResult(formatted.text) };
     }
 
     private async displayMedia(
@@ -1146,7 +1237,7 @@ export class OmpHostIntegration {
         client: OmpRpcClient;
         cwd: string;
         sessionClient: Pick<ApiSessionClient,
-            'sendAgentMessage' | 'sendClaudeSessionMessage' | 'updateAgentState' | 'updateMetadata' | 'rpcHandlerManager'>;
+            'sendAgentMessage' | 'sendClaudeSessionMessage' | 'updateAgentState' | 'updateMetadata' | 'rpcHandlerManager' | 'workApi'>;
         onFatal: (error: Error) => void;
         hostUriProviders?: OmpHostUriProvider[];
         eventAllowlist?: ReadonlySet<OmpKnownEventType>;
@@ -1172,6 +1263,7 @@ export class OmpHostIntegration {
         this.hostTools = new OmpHostToolBridge({
             client: options.client,
             cwd: options.cwd,
+            workApi: (path, init) => options.sessionClient.workApi(path, init ?? {}),
             sendAgentMessage: (message) => {
                 if (eventAllowlist.has('host_tool_call')) options.sessionClient.sendAgentMessage(message);
             },

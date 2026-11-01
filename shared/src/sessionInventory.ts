@@ -10,6 +10,11 @@ export const SessionInventorySourceSchema = z.enum([
     'tool',
 ])
 
+export const SessionInventoryMcpToolSchema = z.object({
+    name: z.string().min(1).max(120),
+    description: z.string().max(160).optional(),
+})
+
 export const SessionInventoryMcpServerSchema = z.object({
     name: z.string().min(1).max(200),
     source: SessionInventorySourceSchema,
@@ -18,6 +23,12 @@ export const SessionInventoryMcpServerSchema = z.object({
     loaded: z.boolean().optional(),
     filePath: z.string().min(1).max(4096).optional(),
     line: z.number().int().min(1).max(1_000_000).optional(),
+    /** Short display path. `filePath` stays absolute so the file page can open it. */
+    pathLabel: z.string().min(1).max(300).optional(),
+    /** Names from tools/list. Present only after a successful check; cached with that result. */
+    tools: z.array(SessionInventoryMcpToolSchema).max(200).optional(),
+    /** True when a later page was skipped because the budget, page cap, or 200-name cap ran out. */
+    toolsTruncated: z.boolean().optional(),
 })
 
 export const SessionInventoryHookSchema = z.object({
@@ -61,6 +72,7 @@ export const SessionPromptItemSchema = z.object({
     preview: z.string().max(160).optional(),
     truncated: z.boolean().optional(),
     load: SessionPromptLoadSchema.optional(),
+    loaded: z.boolean().optional(),
     match: z.string().max(300).optional(),
     note: z.string().max(80).optional(),
     hasText: z.boolean().optional(),

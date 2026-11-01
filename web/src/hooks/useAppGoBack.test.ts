@@ -93,6 +93,33 @@ describe('useAppGoBack file preview navigation', () => {
         })
     })
 
+    it('returns to the MCP server page when the file was opened from it', () => {
+        routerMocks.pathname = '/sessions/session-1/file'
+        routerMocks.search = { path: 'encoded-path', origin: 'mcp', mcpName: 'docs', mcpSource: 'user' }
+        const { result } = renderHook(() => useAppGoBack())
+
+        act(() => result.current())
+
+        expect(routerMocks.navigate).toHaveBeenCalledWith({
+            to: '/sessions/session-1/config/server',
+            search: { name: 'docs', source: 'user' },
+            resetScroll: false,
+        })
+    })
+
+    it('returns from an MCP server page to the config list', () => {
+        routerMocks.pathname = '/sessions/session-1/config/server'
+        routerMocks.search = { name: 'docs', source: 'user' }
+        const { result } = renderHook(() => useAppGoBack())
+
+        act(() => result.current())
+
+        expect(routerMocks.navigate).toHaveBeenCalledWith({
+            to: '/sessions/session-1/config',
+            resetScroll: false,
+        })
+    })
+
     it('keeps returning file-browser previews to their previous file context', () => {
         routerMocks.pathname = '/sessions/session-1/file'
         routerMocks.search = {

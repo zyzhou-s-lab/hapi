@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSyn
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { clearSessionPromptLive, collectSessionPrompts, getSessionPromptLive, readSessionPromptDetail, setSessionPromptLive } from './sessionPrompts'
+import { clearSessionPromptLive, clipCodeUnits, collectSessionPrompts, getSessionPromptLive, readSessionPromptDetail, setSessionPromptLive } from './sessionPrompts'
 
 const dirs: string[] = []
 
@@ -22,6 +22,16 @@ function titles(cwd: string, home: string, flavor: string, extra: Parameters<typ
 }
 
 describe('session prompts', () => {
+    it('clips by UTF-16 units without splitting an emoji', () => {
+        expect(clipCodeUnits('short', 10)).toBe('short')
+        // Whole pairs are kept when the cut lands cleanly.
+        expect(clipCodeUnits('😀'.repeat(3), 4)).toBe('😀😀')
+        expect(clipCodeUnits('😀a', 2)).toBe('😀')
+        // A cut at 1 falls between the emoji's high and low surrogate, so it backs off to 0.
+        expect(clipCodeUnits('😀a', 1)).toBe('')
+        expect(clipCodeUnits('😀a'.repeat(20), 41).length).toBeLessThanOrEqual(41)
+    })
+
     it('skips AGENTS.md when a Claude project CLAUDE.md exists and marks path rules', () => {
         const home = tempDir()
         const cwd = tempDir()
@@ -248,8 +258,102 @@ describe('session prompts', () => {
         expect(user.find((item) => item.title === 'api.mdc')?.match).toContain('src/**/*.ts')
         expect(user.find((item) => item.title === 'style.instructions.md')?.match).toContain('**/*.ts')
         expect(user.find((item) => item.title === 'careful.md')?.match).toContain('rm -rf')
-        expect(user.find((item) => item.title === 'AGENTS.md')?.load).toBe('demand')
+        expect(user.find((item) => item.title === 'AGENTS.md')?.load).toBeUndefined()
+        expect(user.find((item) => item.title === 'AGENTS.md')?.loaded).toBe(false)
     })
+
+    it('marks an omp instruction loaded only when the system prompt has its path or text', () => {
+        const home = tempDir()
+        const parent = tempDir()
+        const cwd = join(parent, 'repo')
+        mkdirSync(join(cwd, '.git'), { recursive: true })
+        mkdirSync(join(cwd, '.omp'), { recursive: true })
+        mkdirSync(join(home, 'agent'), { recursive: true })
+        const projectText = 'Project agents text that is long enough to match.'
+        writeFileSync(join(cwd, 'AGENTS.md'), projectText)
+        writeFileSync(join(parent, 'AGENTS.md'), 'Parent agents text that omp does not walk past the git root.')
+        writeFileSync(join(cwd, '.omp', 'AGENTS.md'), 'Nearest omp agents text that is also long enough.')
+        writeFileSync(join(home, 'agent', 'AGENTS.md'), 'User agent instructions that are long enough to match.')
+        const prompts = titles(cwd, home, 'omp', {
+            flavor: 'omp',
+            cwd,
+            home,
+            env: { PI_CODING_AGENT_DIR: join(home, 'agent') },
+            promptLive: {
+                omp: {
+                    systemPrompt: [
+                        projectText,
+                        join(home, 'agent', 'AGENTS.md'),
+                    ],
+                },
+            },
+        })
+        const user = prompts?.user?.items ?? []
+        const byPath = Object.fromEntries(user.filter((item) => item.title === 'AGENTS.md').map((item) => [item.pathLabel, item.loaded]))
+        expect(byPath['AGENTS.md']).toBe(true)
+        expect(byPath['.omp/AGENTS.md']).toBe(false)
+        expect(byPath['~/agent/AGENTS.md']).toBe(true)
+        expect(user.some((item) => item.pathLabel?.includes('Parent'))).toBe(false)
+        expect(user.every((item) => item.title !== 'AGENTS.md' || item.load === undefined)).toBe(true)
+    })
+
+    it('marks a multi-line AGENTS.md loaded from an omp 18.12.6 repo-rules block', () => {
+        const home = tempDir()
+        const cwd = tempDir()
+        mkdirSync(join(cwd, '.git'))
+        mkdirSync(join(cwd, '.omp'))
+        const body = '# Title\n\nFollow the repository rules when editing code here.\n'
+        writeFileSync(join(cwd, 'AGENTS.md'), body)
+        writeFileSync(join(cwd, '.omp', 'AGENTS.md'), '# Other\n\nThis nearest omp file is not in the prompt.\n')
+        const prompts = titles(cwd, home, 'omp', {
+            flavor: 'omp',
+            cwd,
+            home,
+            env: { PI_CODING_AGENT_DIR: join(home, 'agent') },
+            promptLive: {
+                omp: {
+                    systemPrompt: [[
+                        '<repo-rules>',
+                        'MUST follow these context files for all tasks:',
+                        '<file path="/opt/omp/other/AGENTS.md">',
+                        '# Title',
+                        '',
+                        'Follow the repository rules when editing code here.',
+                        '</file>',
+                        '</repo-rules>',
+                    ].join('\n')],
+                },
+            },
+        })
+        const byPath = Object.fromEntries((prompts?.user?.items ?? []).filter((item) => item.title === 'AGENTS.md').map((item) => [item.pathLabel, item.loaded]))
+        expect(byPath['AGENTS.md']).toBe(true)
+        expect(byPath['.omp/AGENTS.md']).toBe(false)
+        expect(JSON.stringify(prompts)).not.toContain(join(cwd, 'AGENTS.md'))
+    })
+
+    it('loads contextFiles.extra names from the agent directory and skips paths', () => {
+        const home = tempDir()
+        const cwd = tempDir()
+        mkdirSync(join(cwd, '.git'))
+        const agent = join(home, 'agent')
+        mkdirSync(agent)
+        writeFileSync(join(agent, 'settings.json'), JSON.stringify({
+            contextFiles: { extra: ['TEAM.md', 'AGENTS.md', '../SECRET.md', 'nested/NO.md', ''] },
+        }))
+        writeFileSync(join(agent, 'TEAM.md'), 'Team rules that are long enough to list.')
+        writeFileSync(join(home, 'SECRET.md'), 'should not load from a path')
+        const prompts = titles(cwd, home, 'omp', {
+            flavor: 'omp',
+            cwd,
+            home,
+            env: { PI_CODING_AGENT_DIR: agent },
+        })
+        const items = prompts?.user?.items ?? []
+        expect(items.some((item) => item.title === 'TEAM.md' && item.scope === 'user')).toBe(true)
+        expect(items.some((item) => item.title === 'SECRET.md' || item.title === 'NO.md')).toBe(false)
+        expect(items.filter((item) => item.title === 'AGENTS.md')).toEqual([])
+    })
+
 
     it('reports no user files for flavors that do not read them', () => {
         const home = tempDir()

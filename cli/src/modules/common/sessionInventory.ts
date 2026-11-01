@@ -13,7 +13,8 @@ import {
 } from '@hapi/protocol/schemas';
 import { buildHookSettings, readMachineClaudeSettings } from '@/modules/common/hooks/generateHookSettings';
 import { listInventorySkills } from '@/modules/common/skills';
-import { collectSessionPrompts, getSessionPromptLive, type SessionPromptLive } from './sessionPrompts';
+import { clipCodeUnits, collectSessionPrompts, getSessionPromptLive, type SessionPromptLive } from './sessionPrompts';
+import { cachedProbe, cachedProbeTools, checkMcpServers, probeTargetsFromConfig, type McpProbeTarget } from './mcpServerCheck';
 import { lineOfJsonKey, lineOfSnippet, listedConfigFilePath, tryRealpath } from './configFilePath';
 
 const MAX_CONFIG_BYTES = 1_000_000;
@@ -156,6 +157,7 @@ export function dedupeServers(servers: readonly SessionInventoryMcpServer[]): Se
                 ...(server.enabled === false ? { enabled: false } : {}),
                 ...(server.loaded !== undefined ? { loaded: server.loaded } : {}),
                 ...(server.filePath ? { filePath: server.filePath } : {}),
+                ...(server.pathLabel ? { pathLabel: server.pathLabel } : {}),
                 ...(server.line ? { line: server.line } : {}),
             });
         }
@@ -210,12 +212,53 @@ function publishFilePath(filePath: string | undefined): string | undefined {
     return filePath;
 }
 
-function fileLocation(origin: ConfigFileOrigin | undefined, key: string): { filePath?: string; line?: number } {
+/** Matches `pathLabel` on the session-config schema. A longer label fails the whole parse. */
+const PATH_LABEL_MAX = 300
+
+function isFilesystemRoot(path: string): boolean {
+    const norm = resolve(path);
+    return norm === '/' || norm === sep || /^[A-Za-z]:\\?$/.test(norm);
+}
+
+function clipPathLabel(label: string): string {
+    if (label.length <= PATH_LABEL_MAX) return label;
+    const mark = '…';
+    const keep = PATH_LABEL_MAX - mark.length;
+    const head = Math.ceil(keep / 2);
+    const tail = keep - head;
+    const headText = clipCodeUnits(label, head);
+    // The tail keeps the path suffix; when its start lands inside a surrogate
+    // pair, drop the lone low surrogate instead of rendering a broken emoji.
+    let tailStart = label.length - tail;
+    if (tailStart > 0) {
+        const before = label.charCodeAt(tailStart - 1);
+        const at = label.charCodeAt(tailStart);
+        if (before >= 0xd800 && before <= 0xdbff && at >= 0xdc00 && at <= 0xdfff) {
+            tailStart += 1;
+        }
+    }
+    return `${headText}${mark}${label.slice(tailStart)}`;
+}
+
+/** `~/...` when the file is under the runner home. A custom HOME is not always `/Users` or `/home`. */
+export function displayHomePath(file: string, home: string): string | undefined {
+    if (!isAbsolute(file) || !isAbsolute(home) || isFilesystemRoot(home)) return undefined;
+    const fileNorm = resolve(file);
+    const homeNorm = resolve(home);
+    if (isFilesystemRoot(homeNorm)) return undefined;
+    if (fileNorm === homeNorm) return '~';
+    const prefix = homeNorm.endsWith(sep) ? homeNorm : `${homeNorm}${sep}`;
+    if (!fileNorm.startsWith(prefix)) return undefined;
+    return clipPathLabel(`~/${fileNorm.slice(prefix.length).split(sep).join('/')}`);
+}
+
+function fileLocation(origin: ConfigFileOrigin | undefined, key: string): { filePath?: string; line?: number; pathLabel?: string } {
     if (!origin) return {};
     const filePath = listedConfigFilePath(origin.file, origin.cwd);
     if (!filePath) return {};
     const line = lineOfJsonKey(origin.text, key) ?? lineOfSnippet(origin.text, key);
-    return { filePath, ...(line ? { line } : {}) };
+    const pathLabel = displayHomePath(filePath, tryRealpath(homedir()) ?? homedir());
+    return { filePath, ...(line ? { line } : {}), ...(pathLabel ? { pathLabel } : {}) };
 }
 
 function hookScriptPath(command: string, cwd: string): string | undefined {
@@ -432,6 +475,101 @@ export function withMcpLoadState(servers: readonly SessionInventoryMcpServer[], 
     return dedupeServers([...servers, ...extras]).map((server) => ({ ...server, loaded: loaded.has(server.name) }));
 }
 
+function ompProbeTargets(cwd: string): McpProbeTarget[] {
+    const dir = process.env.PI_CODING_AGENT_DIR?.trim() || join(homedir(), '.omp', 'agent');
+    const seen = new Set<string>();
+    const targets: McpProbeTarget[] = [];
+    // omp 18.12.6 keeps the first definition. Native project .omp/mcp.json, then
+    // .omp/.mcp.json, then the user file. Root .mcp.json stays last.
+    for (const path of [...ompProjectMcpPaths(cwd), join(dir, 'mcp.json'), join(dir, 'settings.json'), ...projectMcpPaths(cwd)]) {
+        const text = readTextFile(path);
+        if (!text) continue;
+        let parsed: unknown;
+        try {
+            parsed = JSON.parse(text);
+        } catch {
+            continue;
+        }
+        for (const target of probeTargetsFromConfig(parsed)) {
+            if (seen.has(target.name)) continue;
+            seen.add(target.name);
+            targets.push({ ...target, cwd: resolve(cwd, target.cwd ?? '.') });
+        }
+    }
+    return targets;
+}
+
+/** User servers are checked. A project server is only checked when `check` names it; a cached project result is shown without starting it. */
+async function withOmpCheckedLoadState(
+    servers: readonly SessionInventoryMcpServer[],
+    tools: readonly string[] | undefined,
+    cwd: string,
+    options?: { fresh?: boolean; check?: string },
+): Promise<SessionInventoryMcpServer[]> {
+    const known = new Set(servers.map((server) => server.name));
+    const extras = tools
+        ? withMcpLoadState([], tools).filter((server) => !known.has(server.name))
+        : [];
+    const byName = new Map(ompProbeTargets(cwd).map((target) => [target.name, target]));
+    const selected = options?.check?.trim();
+    const probing: McpProbeTarget[] = [];
+    const forced: McpProbeTarget[] = [];
+    const cachedProject = new Map<string, boolean>();
+    for (const server of servers) {
+        if (server.enabled === false) continue;
+        const target = byName.get(server.name);
+        if (!target) continue;
+        if (selected === server.name) {
+            forced.push(target);
+            continue;
+        }
+        if (server.source === 'project') {
+            const hit = cachedProbe(target);
+            if (hit === undefined) continue;
+            if (options?.fresh) {
+                probing.push(target);
+                continue;
+            }
+            cachedProject.set(server.name, hit);
+            continue;
+        }
+        probing.push(target);
+    }
+    const [loaded, again] = await Promise.all([
+        checkMcpServers(probing, { fresh: options?.fresh === true }),
+        forced.length > 0 ? checkMcpServers(forced, { fresh: true }) : Promise.resolve(new Map<string, boolean>()),
+    ]);
+    for (const [name, ok] of again) loaded.set(name, ok);
+    const probed = (server: SessionInventoryMcpServer, ok: boolean): SessionInventoryMcpServer => {
+        const { tools: _tools, toolsTruncated: _truncated, ...rest } = server;
+        if (!ok) return { ...rest, loaded: false };
+        const target = byName.get(server.name);
+        const listed = target ? cachedProbeTools(target) : undefined;
+        return {
+            ...rest,
+            loaded: true,
+            ...(listed ? { tools: listed.tools, ...(listed.truncated ? { toolsTruncated: true } : {}) } : {}),
+        };
+    };
+    return [
+        ...servers.map((server) => {
+            if (server.enabled === false) {
+                const { tools: _tools, toolsTruncated: _truncated, ...rest } = server;
+                return { ...rest, loaded: false as const };
+            }
+            if (loaded.has(server.name)) return probed(server, loaded.get(server.name) === true);
+            if (cachedProject.has(server.name)) return probed(server, cachedProject.get(server.name) === true);
+            if (server.source === 'project') {
+                const { loaded: _loaded, tools: _tools, toolsTruncated: _truncated, ...rest } = server;
+                return rest;
+            }
+            const { tools: _tools, toolsTruncated: _truncated, ...rest } = server;
+            return { ...rest, loaded: false as const };
+        }),
+        ...extras,
+    ];
+}
+
 export function ompInventoryFromTools(tools: readonly string[]): SessionInventoryPatch {
     const servers = dedupeServers(tools.flatMap((tool) => {
         const name = mcpServerNameFromTool(tool);
@@ -443,9 +581,31 @@ export function ompInventoryFromTools(tools: readonly string[]): SessionInventor
     };
 }
 
+function keepFirstServers(servers: readonly SessionInventoryMcpServer[]): SessionInventoryMcpServer[] {
+    const byName = new Map<string, SessionInventoryMcpServer>();
+    for (const server of servers) {
+        if (!isSafeInventoryName(server.name)) continue;
+        const name = server.name.trim();
+        if (byName.has(name)) continue;
+        byName.set(name, {
+            name,
+            source: server.source,
+            ...(server.enabled === false ? { enabled: false } : {}),
+            ...(server.loaded !== undefined ? { loaded: server.loaded } : {}),
+            ...(server.filePath ? { filePath: server.filePath } : {}),
+            ...(server.pathLabel ? { pathLabel: server.pathLabel } : {}),
+            ...(server.line ? { line: server.line } : {}),
+        });
+    }
+    return [...byName.values()].sort((left, right) => left.name.localeCompare(right.name)).slice(0, 200);
+}
+
 function loadOmpInventory(cwd: string): SessionInventoryPatch {
     const dir = process.env.PI_CODING_AGENT_DIR?.trim() || join(homedir(), '.omp', 'agent');
-    const servers = dedupeServers([
+    // Same order as ompProbeTargets: native project, then user, then root .mcp.json.
+    // First name wins, matching omp. SOURCE_RANK would let the root file beat the user file.
+    const servers = keepFirstServers([
+        ...ompProjectMcpPaths(cwd).flatMap((path) => jsonServersFromFile(path, cwd, 'project')),
         ...jsonServersFromFile(join(dir, 'mcp.json'), cwd, 'user'),
         ...jsonServersFromFile(join(dir, 'settings.json'), cwd, 'user'),
         ...projectMcpPaths(cwd).flatMap((path) => jsonServersFromFile(path, cwd, 'project')),
@@ -504,19 +664,28 @@ function readJsonFile(path: string, options?: { allowSymlink?: boolean }): unkno
 }
 
 export function projectMcpPaths(cwd: string, home = homedir()): string[] {
-    const paths: string[] = [];
+    return walkProjectDirs(cwd, home).map((dir) => join(dir, '.mcp.json'));
+}
+
+/** Native project MCP files, closer directory first. omp reads `<cwd>/.omp/mcp.json` then `.omp/.mcp.json`; this walk continues to the git root. */
+export function ompProjectMcpPaths(cwd: string, home = homedir()): string[] {
+    return walkProjectDirs(cwd, home).flatMap((dir) => [join(dir, '.omp', 'mcp.json'), join(dir, '.omp', '.mcp.json')]);
+}
+
+function walkProjectDirs(cwd: string, home: string): string[] {
+    const dirs: string[] = [];
     let current = resolve(cwd);
     const seen = new Set<string>();
     while (!seen.has(current)) {
         seen.add(current);
         if (current === resolve(home)) break;
-        paths.push(join(current, '.mcp.json'));
+        dirs.push(current);
         if (existsSync(join(current, '.git'))) break;
         const parent = dirname(current);
         if (parent === current) break;
         current = parent;
     }
-    return paths;
+    return dirs;
 }
 
 export function loadClaudeInventory(cwd: string): SessionInventoryPatch {
@@ -856,11 +1025,19 @@ export async function readLiveSessionConfig(input: {
     startingMode?: string | null;
     skills?: LiveSessionConfig['skills'];
     promptLive?: SessionPromptLive;
+    fresh?: boolean;
+    check?: string;
 }): Promise<LiveSessionConfig> {
     const flavor = (input.flavor ?? '').trim().toLowerCase();
     const sections = flavorInventory({ ...input, flavor });
+    const promptLive = { ...getSessionPromptLive(input.sessionId), ...input.promptLive };
     const mcp = sections.mcp
-        ? { kind: 'servers' as const, servers: withMcpLoadState(sections.mcp.servers, input.tools) }
+        ? {
+            kind: 'servers' as const,
+            servers: flavor === 'omp'
+                ? await withOmpCheckedLoadState(sections.mcp.servers, input.tools, input.cwd, { fresh: input.fresh, check: input.check })
+                : withMcpLoadState(sections.mcp.servers, input.tools),
+        }
         : undefined;
     const diskSkills = await listInventorySkills(input.cwd, { flavor: flavor || undefined });
     const filePathByName = new Map(diskSkills.flatMap((skill) => skill.filePath ? [[skill.name, skill.filePath] as const] : []));
@@ -882,7 +1059,7 @@ export async function readLiveSessionConfig(input: {
         cwd: input.cwd,
         startingMode: input.startingMode,
         sessionId: input.sessionId,
-        promptLive: { ...getSessionPromptLive(input.sessionId), ...input.promptLive },
+        promptLive,
     }).prompts;
     const agents = { items: await listSessionAgents(input.cwd) };
     return { ...sections, ...(mcp ? { mcp } : {}), agents, skills, prompts };

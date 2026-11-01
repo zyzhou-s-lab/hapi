@@ -21,6 +21,17 @@ export type InventoryRow = {
     line?: number
     scriptPath?: string
     loaded?: boolean
+    /** Project server: the row can be probed again after the first check. */
+    checkable?: boolean
+    /** Set after a successful check, including an empty list. */
+    tools?: { name: string; description?: string }[]
+    toolsTruncated?: boolean
+    pathLabel?: string
+}
+
+export type InventoryGroup = {
+    label?: string
+    rows: InventoryRow[]
 }
 
 export type InventorySection =
@@ -28,7 +39,7 @@ export type InventorySection =
     | { status: 'empty' }
     | { status: 'none'; note?: string }
     | { status: 'catalogUnavailable' }
-    | { status: 'list'; rows: InventoryRow[]; tools?: boolean; note?: string }
+    | { status: 'list'; rows: InventoryRow[]; groups?: InventoryGroup[]; tools?: boolean; note?: string }
 
 
 
@@ -98,10 +109,62 @@ export function mcpSection(inventory: SessionInventory | null | undefined, flavo
     const rows = mcp.servers.flatMap((server) => {
         const next = row(server.name, server.source, undefined, { kind: 'mcp', name: server.name, source: server.source }, server.enabled, flavor, server.filePath, server.line)
         if (!next) return []
-        return [{ ...next, ...(server.loaded === undefined ? {} : { loaded: server.loaded }) }]
+        const checkable = mcp.kind === 'servers' && server.source === 'project'
+        const tools = server.tools?.flatMap((tool) => {
+            const name = visibleInventoryText(tool.name)
+            if (!name) return []
+            const description = visibleInventoryText(tool.description)
+            return [description ? { name, description } : { name }]
+        })
+        return [{
+            ...next,
+            ...(server.loaded === undefined ? {} : { loaded: server.loaded }),
+            ...(checkable ? { checkable: true } : {}),
+            ...(tools ? { tools } : {}),
+            ...(server.toolsTruncated ? { toolsTruncated: true } : {}),
+            ...(server.pathLabel ? { pathLabel: server.pathLabel } : {}),
+        }]
     })
+    if (rows.length === 0) return { status: 'empty' }
     if (mcp.kind === 'tools') return { status: 'list', rows, tools: true }
-    return rowsOrEmpty(rows)
+    const groups = mcpGroups(rows)
+    return { status: 'list', rows, ...(groups ? { groups } : {}) }
+}
+
+function mcpGroups(rows: InventoryRow[]): InventoryGroup[] | undefined {
+    if (!rows.some((item) => item.filePath)) return undefined
+    const order: string[] = []
+    const byFile = new Map<string, InventoryRow[]>()
+    const loose: InventoryRow[] = []
+    for (const item of rows) {
+        const file = item.filePath
+        if (!file) {
+            loose.push(item)
+            continue
+        }
+        const list = byFile.get(file)
+        if (list) list.push(item)
+        else {
+            order.push(file)
+            byFile.set(file, [item])
+        }
+    }
+    return [
+        ...order.map((file) => ({ label: groupLabel(file, byFile.get(file) ?? []), rows: byFile.get(file) ?? [] })),
+        ...(loose.length > 0 ? [{ rows: loose }] : []),
+    ]
+}
+
+/** User files live outside the session, so the header shows `~/...` instead of the absolute path. The row still opens the original path. */
+function groupLabel(file: string, rows: InventoryRow[]): string {
+    if (!rows.every((item) => item.source === 'user')) return file
+    const labeled = rows.find((item) => item.pathLabel)?.pathLabel
+    if (labeled) return labeled
+    const unix = /^\/(?:Users|home)\/[^/]+(\/.*)$/.exec(file)
+    if (unix?.[1]) return `~${unix[1]}`
+    const win = /^[A-Za-z]:[\\/]Users[\\/][^\\/]+([\\/].*)$/.exec(file)
+    if (win?.[1]) return `~${win[1].replaceAll('\\', '/')}`
+    return file
 }
 
 export function hooksSection(inventory: SessionInventory | null | undefined, flavor?: string | null): InventorySection {
@@ -170,6 +233,7 @@ function promptRow(item: SessionPromptItem): InventoryRow | null {
         toggle: false,
         openable: Boolean(item.filePath),
         ...(item.load ? { load: item.load } : {}),
+        ...(item.loaded === undefined ? {} : { loaded: item.loaded }),
         ...(item.match ? { match: item.match } : {}),
         ...(item.codexCapped ? { codexCapped: true } : {}),
         ...(item.filePath ? { filePath: item.filePath } : {}),

@@ -53,6 +53,7 @@ type Draft = {
     title: string
     pathLabel?: string
     load?: 'path' | 'demand'
+    loaded?: boolean
     match?: string
     note?: string
     hasText?: boolean
@@ -76,8 +77,28 @@ export function sessionRelativePath(file: string, cwd: string): string | undefin
     return rel.split(sep).join('/')
 }
 
+/**
+ * Truncates `value` to at most `max` UTF-16 code units without splitting a
+ * surrogate pair. A raw `value.slice(0, max)` can cut an emoji in half and
+ * leave a lone surrogate that renders as `�`; when `max` lands between a high
+ * and a low surrogate the cut backs off one unit so the result stays valid
+ * UTF-16 and still within `max`.
+ */
+export function clipCodeUnits(value: string, max: number): string {
+    if (value.length <= max) return value
+    let end = max
+    if (end > 0 && end < value.length) {
+        const before = value.charCodeAt(end - 1)
+        const at = value.charCodeAt(end)
+        if (before >= 0xd800 && before <= 0xdbff && at >= 0xdc00 && at <= 0xdfff) {
+            end -= 1
+        }
+    }
+    return value.slice(0, end)
+}
+
 function clip(value: string, max: number): string {
-    return value.length <= max ? value : value.slice(0, max)
+    return clipCodeUnits(value, max)
 }
 
 function previewOf(text: string, stripFrontmatter = false): string | undefined {
@@ -299,6 +320,7 @@ function pushFile(drafts: Draft[], input: {
     cwd: string
     home: string
     load?: 'path' | 'demand'
+    loaded?: boolean
     match?: string
     note?: string
     codexCapped?: boolean
@@ -314,6 +336,7 @@ function pushFile(drafts: Draft[], input: {
         pathLabel: displayPath(input.path, input.cwd, input.home),
         ...(filePath ? { filePath } : {}),
         ...(input.load ? { load: input.load } : {}),
+        ...(input.loaded === undefined ? {} : { loaded: input.loaded }),
         ...(input.match ? { match: input.match } : {}),
         note: hasImport(body.text) ? 'no-import' : input.note,
         truncated: body.truncated,
@@ -338,6 +361,7 @@ function finish(drafts: Draft[], note?: string): { items: SessionPromptItem[]; b
             ...(preview ? { preview } : {}),
             ...(draft.truncated ? { truncated: true } : {}),
             ...(draft.load ? { load: draft.load } : {}),
+            ...(draft.loaded === undefined ? {} : { loaded: draft.loaded }),
             ...(draft.match ? { match: clip(draft.match, 300) } : {}),
             ...(draft.note ? { note: clip(draft.note, 80) } : {}),
             ...(draft.hasText === false ? { hasText: false } : {}),
@@ -781,6 +805,39 @@ function collectOpencode(input: CollectInput, live: SessionPromptLive | undefine
     }
 }
 
+function collapsed(value: string): string {
+    return value.replace(/\s+/g, ' ').trim()
+}
+
+function ompInstructionLoaded(prompt: string, path: string, text: string): boolean {
+    if (prompt.includes(path)) return true
+    const needle = collapsed(text).slice(0, 80)
+    return needle.length >= 24 && collapsed(prompt).includes(needle)
+}
+
+/** Filenames omp loads beside AGENTS.md (`contextFiles.extra`). Names only, never paths. */
+function ompExtraContextNames(agentDir: string): string[] {
+    const text = readFileIfRegular(join(agentDir, 'settings.json'))
+    if (!text) return []
+    try {
+        const parsed: unknown = JSON.parse(text)
+        if (!parsed || typeof parsed !== 'object' || !('contextFiles' in parsed)) return []
+        const contextFiles = parsed.contextFiles
+        if (!contextFiles || typeof contextFiles !== 'object' || !('extra' in contextFiles)) return []
+        const extra = contextFiles.extra
+        if (!Array.isArray(extra)) return []
+        return extra.filter((name): name is string => (
+            typeof name === 'string'
+            && name.length > 0
+            && name !== 'AGENTS.md'
+            && !name.includes('/')
+            && !name.includes('\\')
+        ))
+    } catch {
+        return []
+    }
+}
+
 function collectOmp(input: CollectInput, live: SessionPromptLive | undefined): Collected {
     const home = input.home ?? homedir()
     const cwd = resolve(input.cwd)
@@ -852,21 +909,53 @@ function collectOmp(input: CollectInput, live: SessionPromptLive | undefined): C
         }
         break
     }
-    const codexHome = input.env?.CODEX_HOME?.trim() || join(home, '.codex')
-    const configText = readFileIfRegular(join(codexHome, 'config.toml'))
-    const names = ['AGENTS.override.md', 'AGENTS.md', ...codexFallbacks(configText).names]
-    const global = pickCodex(codexHome, ['AGENTS.override.md', 'AGENTS.md'])
-    if (global) pushFile(user, { scope: 'user', title: global.path.split(sep).pop() || 'AGENTS.md', path: global.path, cwd, home, load: 'demand' })
-    for (const dir of upward(cwd, gitRoot(cwd, home)).reverse()) {
-        const file = pickCodex(dir, names)
-        if (!file) continue
-        pushFile(user, { scope: 'project', title: file.path.split(sep).pop() || 'AGENTS.md', path: file.path, cwd, home, load: 'demand' })
-        for (const folder of ['.agent', '.agents']) {
-            const agents = join(dir, folder, 'AGENTS.md')
-            pushFile(user, { scope: 'project', title: 'AGENTS.md', path: agents, cwd, home, load: 'demand' })
-        }
-    }
     const agentDir = input.env?.PI_CODING_AGENT_DIR?.trim() || join(home, '.omp', 'agent')
+    const promptText = live?.omp?.systemPrompt ? live.omp.systemPrompt.join('\n') : undefined
+    const seenAgents = new Set<string>()
+    const pushAgents = (path: string, scope: 'user' | 'project') => {
+        const abs = resolve(path)
+        if (seenAgents.has(abs)) return
+        const body = readBody(abs)
+        if (!body?.text.trim()) return
+        seenAgents.add(abs)
+        const loaded = promptText === undefined ? undefined : ompInstructionLoaded(promptText, abs, body.text)
+        pushFile(user, {
+            scope,
+            title: abs.split(sep).pop() || 'AGENTS.md',
+            path: abs,
+            cwd,
+            home,
+            ...(loaded === undefined ? {} : { loaded }),
+        })
+    }
+    pushAgents(join(agentDir, 'AGENTS.md'), 'user')
+    for (const name of ompExtraContextNames(agentDir)) pushAgents(join(agentDir, name), 'user')
+    const root = gitRoot(cwd, home)
+    let current = cwd
+    const seenDirs = new Set<string>()
+    let foundProjectOmp = false
+    while (!seenDirs.has(current)) {
+        seenDirs.add(current)
+        const base = current.split(sep).pop() ?? ''
+        if (!base.startsWith('.') && current !== home) pushAgents(join(current, 'AGENTS.md'), 'project')
+        if (current !== home) {
+            pushAgents(join(current, '.agent', 'AGENTS.md'), 'project')
+            pushAgents(join(current, '.agents', 'AGENTS.md'), 'project')
+        }
+        if (!foundProjectOmp) {
+            const ompAgents = join(current, '.omp', 'AGENTS.md')
+            if (readBody(ompAgents)?.text.trim()) {
+                pushAgents(ompAgents, 'project')
+                foundProjectOmp = true
+            }
+        }
+        if (current === root || current === home) break
+        const parent = dirname(current)
+        if (parent === current) break
+        current = parent
+    }
+    pushAgents(join(home, '.agent', 'AGENTS.md'), 'user')
+    pushAgents(join(home, '.agents', 'AGENTS.md'), 'user')
     const ruleDirs = [join(cwd, '.omp', 'rules'), join(agentDir, 'rules')]
     try {
         const ompDir = lstatSync(join(cwd, '.omp'))
