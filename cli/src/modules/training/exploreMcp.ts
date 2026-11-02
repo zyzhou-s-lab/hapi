@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { EXPLORE_DELETE_CONFIRM_HEADER } from '@hapi/protocol'
 import { formatWorkResult, type WorkHub } from './trainingMcp'
 
 type Result = { status: number; body: unknown }
@@ -165,7 +166,10 @@ async function dispatch(hub: WorkHub, name: ExploreTool, args: Record<string, un
             })
         }
         case 'delete_exploration':
-            return hub.request(`/cli/work/explorations/${line}`, { method: 'DELETE' })
+            return hub.request(`/cli/work/explorations/${line}`, {
+                method: 'DELETE',
+                headers: { [EXPLORE_DELETE_CONFIRM_HEADER]: '1' },
+            })
         case 'list_linked_sessions':
             return hub.request(`/cli/work/explorations/${line}/sessions`)
         case 'link_session':

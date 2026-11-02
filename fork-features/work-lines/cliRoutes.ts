@@ -7,6 +7,7 @@ import { WorkMapError, type WorkLayout, type WorkLine } from '../../hub/src/stor
 import { pushTrainingCard } from '../../hub/src/socket/trainingCardPush'
 import { getConfiguration } from '../../hub/src/configuration'
 import { parseAccessToken } from '../../hub/src/utils/accessToken'
+import { EXPLORE_DELETE_CONFIRM_HEADER } from '@hapi/protocol'
 import { constantTimeEquals } from '../../hub/src/utils/crypto'
 import type { MultiUserGatewayStore } from '../multi-user/gatewayStore'
 import { resolveGatewayCliAccountId } from '../multi-user/cliAdapter'
@@ -167,6 +168,11 @@ export function mountCliWorkRoutes(app: Hono<WebAppEnv>, deps: {
     routes.delete('/explorations/:id', (c) => {
         const ready = open(c)
         if (ready instanceof Response) return ready
+        // Caller token only. delete_exploration still needs a person on the
+        // client; yolo, bypass and approved_for_session do not count.
+        if (c.req.header(EXPLORE_DELETE_CONFIRM_HEADER) !== '1') {
+            return c.json({ error: 'Missing delete confirmation' }, 400)
+        }
         try {
             ready.engine.getWorkLines().deleteLine(ready.account.id, c.req.param('id'))
             touch(ready.account)
@@ -220,9 +226,17 @@ export function mountCliWorkRoutes(app: Hono<WebAppEnv>, deps: {
         const ready = open(c)
         if (ready instanceof Response) return ready
         const sessionId = c.req.param('sessionId')
+        const lineId = c.req.param('id')
         if (!canSeeSession(ready.account.id, sessionId)) return c.json({ error: 'Not found' }, 404)
         try {
-            ready.engine.getWorkLines().putSession(ready.account.id, { sessionId, state: 'follow', lineId: null })
+            const lines = ready.engine.getWorkLines()
+            const binding = lines.getSessionBinding(ready.account.id, sessionId)
+            const boundLine = binding
+                ? binding.lineId
+                : inheritedLineId(ready.engine, ready.account.id, sessionId)
+            if (binding?.lineId && binding.lineId !== lineId) return c.json({ error: 'Not found' }, 409)
+            if (boundLine !== lineId) return c.json({ error: 'Not found' }, 404)
+            lines.putSession(ready.account.id, { sessionId, state: 'ignored' })
             touch(ready.account)
             return c.json({ ok: true })
         } catch (error) {
@@ -342,6 +356,14 @@ function mapError(c: { json: (body: unknown, status?: number) => Response }, err
     if (error instanceof WorkMapError) return c.json({ error: error.message }, error.status)
     console.error('[work-lines] cli request failed', error)
     return c.json({ error: 'Work request failed' }, 500)
+}
+
+function inheritedLineId(engine: SyncEngine, accountId: number, sessionId: string): string | null {
+    const metadata = engine.getSession(sessionId)?.metadata
+    const path = metadata?.worktree?.basePath ?? metadata?.path ?? ''
+    const machineId = metadata?.machineId ?? ''
+    if (!machineId || !path) return null
+    return engine.getWorkLines().lineForDirectory(accountId, machineId, path)
 }
 
 function isHubBaseCliToken(token: string): boolean {

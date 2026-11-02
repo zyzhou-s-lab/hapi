@@ -1,6 +1,7 @@
 import type { ApiSessionClient } from '@/api/apiSession'
 import type { AgentBackend, PermissionRequest, PermissionResponse } from '@/agent/types'
 import type { PermissionMode } from '@hapi/protocol/types'
+import { freshApprovalDecision } from '@hapi/protocol'
 import { deriveToolName } from '@/agent/utils'
 import { logger } from '@/ui/logger'
 import {
@@ -114,7 +115,7 @@ export class AcpPermissionHandler extends BasePermissionHandler<PermissionRespon
     ): Promise<PermissionCompletion> {
         const request = this.pendingBackendRequests.get(response.id)
         this.pendingBackendRequests.delete(response.id)
-        const decision = response.decision ?? (response.approved ? 'approved' : 'denied')
+        const decision = freshApprovalDecision(pending.toolName, response.decision ?? (response.approved ? 'approved' : 'denied'))
 
         if (decision === 'abort' && request) {
             await this.backend.cancelPrompt(request.sessionId)

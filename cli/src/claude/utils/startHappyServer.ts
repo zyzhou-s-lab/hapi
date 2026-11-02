@@ -515,7 +515,7 @@ function createHapiMcpServer(
         return { content: [{ type: 'text' as const, text: result.text }], isError: result.isError };
     };
     const hub = {
-        request: (path: string, init?: { method?: string; body?: unknown }) => client.workApi(path, init),
+        request: (path: string, init?: { method?: string; body?: unknown; headers?: Record<string, string> }) => client.workApi(path, init),
     };
     mcp.registerTool<any, any>('register_training_run', {
         description: 'Register a local W&B run with HAPI so it can be shown on a work-line training card. Call this after the run directory exists. machineId defaults to this machine.',

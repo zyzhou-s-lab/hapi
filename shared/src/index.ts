@@ -1,6 +1,7 @@
 export * from './scratchlistAttachments'
 export * from './workGraph'
 export * from './workLayouts'
+export * from './exploreApproval'
 export * from './apiTypes'
 export * from './cursorCliSku'
 export * from './messages'

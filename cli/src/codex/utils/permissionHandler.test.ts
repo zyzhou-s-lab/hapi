@@ -222,3 +222,32 @@ describe('CodexPermissionHandler', () => {
         await expect(second).rejects.toThrow('Session reset');
     });
 });
+
+describe('CodexPermissionHandler delete_exploration', () => {
+    it('keeps yolo and safe-yolo from approving a delete, and rewrites a session grant', async () => {
+        const yolo = createHarness('yolo');
+        const pending = yolo.handler.handleToolCall('perm-del', 'mcp__hapi__delete_exploration', { lineId: 'line-1' });
+        expect(yolo.getAgentState().requests).toMatchObject({
+            'perm-del': { tool: 'mcp__hapi__delete_exploration' }
+        });
+        await yolo.rpcHandlers.get('permission')?.({
+            id: 'perm-del',
+            approved: true,
+            decision: 'approved_for_session'
+        });
+        await expect(pending).resolves.toMatchObject({ decision: 'approved' });
+
+        const again = yolo.handler.handleToolCall('perm-del-2', 'delete_exploration', { lineId: 'line-1' });
+        expect(yolo.getAgentState().requests).toMatchObject({
+            'perm-del-2': { tool: 'delete_exploration' }
+        });
+        yolo.handler.reset();
+        await expect(again).rejects.toThrow();
+
+        const safe = createHarness('safe-yolo');
+        const safePending = safe.handler.handleToolCall('perm-safe', 'Delete Exploration', { lineId: 'line-1' });
+        expect(safe.getAgentState().requests?.['perm-safe']).toMatchObject({ tool: 'Delete Exploration' });
+        safe.handler.reset();
+        await expect(safePending).rejects.toThrow();
+    });
+});

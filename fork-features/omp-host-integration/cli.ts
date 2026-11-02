@@ -289,6 +289,79 @@ export type OmpExtensionUiPresentationEvent =
     | { type: 'omp-extension-ui'; method: 'set_editor_text'; text: string }
     | { type: 'omp-extension-ui'; method: 'open_url'; url: string; instructions?: string };
 
+class DeleteExplorationApprovals {
+    private readonly pending = new Map<string, { resolve: (approved: boolean) => void }>();
+
+    constructor(private readonly updateAgentState: (handler: (state: AgentState) => AgentState) => void) {}
+
+    async confirm(lineId: string, signal: AbortSignal): Promise<boolean> {
+        const id = randomUUID();
+        const createdAt = Date.now();
+        const { promise, resolve, reject } = Promise.withResolvers<boolean>();
+        const finish = (approved: boolean) => {
+            signal.removeEventListener('abort', onAbort);
+            this.pending.delete(id);
+            this.clear(id, lineId, createdAt, approved);
+            resolve(approved);
+        };
+        const onAbort = () => {
+            if (!this.pending.has(id)) return;
+            signal.removeEventListener('abort', onAbort);
+            this.pending.delete(id);
+            this.clear(id, lineId, createdAt, false);
+            reject(abortError('delete_exploration'));
+        };
+        this.pending.set(id, { resolve: finish });
+        signal.addEventListener('abort', onAbort, { once: true });
+        this.updateAgentState((state) => ({
+            ...state,
+            requests: {
+                ...(state.requests ?? {}),
+                [id]: {
+                    tool: 'delete_exploration',
+                    arguments: { lineId },
+                    createdAt
+                }
+            }
+        }));
+        return await promise;
+    }
+
+    /** Approves this call only. approved_for_session is not stored. */
+    claim(response: unknown): boolean {
+        if (!response || typeof response !== 'object' || !('id' in response) || typeof response.id !== 'string') return false;
+        const pending = this.pending.get(response.id);
+        if (!pending) return false;
+        const decision = 'decision' in response ? response.decision : undefined;
+        const approved = 'approved' in response && response.approved === true
+            && decision !== 'denied'
+            && decision !== 'abort';
+        pending.resolve(approved);
+        return true;
+    }
+
+    private clear(id: string, lineId: string, createdAt: number, approved: boolean): void {
+        this.updateAgentState((state) => {
+            const { [id]: _removed, ...requests } = state.requests ?? {};
+            return {
+                ...state,
+                requests,
+                completedRequests: {
+                    ...(state.completedRequests ?? {}),
+                    [id]: {
+                        tool: 'delete_exploration',
+                        arguments: { lineId },
+                        createdAt,
+                        completedAt: Date.now(),
+                        status: approved ? 'approved' : 'denied',
+                        decision: approved ? 'approved' : 'denied'
+                    }
+                }
+            };
+        });
+    }
+}
+
 type OmpHostToolBridgeOptions = {
     client: OmpRpcClient;
     cwd: string;
@@ -298,6 +371,7 @@ type OmpHostToolBridgeOptions = {
     onFatal: (error: Error) => void;
     sessionId?: string;
     sessionPath?: string;
+    confirmDelete?: (lineId: string, signal: AbortSignal) => Promise<boolean>;
 };
 
 export class OmpHostToolBridge {
@@ -476,6 +550,16 @@ export class OmpHostToolBridge {
                     const machineId = typeof args.machineId === 'string' && args.machineId.trim()
                         ? args.machineId.trim()
                         : (await readSettings()).machineId;
+                    if (name === 'delete_exploration') {
+                        if (!this.options.confirmDelete) {
+                            throw new Error('delete_exploration requires a person to approve every call, and this host cannot ask');
+                        }
+                        const lineId = await this.explorationToDelete(args, machineId);
+                        const approved = await this.options.confirmDelete(lineId, signal);
+                        throwIfAborted(signal, request.toolName);
+                        if (!approved) throw new Error('delete_exploration was not approved');
+                        args.lineId = lineId;
+                    }
                     const result = await callExploreTool(this.workHub(), name, args, {
                         sessionId: this.options.sessionId,
                         machineId,
@@ -491,7 +575,25 @@ export class OmpHostToolBridge {
     }
 
     private workHub() {
-        return { request: (path: string, init?: { method?: string; body?: unknown }) => this.options.workApi(path, init ?? {}) };
+        return {
+            request: (path: string, init?: { method?: string; body?: unknown; headers?: Record<string, string> }) => this.options.workApi(path, init ?? {})
+        };
+    }
+
+    private async explorationToDelete(args: Record<string, unknown>, machineId: string | undefined): Promise<string> {
+        const explicit = typeof args.lineId === 'string' ? args.lineId.trim() : '';
+        if (explicit) return explicit;
+        const query = new URLSearchParams();
+        if (this.options.sessionId) query.set('sessionId', this.options.sessionId);
+        if (machineId) query.set('machineId', machineId);
+        const path = this.options.sessionPath ?? this.options.cwd;
+        if (path) query.set('path', path);
+        const found = await this.workHub().request(`/cli/work/session-line?${query.toString()}`);
+        const lineId = found.status >= 200 && found.status < 300 && found.body && typeof found.body === 'object' && 'lineId' in found.body && typeof found.body.lineId === 'string'
+            ? found.body.lineId
+            : '';
+        if (!lineId) throw new Error('this session is not on an exploration');
+        return lineId;
     }
 
     private trainingResult(toolName: string, signal: AbortSignal, status: number, body: unknown): HostToolExecution {
@@ -1269,6 +1371,7 @@ export class OmpHostIntegration {
                 }));
             }
         };
+        const deleteApprovals = new DeleteExplorationApprovals((handler) => options.sessionClient.updateAgentState(handler));
         this.hostTools = new OmpHostToolBridge({
             client: options.client,
             cwd: options.cwd,
@@ -1280,6 +1383,7 @@ export class OmpHostIntegration {
             onFatal: options.onFatal,
             sessionId: options.sessionClient.sessionId,
             sessionPath: options.sessionClient.getMetadata?.()?.path ?? options.cwd,
+            confirmDelete: (lineId, signal) => deleteApprovals.confirm(lineId, signal),
         });
         this.hostUris = new OmpHostUriBridge(
             options.client,
@@ -1297,7 +1401,10 @@ export class OmpHostIntegration {
 
         options.sessionClient.rpcHandlerManager.registerHandler(
             RPC_METHODS.Permission,
-            async (response: unknown) => await this.extensionUi.handleWebResponse(response)
+            async (response: unknown) => {
+                if (deleteApprovals.claim(response)) return;
+                await this.extensionUi.handleWebResponse(response);
+            }
         );
         options.sessionClient.rpcHandlerManager.registerHandler<GetOmpExtensionUiRequest, GetOmpExtensionUiResponse>(
             RPC_METHODS.GetOmpExtensionUiRequest,

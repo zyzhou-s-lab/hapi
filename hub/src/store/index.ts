@@ -12,7 +12,7 @@ import { ScratchlistStore } from './scratchlistStore'
 import { SessionStore } from './sessionStore'
 import { UserStore } from './userStore'
 import { UsageStore } from './usageStore'
-import { WORK_LINES_SCHEMA_SQL, WorkLinesStore } from './workLines'
+import { WORK_LINES_SCHEMA_SQL, WorkLinesStore, backfillTrainingCardInstanceIds } from './workLines'
 import { WorkGraphStore } from './workGraphStore'
 
 export type {
@@ -1074,6 +1074,7 @@ export class Store {
         const columns = new Set((this.db.prepare('PRAGMA table_info(work_lines)').all() as Array<{ name: string }>).map((row) => row.name))
         if (!columns.has('hypothesis')) this.db.exec('ALTER TABLE work_lines ADD COLUMN hypothesis TEXT')
         this.db.exec(WORK_LINES_SCHEMA_SQL)
+        backfillTrainingCardInstanceIds(this.db)
     }
 
     /** Standalone copy, not a WAL sidecar. Downgrade by replacing the live db

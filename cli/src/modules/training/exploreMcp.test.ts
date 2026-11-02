@@ -1,15 +1,24 @@
 import { describe, expect, it } from 'vitest'
+import { EXPLORE_DELETE_CONFIRM_HEADER } from '@hapi/protocol'
 import { callExploreTool, type ExploreTool } from './exploreMcp'
 import type { WorkHub } from './trainingMcp'
 
-function hub(routes: Record<string, { status: number; body: unknown }>): { client: WorkHub; seen: string[] } {
+function hub(routes: Record<string, { status: number; body: unknown }>): {
+    client: WorkHub
+    seen: string[]
+    calls: Array<{ path: string; init?: { method?: string; headers?: Record<string, string> } }>
+} {
     const seen: string[] = []
+    const calls: Array<{ path: string; init?: { method?: string; headers?: Record<string, string> } }> = []
     return {
         seen,
+        calls,
         client: {
-            request: async (path) => {
-                seen.push(path.split('?')[0] ?? path)
-                const route = routes[path.split('?')[0] ?? path]
+            request: async (path, init) => {
+                const bare = path.split('?')[0] ?? path
+                seen.push(bare)
+                calls.push({ path: bare, init })
+                const route = routes[bare]
                 if (!route) return { status: 500, body: { error: `unexpected ${path}` } }
                 return route
             },
@@ -43,5 +52,18 @@ describe('callExploreTool', () => {
         })
         const result = await callExploreTool(client, 'get_hypothesis', {}, { sessionId: 's1' })
         expect(result).toEqual({ text: 'this session is not on an exploration', isError: true })
+    })
+
+    it('sends the delete confirmation header', async () => {
+        const { client, calls } = hub({
+            '/cli/work/explorations/line-1': { status: 200, body: { ok: true } },
+        })
+        const result = await callExploreTool(client, 'delete_exploration', { lineId: 'line-1' }, {})
+        expect(result.isError).toBe(false)
+        expect(EXPLORE_DELETE_CONFIRM_HEADER).toBe('x-hapi-explore-delete-confirm')
+        expect(calls).toEqual([{
+            path: '/cli/work/explorations/line-1',
+            init: { method: 'DELETE', headers: { 'x-hapi-explore-delete-confirm': '1' } },
+        }])
     })
 })

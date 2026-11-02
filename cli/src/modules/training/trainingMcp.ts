@@ -1,5 +1,5 @@
 export type WorkHub = {
-    request(path: string, init?: { method?: string; body?: unknown }): Promise<{ status: number; body: unknown }>
+    request(path: string, init?: { method?: string; body?: unknown; headers?: Record<string, string> }): Promise<{ status: number; body: unknown }>
 }
 
 export async function registerTrainingRun(hub: WorkHub, input: { run: string; machineId: string; runDir: string }): Promise<{ status: number; body: unknown }> {

@@ -1,5 +1,5 @@
 import type { Database } from 'bun:sqlite'
-import { workbenchDefaultRegions } from '@hapi/protocol'
+import { absoluteDirectoryAncestors, workbenchDefaultRegions } from '@hapi/protocol'
 import { randomUUID } from 'node:crypto'
 import { z } from 'zod'
 
@@ -516,12 +516,22 @@ export class WorkLinesStore {
         return { lineId: row.line_id }
     }
 
-    /** Directory owned by a line, used when the session has no explicit row. */
+    /**
+     * A session path inherits the nearest absolute ancestor that belongs to a
+     * line. An ignored or mixed directory stops the walk. `/` is not an
+     * ancestor of other paths, and a relative path matches only itself.
+     */
     lineForDirectory(accountId: number, machineId: string, path: string): string | null {
-        const row = this.db.prepare(
-            "SELECT line_id FROM work_directories WHERE account_id = ? AND directory_key = ? AND mode = 'line'"
-        ).get(accountId, primaryKey(machineId, path)) as { line_id: string | null } | null
-        return row?.line_id ?? null
+        const lookup = this.db.prepare(
+            'SELECT mode, line_id FROM work_directories WHERE account_id = ? AND directory_key = ?'
+        )
+        for (const candidate of absoluteDirectoryAncestors(path)) {
+            const row = lookup.get(accountId, primaryKey(machineId, candidate)) as { mode: string; line_id: string | null } | null
+            if (!row) continue
+            if (row.mode === 'line' && row.line_id) return row.line_id
+            return null
+        }
+        return null
     }
 
     listLinkedSessions(accountId: number, lineId: string): { sessionId: string; updatedAt: number }[] {
@@ -722,4 +732,32 @@ function validateLayout(surface: WorkSurface, layout: unknown): WorkLayout {
         })
     }
     return { revision: parsed.data.revision, regions }
+}
+
+/** v27 training slots had no instanceId, so list and unbind could not see them. */
+export function backfillTrainingCardInstanceIds(db: Database): void {
+    const rows = db.prepare('SELECT account_id, surface, json FROM work_layouts').all() as Array<{ account_id: number; surface: string; json: string }>
+    const update = db.prepare('UPDATE work_layouts SET json = ? WHERE account_id = ? AND surface = ?')
+    for (const row of rows) {
+        let parsed: { regions?: Record<string, unknown> }
+        try {
+            parsed = JSON.parse(row.json) as { regions?: Record<string, unknown> }
+        } catch {
+            continue
+        }
+        if (!parsed.regions) continue
+        let changed = false
+        for (const slots of Object.values(parsed.regions)) {
+            if (!Array.isArray(slots)) continue
+            for (const slot of slots) {
+                if (!slot || typeof slot !== 'object' || slot.cardId !== 'example.training-curves') continue
+                const args = slot.args && typeof slot.args === 'object' ? slot.args as Record<string, unknown> : {}
+                if (typeof args.instanceId === 'string' && args.instanceId.trim()) continue
+                args.instanceId = randomUUID()
+                slot.args = args
+                changed = true
+            }
+        }
+        if (changed) update.run(JSON.stringify(parsed), row.account_id, row.surface)
+    }
 }

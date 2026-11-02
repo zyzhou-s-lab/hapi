@@ -1,5 +1,6 @@
 import type { AgentState } from "@/api/types";
 import type { PermissionMode } from "@hapi/protocol/types";
+import { requiresFreshApproval } from '@hapi/protocol';
 import { RPC_METHODS } from '@hapi/protocol/rpcMethods';
 
 type RpcHandlerManagerLike = {
@@ -79,6 +80,7 @@ export function resolveToolAutoApprovalDecision(
 
     const lowerTool = toolName.toLowerCase();
     const lowerId = toolCallId.toLowerCase();
+    if (requiresFreshApproval(toolName)) return null;
     const decisionForMode: AutoApprovalDecision = (mode === 'yolo' || mode === 'always-proceed') ? 'approved_for_session' : 'approved';
 
     if (

@@ -1,6 +1,7 @@
 import type { ApiSessionClient } from '@/api/apiSession';
 import type { AgentBackend, PermissionRequest, PermissionResponse } from '@/agent/types';
 import type { OpencodePermissionMode } from '@hapi/protocol/types';
+import { freshApprovalDecision } from '@hapi/protocol'
 import { deriveToolName } from '@/agent/utils';
 import { logger } from '@/ui/logger';
 import {
@@ -173,7 +174,7 @@ export class OpencodePermissionHandler extends BasePermissionHandler<PermissionR
             logger.debug('[Opencode] Permission response missing backend request', response.id);
         }
 
-        const decision = response.decision ?? (response.approved ? 'approved' : 'denied');
+        const decision = freshApprovalDecision(pending.toolName, response.decision ?? (response.approved ? 'approved' : 'denied'));
 
         if (decision === 'abort' && pendingRequest) {
             await this.backend.cancelPrompt(pendingRequest.sessionId);
