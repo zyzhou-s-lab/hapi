@@ -91,7 +91,11 @@ describe('TurnBlockView', () => {
             <TurnBlockView partition={partition} streaming={false} durationMs={151_000} initiallyOpen={false} />
         )
 
-        expect(screen.getByRole('button', { name: /先看页面/ })).toHaveAttribute('aria-expanded', 'false')
+        const header = screen.getByRole('button', { name: /先看页面/ })
+        expect(header).toHaveAttribute('aria-expanded', 'false')
+        expect(header.className).not.toContain('app-reasoning-bg')
+        expect(header.parentElement).toHaveAttribute('data-hapi-turn-block-list', 'true')
+        expect(header.parentElement?.className).toContain('border')
         expect(screen.getByText('2m 31s')).toBeInTheDocument()
         const reasoning = screen.getAllByText('先看页面').find((node) => node.getAttribute('data-hapi-share-exclude') === 'true')
         expect(reasoning?.closest('[data-hapi-turn-quiet]')).toHaveClass('hidden')

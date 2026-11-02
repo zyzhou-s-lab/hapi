@@ -177,20 +177,20 @@ export function TurnBlockView(props: {
 
     return (
         <div className="my-3">
-            <button
-                type="button"
-                className="flex min-h-11 w-full items-center gap-1.5 rounded-2xl bg-[var(--app-reasoning-bg)] px-3.5 py-2.5 text-left text-xs font-medium text-[var(--app-hint)]"
-                aria-expanded={open}
-                onClick={() => setOpen((value) => !value)}
-            >
-                <Chevron open={open} />
-                <span className={cn('inline-block h-1.5 w-1.5 shrink-0 rounded-full', failed ? 'bg-[var(--app-badge-error-text)]' : 'bg-current', props.streaming && 'animate-pulse')} />
-                <span className="min-w-0 flex-1">
-                    {props.partition.title}
-                    {props.durationMs != null ? <span className="ml-1 font-normal tabular-nums">{formatDuration(props.durationMs)}</span> : null}
-                </span>
-            </button>
-            <div className="mt-2 divide-y divide-[var(--app-divider)] overflow-hidden rounded-2xl border border-[var(--app-border)] bg-[var(--app-bg)]" data-hapi-turn-block-list="true">
+            <div className="divide-y divide-[var(--app-divider)] overflow-hidden rounded-2xl border border-[var(--app-border)]" data-hapi-turn-block-list="true">
+                <button
+                    type="button"
+                    className="flex min-h-11 w-full items-center gap-1.5 bg-transparent px-4 py-2.5 text-left text-xs font-medium text-[var(--app-hint)]"
+                    aria-expanded={open}
+                    onClick={() => setOpen((value) => !value)}
+                >
+                    <Chevron open={open} />
+                    <span className={cn('inline-block h-1.5 w-1.5 shrink-0 rounded-full', failed ? 'bg-[var(--app-badge-error-text)]' : 'bg-current', props.streaming && 'animate-pulse')} />
+                    <span className="min-w-0 flex-1">
+                        {props.partition.title}
+                        {props.durationMs != null ? <span className="ml-1 font-normal tabular-nums">{formatDuration(props.durationMs)}</span> : null}
+                    </span>
+                </button>
                 {props.partition.rows.map((row) => <Step key={row.key} row={row} folded={!open} />)}
             </div>
             {trailing.map((row) => (
