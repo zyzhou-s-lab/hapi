@@ -42,12 +42,12 @@ function createHarness(mode: 'default' | 'auto' | 'plan' | 'bypassPermissions') 
     }
 }
 
-function request(): PermissionRequest {
+function request(id = 'perm-1', title = 'Shell'): PermissionRequest {
     return {
-        id: 'perm-1',
+        id,
         sessionId: 'session-1',
         toolCallId: 'tool-1',
-        title: 'Shell',
+        title,
         rawInput: { command: 'pwd' },
         options: [
             { optionId: 'allow-once', name: 'Allow once', kind: 'allow_once' },
@@ -97,5 +97,27 @@ describe('GrokPermissionHandler', () => {
             status: 'denied',
             decision: 'denied'
         })
+    })
+})
+
+describe('GrokPermissionHandler delete_exploration', () => {
+    it('does not bypass delete_exploration and treats a session grant as one call', async () => {
+        const harness = createHarness('bypassPermissions')
+        harness.emit(request('perm-1', 'mcp__hapi__delete_exploration'))
+        await flush()
+        expect(harness.responses).toEqual([])
+        expect(harness.state().requests?.['perm-1']).toMatchObject({ tool: 'mcp__hapi__delete_exploration' })
+
+        await harness.rpcHandlers.get('permission')?.({
+            id: 'perm-1',
+            approved: true,
+            decision: 'approved_for_session'
+        })
+        expect(harness.responses).toEqual([{ outcome: 'selected', optionId: 'allow-once' }])
+
+        harness.emit(request('perm-2', 'Delete Exploration'))
+        await flush()
+        expect(harness.responses).toHaveLength(1)
+        expect(harness.state().requests?.['perm-2']).toMatchObject({ tool: 'Delete Exploration' })
     })
 })

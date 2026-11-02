@@ -29,7 +29,8 @@ import {
 } from '@hapi/protocol/sessionCitation'
 import { PingPeerError, formatInspectPeerReport, formatPeerSessionsList, inspectPeer, listPeerSessions, peerListFetchLimit, pingPeer } from "@/modules/pingPeer/pingPeer";
 import { readSettings } from '@/persistence';
-import { bindTrainingCard, formatWorkResult, queryTrainingRun, registerTrainingRun } from '@/modules/training/trainingMcp';
+import { formatWorkResult, queryTrainingRun, registerTrainingRun } from '@/modules/training/trainingMcp';
+import { EXPLORE_TOOLS, callExploreTool, exploreToolDescription, exploreToolSchemas, exploreToolTitle } from '@/modules/training/exploreMcp';
 type StartHappyServerOptions = {
     emitTitleSummary?: boolean;
     enableChangeTitle?: boolean;
@@ -45,7 +46,8 @@ const CLAUDE_MANUAL_APPROVAL_HAPI_TOOLS = new Set([
     'display_video',
     'send_file',
     'ping_peer',
-    'inspect_peer'
+    'inspect_peer',
+    'delete_exploration',
 ]);
 
 /**
@@ -513,7 +515,7 @@ function createHapiMcpServer(
         return { content: [{ type: 'text' as const, text: result.text }], isError: result.isError };
     };
     const hub = {
-        request: (path: string, init?: { method?: string; body?: unknown }) => client.workApi(path, init),
+        request: (path: string, init?: { method?: string; body?: unknown; headers?: Record<string, string> }) => client.workApi(path, init),
     };
     mcp.registerTool<any, any>('register_training_run', {
         description: 'Register a local W&B run with HAPI so it can be shown on a work-line training card. Call this after the run directory exists. machineId defaults to this machine.',
@@ -537,18 +539,24 @@ function createHapiMcpServer(
         const response = await queryTrainingRun(hub, args.run);
         return trainingResult(response.status, response.body);
     });
-    mcp.registerTool<any, any>('bind_training_card', {
-        description: 'Show a registered run on a work-line training card. metrics empty means every metric. The open workbench updates immediately.',
-        title: 'Bind Training Card',
-        inputSchema: z.object({
-            lineId: z.string().describe('Work line id'),
-            run: z.string().describe('Registered run name'),
-            metrics: z.array(z.string()).optional().describe('Metric names to draw. Omit or pass [] to draw every metric.'),
-        }),
-    }, async (args: { lineId: string; run: string; metrics?: string[] }) => {
-        const response = await bindTrainingCard(hub, args);
-        return trainingResult(response.status, response.body);
-    });
+    for (const name of EXPLORE_TOOLS) {
+        mcp.registerTool<any, any>(name, {
+            description: exploreToolDescription(name),
+            title: exploreToolTitle(name),
+            inputSchema: exploreToolSchemas[name],
+        }, async (args: Record<string, unknown>) => {
+            const machineId = typeof args.machineId === 'string' && args.machineId.trim()
+                ? args.machineId.trim()
+                : (await readSettings()).machineId;
+            const metadata = client.getMetadata()
+            const result = await callExploreTool(hub, name, { ...args, ...(machineId ? { machineId } : {}) }, {
+                sessionId: client.sessionId,
+                machineId,
+                path: metadata?.path ?? undefined,
+            });
+            return { content: [{ type: 'text' as const, text: result.text }], isError: result.isError };
+        });
+    }
 
     return mcp;
 }
@@ -626,8 +634,8 @@ export async function startHappyServer(client: ApiSessionClient, options: StartH
     }));
 
     const toolNames = enableChangeTitle
-        ? ['change_title', 'display_image', 'display_video', 'display_media', 'list_peers', 'ping_peer', 'inspect_peer', 'send_file', 'register_training_run', 'query_training_run', 'bind_training_card']
-        : ['display_image', 'display_video', 'display_media', 'list_peers', 'ping_peer', 'inspect_peer', 'send_file', 'register_training_run', 'query_training_run', 'bind_training_card'];
+        ? ['change_title', 'display_image', 'display_video', 'display_media', 'list_peers', 'ping_peer', 'inspect_peer', 'send_file', 'register_training_run', 'query_training_run', ...EXPLORE_TOOLS]
+        : ['display_image', 'display_video', 'display_media', 'list_peers', 'ping_peer', 'inspect_peer', 'send_file', 'register_training_run', 'query_training_run', ...EXPLORE_TOOLS];
     if (options.skillLookup) {
         toolNames.push('skill_lookup');
     }

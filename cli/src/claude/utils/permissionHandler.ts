@@ -15,7 +15,7 @@ import { getToolName } from "./getToolName";
 import { EnhancedMode, PermissionMode } from "../loop";
 import { getToolDescriptor } from "./getToolDescriptor";
 import { delay } from "@/utils/time";
-import { isObject } from "@hapi/protocol";
+import { isObject, requiresFreshApproval } from "@hapi/protocol";
 import {
     BasePermissionHandler,
     type PendingPermissionRequest,
@@ -209,7 +209,7 @@ export class PermissionHandler extends BasePermissionHandler<PermissionResponse,
         // Update allowed tools
         if (response.allowTools && response.allowTools.length > 0) {
             response.allowTools.forEach(tool => {
-                if (isQuestionToolName(tool)) {
+                if (isQuestionToolName(tool) || requiresFreshApproval(tool)) {
                     return;
                 }
                 if (tool.startsWith('Bash(') || tool === 'Bash') {
@@ -289,9 +289,10 @@ export class PermissionHandler extends BasePermissionHandler<PermissionResponse,
      */
     handleToolCall = async (toolName: string, input: unknown, mode: EnhancedMode, options: { signal: AbortSignal }): Promise<PermissionResult> => {
         const isQuestionTool = isQuestionToolName(toolName);
+        const freshApproval = requiresFreshApproval(toolName);
 
         // Check if tool is explicitly allowed
-        if (!isQuestionTool && toolName === 'Bash') {
+        if (!freshApproval && !isQuestionTool && toolName === 'Bash') {
             const inputObj = input as { command?: string };
             if (inputObj?.command) {
                 // Check literal matches
@@ -305,7 +306,7 @@ export class PermissionHandler extends BasePermissionHandler<PermissionResponse,
                     }
                 }
             }
-        } else if (!isQuestionTool && this.allowedTools.has(toolName)) {
+        } else if (!freshApproval && !isQuestionTool && this.allowedTools.has(toolName)) {
             return { behavior: 'allow', updatedInput: input as Record<string, unknown> };
         }
 
@@ -316,7 +317,7 @@ export class PermissionHandler extends BasePermissionHandler<PermissionResponse,
         // Handle special cases
         //
 
-        if (!isQuestionTool && this.permissionMode === 'bypassPermissions') {
+        if (!freshApproval && !isQuestionTool && this.permissionMode === 'bypassPermissions') {
             // In bypassPermissions (YOLO) mode, exit_plan_mode needs special
             // handling: inject PLAN_FAKE_RESTART so the agent continues after
             // the plan, rather than stalling and waiting for user input.
@@ -328,7 +329,7 @@ export class PermissionHandler extends BasePermissionHandler<PermissionResponse,
             return { behavior: 'allow', updatedInput: input as Record<string, unknown> };
         }
 
-        if (!isQuestionTool && this.permissionMode === 'acceptEdits' && descriptor.edit) {
+        if (!freshApproval && !isQuestionTool && this.permissionMode === 'acceptEdits' && descriptor.edit) {
             return { behavior: 'allow', updatedInput: input as Record<string, unknown> };
         }
 

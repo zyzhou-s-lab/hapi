@@ -286,6 +286,21 @@ export class ApiClient {
     async putWorkLayout(surface: 'overview' | 'workbench', layout: WorkLayout): Promise<void> {
         await this.request(`/api/work/layout/${surface}`, { method: 'PUT', body: JSON.stringify(layout) })
     }
+    async putWorkHypothesis(lineId: string, hypothesis: string | null): Promise<{ hypothesis: string | null }> {
+        return await this.request(`/api/work/lines/${encodeURIComponent(lineId)}/hypothesis`, { method: 'PUT', body: JSON.stringify({ hypothesis }) })
+    }
+
+    async getWorkReferences(lineId: string): Promise<{ references: Array<{ id: string; format: 'apa7' | 'vancouver'; citation: string; createdAt: number }> }> {
+        return await this.request(`/api/work/lines/${encodeURIComponent(lineId)}/references`)
+    }
+
+    async createWorkReference(lineId: string, body: { format: 'apa7' | 'vancouver'; citation: string }): Promise<{ reference: { id: string } }> {
+        return await this.request(`/api/work/lines/${encodeURIComponent(lineId)}/references`, { method: 'POST', body: JSON.stringify(body) })
+    }
+
+    async deleteWorkReference(lineId: string, referenceId: string): Promise<void> {
+        await this.request(`/api/work/lines/${encodeURIComponent(lineId)}/references/${encodeURIComponent(referenceId)}`, { method: 'DELETE' })
+    }
 
 
     async putWorkDismissed(sessionId: string, dismissed: boolean): Promise<void> {

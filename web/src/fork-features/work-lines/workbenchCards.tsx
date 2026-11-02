@@ -1,11 +1,12 @@
-import { useState, type ReactNode } from 'react'
-import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { useEffect, useState, type ReactNode } from 'react'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from '@tanstack/react-router'
 import { useAppContext } from '@/lib/app-context'
 import { getSessionListSelectionNavigation } from '@/lib/sessionNavigation'
 import { useTranslation } from '@/lib/use-translation'
 import { useMachines } from '@/hooks/queries/useMachines'
 import { CardFrame, registerWorkCards, type WorkCardContext, type WorkCardDefinition } from './WorkCardHost'
+import { watchCardTopic } from './cardTopics'
 import { workCardMapPrefix } from './useWorkMap'
 
 function useBench(ctx: WorkCardContext) {
@@ -290,5 +291,105 @@ const continueCard: WorkCardDefinition = {
         )
     },
 }
+function HypothesisCard(props: { ctx: WorkCardContext }): ReactNode {
+    const { t } = useTranslation()
+    const { api } = useAppContext()
+    const refresh = useMapRefresh()
+    const lineId = lineIdOf(props.ctx)
+    const line = useBench(props.ctx).lines.find((item) => item.id === lineId)
+    const stored = line?.hypothesis ?? ''
+    const [draft, setDraft] = useState(stored)
+    const [failed, setFailed] = useState(false)
+    useEffect(() => { setDraft(stored) }, [stored])
+    const save = useMutation({
+        mutationFn: async () => {
+            if (!api || !lineId) throw new Error('API unavailable')
+            await api.putWorkHypothesis(lineId, draft.trim() ? draft : null)
+        },
+        onSuccess: () => { setFailed(false); void refresh() },
+        onError: () => setFailed(true),
+    })
+    return (
+        <CardFrame title={t('work.hypothesis')}>
+            <textarea className="mt-3 min-h-24 w-full rounded border border-[var(--app-divider)] bg-transparent px-2 py-1 text-sm" value={draft} onChange={(event) => { setFailed(false); setDraft(event.target.value) }} placeholder={t('work.hypothesisPlaceholder')} />
+            <button type="button" className="mt-2 text-sm text-[var(--app-link)]" disabled={!lineId || save.isPending || draft === (line?.hypothesis ?? '')} onClick={() => save.mutate()}>{t('work.saveHypothesis')}</button>
+            {failed ? <p className="text-sm text-red-600">{t('work.saveHypothesisFailed')}</p> : null}
+        </CardFrame>
+    )
+}
 
-registerWorkCards([lineList, lineHeader, focus, directories, inbox, sessionsCard, continueCard])
+function ReferencesCard(props: { ctx: WorkCardContext }): ReactNode {
+    const { t } = useTranslation()
+    const { api, user } = useAppContext()
+    const lineId = lineIdOf(props.ctx)
+    const query = useQuery({
+        queryKey: ['work-references', user.id, lineId],
+        enabled: Boolean(api && lineId),
+        queryFn: () => api!.getWorkReferences(lineId),
+    })
+    useEffect(() => {
+        if (!lineId) return
+        return watchCardTopic('work-map', user.id, ['work-references', user.id, lineId])
+    }, [lineId, user.id])
+    const [format, setFormat] = useState<'apa7' | 'vancouver'>('apa7')
+    const [citation, setCitation] = useState('')
+    const [failed, setFailed] = useState(false)
+    const add = useMutation({
+        mutationFn: async () => {
+            if (!api || !lineId) throw new Error('API unavailable')
+            await api.createWorkReference(lineId, { format, citation })
+        },
+        onSuccess: () => { setFailed(false); setCitation(''); void query.refetch() },
+        onError: () => setFailed(true),
+    })
+    const remove = useMutation({
+        mutationFn: async (referenceId: string) => {
+            if (!api || !lineId) throw new Error('API unavailable')
+            await api.deleteWorkReference(lineId, referenceId)
+        },
+        onSuccess: () => { void query.refetch() },
+    })
+    const references = query.data?.references ?? []
+    return (
+        <CardFrame title={t('work.references')}>
+            {references.length === 0 ? <p className="mt-3 text-xs text-[var(--app-hint)]">{t('work.noReferences')}</p> : (
+                <ul className="mt-3 flex flex-col gap-2">
+                    {references.map((reference) => (
+                        <li key={reference.id} className="flex items-start gap-2 text-sm">
+                            <span className="min-w-0 flex-1">{reference.citation}</span>
+                            <button type="button" className="shrink-0 text-xs text-[var(--app-hint)]" onClick={() => remove.mutate(reference.id)}>{t('work.removeReference')}</button>
+                        </li>
+                    ))}
+                </ul>
+            )}
+            <form className="mt-3 flex flex-col gap-2" onSubmit={(event) => { event.preventDefault(); setFailed(false); add.mutate() }}>
+                <select className="rounded border border-[var(--app-divider)] bg-transparent px-2 py-1 text-sm" value={format} onChange={(event) => setFormat(event.target.value === 'vancouver' ? 'vancouver' : 'apa7')}>
+                    <option value="apa7">{t('work.formatApa7')}</option>
+                    <option value="vancouver">{t('work.formatVancouver')}</option>
+                </select>
+                <textarea className="min-h-16 w-full rounded border border-[var(--app-divider)] bg-transparent px-2 py-1 text-sm" value={citation} onChange={(event) => { setFailed(false); setCitation(event.target.value) }} placeholder={t('work.citationPlaceholder')} />
+                <button type="submit" className="text-sm text-[var(--app-link)]" disabled={!lineId || add.isPending || !citation.trim()}>{t('work.addReference')}</button>
+                {failed ? <p className="text-sm text-red-600">{t('work.addReferenceFailed')}</p> : null}
+            </form>
+        </CardFrame>
+    )
+}
+
+const hypothesisCard: WorkCardDefinition = {
+    id: 'workbench.hypothesis',
+    titleKey: 'work.hypothesis',
+    size: 'main',
+    source: { kind: 'work-model' },
+    visible: (ctx) => ctx.view.kind === 'line',
+    Component: HypothesisCard,
+}
+
+const referencesCard: WorkCardDefinition = {
+    id: 'workbench.references',
+    titleKey: 'work.references',
+    size: 'side',
+    source: { kind: 'work-model' },
+    visible: (ctx) => ctx.view.kind === 'line',
+    Component: ReferencesCard,
+}
+registerWorkCards([lineList, lineHeader, hypothesisCard, focus, directories, inbox, sessionsCard, continueCard, referencesCard])

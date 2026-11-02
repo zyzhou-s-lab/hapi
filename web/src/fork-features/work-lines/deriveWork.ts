@@ -1,3 +1,4 @@
+import { absoluteDirectoryAncestors } from '@hapi/protocol'
 import { sessionDirectoryGroupKey } from '@/lib/sessionDirectoryGroup'
 import type { SessionSummary } from '@/types/api'
 
@@ -5,6 +6,7 @@ export type WorkLineRecord = {
     id: string
     name: string
     goal: string | null
+    hypothesis?: string | null
     sort: number
     primaryMachineId: string
     primaryPath: string
@@ -101,7 +103,7 @@ function classify(
 ): WorkSessionView {
     const key = canonicalDirectoryKey(sessionDirectoryGroupKey(session), canon)
     const assignment = sessionById.get(session.id)
-    const directory = directoryByKey.get(key)
+    const directory = directoryForSession(session, directoryByKey, canon)
     let lineId: string | null = null
     let ignored = false
     let inbox = false
@@ -229,4 +231,17 @@ function indexDirectories(rows: readonly WorkDirectoryRecord[], canon: (path: st
         indexed.set(canonicalDirectoryKey(row.directoryKey, canon), row)
     }
     return indexed
+}
+
+function directoryForSession(
+    session: SessionSummary,
+    directoryByKey: Map<string, WorkDirectoryRecord>,
+    canon: (path: string) => string,
+): WorkDirectoryRecord | undefined {
+    const { machineId, path } = splitDirectoryKey(sessionDirectoryGroupKey(session))
+    for (const ancestor of absoluteDirectoryAncestors(path)) {
+        const row = directoryByKey.get(canonicalDirectoryKey(`${machineId}::${ancestor}`, canon))
+        if (row) return row
+    }
+    return undefined
 }

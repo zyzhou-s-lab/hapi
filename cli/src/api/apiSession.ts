@@ -540,14 +540,16 @@ export class ApiSessionClient extends EventEmitter {
     getMetadata(): Readonly<Metadata> | null {
         return this.metadata
     }
-    async workApi(path: string, init: { method?: string; body?: unknown } = {}): Promise<{ status: number; body: unknown }> {
+    async workApi(path: string, init: { method?: string; body?: unknown; headers?: Record<string, string> } = {}): Promise<{ status: number; body: unknown }> {
         const response = await axios.request({
             url: `${configuration.apiUrl}${path}`,
             method: init.method ?? 'GET',
             data: init.body,
             headers: buildHubRequestHeaders({
+                ...(init.headers ?? {}),
                 Authorization: `Bearer ${this.token}`,
                 'Content-Type': 'application/json',
+                'x-hapi-session-id': this.sessionId,
             }),
             timeout: 20_000,
             validateStatus: () => true,

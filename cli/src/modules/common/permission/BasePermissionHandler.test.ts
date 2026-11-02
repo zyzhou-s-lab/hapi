@@ -101,3 +101,21 @@ describe('resolveToolAutoApprovalDecision list_peers', () => {
         )).toBeNull()
     })
 })
+
+describe('resolveToolAutoApprovalDecision delete_exploration', () => {
+    it('refuses every automatic mode, including a session grant', () => {
+        for (const mode of ['yolo', 'safe-yolo', 'always-proceed', 'bypassPermissions'] as const) {
+            for (const name of [
+                'delete_exploration',
+                'mcp__hapi__delete_exploration',
+                'Delete Exploration',
+                'mcp_hapi_delete-exploration',
+            ]) {
+                expect(resolveToolAutoApprovalDecision(mode, name, 'call-1')).toBeNull()
+            }
+        }
+        expect(resolveToolAutoApprovalDecision('yolo', 'custom_tool', 'call-1')).toBe('approved_for_session')
+        expect(resolveToolAutoApprovalDecision('safe-yolo', 'custom_tool', 'call-1')).toBe('approved')
+        expect(resolveToolAutoApprovalDecision('always-proceed', 'custom_tool', 'call-1')).toBe('approved_for_session')
+    })
+})

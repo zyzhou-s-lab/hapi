@@ -93,4 +93,23 @@ describe('deriveWork', () => {
         expect(bench.inboxDirectoryCount).toBe(0)
         expect(bench.lineDirectories('line-1').map((row) => row.path)).toEqual(['/private/tmp/proj'])
     })
+
+    it('keeps a subdirectory session on the line and drops an explicit unlink', () => {
+        const map: WorkMapData = {
+            lines: [{ id: 'line-1', name: '主线', goal: null, sort: 0, primaryMachineId: 'gpu', primaryPath: '/repo' }],
+            directories: [
+                { directoryKey: 'gpu::/repo', mode: 'line', lineId: 'line-1' },
+                { directoryKey: 'gpu::/repo/skip', mode: 'ignored', lineId: null },
+            ],
+            sessions: [{ sessionId: 'unlinked', lineId: null }],
+            dismissed: [],
+        }
+        const bench = deriveWorkbench([
+            session({ id: 'child', metadata: { path: '/repo/pkg/src', machineId: 'gpu' } }),
+            session({ id: 'unlinked', metadata: { path: '/repo/pkg/src', machineId: 'gpu' } }),
+            session({ id: 'stopped', metadata: { path: '/repo/skip/deeper', machineId: 'gpu' } }),
+        ], map, (item) => item.id, () => 'gpu')
+        expect(bench.lineSessions('line-1').map((row) => row.id)).toEqual(['child'])
+        expect(bench.focus('line-1')?.id).toBe('child')
+    })
 })

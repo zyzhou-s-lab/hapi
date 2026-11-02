@@ -19,11 +19,13 @@ export const workbenchDefaultRegions: Record<string, WorkCardSlot[]> = {
     rail: [{ cardId: 'workbench.line-list' }],
     main: [
         { cardId: 'workbench.line-header' },
+        { cardId: 'workbench.hypothesis' },
         { cardId: 'workbench.focus' },
         { cardId: 'workbench.directories' },
         { cardId: 'workbench.inbox' },
     ],
     side: [
+        { cardId: 'workbench.references' },
         { cardId: 'workbench.sessions' },
         { cardId: 'workbench.continue' },
     ],

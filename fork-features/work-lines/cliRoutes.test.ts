@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'bun:test'
 import { Hono } from 'hono'
 import { SignJWT } from 'jose'
+import { EXPLORE_DELETE_CONFIRM_HEADER } from '@hapi/protocol'
 import { mountCliWorkRoutes } from './cliRoutes'
 import { Store } from '../../hub/src/store'
 import { createConfiguration } from '../../hub/src/configuration'
@@ -32,8 +33,13 @@ describe('cli work routes', () => {
     const pushed: unknown[] = []
     setTrainingCardPush((_accountId, update) => { pushed.push(update) })
 
+    const sessionMetadata = new Map<string, { path?: string; machineId?: string }>()
     const engine = {
         getWorkLines: () => core.workLines,
+        getSession: (sessionId: string) => {
+            const metadata = sessionMetadata.get(sessionId)
+            return metadata ? { metadata } : undefined
+        },
         queryTrainingRun: async (machineId: string, query: { run: string; runDir: string }) => {
             rpcCalls.push({ machineId, run: query.run, runDir: query.runDir })
             return { metrics: ['loss'], partial: true }
@@ -70,16 +76,18 @@ describe('cli work routes', () => {
         expect(hidden.status).toBe(404)
 
         const line = core.workLines.createLine(owner.id, { name: '主线', primaryMachineId: 'gpu', primaryPath: '/data/hapi' })
-        const bound = await app.request('/cli/work/training-card', {
-            method: 'PUT',
+        const bound = await app.request(`/cli/work/explorations/${line.id}/cards`, {
+            method: 'POST',
             headers: ownerAuth,
-            body: JSON.stringify({ lineId: line.id, run: 'exp-1', metrics: ['loss', ' loss', 'loss'], accountId: other.id }),
+            body: JSON.stringify({ run: 'exp-1', metrics: ['loss', ' loss', 'loss'], accountId: other.id }),
         })
         expect(bound.status).toBe(200)
-        expect(pushed).toEqual([{ lineId: line.id, run: 'exp-1', metrics: ['loss'] }])
+        const body = await bound.json() as { card: { cardId: string } }
+        expect(pushed).toEqual([{ lineId: line.id, run: 'exp-1', metrics: ['loss'], instanceId: body.card.cardId }])
         const layout = core.workLines.getLayout(owner.id, 'workbench')
         const slot = layout?.regions.main.find((item) => item.args?.run === 'exp-1')
         expect(slot?.args?.lineId).toBe(line.id)
+        expect(slot?.args?.instanceId).toBe(body.card.cardId)
     })
 
     it('rejects a web JWT on the CLI training route', async () => {
@@ -95,10 +103,10 @@ describe('cli work routes', () => {
     it('does not bind another account line and does not push', async () => {
         pushed.length = 0
         const line = core.workLines.createLine(owner.id, { name: '别人的主线', primaryMachineId: 'gpu', primaryPath: '/data/other-line' })
-        const response = await app.request('/cli/work/training-card', {
-            method: 'PUT',
+        const response = await app.request(`/cli/work/explorations/${line.id}/cards`, {
+            method: 'POST',
             headers: { authorization: `Bearer ${otherToken.plaintext}`, 'content-type': 'application/json' },
-            body: JSON.stringify({ lineId: line.id, run: 'exp-1', metrics: ['loss'] }),
+            body: JSON.stringify({ run: 'exp-1', metrics: ['loss'] }),
         })
         expect(response.status).toBe(404)
         expect(pushed).toEqual([])
@@ -140,5 +148,85 @@ describe('cli work routes', () => {
         } finally {
             config._setCliApiToken(previousToken, previousSource, false)
         }
+    })
+
+    it('unlinks a subdirectory session, rejects the wrong line, and requires delete confirmation', async () => {
+        for (const sessionId of ['child', 'sib', 'moved']) {
+            gateway.bindResource({
+                resourceType: 'session',
+                resourceId: sessionId,
+                ownerAccountId: owner.id,
+                coreNamespace: owner.defaultNamespace,
+            })
+        }
+        const line = core.workLines.createLine(owner.id, {
+            name: 'proj',
+            primaryMachineId: 'gpu',
+            primaryPath: '/data/proj',
+        })
+        const otherLine = core.workLines.createLine(owner.id, {
+            name: 'other',
+            primaryMachineId: 'gpu',
+            primaryPath: '/data/other',
+        })
+        sessionMetadata.set('child', { path: '/data/proj/pkg/src', machineId: 'gpu' })
+        sessionMetadata.set('sib', { path: '/data/proj/pkg/other', machineId: 'gpu' })
+        core.workLines.putSession(owner.id, { sessionId: 'moved', state: 'line', lineId: otherLine.id })
+
+        const inherited = await app.request(`/cli/work/session-line?${new URLSearchParams({
+            sessionId: 'sib',
+            machineId: 'gpu',
+            path: '/data/proj/pkg/other',
+        })}`, { headers: ownerAuth })
+        expect(inherited.status).toBe(200)
+        expect(await inherited.json()).toEqual({ lineId: line.id })
+
+        const unlinked = await app.request(`/cli/work/explorations/${line.id}/sessions/child`, {
+            method: 'DELETE',
+            headers: ownerAuth,
+        })
+        expect(unlinked.status).toBe(200)
+        expect(core.workLines.getSessionBinding(owner.id, 'child')).toEqual({ lineId: null })
+        const stayed = await app.request(`/cli/work/session-line?${new URLSearchParams({
+            sessionId: 'child',
+            machineId: 'gpu',
+            path: '/data/proj/pkg/src',
+        })}`, { headers: ownerAuth })
+        expect(await stayed.json()).toEqual({ lineId: null })
+
+        const wrongLine = await app.request(`/cli/work/explorations/${otherLine.id}/sessions/sib`, {
+            method: 'DELETE',
+            headers: ownerAuth,
+        })
+        expect(wrongLine.status).toBe(404)
+        const conflict = await app.request(`/cli/work/explorations/${line.id}/sessions/moved`, {
+            method: 'DELETE',
+            headers: ownerAuth,
+        })
+        expect(conflict.status).toBe(409)
+
+        const otherAuth = { authorization: `Bearer ${otherToken.plaintext}` }
+        expect((await app.request(`/cli/work/explorations/${line.id}`, { headers: otherAuth })).status).toBe(404)
+        expect((await app.request(`/cli/work/explorations/${line.id}`, {
+            method: 'DELETE',
+            headers: { ...otherAuth, [EXPLORE_DELETE_CONFIRM_HEADER]: '1' },
+        })).status).toBe(404)
+        expect((await app.request(`/cli/work/explorations/${line.id}/sessions/child`, {
+            method: 'DELETE',
+            headers: otherAuth,
+        })).status).toBe(404)
+
+        const missing = await app.request(`/cli/work/explorations/${line.id}`, {
+            method: 'DELETE',
+            headers: ownerAuth,
+        })
+        expect(missing.status).toBe(400)
+        expect(core.workLines.getMap(owner.id).lines.some((item) => item.id === line.id)).toBe(true)
+        const removed = await app.request(`/cli/work/explorations/${line.id}`, {
+            method: 'DELETE',
+            headers: { ...ownerAuth, [EXPLORE_DELETE_CONFIRM_HEADER]: '1' },
+        })
+        expect(removed.status).toBe(200)
+        expect(core.workLines.getMap(owner.id).lines.some((item) => item.id === line.id)).toBe(false)
     })
 })

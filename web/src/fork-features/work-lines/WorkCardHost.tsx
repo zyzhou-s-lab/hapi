@@ -80,6 +80,9 @@ export function WorkCardHost(props: {
         },
         enabled: Boolean(props.api),
     })
+    useEffect(() => {
+        return watchCardTopic('work-layout', user.id, ['work', 'layout', props.surface])
+    }, [props.surface, user.id])
     const defaults = props.layoutFor?.(props.surface) ?? (props.surface === 'workbench' ? workbenchLayout : overviewLayout)
     const merged = mergeLayout(saved.data?.source === 'saved' ? saved.data.layout : null, defaults)
     const layout = props.surface === 'workbench' && props.view.kind === 'line'

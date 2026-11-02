@@ -3,6 +3,7 @@ import type { AgentState, SessionPermissionMode } from '@/api/types';
 import type { ApiSessionClient } from '@/api/apiSession';
 import { logger } from '@/ui/logger';
 import { deriveToolName } from '@/agent/utils';
+import { freshApprovalDecision } from '@hapi/protocol'
 import { RPC_METHODS } from '@hapi/protocol/rpcMethods';
 import {
     resolveToolAutoApprovalDecision,
@@ -146,12 +147,12 @@ export class PermissionAdapter {
 
         this.pendingRequests.delete(response.id);
 
-        const decision = response.decision ?? (response.approved ? 'approved' : 'denied');
         const toolName = deriveToolName({
             title: pending.title,
             kind: pending.kind,
             rawInput: pending.rawInput
         });
+        const decision = freshApprovalDecision(toolName, response.decision ?? (response.approved ? 'approved' : 'denied'));
         const toolInput = deriveToolInput(pending);
 
         const outcome = this.mapDecisionToOutcome(pending, decision);

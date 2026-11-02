@@ -7,6 +7,7 @@
 
 import { logger } from "@/ui/logger";
 import { ApiSessionClient } from "@/api/apiSession";
+import { freshApprovalDecision } from '@hapi/protocol'
 import type { CodexPermissionMode } from "@hapi/protocol/types";
 import {
     BasePermissionHandler,
@@ -217,7 +218,7 @@ export class CodexPermissionHandler extends BasePermissionHandler<PermissionResp
         const reason = typeof response.reason === 'string' ? response.reason : undefined;
         const result: ToolPermissionResult = response.approved
             ? {
-                decision: response.decision === 'approved_for_session' ? 'approved_for_session' : 'approved',
+                decision: freshApprovalDecision(pending.toolName, response.decision === 'approved_for_session' ? 'approved_for_session' : 'approved'),
                 reason
             }
             : {

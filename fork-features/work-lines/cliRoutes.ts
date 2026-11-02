@@ -3,10 +3,11 @@ import { z } from 'zod'
 import type { WebAppEnv } from '../../hub/src/web/middleware/auth'
 import type { SyncEngine } from '../../hub/src/sync/syncEngine'
 import type { SSEManager } from '../../hub/src/sse/sseManager'
-import { WorkMapError, type WorkLayout } from '../../hub/src/store/workLines'
+import { WorkMapError, type WorkLayout, type WorkLine } from '../../hub/src/store/workLines'
 import { pushTrainingCard } from '../../hub/src/socket/trainingCardPush'
 import { getConfiguration } from '../../hub/src/configuration'
 import { parseAccessToken } from '../../hub/src/utils/accessToken'
+import { EXPLORE_DELETE_CONFIRM_HEADER } from '@hapi/protocol'
 import { constantTimeEquals } from '../../hub/src/utils/crypto'
 import type { MultiUserGatewayStore } from '../multi-user/gatewayStore'
 import { resolveGatewayCliAccountId } from '../multi-user/cliAdapter'
@@ -17,17 +18,26 @@ const registerSchema = z.object({
     runDir: z.string(),
 })
 
-const bindSchema = z.object({
-    lineId: z.string(),
+
+const cardSchema = z.object({
     run: z.string(),
     metrics: z.array(z.string()).optional(),
+    xAxis: z.string().optional(),
+    cardId: z.string().optional(),
 })
 
-function bearerToken(header: string | undefined): string | null {
-    if (!header) return null
-    const match = /^Bearer\s+(.+)$/i.exec(header)
-    return match?.[1] ?? null
-}
+const referenceSchema = z.object({
+    format: z.enum(['apa7', 'vancouver']),
+    citation: z.string().min(1).max(2000),
+})
+
+const lineSchema = z.object({
+    name: z.string(),
+    hypothesis: z.string().nullable().optional(),
+    machineId: z.string(),
+    path: z.string(),
+})
+
 
 export function mountCliWorkRoutes(app: Hono<WebAppEnv>, deps: {
     store: MultiUserGatewayStore
@@ -36,7 +46,8 @@ export function mountCliWorkRoutes(app: Hono<WebAppEnv>, deps: {
 }): void {
     const routes = new Hono<WebAppEnv>()
     const open = (c: { req: { header: (name: string) => string | undefined }; json: (body: unknown, status?: number) => Response }) => {
-        const token = bearerToken(c.req.header('authorization'))
+        const header = c.req.header('authorization')
+        const token = header ? /^Bearer\s+(.+)$/i.exec(header)?.[1] ?? null : null
         if (!token) return c.json({ error: 'Missing Authorization header' }, 401)
         const accountId = resolveGatewayCliAccountId(deps.store, token)
         if (accountId === null) {
@@ -51,6 +62,19 @@ export function mountCliWorkRoutes(app: Hono<WebAppEnv>, deps: {
 
     const canSeeMachine = (accountId: number, machineId: string): boolean => {
         return deps.store.listAccessibleResources('machine', accountId).some((binding) => binding.resourceId === machineId)
+    }
+
+    const canSeeSession = (accountId: number, sessionId: string): boolean => {
+        return deps.store.listAccessibleResources('session', accountId).some((binding) => binding.resourceId === sessionId)
+    }
+
+    const touch = (account: { id: number; defaultNamespace: string }, topic: 'work-map' | 'work-layout' = 'work-map') => {
+        deps.getSseManager()?.broadcast({
+            type: 'card-invalidated',
+            namespace: account.defaultNamespace,
+            accountId: account.id,
+            topic,
+        })
     }
 
     routes.post('/training-runs', async (c) => {
@@ -81,29 +105,248 @@ export function mountCliWorkRoutes(app: Hono<WebAppEnv>, deps: {
         }
     })
 
-    routes.put('/training-card', async (c) => {
+
+    routes.get('/explorations', (c) => {
         const ready = open(c)
         if (ready instanceof Response) return ready
-        const parsed = bindSchema.safeParse(await c.req.json().catch(() => null))
-        if (!parsed.success) return c.json({ error: 'Invalid body' }, 400)
+        const explorations = ready.engine.getWorkLines().getMap(ready.account.id).lines.map((line) => ({
+            id: line.id,
+            name: line.name,
+            hypothesis: line.hypothesis,
+            primaryMachineId: line.primaryMachineId,
+            primaryPath: line.primaryPath,
+            createdAt: line.createdAt,
+            updatedAt: line.updatedAt,
+        }))
+        return c.json({ explorations })
+    })
+
+    routes.get('/explorations/:id', (c) => {
+        const ready = open(c)
+        if (ready instanceof Response) return ready
+        const lines = ready.engine.getWorkLines()
         try {
-            const metrics = parsed.data.metrics ?? []
-            const layout = ready.engine.getWorkLines().bindTrainingLine(ready.account.id, parsed.data.lineId, parsed.data.run, metrics)
-            deps.getSseManager()?.broadcast({
-                type: 'card-invalidated',
-                namespace: ready.account.defaultNamespace,
-                accountId: ready.account.id,
-                topic: 'work-layout',
+            const line = lines.getMap(ready.account.id).lines.find((item) => item.id === c.req.param('id'))
+            if (!line) return c.json({ error: 'Not found' }, 404)
+            const sessions = lines.listLinkedSessions(ready.account.id, line.id)
+                .filter((session) => canSeeSession(ready.account.id, session.sessionId))
+            return c.json({
+                exploration: explorationOf(line),
+                linkedSessions: sessions,
+                verificationCards: lines.listVerificationCards(ready.account.id, line.id),
+                references: lines.listReferences(ready.account.id, line.id),
             })
-            pushTrainingCard(ready.account.id, {
-                lineId: parsed.data.lineId,
-                run: parsed.data.run,
-                metrics: storedTrainingMetrics(layout, parsed.data.lineId, parsed.data.run),
-            })
-            return c.json({ layout })
         } catch (error) {
             return mapError(c, error)
         }
+    })
+
+    routes.post('/explorations', async (c) => {
+        const ready = open(c)
+        if (ready instanceof Response) return ready
+        const parsed = lineSchema.safeParse(await c.req.json().catch(() => null))
+        if (!parsed.success) return c.json({ error: 'Invalid body' }, 400)
+        if (!canSeeMachine(ready.account.id, parsed.data.machineId)) return c.json({ error: 'Not found' }, 404)
+        try {
+            const line = ready.engine.getWorkLines().createLine(ready.account.id, {
+                name: parsed.data.name,
+                hypothesis: parsed.data.hypothesis,
+                primaryMachineId: parsed.data.machineId,
+                primaryPath: parsed.data.path,
+            })
+            const sessionId = c.req.header('x-hapi-session-id')
+            if (sessionId && canSeeSession(ready.account.id, sessionId)) {
+                ready.engine.getWorkLines().putSession(ready.account.id, { sessionId, state: 'line', lineId: line.id })
+            }
+            touch(ready.account)
+            return c.json({ exploration: explorationOf(line) })
+        } catch (error) {
+            return mapError(c, error)
+        }
+    })
+
+    routes.delete('/explorations/:id', (c) => {
+        const ready = open(c)
+        if (ready instanceof Response) return ready
+        // Caller token only. delete_exploration still needs a person on the
+        // client; yolo, bypass and approved_for_session do not count.
+        if (c.req.header(EXPLORE_DELETE_CONFIRM_HEADER) !== '1') {
+            return c.json({ error: 'Missing delete confirmation' }, 400)
+        }
+        try {
+            ready.engine.getWorkLines().deleteLine(ready.account.id, c.req.param('id'))
+            touch(ready.account)
+            return c.json({ ok: true })
+        } catch (error) {
+            return mapError(c, error)
+        }
+    })
+
+    routes.put('/explorations/:id/hypothesis', async (c) => {
+        const ready = open(c)
+        if (ready instanceof Response) return ready
+        const body = await c.req.json().catch(() => null) as { hypothesis?: unknown } | null
+        if (!body || (typeof body.hypothesis !== 'string' && body.hypothesis !== null)) return c.json({ error: 'Invalid body' }, 400)
+        try {
+            const hypothesis = ready.engine.getWorkLines().setHypothesis(ready.account.id, c.req.param('id'), body.hypothesis ?? '')
+            touch(ready.account)
+            return c.json({ lineId: c.req.param('id'), hypothesis })
+        } catch (error) {
+            return mapError(c, error)
+        }
+    })
+
+    routes.get('/explorations/:id/sessions', (c) => {
+        const ready = open(c)
+        if (ready instanceof Response) return ready
+        try {
+            const lineId = c.req.param('id')
+            const sessions = ready.engine.getWorkLines().listLinkedSessions(ready.account.id, lineId)
+                .filter((session) => canSeeSession(ready.account.id, session.sessionId))
+            return c.json({ lineId, sessions })
+        } catch (error) {
+            return mapError(c, error)
+        }
+    })
+
+    routes.put('/explorations/:id/sessions/:sessionId', (c) => {
+        const ready = open(c)
+        if (ready instanceof Response) return ready
+        const sessionId = c.req.param('sessionId')
+        if (!canSeeSession(ready.account.id, sessionId)) return c.json({ error: 'Not found' }, 404)
+        try {
+            ready.engine.getWorkLines().putSession(ready.account.id, { sessionId, state: 'line', lineId: c.req.param('id') })
+            touch(ready.account)
+            return c.json({ lineId: c.req.param('id'), sessionId })
+        } catch (error) {
+            return mapError(c, error)
+        }
+    })
+    routes.delete('/explorations/:id/sessions/:sessionId', (c) => {
+        const ready = open(c)
+        if (ready instanceof Response) return ready
+        const sessionId = c.req.param('sessionId')
+        const lineId = c.req.param('id')
+        if (!canSeeSession(ready.account.id, sessionId)) return c.json({ error: 'Not found' }, 404)
+        try {
+            const lines = ready.engine.getWorkLines()
+            const binding = lines.getSessionBinding(ready.account.id, sessionId)
+            const boundLine = binding
+                ? binding.lineId
+                : inheritedLineId(ready.engine, ready.account.id, sessionId)
+            if (binding?.lineId && binding.lineId !== lineId) return c.json({ error: 'Not found' }, 409)
+            if (boundLine !== lineId) return c.json({ error: 'Not found' }, 404)
+            lines.putSession(ready.account.id, { sessionId, state: 'ignored' })
+            touch(ready.account)
+            return c.json({ ok: true })
+        } catch (error) {
+            return mapError(c, error)
+        }
+    })
+
+    routes.get('/explorations/:id/cards', (c) => {
+        const ready = open(c)
+        if (ready instanceof Response) return ready
+        try {
+            const lineId = c.req.param('id')
+            return c.json({ lineId, cards: ready.engine.getWorkLines().listVerificationCards(ready.account.id, lineId) })
+        } catch (error) {
+            return mapError(c, error)
+        }
+    })
+
+    routes.post('/explorations/:id/cards', async (c) => {
+        const ready = open(c)
+        if (ready instanceof Response) return ready
+        const parsed = cardSchema.safeParse(await c.req.json().catch(() => null))
+        if (!parsed.success) return c.json({ error: 'Invalid body' }, 400)
+        try {
+            const lineId = c.req.param('id')
+            const bound = ready.engine.getWorkLines().bindTrainingLine(ready.account.id, {
+                lineId,
+                run: parsed.data.run,
+                metrics: parsed.data.metrics,
+                xAxis: parsed.data.xAxis,
+                instanceId: parsed.data.cardId,
+            })
+            pushTrainingCard(ready.account.id, {
+                lineId,
+                run: parsed.data.run,
+                metrics: storedTrainingMetrics(bound.layout, bound.instanceId),
+                instanceId: bound.instanceId,
+            })
+            touch(ready.account, 'work-layout')
+            const card = ready.engine.getWorkLines().listVerificationCards(ready.account.id, lineId)
+                .find((item) => item.cardId === bound.instanceId)
+            if (!card) return c.json({ error: 'Not found' }, 404)
+            return c.json({ card })
+        } catch (error) {
+            return mapError(c, error)
+        }
+    })
+
+    routes.delete('/explorations/:id/cards/:cardId', (c) => {
+        const ready = open(c)
+        if (ready instanceof Response) return ready
+        try {
+            const cards = ready.engine.getWorkLines().listVerificationCards(ready.account.id, c.req.param('id'))
+            if (!cards.some((card) => card.cardId === c.req.param('cardId'))) return c.json({ error: 'Not found' }, 404)
+            ready.engine.getWorkLines().unbindTrainingCard(ready.account.id, c.req.param('cardId'))
+            touch(ready.account, 'work-layout')
+            return c.json({ ok: true })
+        } catch (error) {
+            return mapError(c, error)
+        }
+    })
+
+    routes.get('/explorations/:id/references', (c) => {
+        const ready = open(c)
+        if (ready instanceof Response) return ready
+        try {
+            const lineId = c.req.param('id')
+            return c.json({ lineId, references: ready.engine.getWorkLines().listReferences(ready.account.id, lineId) })
+        } catch (error) {
+            return mapError(c, error)
+        }
+    })
+
+    routes.post('/explorations/:id/references', async (c) => {
+        const ready = open(c)
+        if (ready instanceof Response) return ready
+        const parsed = referenceSchema.safeParse(await c.req.json().catch(() => null))
+        if (!parsed.success) return c.json({ error: 'Invalid body' }, 400)
+        try {
+            const reference = ready.engine.getWorkLines().addReference(ready.account.id, { lineId: c.req.param('id'), ...parsed.data })
+            touch(ready.account)
+            return c.json({ reference })
+        } catch (error) {
+            return mapError(c, error)
+        }
+    })
+
+    routes.delete('/explorations/:id/references/:referenceId', (c) => {
+        const ready = open(c)
+        if (ready instanceof Response) return ready
+        try {
+            ready.engine.getWorkLines().removeReference(ready.account.id, c.req.param('id'), c.req.param('referenceId'))
+            touch(ready.account)
+            return c.json({ ok: true })
+        } catch (error) {
+            return mapError(c, error)
+        }
+    })
+
+    routes.get('/session-line', (c) => {
+        const ready = open(c)
+        if (ready instanceof Response) return ready
+        const sessionId = c.req.query('sessionId') || c.req.header('x-hapi-session-id') || ''
+        if (sessionId && !canSeeSession(ready.account.id, sessionId)) return c.json({ error: 'Not found' }, 404)
+        const machineId = c.req.query('machineId') ?? ''
+        const path = c.req.query('path') ?? ''
+        const lines = ready.engine.getWorkLines()
+        const binding = sessionId ? lines.getSessionBinding(ready.account.id, sessionId) : null
+        const lineId = binding ? binding.lineId : (machineId && path ? lines.lineForDirectory(ready.account.id, machineId, path) : null)
+        return c.json({ lineId })
     })
 
     app.route('/cli/work', routes)
@@ -113,6 +356,14 @@ function mapError(c: { json: (body: unknown, status?: number) => Response }, err
     if (error instanceof WorkMapError) return c.json({ error: error.message }, error.status)
     console.error('[work-lines] cli request failed', error)
     return c.json({ error: 'Work request failed' }, 500)
+}
+
+function inheritedLineId(engine: SyncEngine, accountId: number, sessionId: string): string | null {
+    const metadata = engine.getSession(sessionId)?.metadata
+    const path = metadata?.worktree?.basePath ?? metadata?.path ?? ''
+    const machineId = metadata?.machineId ?? ''
+    if (!machineId || !path) return null
+    return engine.getWorkLines().lineForDirectory(accountId, machineId, path)
 }
 
 function isHubBaseCliToken(token: string): boolean {
@@ -125,10 +376,8 @@ function isHubBaseCliToken(token: string): boolean {
     }
 }
 
-function storedTrainingMetrics(layout: WorkLayout, lineId: string, run: string): string[] {
-    const storedLine = lineId.trim()
-    const storedRun = run.trim()
-    const slot = layout.regions.main?.find((item) => item.cardId === 'example.training-curves' && item.args?.lineId === storedLine && item.args.run === storedRun)
+function storedTrainingMetrics(layout: WorkLayout, instanceId: string): string[] {
+    const slot = layout.regions.main?.find((item) => item.cardId === 'example.training-curves' && item.args?.instanceId === instanceId)
     const raw = slot?.args?.metrics
     if (!raw) return []
     try {
@@ -136,5 +385,18 @@ function storedTrainingMetrics(layout: WorkLayout, lineId: string, run: string):
         return Array.isArray(parsed) ? parsed.filter((item): item is string => typeof item === 'string') : []
     } catch {
         return []
+    }
+}
+
+function explorationOf(line: WorkLine) {
+    return {
+        id: line.id,
+        name: line.name,
+        goal: line.goal,
+        hypothesis: line.hypothesis,
+        primaryMachineId: line.primaryMachineId,
+        primaryPath: line.primaryPath,
+        createdAt: line.createdAt,
+        updatedAt: line.updatedAt,
     }
 }

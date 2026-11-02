@@ -1,6 +1,7 @@
 import type { ApiSessionClient } from '@/api/apiSession'
 import type { AgentBackend, PermissionRequest, PermissionResponse } from '@/agent/types'
 import type { GrokPermissionMode } from '@hapi/protocol/types'
+import { freshApprovalDecision, requiresFreshApproval } from '@hapi/protocol'
 import { deriveToolName } from '@/agent/utils'
 import { logger } from '@/ui/logger'
 import {
@@ -77,9 +78,11 @@ export class GrokPermissionHandler extends BasePermissionHandler<PermissionRespo
         const toolInput = deriveToolInput(request)
         const mode = this.getPermissionMode() ?? 'default'
 
-        const autoDecision: AutoApprovalDecision | null = mode === 'bypassPermissions'
-            ? 'approved_for_session'
-            : this.resolveAutoApprovalDecision(mode, toolName, request.toolCallId)
+        const autoDecision: AutoApprovalDecision | null = requiresFreshApproval(toolName)
+            ? null
+            : mode === 'bypassPermissions'
+                ? 'approved_for_session'
+                : this.resolveAutoApprovalDecision(mode, toolName, request.toolCallId)
         if (autoDecision) {
             void this.autoApprove(request, toolName, toolInput, autoDecision)
             return
@@ -152,7 +155,7 @@ export class GrokPermissionHandler extends BasePermissionHandler<PermissionRespo
     ): Promise<PermissionCompletion> {
         const request = this.pendingBackendRequests.get(response.id)
         this.pendingBackendRequests.delete(response.id)
-        const decision = response.decision ?? (response.approved ? 'approved' : 'denied')
+        const decision = freshApprovalDecision(pending.toolName, response.decision ?? (response.approved ? 'approved' : 'denied'))
 
         if (decision === 'abort' && request) {
             await this.backend.cancelPrompt(request.sessionId)

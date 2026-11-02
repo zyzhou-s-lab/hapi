@@ -21,6 +21,16 @@ import {
     type OmpHostUriProvider
 } from '../../../fork-features/omp-host-integration/cli';
 import { detectOmpMachineAvailability } from '../../../fork-features/omp-host-integration/machine';
+import type * as Persistence from '@/persistence';
+import { EXPLORE_DELETE_CONFIRM_HEADER } from '@hapi/protocol';
+
+vi.mock('@/persistence', async (importOriginal) => {
+    const actual = await importOriginal<typeof Persistence>();
+    return {
+        ...actual,
+        readSettings: (async () => ({ machineId: 'gpu' })) as typeof Persistence.readSettings
+    };
+});
 
 type FakeClient = {
     client: OmpRpcClient;
@@ -387,13 +397,13 @@ describe('OMP host tool bridge', () => {
             tools: expect.arrayContaining([
                 expect.objectContaining({ name: 'register_training_run', loadMode: 'discoverable' }),
                 expect.objectContaining({ name: 'query_training_run', loadMode: 'discoverable' }),
-                expect.objectContaining({ name: 'bind_training_card', loadMode: 'discoverable' })
+                expect.objectContaining({ name: 'add_verification_card', loadMode: 'discoverable' })
             ])
         });
         const calls: JsonObject[] = [
             { type: 'host_tool_call', id: 'register-call', toolCallId: 't1', toolName: 'register_training_run', arguments: { run: 'exp', runDir: '/tmp/wandb/run-exp', machineId: 'machine-1' } },
             { type: 'host_tool_call', id: 'query-call', toolCallId: 't2', toolName: 'query_training_run', arguments: { run: 'exp' } },
-            { type: 'host_tool_call', id: 'bind-call', toolCallId: 't3', toolName: 'bind_training_card', arguments: { lineId: 'line-1', run: 'exp', metrics: [] } }
+            { type: 'host_tool_call', id: 'bind-call', toolCallId: 't3', toolName: 'add_verification_card', arguments: { lineId: 'line-1', run: 'exp', metrics: [] } }
         ]
         for (const call of calls) bridge.handleCall(call);
         await vi.waitFor(() => {
@@ -401,7 +411,7 @@ describe('OMP host tool bridge', () => {
         });
         expect(workApi).toHaveBeenCalledWith('/cli/work/training-runs', { method: 'POST', body: { run: 'exp', machineId: 'machine-1', runDir: '/tmp/wandb/run-exp' } });
         expect(workApi).toHaveBeenCalledWith('/cli/work/training-runs/exp', {});
-        expect(workApi).toHaveBeenCalledWith('/cli/work/training-card', { method: 'PUT', body: { lineId: 'line-1', run: 'exp', metrics: [] } });
+        expect(workApi).toHaveBeenCalledWith('/cli/work/explorations/line-1/cards', { method: 'POST', body: { run: 'exp', metrics: [], xAxis: undefined, cardId: undefined } });
         const bind = fake.frames.find((frame) => frame.type === 'host_tool_result' && frame.id === 'bind-call');
         expect(bind).toMatchObject({ isError: true });
         bridge.close();
@@ -735,5 +745,126 @@ describe('OMP runner capability detection', () => {
             error: 'OMP 16.9.0 is too old; HAPI requires OMP 17.0.4 or newer for RPC mode'
         });
         expect(missing).toEqual({ available: false, error: 'omp was not found on PATH' });
+    });
+});
+
+describe('OMP delete_exploration approval', () => {
+    it('refuses the delete when this host cannot ask a person', async () => {
+        const fake = createFakeClient();
+        const workApi = vi.fn();
+        const bridge = new OmpHostToolBridge({
+            client: fake.client,
+            cwd: process.cwd(),
+            workApi,
+            sendAgentMessage: vi.fn(),
+            sendSummary: vi.fn(),
+            onFatal: vi.fn()
+        });
+        await bridge.register();
+        bridge.handleCall({
+            type: 'host_tool_call',
+            id: 'no-ask',
+            toolCallId: 'tool-no-ask',
+            toolName: 'delete_exploration',
+            arguments: { lineId: 'line-1' }
+        });
+        await vi.waitFor(() => {
+            expect(fake.frames).toContainEqual(expect.objectContaining({
+                type: 'host_tool_result',
+                id: 'no-ask',
+                isError: true
+            }));
+        });
+        expect(workApi).not.toHaveBeenCalled();
+        bridge.close();
+    });
+
+    it('asks through the permission RPC on every call and does not keep a session grant', async () => {
+        const fake = createFakeClient();
+        let state: AgentState = { requests: {}, completedRequests: {} };
+        const rpc = new RpcHandlerManager({ scopePrefix: 'delete-test' });
+        const calls: Array<{ path: string; init?: { method?: string; headers?: Record<string, string> } }> = [];
+        const integration = new OmpHostIntegration({
+            client: fake.client,
+            cwd: process.cwd(),
+            eventAllowlist: new Set(),
+            sessionClient: {
+                sessionId: 'session-1',
+                sendAgentMessage: vi.fn(),
+                sendClaudeSessionMessage: vi.fn(),
+                updateAgentState: (handler) => { state = handler(state); },
+                updateMetadata: vi.fn(),
+                rpcHandlerManager: rpc,
+                workApi: async (path, init) => {
+                    calls.push({ path, init });
+                    return { status: 200, body: { ok: true } };
+                }
+            },
+            onFatal: vi.fn()
+        });
+        integration.handle({
+            type: 'host_tool_call',
+            raw: {
+                type: 'host_tool_call',
+                id: 'del-1',
+                toolCallId: 'tool-del-1',
+                toolName: 'delete_exploration',
+                arguments: { lineId: 'line-1' }
+            }
+        });
+        await vi.waitFor(() => expect(Object.keys(state.requests ?? {})).toHaveLength(1));
+        expect(calls).toEqual([]);
+        const firstId = Object.keys(state.requests ?? {})[0] ?? '';
+        await rpc.handleRequest({
+            method: `delete-test:${RPC_METHODS.Permission}`,
+            params: JSON.stringify({ id: firstId, approved: true, decision: 'approved_for_session' })
+        });
+        await vi.waitFor(() => expect(calls).toHaveLength(1));
+        expect(calls[0]).toEqual({
+            path: '/cli/work/explorations/line-1',
+            init: { method: 'DELETE', headers: { [EXPLORE_DELETE_CONFIRM_HEADER]: '1' } }
+        });
+        expect(state.completedRequests?.[firstId]).toMatchObject({
+            status: 'approved',
+            decision: 'approved'
+        });
+        await vi.waitFor(() => {
+            expect(fake.frames).toContainEqual(expect.objectContaining({
+                type: 'host_tool_result',
+                id: 'del-1',
+                result: { content: [{ type: 'text', text: '{"ok":true}' }], details: {} }
+            }));
+        });
+
+        integration.handle({
+            type: 'host_tool_call',
+            raw: {
+                type: 'host_tool_call',
+                id: 'del-2',
+                toolCallId: 'tool-del-2',
+                toolName: 'delete_exploration',
+                arguments: { lineId: 'line-1' }
+            }
+        });
+        await vi.waitFor(() => expect(Object.keys(state.requests ?? {})).toHaveLength(1));
+        expect(calls).toHaveLength(1);
+        const secondId = Object.keys(state.requests ?? {})[0] ?? '';
+        await rpc.handleRequest({
+            method: `delete-test:${RPC_METHODS.Permission}`,
+            params: JSON.stringify({ id: secondId, approved: false, decision: 'approved_for_session' })
+        });
+        await vi.waitFor(() => {
+            expect(fake.frames).toContainEqual(expect.objectContaining({
+                type: 'host_tool_result',
+                id: 'del-2',
+                isError: true
+            }));
+        });
+        expect(calls).toHaveLength(1);
+        expect(state.completedRequests?.[secondId]).toMatchObject({
+            status: 'denied',
+            decision: 'denied'
+        });
+        await integration.close('done');
     });
 });
