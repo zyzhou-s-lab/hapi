@@ -152,12 +152,16 @@ export function registerSessionHandlers(socket: CliSocketWithData, deps: Session
         if (nextTodos) {
             // Two results can share a millisecond. The watermark is also the
             // SSE version, so an equal stamp would both lose the store write
-            // and let a client drop the second patch.
+            // and let a client drop the second patch. An earlier stamp is a
+            // late message and must not replace the newer list.
             const previousWatermark = storedSession?.todosUpdatedAt ?? null
-            const todoVersion = previousWatermark !== null && msg.createdAt <= previousWatermark
+            const newerOrSame = previousWatermark === null || msg.createdAt >= previousWatermark
+            const todoVersion = previousWatermark !== null && msg.createdAt === previousWatermark
                 ? previousWatermark + 1
                 : msg.createdAt
-            const updated = store.sessions.setSessionTodos(sid, nextTodos, todoVersion, session.namespace)
+            const updated = newerOrSame
+                ? store.sessions.setSessionTodos(sid, nextTodos, todoVersion, session.namespace)
+                : false
             if (updated) {
                 const stored = store.sessions.getSession(sid)
                 onWebappEvent?.({

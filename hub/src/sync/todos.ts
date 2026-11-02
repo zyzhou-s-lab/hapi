@@ -6,9 +6,20 @@ import type { TodoItem } from '@hapi/protocol/types'
 export { TodoItemSchema, TodosSchema }
 export type { TodoItem }
 
-// Known ops still decide whether an empty phase array is a real clear.
-// A result can also publish the live list without one of these ops; the
-// message card renders that list, so the session snapshot must too.
+const OMP_TODO_OPS: Record<string, true> = {
+    init: true,
+    start: true,
+    done: true,
+    rm: true,
+    drop: true,
+    block: true,
+    unblock: true,
+    append: true,
+    view: true
+}
+
+// Empty phases clear the panel only for these ops. A result with no op is
+// not a clear, even when the tool is named todo.
 const OMP_TODO_CLEAR_OPS: Record<string, true> = {
     init: true,
     view: true,
@@ -48,12 +59,15 @@ function ompTodoDetails(value: Record<string, unknown>): { op: string | null; ph
 }
 
 // Result details only: `{ op, phases }` or `{ content, details: { op, phases } }`.
-// Input objects that merely contain `phases` are not snapshots.
-function extractOmpTodoSnapshot(value: unknown): TodoItem[] | null {
+// A phase list without a known op is a snapshot only for a tool named todo.
+// Input objects that merely contain `phases` are not passed here.
+function extractOmpTodoSnapshot(value: unknown, namedTodo: boolean): TodoItem[] | null {
     if (!isObject(value)) return null
     const details = ompTodoDetails(value)
         ?? (isObject(value.details) ? ompTodoDetails(value.details) : null)
     if (!details) return null
+    const known = details.op !== null && OMP_TODO_OPS[details.op] === true
+    if (!known && !namedTodo) return null
 
     const todos: Array<Pick<TodoItem, 'content' | 'status' | 'priority' | 'id' | 'blocked'>> = []
     let opaque = false
@@ -82,16 +96,10 @@ function extractOmpTodoSnapshot(value: unknown): TodoItem[] | null {
 
     if (todos.length > 0) return todosFromClaudeArray(todos)
     if (opaque) return null
-    // phases: [] is a whole-list clear only for init (replace), view (read of
-    // an empty list), and rm. Other known ops do not emit an empty phase array
-    // on success; an errored rm keeps the previous phases and is skipped earlier.
-    // A result with no recognized op is still the list the message card draws,
-    // including an empty one. A non-empty phase list with no remaining tasks is
-    // a real clear (rm emptied every task, or every task was abandoned and is hidden).
-    if (details.phases.length === 0 && (details.op === null || OMP_TODO_CLEAR_OPS[details.op] !== true)) {
-        if (details.op !== null) return null
+    if (known && details.op !== null && OMP_TODO_CLEAR_OPS[details.op] === true) {
+        return []
     }
-    return []
+    return null
 }
 
 function extractTodosFromClaudeOutput(content: Record<string, unknown>): TodoItem[] | null {
@@ -136,12 +144,13 @@ function extractTodosFromOmpOutput(content: Record<string, unknown>): TodoItem[]
         const resultName = typeof block.name === 'string' ? block.name : typeof block.toolName === 'string' ? block.toolName : null
         if (resultName !== null && !isOmpTodoToolName(resultName)) continue
         if (block.is_error === true || block.isError === true) continue
-        const fromContent = extractOmpTodoSnapshot('content' in block ? (block as Record<string, unknown>).content : null)
+        const namedTodo = isOmpTodoToolName(resultName)
+        const fromContent = extractOmpTodoSnapshot('content' in block ? (block as Record<string, unknown>).content : null, namedTodo)
         if (fromContent) return fromContent
         // toolUseResult is one envelope for the whole message. Only a single
         // tool_result can own it; with several blocks it would stick to the wrong one.
         if (blocks.length !== 1) continue
-        const fromEnvelope = extractOmpTodoSnapshot(data.toolUseResult)
+        const fromEnvelope = extractOmpTodoSnapshot(data.toolUseResult, namedTodo)
         if (fromEnvelope) return fromEnvelope
     }
 
@@ -158,7 +167,7 @@ function extractTodosFromCodexMessage(content: Record<string, unknown>): TodoIte
         if (data.is_error === true || data.isError === true) return null
         const name = typeof data.name === 'string' ? data.name : null
         if (name !== null && !isOmpTodoToolName(name)) return null
-        return extractOmpTodoSnapshot('output' in data ? data.output : null)
+        return extractOmpTodoSnapshot('output' in data ? data.output : null, isOmpTodoToolName(name))
     }
 
     if (data.type !== 'tool-call') return null

@@ -230,7 +230,15 @@ describe('omp todo extraction', () => {
         expect(extractTodoWriteTodosFromMessageContent(ompToolResult({
             phases: [],
             storage: 'session'
-        }))).toEqual([])
+        }))).toBeNull()
+        expect(extractTodoWriteTodosFromMessageContent(ompToolResult({
+            phases,
+            storage: 'session'
+        }, { name: null }))).toBeNull()
+        expect(extractTodoWriteTodosFromMessageContent(ompToolResult({
+            phases: [],
+            storage: 'session'
+        }, { name: 'bash' }))).toBeNull()
 
         const earlier = ompToolResult({
             op: 'init',
@@ -244,10 +252,19 @@ describe('omp todo extraction', () => {
             storage: 'session'
         })
         const later = ompToolResult({ phases, storage: 'session' })
+        const kept: TodoItem[] = [
+            { content: '写 MLP 训练脚本', status: 'in_progress', priority: 'medium', id: 'Tasks:0' },
+            { content: '跑通并核对指标', status: 'pending', priority: 'medium', id: 'Tasks:1' }
+        ]
         expect([earlier, later].reduce<TodoItem[] | null>(
             (todos, message) => applyTodoMessageContent(todos, message) ?? todos,
             null
         )).toEqual(expected)
+        expect([earlier, ompToolResult({ phases: [], storage: 'session' })].reduce<TodoItem[] | null>(
+            (todos, message) => applyTodoMessageContent(todos, message) ?? todos,
+            null
+        )).toEqual(kept)
+
     })
 
     test('reads a full todos array from an omp-named tool call and ignores its phase input', () => {
