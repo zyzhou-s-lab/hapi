@@ -18,6 +18,14 @@ const OMP_TODO_OPS: Record<string, true> = {
     view: true
 }
 
+// Empty phases clear the panel only for these ops. A result with no op is
+// not a clear, even when the tool is named todo.
+const OMP_TODO_CLEAR_OPS: Record<string, true> = {
+    init: true,
+    view: true,
+    rm: true
+}
+
 function isOmpTodoToolName(name: string | null): boolean {
     if (!name) return false
     const normalized = name.toLowerCase()
@@ -44,18 +52,22 @@ function ompTodoId(phaseName: string, index: number, id: unknown): string {
     return `${phaseName}:${index}`
 }
 
-function ompTodoDetails(value: Record<string, unknown>): { op: string; phases: unknown[] } | null {
-    if (typeof value.op !== 'string' || OMP_TODO_OPS[value.op] !== true || !Array.isArray(value.phases)) return null
-    return { op: value.op, phases: value.phases }
+function ompTodoDetails(value: Record<string, unknown>): { op: string | null; phases: unknown[] } | null {
+    if (!Array.isArray(value.phases)) return null
+    const op = typeof value.op === 'string' ? value.op : null
+    return { op, phases: value.phases }
 }
 
 // Result details only: `{ op, phases }` or `{ content, details: { op, phases } }`.
-// Input objects that merely contain `phases` are not snapshots.
-function extractOmpTodoSnapshot(value: unknown): TodoItem[] | null {
+// A phase list without a known op is a snapshot only for a tool named todo.
+// Input objects that merely contain `phases` are not passed here.
+function extractOmpTodoSnapshot(value: unknown, namedTodo: boolean): TodoItem[] | null {
     if (!isObject(value)) return null
     const details = ompTodoDetails(value)
         ?? (isObject(value.details) ? ompTodoDetails(value.details) : null)
     if (!details) return null
+    const known = details.op !== null && OMP_TODO_OPS[details.op] === true
+    if (!known && !namedTodo) return null
 
     const todos: Array<Pick<TodoItem, 'content' | 'status' | 'priority' | 'id' | 'blocked'>> = []
     let opaque = false
@@ -84,15 +96,10 @@ function extractOmpTodoSnapshot(value: unknown): TodoItem[] | null {
 
     if (todos.length > 0) return todosFromClaudeArray(todos)
     if (opaque) return null
-    // phases: [] is a whole-list publish only for init (replace), view (read of
-    // an empty list), and rm. Other ops do not emit an empty phase array on
-    // success; an errored rm keeps the previous phases and is skipped earlier.
-    // A non-empty phase list with no remaining tasks is a real clear (rm emptied
-    // every task, or every task was abandoned and is hidden).
-    if (details.phases.length === 0 && details.op !== 'init' && details.op !== 'view' && details.op !== 'rm') {
-        return null
+    if (known && details.op !== null && OMP_TODO_CLEAR_OPS[details.op] === true) {
+        return []
     }
-    return []
+    return null
 }
 
 function extractTodosFromClaudeOutput(content: Record<string, unknown>): TodoItem[] | null {
@@ -110,12 +117,15 @@ function extractTodosFromClaudeOutput(content: Record<string, unknown>): TodoIte
     for (const block of modelContent) {
         if (!isObject(block) || block.type !== 'tool_use') continue
         const name = typeof block.name === 'string' ? block.name : null
-        if (name !== 'TodoWrite') continue
+        if (!isOmpTodoToolName(name)) continue
         const input = 'input' in block ? (block as Record<string, unknown>).input : null
         if (!isObject(input)) continue
-
-        const parsed = todosFromClaudeArray(input.todos)
-        if (parsed) return parsed
+        // Incremental omp calls carry phases as the pre-call list. Only a
+        // full todos array on the call is a snapshot; the result replaces it.
+        if (Array.isArray(input.todos)) {
+            const parsed = todosFromClaudeArray(input.todos)
+            if (parsed) return parsed
+        }
     }
 
     return null
@@ -134,12 +144,13 @@ function extractTodosFromOmpOutput(content: Record<string, unknown>): TodoItem[]
         const resultName = typeof block.name === 'string' ? block.name : typeof block.toolName === 'string' ? block.toolName : null
         if (resultName !== null && !isOmpTodoToolName(resultName)) continue
         if (block.is_error === true || block.isError === true) continue
-        const fromContent = extractOmpTodoSnapshot('content' in block ? (block as Record<string, unknown>).content : null)
+        const namedTodo = isOmpTodoToolName(resultName)
+        const fromContent = extractOmpTodoSnapshot('content' in block ? (block as Record<string, unknown>).content : null, namedTodo)
         if (fromContent) return fromContent
         // toolUseResult is one envelope for the whole message. Only a single
         // tool_result can own it; with several blocks it would stick to the wrong one.
         if (blocks.length !== 1) continue
-        const fromEnvelope = extractOmpTodoSnapshot(data.toolUseResult)
+        const fromEnvelope = extractOmpTodoSnapshot(data.toolUseResult, namedTodo)
         if (fromEnvelope) return fromEnvelope
     }
 
@@ -156,12 +167,12 @@ function extractTodosFromCodexMessage(content: Record<string, unknown>): TodoIte
         if (data.is_error === true || data.isError === true) return null
         const name = typeof data.name === 'string' ? data.name : null
         if (name !== null && !isOmpTodoToolName(name)) return null
-        return extractOmpTodoSnapshot('output' in data ? data.output : null)
+        return extractOmpTodoSnapshot('output' in data ? data.output : null, isOmpTodoToolName(name))
     }
 
     if (data.type !== 'tool-call') return null
     const name = typeof data.name === 'string' ? data.name : null
-    if (name !== 'TodoWrite') return null
+    if (!isOmpTodoToolName(name)) return null
     const input = 'input' in data ? (data as Record<string, unknown>).input : null
     if (!isObject(input) || !Array.isArray(input.todos)) return null
     return todosFromClaudeArray(input.todos)

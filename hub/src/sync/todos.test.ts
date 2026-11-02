@@ -205,6 +205,92 @@ describe('omp todo extraction', () => {
             toolUseResult: { details: { op: 'view', phases: [], storage: 'session' } }
         }))).toEqual(initTodos)
     })
+    test('reads a phase list the message card already draws when the op is absent or unknown', () => {
+        const phases = [{
+            name: 'Tasks',
+            tasks: [
+                { content: '写 MLP 训练脚本', status: 'completed' },
+                { content: '跑通并核对指标', status: 'completed' },
+                { content: '复制 GPU 的 wandb .netrc', status: 'completed' },
+                { content: '核对本机条目', status: 'completed' }
+            ]
+        }]
+        const expected: TodoItem[] = [
+            { content: '写 MLP 训练脚本', status: 'completed', priority: 'medium', id: 'Tasks:0' },
+            { content: '跑通并核对指标', status: 'completed', priority: 'medium', id: 'Tasks:1' },
+            { content: '复制 GPU 的 wandb .netrc', status: 'completed', priority: 'medium', id: 'Tasks:2' },
+            { content: '核对本机条目', status: 'completed', priority: 'medium', id: 'Tasks:3' }
+        ]
+        expect(extractTodoWriteTodosFromMessageContent(ompToolResult({ phases, storage: 'session' }))).toEqual(expected)
+        expect(extractTodoWriteTodosFromMessageContent(ompToolResult({
+            op: 'replace',
+            phases,
+            storage: 'session'
+        }))).toEqual(expected)
+        expect(extractTodoWriteTodosFromMessageContent(ompToolResult({
+            phases: [],
+            storage: 'session'
+        }))).toBeNull()
+        expect(extractTodoWriteTodosFromMessageContent(ompToolResult({
+            phases,
+            storage: 'session'
+        }, { name: null }))).toBeNull()
+        expect(extractTodoWriteTodosFromMessageContent(ompToolResult({
+            phases: [],
+            storage: 'session'
+        }, { name: 'bash' }))).toBeNull()
+
+        const earlier = ompToolResult({
+            op: 'init',
+            phases: [{
+                name: 'Tasks',
+                tasks: [
+                    { content: '写 MLP 训练脚本', status: 'in_progress' },
+                    { content: '跑通并核对指标', status: 'pending' }
+                ]
+            }],
+            storage: 'session'
+        })
+        const later = ompToolResult({ phases, storage: 'session' })
+        const kept: TodoItem[] = [
+            { content: '写 MLP 训练脚本', status: 'in_progress', priority: 'medium', id: 'Tasks:0' },
+            { content: '跑通并核对指标', status: 'pending', priority: 'medium', id: 'Tasks:1' }
+        ]
+        expect([earlier, later].reduce<TodoItem[] | null>(
+            (todos, message) => applyTodoMessageContent(todos, message) ?? todos,
+            null
+        )).toEqual(expected)
+        expect([earlier, ompToolResult({ phases: [], storage: 'session' })].reduce<TodoItem[] | null>(
+            (todos, message) => applyTodoMessageContent(todos, message) ?? todos,
+            null
+        )).toEqual(kept)
+
+    })
+
+    test('reads a full todos array from an omp-named tool call and ignores its phase input', () => {
+        expect(extractTodoWriteTodosFromMessageContent(outputMessage({
+            type: 'assistant',
+            message: {
+                role: 'assistant',
+                content: [{
+                    type: 'tool_use',
+                    name: 'todo',
+                    input: {
+                        op: 'init',
+                        phases: initDetails.phases,
+                        todos: [{ content: 'claude task', status: 'pending', id: 'full-1' }]
+                    }
+                }]
+            }
+        }))).toEqual([{ content: 'claude task', status: 'pending', priority: 'medium', id: 'full-1' }])
+        expect(extractTodoWriteTodosFromMessageContent(codexMessage({
+            type: 'tool-call',
+            name: 'todo',
+            callId: 'todo-call',
+            input: { todos: [{ content: 'codex task', status: 'completed', priority: 'high', id: 'c1' }] }
+        }))).toEqual([{ content: 'codex task', status: 'completed', priority: 'high', id: 'c1' }])
+    })
+
 
     test('reads a named omp tool-call-result and still accepts TodoWrite', () => {
         expect(extractTodoWriteTodosFromMessageContent(codexMessage({

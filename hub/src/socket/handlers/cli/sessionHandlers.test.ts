@@ -250,6 +250,157 @@ describe('cli session handlers', () => {
         expect(typeof (sessionUpdated.data as { updatedAt?: number }).updatedAt).toBe('number')
         expect((sessionUpdated.data as { updatedAt?: number }).updatedAt).toBeGreaterThan(0)
     })
+    it('replaces session todos when a later omp result shares the first result timestamp', () => {
+        const store = new Store(':memory:')
+        const session = store.sessions.getOrCreateSession('omp-todos', { path: '/tmp', host: 'h' }, null, 'default')
+        const socket = new FakeSocket()
+        const webEvents: SyncEvent[] = []
+
+        registerSessionHandlers(socket as unknown as CliSocketWithData, {
+            store,
+            resolveSessionAccess: () => ({ ok: true, value: session as StoredSession }),
+            emitAccessError: () => {
+                throw new Error('unexpected access error')
+            },
+            onWebappEvent: (event) => {
+                webEvents.push(event)
+            }
+        })
+
+        const todoResult = (phases: Array<Record<string, unknown>>) => ({
+            role: 'agent',
+            content: {
+                type: 'output',
+                data: {
+                    type: 'user',
+                    message: {
+                        role: 'user',
+                        content: [{
+                            type: 'tool_result',
+                            tool_use_id: 'todo-1',
+                            name: 'todo',
+                            content: { content: [{ type: 'text', text: 'ok' }], details: { phases, storage: 'session' } },
+                            is_error: false
+                        }]
+                    },
+                    toolUseResult: { details: { phases, storage: 'session' } }
+                }
+            }
+        })
+
+        socket.trigger('message', {
+            sid: session.id,
+            createdAt: 1_700_000_000_000,
+            message: todoResult([{
+                name: 'Tasks',
+                tasks: [
+                    { content: '写 MLP 训练脚本', status: 'in_progress' },
+                    { content: '跑通并核对指标', status: 'pending' }
+                ]
+            }])
+        })
+        socket.trigger('message', {
+            sid: session.id,
+            createdAt: 1_700_000_000_000,
+            message: todoResult([{
+                name: 'Tasks',
+                tasks: [
+                    { content: '写 MLP 训练脚本', status: 'completed' },
+                    { content: '跑通并核对指标', status: 'completed' },
+                    { content: '复制 GPU 的 wandb .netrc', status: 'completed' },
+                    { content: '核对本机条目', status: 'completed' }
+                ]
+            }])
+        })
+
+        const stored = store.sessions.getSession(session.id)
+        expect(stored?.todos).toEqual([
+            { content: '写 MLP 训练脚本', status: 'completed', priority: 'medium', id: 'Tasks:0' },
+            { content: '跑通并核对指标', status: 'completed', priority: 'medium', id: 'Tasks:1' },
+            { content: '复制 GPU 的 wandb .netrc', status: 'completed', priority: 'medium', id: 'Tasks:2' },
+            { content: '核对本机条目', status: 'completed', priority: 'medium', id: 'Tasks:3' }
+        ])
+        expect(stored?.todosUpdatedAt).toBe(1_700_000_000_001)
+        const updates = webEvents.filter((event) => event.type === 'session-updated')
+        expect(updates).toHaveLength(2)
+        const latest = updates[1]
+        if (!latest || latest.type !== 'session-updated') throw new Error('missing second todo patch')
+        expect(latest.data).toMatchObject({
+            todos: { version: 1_700_000_000_001 }
+        })
+
+    })
+    it('keeps the newer todo list when an older result arrives 1000 seconds later', () => {
+        const store = new Store(':memory:')
+        const session = store.sessions.getOrCreateSession('omp-todos-order', { path: '/tmp', host: 'h' }, null, 'default')
+        const socket = new FakeSocket()
+        const webEvents: SyncEvent[] = []
+
+        registerSessionHandlers(socket as unknown as CliSocketWithData, {
+            store,
+            resolveSessionAccess: () => ({ ok: true, value: session as StoredSession }),
+            emitAccessError: () => {
+                throw new Error('unexpected access error')
+            },
+            onWebappEvent: (event) => {
+                webEvents.push(event)
+            }
+        })
+
+        const todoResult = (phases: Array<Record<string, unknown>>) => ({
+            role: 'agent',
+            content: {
+                type: 'output',
+                data: {
+                    type: 'user',
+                    message: {
+                        role: 'user',
+                        content: [{
+                            type: 'tool_result',
+                            tool_use_id: 'todo-1',
+                            name: 'todo',
+                            content: { content: [{ type: 'text', text: 'ok' }], details: { phases, storage: 'session' } },
+                            is_error: false
+                        }]
+                    }
+                }
+            }
+        })
+        const newerAt = 1_700_000_000_000
+
+        socket.trigger('message', {
+            sid: session.id,
+            createdAt: newerAt,
+            message: todoResult([{
+                name: 'Tasks',
+                tasks: [
+                    { content: '写 MLP 训练脚本', status: 'completed' },
+                    { content: '跑通并核对指标', status: 'completed' }
+                ]
+            }])
+        })
+        socket.trigger('message', {
+            sid: session.id,
+            createdAt: newerAt - 1000 * 1000,
+            message: todoResult([{
+                name: 'Tasks',
+                tasks: [
+                    { content: '写 MLP 训练脚本', status: 'in_progress' },
+                    { content: '跑通并核对指标', status: 'pending' }
+                ]
+            }])
+        })
+
+        const stored = store.sessions.getSession(session.id)
+        expect(stored?.todos).toEqual([
+            { content: '写 MLP 训练脚本', status: 'completed', priority: 'medium', id: 'Tasks:0' },
+            { content: '跑通并核对指标', status: 'completed', priority: 'medium', id: 'Tasks:1' }
+        ])
+        expect(stored?.todosUpdatedAt).toBe(newerAt)
+        expect(webEvents.filter((event) => event.type === 'session-updated')).toHaveLength(1)
+    })
+
+
 
     it('emits a structured metadata patch on update-metadata RPC (closes second half of #884)', () => {
         const store = new Store(':memory:')
