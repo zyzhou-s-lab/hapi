@@ -7,12 +7,15 @@ import { parseSessionConfigRpc } from '@hapi/protocol/schemas'
 import { clearProbeCache } from './mcpServerCheck'
 import { registerFileHandlers } from './handlers/files'
 import {
+    applyOmpProbeReport,
     commandBasename,
     cursorServersFromMcpJson,
     hooksFromClaudeSettings,
     inventorySkills,
+    liveToolsForServer,
     mcpServersFromClaudeJson,
     mcpServersFromConfig,
+    mcpToolMatchesServer,
     ompInventoryFromTools,
     parseCodexConfigInventory,
     projectMcpPaths,
@@ -119,6 +122,35 @@ command = "my-hook --token abc"
             mcp: { kind: 'tools', servers: [{ name: 'example_probe', source: 'tool' }, { name: 'hapi', source: 'tool' }] },
             hooks: { availability: 'none', items: [] },
         })
+    })
+
+    it('matches an omp tool id to the configured server and does not let a timeout hide it', () => {
+        const names = ['android-remote-control-mi10pro', 'android-remote-control-winrt', 'notion', 'android']
+        const tool = 'mcp__android_remote_control_mi10pro_android_tap'
+        expect(mcpToolMatchesServer(tool, 'android-remote-control-mi10pro')).toBe(true)
+        expect(mcpToolMatchesServer('mcp__notion__search', 'notion')).toBe(true)
+        expect(liveToolsForServer('android-remote-control-mi10pro', [tool], names)).toEqual([tool])
+        expect(liveToolsForServer('android', [tool], names)).toEqual([])
+        const loaded = applyOmpProbeReport(
+            { name: 'android-remote-control-mi10pro', source: 'user' },
+            { ok: false, timedOut: true, reason: 'timeout' },
+            [tool],
+            names,
+        )
+        expect(loaded).toMatchObject({ loaded: true, tools: [{ name: 'android_tap' }] })
+        expect(loaded.loadError).toBeUndefined()
+        expect(applyOmpProbeReport(
+            { name: 'notion', source: 'user' },
+            { ok: false, timedOut: false, reason: 'exit' },
+            ['mcp__notion__search'],
+            names,
+        )).toMatchObject({ loaded: false, loadError: 'exit' })
+        expect(applyOmpProbeReport(
+            { name: 'notion', source: 'user' },
+            { ok: false, timedOut: false, reason: "magpie's sign-in to the MCP server notion has run out: sign in to it again in magpie's Library bearer sekret http://127.0.0.1:9/mcp" },
+            [],
+            names,
+        ).loadError).toBe("magpie's sign-in to the MCP server notion has run out: sign in to it again in magpie's Library bearer ***")
     })
 
     it('lists configured omp servers and marks which ones the session loaded', async () => {
@@ -884,6 +916,8 @@ command = "my-hook --token abc"
         mkdirSync(join(home, 'claude', 'agents'), { recursive: true })
         writeFileSync(join(workspace, '.omp', 'agents', 'scout.md'), '---\nmeta:\n  name: hidden\n  description: Nested\nname: scout\ndescription: Project scout\n---\nDo not leak token=sekret\n')
         writeFileSync(join(home, 'agents', 'notes.md'), '---\nname: notes\ndescription: User notes https://example.test\n---\nbody\n')
+        writeFileSync(join(home, 'agents', 'discuss-divergent.md'), '---\nname: discuss:divergent\ndescription: Expansive stance\n---\nbody\n')
+        writeFileSync(join(home, 'agents', 'mentor-default.md'), '---\ndescription: Tool-less mentor\n---\nbody\n')
         writeFileSync(join(home, 'claude', 'agents', 'claude-helper.md'), '---\nname: claude-helper\ndescription: Claude helper\n---\nbody\n')
         writeFileSync(join(bundled, 'scout.md'), '---\nname: scout\ndescription: Bundled scout\n---\nbody\n')
         writeFileSync(join(bundled, 'task.md'), '---\nname: task\ndescription: Bundled task\n---\nbody\n')
@@ -895,6 +929,9 @@ command = "my-hook --token abc"
             expect(byName.notes).toMatchObject({ source: 'user', description: 'User notes' })
             expect(byName.notes?.filePath).toContain('/agents/notes.md')
             expect(byName['claude-helper']).toMatchObject({ source: 'user', description: 'Claude helper' })
+            expect(byName['discuss:divergent']).toMatchObject({ source: 'user', description: 'Expansive stance' })
+            expect(byName['mentor-default']).toMatchObject({ source: 'user', description: 'Tool-less mentor' })
+            expect(byName['discuss-divergent']).toBeUndefined()
             expect(byName.task).toMatchObject({ source: 'system', description: 'Bundled task' })
             expect(byName.task?.filePath).toContain('/task.md')
             const encoded = JSON.stringify(agents)

@@ -145,6 +145,7 @@ type PageFetch = {
     message?: RpcMsg
     failed: boolean
     timedOut: boolean
+    reason?: string
 }
 
 /** Follows `nextCursor` until the list ends, the 8s budget runs out, or the page cap is hit. */
@@ -157,10 +158,10 @@ async function followToolPages(
     let cursor: string | undefined
     for (let page = 0; page < TOOL_PAGE_LIMIT; page += 1) {
         const budget = remaining()
-        if (budget <= 0) return page === 0 ? down(true) : { ok: true, timedOut: false, tools, toolsTruncated: true }
+        if (budget <= 0) return page === 0 ? down(true, 'timeout') : { ok: true, timedOut: false, tools, toolsTruncated: true }
         const got = await fetchPage(2 + page, cursor, budget)
         if (got.failed || !got.message || !toolsOk(got.message)) {
-            return page === 0 ? down(got.timedOut) : { ok: true, timedOut: false, tools, toolsTruncated: true }
+            return page === 0 ? down(got.timedOut, got.timedOut ? 'timeout' : got.reason) : { ok: true, timedOut: false, tools, toolsTruncated: true }
         }
         const taken = listedTools(got.message, TOOL_LIMIT - tools.length)
         tools.push(...taken.tools)
@@ -178,16 +179,34 @@ async function followToolPages(
     return { ok: true, timedOut: false, tools, toolsTruncated: true }
 }
 
-type ProbeHit = { ok: boolean; timedOut: boolean; tools?: ListedMcpTool[]; toolsTruncated?: boolean }
+type ProbeHit = { ok: boolean; timedOut: boolean; tools?: ListedMcpTool[]; toolsTruncated?: boolean; reason?: string }
 
-function down(timedOut = false): ProbeHit {
-    return { ok: false, timedOut }
+const PROBE_REASON_MAX = 160
+
+function down(timedOut = false, reason?: string): ProbeHit {
+    return { ok: false, timedOut, ...(reason ? { reason } : {}) }
+}
+
+function clipProbeReason(status: number, body: string): string {
+    const collapsed = body.replace(/\s+/g, ' ').trim().slice(0, PROBE_REASON_MAX)
+    const redacted = redactConfigSecrets(collapsed).replace(/https?:\/\/\S+/gi, '').replace(/\s+/g, ' ').trim()
+    if (!redacted || /:\/\//.test(redacted) || redacted.length < 12) return `HTTP ${status}`
+    return redacted
+}
+
+async function httpFailureReason(response: Response): Promise<string> {
+    try {
+        const text = await response.text()
+        return clipProbeReason(response.status, text.slice(0, 4_000))
+    } catch {
+        return `HTTP ${response.status}`
+    }
 }
 
 const PROBE_TTL_MS = 10 * 60 * 1000
 const PROBE_CACHE_MAX = 200
 
-type CachedProbe = { ok: boolean; at: number; tools?: ListedMcpTool[]; toolsTruncated?: boolean }
+type CachedProbe = { ok: boolean; at: number; tools?: ListedMcpTool[]; toolsTruncated?: boolean; reason?: string }
 type Flight = { gen: number; fresh: boolean; promise: Promise<ProbeHit> }
 
 const probeCache = new Map<string, CachedProbe>()
@@ -245,7 +264,7 @@ function remember(key: string, gen: number, result: ProbeHit): void {
     writtenGen.delete(key)
     writtenGen.set(key, gen)
     probeCache.delete(key)
-    if (!result.timedOut) probeCache.set(key, { ok: result.ok, at: Date.now(), ...(result.ok ? { tools: result.tools ?? [], ...(result.toolsTruncated ? { toolsTruncated: true } : {}) } : {}) })
+    if (!result.timedOut) probeCache.set(key, { ok: result.ok, at: Date.now(), ...(result.reason ? { reason: result.reason } : {}), ...(result.ok ? { tools: result.tools ?? [], ...(result.toolsTruncated ? { toolsTruncated: true } : {}) } : {}) })
     while (probeCache.size > PROBE_CACHE_MAX) {
         const oldest = probeCache.keys().next().value
         if (oldest === undefined) break
@@ -257,6 +276,18 @@ function remember(key: string, gen: number, result: ProbeHit): void {
 
 export function cachedProbe(target: McpProbeTarget): boolean | undefined {
     return readCache(probeConfigKey(target))
+}
+
+export type McpProbeReport = { ok: boolean; timedOut: boolean; reason?: string }
+
+export function cachedProbeReport(target: McpProbeTarget): McpProbeReport | undefined {
+    const row = readRow(probeConfigKey(target))
+    if (!row) return undefined
+    return { ok: row.ok, timedOut: false, ...(row.reason ? { reason: row.reason } : {}) }
+}
+
+function asReport(hit: ProbeHit): McpProbeReport {
+    return { ok: hit.ok, timedOut: hit.timedOut, ...(hit.reason ? { reason: hit.reason } : {}) }
 }
 
 /** Tools from the last successful check of this config. Undefined until a check is stored. */
@@ -307,8 +338,8 @@ function startFlight(target: McpProbeTarget, key: string, fresh: boolean): Promi
 function probeShared(target: McpProbeTarget, fresh: boolean): Promise<ProbeHit> {
     const key = probeConfigKey(target)
     if (!fresh) {
-        const hit = readCache(key)
-        if (hit !== undefined) return Promise.resolve({ ok: hit, timedOut: false })
+        const row = readRow(key)
+        if (row) return Promise.resolve({ ok: row.ok, timedOut: false, ...(row.reason ? { reason: row.reason } : {}) })
         const flight = flights.get(key)
         if (flight) return flight.promise
         return startFlight(target, key, false)
@@ -392,16 +423,20 @@ async function checkStdio(target: McpProbeTarget): Promise<ProbeHit> {
     try {
         send(initializeReq())
         const init = await waitFor(1, remaining())
-        if (!init || init.error) return down(!init && !processGone && child.exitCode === null)
+        if (!init) return down(!processGone && child.exitCode === null, (!processGone && child.exitCode === null) ? 'timeout' : 'exit')
+        if (init.error) return down(false, 'exit')
         send(INITIALIZED)
         return await followToolPages(remaining, async (id, cursor, budgetMs) => {
             send(request(id, 'tools/list', cursor ? { cursor } : undefined))
             const message = await waitFor(id, budgetMs)
-            if (!message) return { failed: true, timedOut: !processGone && child.exitCode === null }
+            if (!message) {
+                const timedOut = !processGone && child.exitCode === null
+                return { failed: true, timedOut, reason: timedOut ? 'timeout' : 'exit' }
+            }
             return { message, failed: false, timedOut: false }
         })
     } catch {
-        return down()
+        return down(false, 'exit')
     } finally {
         reader.close()
         if (!exited && child.exitCode === null && child.stdin.writable) child.stdin.end()
@@ -476,12 +511,12 @@ async function checkHttp(target: McpProbeTarget): Promise<ProbeHit> {
     const remaining = () => Math.max(0, PROBE_BUDGET_MS - (Date.now() - started))
     try {
         const initBudget = remaining()
-        if (initBudget <= 0) return down(true)
+        if (initBudget <= 0) return down(true, 'timeout')
         const init = await postJson(url, initializeReq(), headers, session, initBudget)
-        if (init.status === 401 || init.status === 403 || init.status < 200 || init.status >= 300) return down()
+        if (init.status === 401 || init.status === 403 || init.status < 200 || init.status >= 300) return down(false, await httpFailureReason(init))
         session = init.headers.get('Mcp-Session-Id') ?? ''
         const initMsg = await readRpc(init, 1)
-        if (!initMsg || initMsg.error) return down()
+        if (!initMsg || initMsg.error) return down(false, 'exit')
         const noteBudget = remaining()
         if (noteBudget > 0) {
             await postJson(url, INITIALIZED, headers, session, noteBudget).catch(() => undefined)
@@ -490,19 +525,19 @@ async function checkHttp(target: McpProbeTarget): Promise<ProbeHit> {
             try {
                 const listed = await postJson(url, request(id, 'tools/list', cursor ? { cursor } : undefined), headers, session, budgetMs)
                 if (listed.status === 401 || listed.status === 403 || listed.status < 200 || listed.status >= 300) {
-                    return { failed: true, timedOut: false }
+                    return { failed: true, timedOut: false, reason: await httpFailureReason(listed) }
                 }
                 const message = await readRpc(listed, id)
-                if (!message) return { failed: true, timedOut: false }
+                if (!message) return { failed: true, timedOut: false, reason: 'exit' }
                 return { message, failed: false, timedOut: false }
             } catch (error) {
                 const name = error instanceof Error ? error.name : ''
-                return { failed: true, timedOut: name === 'TimeoutError' || name === 'AbortError' }
+                return { failed: true, timedOut: name === 'TimeoutError' || name === 'AbortError', reason: name === 'TimeoutError' || name === 'AbortError' ? 'timeout' : 'exit' }
             }
         })
     } catch (error) {
         const name = error instanceof Error ? error.name : ''
-        return down(name === 'TimeoutError' || name === 'AbortError')
+        return down(name === 'TimeoutError' || name === 'AbortError', name === 'TimeoutError' || name === 'AbortError' ? 'timeout' : 'exit')
     } finally {
         if (session) {
             fetch(target.url, {
@@ -521,13 +556,13 @@ export async function checkMcpServer(target: McpProbeTarget): Promise<boolean> {
 }
 
 /** At most four at a time. A stored result is reused until the config changes; a timeout is not stored. */
-export async function checkMcpServers(targets: readonly McpProbeTarget[], options?: { fresh?: boolean }): Promise<Map<string, boolean>> {
-    const loaded = new Map<string, boolean>()
+export async function probeMcpServers(targets: readonly McpProbeTarget[], options?: { fresh?: boolean }): Promise<Map<string, McpProbeReport>> {
+    const loaded = new Map<string, McpProbeReport>()
     const pending: McpProbeTarget[] = []
     for (const target of targets) {
         if (!options?.fresh) {
-            const hit = cachedProbe(target)
-            if (hit !== undefined) {
+            const hit = cachedProbeReport(target)
+            if (hit) {
                 loaded.set(target.name, hit)
                 continue
             }
@@ -542,11 +577,16 @@ export async function checkMcpServers(targets: readonly McpProbeTarget[], option
             const target = pending[index]
             if (!target) return
             const result = await probeShared(target, options?.fresh === true)
-            loaded.set(target.name, result.ok)
+            loaded.set(target.name, asReport(result))
         }
     }
     await Promise.all(Array.from({ length: Math.min(CHECK_AT_ONCE, pending.length) }, () => worker()))
     return loaded
+}
+
+export async function checkMcpServers(targets: readonly McpProbeTarget[], options?: { fresh?: boolean }): Promise<Map<string, boolean>> {
+    const reports = await probeMcpServers(targets, options)
+    return new Map([...reports].map(([name, report]) => [name, report.ok]))
 }
 
 function stringList(value: unknown): string[] {

@@ -14,11 +14,18 @@ import { transferComposerDraftThenNavigate } from '@/lib/composer-draft-transfer
 import { useTranslation } from '@/lib/use-translation'
 import { formatSessionConfigError } from '@/lib/sessionConfigError'
 import { encodeBase64 } from '@/lib/utils'
+import { mcpLoadSentence } from '@/lib/sessionInventoryView'
 
-function statusKey(server: SessionInventoryMcpServer): string {
-    if (server.loaded === true) return 'session.config.mcp.loaded'
-    if (server.loaded === false) return 'session.config.mcp.notLoaded'
-    return 'session.config.mcp.unchecked'
+function statusText(server: SessionInventoryMcpServer, t: (key: string) => string): string {
+    const notLoaded = t('session.config.mcp.notLoaded')
+    if (server.loaded === true) return t('session.config.mcp.loaded')
+    if (server.loaded === false) {
+        if (server.loadError === 'timeout') return `${notLoaded} · ${t('session.config.mcp.timeout')}`
+        if (server.loadError === 'exit') return `${notLoaded} · ${t('session.config.mcp.exited')}`
+        if (server.loadError?.startsWith('HTTP ')) return `${notLoaded} · ${server.loadError}`
+        return notLoaded
+    }
+    return t('session.config.mcp.unchecked')
 }
 
 export default function SessionConfigServerPage() {
@@ -115,9 +122,10 @@ export default function SessionConfigServerPage() {
                     <div className="mx-auto flex w-full max-w-content flex-col gap-4 p-4 max-sm:pb-24">
                         <div className="flex flex-wrap items-center gap-2">
                             <h1 className="min-w-0 flex-1 break-words text-lg font-semibold text-[var(--app-fg)]">{server.name}</h1>
-                            <span className="shrink-0 rounded-full bg-[var(--app-subtle-bg)] px-2 py-0.5 text-[11px] text-[var(--app-hint)]">{t(statusKey(server))}</span>
+                            <span className="shrink-0 rounded-full bg-[var(--app-subtle-bg)] px-2 py-0.5 text-[11px] text-[var(--app-hint)]">{statusText(server, t)}</span>
                             <span className="shrink-0 rounded-full bg-[var(--app-subtle-bg)] px-2 py-0.5 text-[11px] text-[var(--app-hint)]">{t(`session.config.source.${server.source as SessionInventorySource}`)}</span>
                         </div>
+                        {mcpLoadSentence(server.loadError) ? <p className="text-sm text-[var(--app-hint)]">{mcpLoadSentence(server.loadError)}</p> : null}
                         {server.filePath ? (
                             <button type="button" className="break-all text-left text-sm text-[var(--app-link)]" onClick={openFile}>
                                 {server.pathLabel ?? server.filePath}
