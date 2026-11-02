@@ -123,13 +123,14 @@ describe('work lines', () => {
             'work_dismissed',
             'work_layouts',
             'work_lines',
+            'work_references',
             'work_sessions',
             'work_training_runs'
         ])
     })
 })
 
-describe('schema 27', () => {
+describe('schema 28', () => {
     it('migrates a v26 database and does not create work_training_points', () => {
         const dir = mkdtempSync(join(tmpdir(), 'hapi-worklines-'))
         const path = join(dir, 'hub.sqlite')
@@ -146,7 +147,7 @@ describe('schema 27', () => {
         try {
             const db = (migrated as unknown as { db: Database }).db
             const version = db.prepare('PRAGMA user_version').get() as { user_version: number }
-            expect(version.user_version).toBe(27)
+            expect(version.user_version).toBe(28)
             const points = db.prepare("SELECT name FROM sqlite_master WHERE name = 'work_training_points'").get()
             expect(points).toBeNull()
             expect(db.prepare("SELECT name FROM sqlite_master WHERE name = 'work_training_runs'").get()).toBeTruthy()

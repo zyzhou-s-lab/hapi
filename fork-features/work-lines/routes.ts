@@ -10,6 +10,7 @@ import { pushTrainingCard } from '../../hub/src/socket/trainingCardPush'
 const lineCreateSchema = z.object({
     name: z.string(),
     goal: z.string().nullable().optional(),
+    hypothesis: z.string().max(4000).nullable().optional(),
     sort: z.number().optional(),
     primaryMachineId: z.string(),
     primaryPath: z.string()
@@ -18,6 +19,7 @@ const lineCreateSchema = z.object({
 const linePatchSchema = z.object({
     name: z.string().optional(),
     goal: z.string().nullable().optional(),
+    hypothesis: z.string().max(4000).nullable().optional(),
     sort: z.number().optional(),
     primaryMachineId: z.string().optional(),
     primaryPath: z.string().optional()
@@ -44,6 +46,11 @@ const trainingSchema = z.object({
     run: z.string(),
     machineId: z.string(),
     runDir: z.string()
+})
+
+const referenceSchema = z.object({
+    format: z.enum(['apa7', 'vancouver']),
+    citation: z.string().min(1).max(2000)
 })
 
 type Ready = {
@@ -162,6 +169,69 @@ export function mountWorkLineRoutes(app: Hono<WebAppEnv>, deps: {
         }
     })
 
+
+    routes.get('/lines/:id/hypothesis', async (c) => {
+        const ready = await open(c)
+        if (ready instanceof Response) return ready
+        try {
+            const hypothesis = ready.engine.getWorkLines().getHypothesis(ready.account.id, c.req.param('id'))
+            return c.json({ hypothesis })
+        } catch (error) {
+            return mapError(c, error)
+        }
+    })
+
+    routes.put('/lines/:id/hypothesis', async (c) => {
+        const ready = await open(c)
+        if (ready instanceof Response) return ready
+        const body = await c.req.json().catch(() => null) as { hypothesis?: unknown } | null
+        if (!body || (typeof body.hypothesis !== 'string' && body.hypothesis !== null)) return c.json({ error: 'Invalid body' }, 400)
+        try {
+            const hypothesis = ready.engine.getWorkLines().setHypothesis(ready.account.id, c.req.param('id'), body.hypothesis ?? '')
+            invalidate(ready.account.defaultNamespace, ready.account.id, 'work-map')
+            return c.json({ hypothesis })
+        } catch (error) {
+            return mapError(c, error)
+        }
+    })
+
+    routes.get('/lines/:id/references', async (c) => {
+        const ready = await open(c)
+        if (ready instanceof Response) return ready
+        try {
+            const references = ready.engine.getWorkLines().listReferences(ready.account.id, c.req.param('id'))
+            return c.json({ references })
+        } catch (error) {
+            return mapError(c, error)
+        }
+    })
+
+    routes.post('/lines/:id/references', async (c) => {
+        const ready = await open(c)
+        if (ready instanceof Response) return ready
+        const parsed = referenceSchema.safeParse(await c.req.json().catch(() => null))
+        if (!parsed.success) return c.json({ error: 'Invalid body' }, 400)
+        try {
+            const reference = ready.engine.getWorkLines().addReference(ready.account.id, { lineId: c.req.param('id'), ...parsed.data })
+            invalidate(ready.account.defaultNamespace, ready.account.id, 'work-map')
+            return c.json({ reference })
+        } catch (error) {
+            return mapError(c, error)
+        }
+    })
+
+    routes.delete('/lines/:id/references/:referenceId', async (c) => {
+        const ready = await open(c)
+        if (ready instanceof Response) return ready
+        try {
+            ready.engine.getWorkLines().removeReference(ready.account.id, c.req.param('id'), c.req.param('referenceId'))
+            invalidate(ready.account.defaultNamespace, ready.account.id, 'work-map')
+            return c.json({ ok: true })
+        } catch (error) {
+            return mapError(c, error)
+        }
+    })
+
     routes.put('/directories', async (c) => {
         const ready = await open(c)
         if (ready instanceof Response) return ready
@@ -230,17 +300,25 @@ export function mountWorkLineRoutes(app: Hono<WebAppEnv>, deps: {
         const ready = await open(c)
         if (ready instanceof Response) return ready
         if (c.req.param('surface') !== 'workbench') return c.json({ error: 'Not found' }, 404)
-        const body = await c.req.json().catch(() => null) as { lineId?: unknown; run?: unknown; metrics?: unknown } | null
+        const body = await c.req.json().catch(() => null) as { lineId?: unknown; run?: unknown; metrics?: unknown; instanceId?: unknown; xAxis?: unknown } | null
         if (!body || typeof body.lineId !== 'string' || typeof body.run !== 'string') return c.json({ error: 'Invalid body' }, 400)
         if (body.metrics !== undefined && (!Array.isArray(body.metrics) || body.metrics.some((metric) => typeof metric !== 'string'))) {
             return c.json({ error: 'Invalid body' }, 400)
         }
+        if (body.instanceId !== undefined && typeof body.instanceId !== 'string') return c.json({ error: 'Invalid body' }, 400)
+        if (body.xAxis !== undefined && typeof body.xAxis !== 'string') return c.json({ error: 'Invalid body' }, 400)
         try {
             const metrics = Array.isArray(body.metrics) ? body.metrics : []
-            const layout = ready.engine.getWorkLines().bindTrainingLine(ready.account.id, body.lineId, body.run, metrics)
+            const bound = ready.engine.getWorkLines().bindTrainingLine(ready.account.id, {
+                lineId: body.lineId,
+                run: body.run,
+                metrics,
+                ...(typeof body.instanceId === 'string' ? { instanceId: body.instanceId } : {}),
+                ...(typeof body.xAxis === 'string' ? { xAxis: body.xAxis } : {}),
+            })
             invalidate(ready.account.defaultNamespace, ready.account.id, 'work-layout')
-            pushTrainingCard(ready.account.id, { lineId: body.lineId, run: body.run, metrics })
-            return c.json({ layout })
+            pushTrainingCard(ready.account.id, { lineId: body.lineId, run: body.run, metrics, instanceId: bound.instanceId })
+            return c.json({ layout: bound.layout, instanceId: bound.instanceId })
         } catch (error) {
             return mapError(c, error)
         }

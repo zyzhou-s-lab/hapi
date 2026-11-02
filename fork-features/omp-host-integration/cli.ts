@@ -13,7 +13,8 @@ import {
 } from '../../cli/src/modules/common/generatedImages';
 import { resolveSkill } from '../../cli/src/modules/common/skills';
 import { readSettings } from '../../cli/src/persistence';
-import { bindTrainingCard, formatWorkResult, queryTrainingRun, registerTrainingRun } from '../../cli/src/modules/training/trainingMcp';
+import { formatWorkResult, queryTrainingRun, registerTrainingRun } from '../../cli/src/modules/training/trainingMcp';
+import { EXPLORE_TOOLS, callExploreTool, exploreToolDescription, exploreToolSchemas, exploreToolTitle, type ExploreTool } from '../../cli/src/modules/training/exploreMcp';
 import type { OmpRpcClient } from '../../cli/src/omp/rpc/OmpRpcClient';
 import { defaultOmpEventAllowlist } from '../../cli/src/omp/rpc/eventAllowlist';
 import type {
@@ -127,11 +128,6 @@ const RegisterTrainingRunArgsSchema = z.object({
     machineId: z.string().optional()
 });
 const QueryTrainingRunArgsSchema = z.object({ run: z.string() });
-const BindTrainingCardArgsSchema = z.object({
-    lineId: z.string(),
-    run: z.string(),
-    metrics: z.array(z.string()).optional()
-});
 
 const HOST_OPERATION_TIMEOUT_MS = 120_000;
 
@@ -141,6 +137,12 @@ function textResult(text: string, details: JsonObject = {}): OmpAgentToolResult 
 
 function errorText(error: unknown): string {
     return error instanceof Error ? error.message : String(error);
+}
+
+function zodObjectToJsonSchema(schema: z.ZodType): JsonObject {
+    const json = z.toJSONSchema(schema) as JsonObject & { $schema?: unknown }
+    delete json.$schema
+    return json
 }
 
 function abortError(operation: string): Error {
@@ -241,22 +243,13 @@ const HOST_TOOL_DEFINITIONS: OmpHostToolDefinition[] = [
         },
         loadMode: 'discoverable'
     },
-    {
-        name: 'bind_training_card',
-        label: 'Bind Training Card',
-        description: 'Show a registered run on a work-line training card. metrics empty means every metric. The open workbench updates immediately.',
-        parameters: {
-            type: 'object',
-            properties: {
-                lineId: { type: 'string', description: 'Work line id' },
-                run: { type: 'string', description: 'Registered run name' },
-                metrics: { type: 'array', items: { type: 'string' }, description: 'Metric names to draw. Omit or pass [] to draw every metric.' }
-            },
-            required: ['lineId', 'run'],
-            additionalProperties: false
-        },
+    ...EXPLORE_TOOLS.map((name): OmpHostToolDefinition => ({
+        name,
+        label: exploreToolTitle(name),
+        description: exploreToolDescription(name),
+        parameters: zodObjectToJsonSchema(exploreToolSchemas[name]),
         loadMode: 'discoverable'
-    },
+    })),
     {
         name: 'skill_lookup',
         label: 'Look Up Skill',
@@ -303,6 +296,8 @@ type OmpHostToolBridgeOptions = {
     sendAgentMessage: (message: unknown) => void;
     sendSummary: (title: string) => void;
     onFatal: (error: Error) => void;
+    sessionId?: string;
+    sessionPath?: string;
 };
 
 export class OmpHostToolBridge {
@@ -473,14 +468,25 @@ export class OmpHostToolBridge {
                 const response = await queryTrainingRun(this.workHub(), args.run);
                 return this.trainingResult(request.toolName, signal, response.status, response.body);
             }
-            case 'bind_training_card': {
-                const args = BindTrainingCardArgsSchema.parse(request.arguments);
-                throwIfAborted(signal, request.toolName);
-                const response = await bindTrainingCard(this.workHub(), args);
-                return this.trainingResult(request.toolName, signal, response.status, response.body);
-            }
-            default:
+            default: {
+                if ((EXPLORE_TOOLS as readonly string[]).includes(request.toolName)) {
+                    const name = request.toolName as ExploreTool;
+                    const args = exploreToolSchemas[name].parse(request.arguments) as Record<string, unknown>;
+                    throwIfAborted(signal, request.toolName);
+                    const machineId = typeof args.machineId === 'string' && args.machineId.trim()
+                        ? args.machineId.trim()
+                        : (await readSettings()).machineId;
+                    const result = await callExploreTool(this.workHub(), name, args, {
+                        sessionId: this.options.sessionId,
+                        machineId,
+                        path: this.options.sessionPath ?? this.options.cwd,
+                    });
+                    throwIfAborted(signal, request.toolName);
+                    if (result.isError) throw new Error(result.text);
+                    return { result: textResult(result.text) };
+                }
                 throw new Error(`HAPI host tool is not registered: ${request.toolName}`);
+            }
         }
     }
 
@@ -1237,7 +1243,10 @@ export class OmpHostIntegration {
         client: OmpRpcClient;
         cwd: string;
         sessionClient: Pick<ApiSessionClient,
-            'sendAgentMessage' | 'sendClaudeSessionMessage' | 'updateAgentState' | 'updateMetadata' | 'rpcHandlerManager' | 'workApi'>;
+            'sendAgentMessage' | 'sendClaudeSessionMessage' | 'updateAgentState' | 'updateMetadata' | 'rpcHandlerManager' | 'workApi'> & {
+            sessionId?: string
+            getMetadata?: () => { path?: string | null } | null
+        };
         onFatal: (error: Error) => void;
         hostUriProviders?: OmpHostUriProvider[];
         eventAllowlist?: ReadonlySet<OmpKnownEventType>;
@@ -1268,7 +1277,9 @@ export class OmpHostIntegration {
                 if (eventAllowlist.has('host_tool_call')) options.sessionClient.sendAgentMessage(message);
             },
             sendSummary,
-            onFatal: options.onFatal
+            onFatal: options.onFatal,
+            sessionId: options.sessionClient.sessionId,
+            sessionPath: options.sessionClient.getMetadata?.()?.path ?? options.cwd,
         });
         this.hostUris = new OmpHostUriBridge(
             options.client,

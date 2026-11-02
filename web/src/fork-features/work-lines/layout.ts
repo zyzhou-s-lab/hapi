@@ -1,4 +1,4 @@
-export const LAYOUT_REVISION = 2
+export const LAYOUT_REVISION = 4
 export const CARD_POLL_MIN_MS = 5_000
 
 export type WorkSurface = 'overview' | 'workbench'

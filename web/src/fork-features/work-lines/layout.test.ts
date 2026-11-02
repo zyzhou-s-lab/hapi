@@ -51,6 +51,19 @@ describe('work layout', () => {
         ])
     })
 
+    it('adds hypothesis and references when a saved workbench is behind the current revision', () => {
+        const saved: WorkLayout = {
+            revision: 3,
+            regions: {
+                main: [{ cardId: 'workbench.line-header' }, { cardId: 'workbench.focus' }],
+                side: [{ cardId: 'workbench.sessions' }],
+            },
+        }
+        const merged = mergeLayout(saved, workbenchLayout)
+        expect(merged.regions.main.map((slot) => slot.cardId)).toContain('workbench.hypothesis')
+        expect(merged.regions.side.map((slot) => slot.cardId)).toContain('workbench.references')
+    })
+
     it('clamps a short poll and stops it while the page is hidden', () => {
         expect(clampCardPollMs(1_000)).toBe(CARD_POLL_MIN_MS)
         expect(visiblePollInterval(1_000, false)).toBe(false)

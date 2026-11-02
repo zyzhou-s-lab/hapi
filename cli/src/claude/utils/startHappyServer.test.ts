@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { ApiSessionClient } from '@/api/apiSession'
 import { startHappyServer, toClaudeAllowedHapiMcpTools } from './startHappyServer'
+import { EXPLORE_TOOLS } from '@/modules/training/exploreMcp'
 
 type ToolResult = {
     content?: Array<{ type: string; text?: string }>
@@ -118,7 +119,7 @@ describe('startHappyServer skill_lookup', () => {
             'send_file',
             'register_training_run',
             'query_training_run',
-            'bind_training_card'
+            ...EXPLORE_TOOLS,
         ])
     })
 
@@ -186,7 +187,7 @@ describe('startHappyServer skill_lookup', () => {
         await mcp.connect(new StreamableHTTPClientTransport(new URL(server.url)))
         const tools = await mcp.listTools()
 
-        expect(server.toolNames).toEqual(['display_image', 'display_video', 'display_media', 'list_peers', 'ping_peer', 'inspect_peer', 'send_file', 'register_training_run', 'query_training_run', 'bind_training_card'])
+        expect(server.toolNames).toEqual(['display_image', 'display_video', 'display_media', 'list_peers', 'ping_peer', 'inspect_peer', 'send_file', 'register_training_run', 'query_training_run', ...EXPLORE_TOOLS])
         expect(tools.tools.map((tool) => tool.name)).toEqual([
             'display_image',
             'display_video',
@@ -197,7 +198,7 @@ describe('startHappyServer skill_lookup', () => {
             'send_file',
             'register_training_run',
             'query_training_run',
-            'bind_training_card'
+            ...EXPLORE_TOOLS,
         ])
     })
 
@@ -223,6 +224,6 @@ describe('toClaudeAllowedHapiMcpTools', () => {
         ])
         expect(toClaudeAllowedHapiMcpTools(['display_video'])).not.toContain('mcp__hapi__display_video')
         expect(toClaudeAllowedHapiMcpTools(['display_media'])).not.toContain('mcp__hapi__display_media')
-        expect(toClaudeAllowedHapiMcpTools(['send_file'])).not.toContain('mcp__hapi__send_file')
+        expect(toClaudeAllowedHapiMcpTools(['delete_exploration', 'get_hypothesis'])).toEqual(['mcp__hapi__get_hypothesis'])
     })
 })

@@ -548,6 +548,7 @@ export class ApiSessionClient extends EventEmitter {
             headers: buildHubRequestHeaders({
                 Authorization: `Bearer ${this.token}`,
                 'Content-Type': 'application/json',
+                'x-hapi-session-id': this.sessionId,
             }),
             timeout: 20_000,
             validateStatus: () => true,

@@ -70,16 +70,18 @@ describe('cli work routes', () => {
         expect(hidden.status).toBe(404)
 
         const line = core.workLines.createLine(owner.id, { name: '主线', primaryMachineId: 'gpu', primaryPath: '/data/hapi' })
-        const bound = await app.request('/cli/work/training-card', {
-            method: 'PUT',
+        const bound = await app.request(`/cli/work/explorations/${line.id}/cards`, {
+            method: 'POST',
             headers: ownerAuth,
-            body: JSON.stringify({ lineId: line.id, run: 'exp-1', metrics: ['loss', ' loss', 'loss'], accountId: other.id }),
+            body: JSON.stringify({ run: 'exp-1', metrics: ['loss', ' loss', 'loss'], accountId: other.id }),
         })
         expect(bound.status).toBe(200)
-        expect(pushed).toEqual([{ lineId: line.id, run: 'exp-1', metrics: ['loss'] }])
+        const body = await bound.json() as { card: { cardId: string } }
+        expect(pushed).toEqual([{ lineId: line.id, run: 'exp-1', metrics: ['loss'], instanceId: body.card.cardId }])
         const layout = core.workLines.getLayout(owner.id, 'workbench')
         const slot = layout?.regions.main.find((item) => item.args?.run === 'exp-1')
         expect(slot?.args?.lineId).toBe(line.id)
+        expect(slot?.args?.instanceId).toBe(body.card.cardId)
     })
 
     it('rejects a web JWT on the CLI training route', async () => {
@@ -95,10 +97,10 @@ describe('cli work routes', () => {
     it('does not bind another account line and does not push', async () => {
         pushed.length = 0
         const line = core.workLines.createLine(owner.id, { name: '别人的主线', primaryMachineId: 'gpu', primaryPath: '/data/other-line' })
-        const response = await app.request('/cli/work/training-card', {
-            method: 'PUT',
+        const response = await app.request(`/cli/work/explorations/${line.id}/cards`, {
+            method: 'POST',
             headers: { authorization: `Bearer ${otherToken.plaintext}`, 'content-type': 'application/json' },
-            body: JSON.stringify({ lineId: line.id, run: 'exp-1', metrics: ['loss'] }),
+            body: JSON.stringify({ run: 'exp-1', metrics: ['loss'] }),
         })
         expect(response.status).toBe(404)
         expect(pushed).toEqual([])

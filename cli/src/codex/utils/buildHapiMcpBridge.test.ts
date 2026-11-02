@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ApiSessionClient } from '@/api/apiSession'
 import { HAPI_SESSION_ID_ENV } from '@/agent/hapiSessionEnv'
+import { EXPLORE_TOOLS } from '@/modules/training/exploreMcp'
 
 const harness = vi.hoisted(() => ({
     startOptions: null as unknown,
@@ -82,7 +83,7 @@ describe('buildHapiMcpBridge skill lookup config', () => {
             list_peers: { approval_mode: 'approve' },
             register_training_run: { approval_mode: 'approve' },
             query_training_run: { approval_mode: 'approve' },
-            bind_training_card: { approval_mode: 'approve' },
+            ...Object.fromEntries(EXPLORE_TOOLS.map((name) => [name, { approval_mode: name === 'delete_exploration' ? 'prompt' : 'approve' }])),
             skill_lookup: { approval_mode: 'approve' }
         })
     })
@@ -100,7 +101,7 @@ describe('buildHapiMcpBridge skill lookup config', () => {
             list_peers: { approval_mode: 'approve' },
             register_training_run: { approval_mode: 'approve' },
             query_training_run: { approval_mode: 'approve' },
-            bind_training_card: { approval_mode: 'approve' }
+            ...Object.fromEntries(EXPLORE_TOOLS.map((name) => [name, { approval_mode: name === 'delete_exploration' ? 'prompt' : 'approve' }])),
         })
     })
 

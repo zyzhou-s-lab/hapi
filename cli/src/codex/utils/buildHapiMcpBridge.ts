@@ -9,7 +9,7 @@ import { startHappyServer } from '@/claude/utils/startHappyServer';
 import { getHappyCliCommand } from '@/utils/spawnHappyCLI';
 import type { ApiSessionClient } from '@/api/apiSession';
 import { exportHapiSessionEnv } from '@/agent/hapiSessionEnv';
-
+import { EXPLORE_TOOLS } from '@/modules/training/exploreMcp';
 /**
  * MCP server entry configuration.
  */
@@ -115,7 +115,9 @@ export async function buildHapiMcpBridge(
     tools.query_training_run = { approval_mode: 'approve' };
     // Own-account writes only: the hub maps this CLI token to one account.
     tools.register_training_run = { approval_mode: 'approve' };
-    tools.bind_training_card = { approval_mode: 'approve' };
+    for (const name of EXPLORE_TOOLS) {
+        tools[name] = { approval_mode: name === 'delete_exploration' ? 'prompt' : 'approve' };
+    }
     // ping_peer / inspect_peer are registered on the HTTP MCP server / stdio
     // bridge, but are not auto-approved: they target another session (resume +
     // inject, or read peer histories).

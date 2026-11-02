@@ -2,8 +2,8 @@ export type TrainingCardUpdate = {
     lineId: string
     run: string
     metrics: string[]
+    instanceId: string
 }
-
 type Push = (accountId: number, update: TrainingCardUpdate) => void
 
 let push: Push | null = null

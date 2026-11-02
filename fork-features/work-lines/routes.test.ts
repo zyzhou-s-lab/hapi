@@ -125,7 +125,7 @@ describe('work line routes', () => {
         const firstBody = await first.json() as { layout: { revision: number; regions: Record<string, { cardId: string }[]> } }
         expect(firstBody.layout.revision).toBe(1)
         expect(firstBody.layout.regions.rail.map((slot) => slot.cardId)).toEqual(['workbench.line-list'])
-        expect(firstBody.layout.regions.side.map((slot) => slot.cardId)).toEqual(['workbench.sessions', 'workbench.continue'])
+        expect(firstBody.layout.regions.side.map((slot) => slot.cardId)).toEqual(['workbench.references', 'workbench.sessions', 'workbench.continue'])
         const second = await app.request('/api/work/layout/workbench/training', {
             method: 'PUT',
             headers: auth,
@@ -133,11 +133,13 @@ describe('work line routes', () => {
         })
         expect(second.status).toBe(200)
         const saved = await app.request('/api/work/layout/workbench', { headers: { authorization: `Bearer ${await token()}` } })
-        const body = await saved.json() as { layout: { regions: { main: { cardId: string; args?: { run: string; lineId: string } }[] } } }
-        expect(body.layout.regions.main.filter((slot) => slot.cardId === 'example.training-curves').map((slot) => slot.args)).toEqual([
+        const body = await saved.json() as { layout: { regions: { main: { cardId: string; args?: { run?: string; lineId?: string; instanceId?: string } }[] } } }
+        const curves = body.layout.regions.main.filter((slot) => slot.cardId === 'example.training-curves')
+        expect(curves.map((slot) => ({ run: slot.args?.run, lineId: slot.args?.lineId }))).toEqual([
             { run: 'exp-1', lineId: createdLines[0] },
             { run: 'exp-2', lineId: createdLines[1] },
         ])
+        expect(new Set(curves.map((slot) => slot.args?.instanceId)).size).toBe(2)
         const hyphen = await app.request('/api/work/layout/overview', {
             method: 'PUT',
             headers: auth,
@@ -162,10 +164,11 @@ describe('work line routes', () => {
             body: JSON.stringify({ lineId, run: 'exp-1', metrics: ['loss', 'loss'] }),
         })
         expect(response.status).toBe(200)
+        const bound = await response.json() as { instanceId: string }
         const saved = await app.request('/api/work/layout/workbench', { headers: { authorization: `Bearer ${await token()}` } })
         const body = await saved.json() as { layout: { regions: { main: { args?: { metrics?: string } }[] } } }
         expect(body.layout.regions.main.find((slot) => slot.args?.metrics)?.args?.metrics).toBe('["loss"]')
-        expect(pushed).toEqual([{ accountId: account.id, update: { lineId, run: 'exp-1', metrics: ['loss', 'loss'] } }])
+        expect(pushed).toEqual([{ accountId: account.id, update: { lineId, run: 'exp-1', metrics: ['loss', 'loss'], instanceId: bound.instanceId } }])
         setTrainingCardPush(null)
     })
     it('broadcasts card-invalidated without curve points when a line is created', async () => {

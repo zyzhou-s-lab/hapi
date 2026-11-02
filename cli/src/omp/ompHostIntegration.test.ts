@@ -387,13 +387,13 @@ describe('OMP host tool bridge', () => {
             tools: expect.arrayContaining([
                 expect.objectContaining({ name: 'register_training_run', loadMode: 'discoverable' }),
                 expect.objectContaining({ name: 'query_training_run', loadMode: 'discoverable' }),
-                expect.objectContaining({ name: 'bind_training_card', loadMode: 'discoverable' })
+                expect.objectContaining({ name: 'add_verification_card', loadMode: 'discoverable' })
             ])
         });
         const calls: JsonObject[] = [
             { type: 'host_tool_call', id: 'register-call', toolCallId: 't1', toolName: 'register_training_run', arguments: { run: 'exp', runDir: '/tmp/wandb/run-exp', machineId: 'machine-1' } },
             { type: 'host_tool_call', id: 'query-call', toolCallId: 't2', toolName: 'query_training_run', arguments: { run: 'exp' } },
-            { type: 'host_tool_call', id: 'bind-call', toolCallId: 't3', toolName: 'bind_training_card', arguments: { lineId: 'line-1', run: 'exp', metrics: [] } }
+            { type: 'host_tool_call', id: 'bind-call', toolCallId: 't3', toolName: 'add_verification_card', arguments: { lineId: 'line-1', run: 'exp', metrics: [] } }
         ]
         for (const call of calls) bridge.handleCall(call);
         await vi.waitFor(() => {
@@ -401,7 +401,7 @@ describe('OMP host tool bridge', () => {
         });
         expect(workApi).toHaveBeenCalledWith('/cli/work/training-runs', { method: 'POST', body: { run: 'exp', machineId: 'machine-1', runDir: '/tmp/wandb/run-exp' } });
         expect(workApi).toHaveBeenCalledWith('/cli/work/training-runs/exp', {});
-        expect(workApi).toHaveBeenCalledWith('/cli/work/training-card', { method: 'PUT', body: { lineId: 'line-1', run: 'exp', metrics: [] } });
+        expect(workApi).toHaveBeenCalledWith('/cli/work/explorations/line-1/cards', { method: 'POST', body: { run: 'exp', metrics: [], xAxis: undefined, cardId: undefined } });
         const bind = fake.frames.find((frame) => frame.type === 'host_tool_result' && frame.id === 'bind-call');
         expect(bind).toMatchObject({ isError: true });
         bridge.close();

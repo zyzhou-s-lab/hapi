@@ -10,9 +10,6 @@ export async function queryTrainingRun(hub: WorkHub, run: string): Promise<{ sta
     return hub.request(`/cli/work/training-runs/${encodeURIComponent(run)}`)
 }
 
-export async function bindTrainingCard(hub: WorkHub, input: { lineId: string; run: string; metrics?: string[] }): Promise<{ status: number; body: unknown }> {
-    return hub.request('/cli/work/training-card', { method: 'PUT', body: input })
-}
 
 export function formatWorkResult(status: number, body: unknown): { text: string; isError: boolean } {
     if (status >= 200 && status < 300) return { text: JSON.stringify(body), isError: false }

@@ -5,6 +5,7 @@ export type WorkLineRecord = {
     id: string
     name: string
     goal: string | null
+    hypothesis?: string | null
     sort: number
     primaryMachineId: string
     primaryPath: string

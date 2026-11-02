@@ -44,7 +44,7 @@ export {
     WorkGraphValidationError
 } from './workGraph'
 
-const SCHEMA_VERSION: number = 27
+const SCHEMA_VERSION: number = 28
 const REQUIRED_TABLES = [
     'sessions',
     'machines',
@@ -63,9 +63,9 @@ const REQUIRED_TABLES = [
     'work_sessions',
     'work_dismissed',
     'work_layouts',
-    'work_training_runs'
+    'work_training_runs',
+    'work_references'
 ] as const
-
 export class Store {
     private db: Database
     private readonly _dbPath: string
@@ -359,6 +359,7 @@ export class Store {
             24: () => this.migrateFromV24ToV25(),
             25: () => this.migrateFromV25ToV26(),
             26: () => this.migrateFromV26ToV27(),
+            27: () => this.migrateFromV27ToV28(),
         })
 
         if (currentVersion === 0) {
@@ -1065,8 +1066,13 @@ export class Store {
             ON messages(session_id, stream_id, stream_live, seq DESC)`)
         backfillMessageStreams(this.db)
     }
-
     private migrateFromV26ToV27(): void {
+        this.db.exec(WORK_LINES_SCHEMA_SQL)
+    }
+
+    private migrateFromV27ToV28(): void {
+        const columns = new Set((this.db.prepare('PRAGMA table_info(work_lines)').all() as Array<{ name: string }>).map((row) => row.name))
+        if (!columns.has('hypothesis')) this.db.exec('ALTER TABLE work_lines ADD COLUMN hypothesis TEXT')
         this.db.exec(WORK_LINES_SCHEMA_SQL)
     }
 

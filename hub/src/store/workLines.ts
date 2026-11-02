@@ -9,6 +9,7 @@ CREATE TABLE IF NOT EXISTS work_lines (
     id TEXT NOT NULL,
     name TEXT NOT NULL,
     goal TEXT,
+    hypothesis TEXT,
     sort INTEGER NOT NULL,
     primary_machine_id TEXT NOT NULL,
     primary_path TEXT NOT NULL,
@@ -52,10 +53,22 @@ CREATE TABLE IF NOT EXISTS work_training_runs (
     created_at INTEGER NOT NULL,
     PRIMARY KEY (account_id, run)
 );
+CREATE TABLE IF NOT EXISTS work_references (
+    account_id INTEGER NOT NULL,
+    id TEXT NOT NULL,
+    line_id TEXT NOT NULL,
+    format TEXT NOT NULL CHECK (format IN ('apa7', 'vancouver')),
+    citation TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    PRIMARY KEY (account_id, id)
+);
 `
 
 const NAME_MAX = 60
 const GOAL_MAX = 200
+const HYPOTHESIS_MAX = 4000
+const CITATION_MAX = 2000
+const REFERENCE_FORMATS = ['apa7', 'vancouver'] as const
 const DIRECTORY_KEY_MAX = 1024
 const SESSION_ID_MAX = 200
 const RUN_MAX = 120
@@ -76,11 +89,28 @@ export type WorkLine = {
     id: string
     name: string
     goal: string | null
+    hypothesis: string | null
     sort: number
     primaryMachineId: string
     primaryPath: string
     createdAt: number
     updatedAt: number
+}
+
+export type WorkVerificationCard = {
+    cardId: string
+    lineId: string
+    run: string
+    metrics: string[]
+    xAxis: string | null
+}
+
+export type WorkReference = {
+    id: string
+    lineId: string
+    format: 'apa7' | 'vancouver'
+    citation: string
+    createdAt: number
 }
 
 export type WorkDirectory = {
@@ -131,6 +161,7 @@ type LineRow = {
     id: string
     name: string
     goal: string | null
+    hypothesis: string | null
     sort: number
     primary_machine_id: string
     primary_path: string
@@ -158,6 +189,14 @@ function cleanGoal(value: string | null | undefined): string | null {
     return trimmed
 }
 
+function cleanOptionalText(value: string | null | undefined, label: string, max: number): string | null {
+    if (value == null) return null
+    const trimmed = value.trim()
+    if (!trimmed) return null
+    if (trimmed.length > max) throw new WorkMapError(`${label} 长度不合法`)
+    return trimmed
+}
+
 export function isWandbRunDir(path: string): boolean {
     const parts = path.replaceAll('\\', '/').split('/').filter(Boolean)
     if (parts.length < 2) return false
@@ -178,7 +217,7 @@ export class WorkLinesStore {
 
     getMap(accountId: number): WorkMap {
         const lines = (this.db.prepare(
-            'SELECT id, name, goal, sort, primary_machine_id, primary_path, created_at, updated_at FROM work_lines WHERE account_id = ? ORDER BY sort, created_at'
+            'SELECT id, name, goal, hypothesis, sort, primary_machine_id, primary_path, created_at, updated_at FROM work_lines WHERE account_id = ? ORDER BY sort, created_at'
         ).all(accountId) as LineRow[]).map(toLine)
         const directories = (this.db.prepare(
             'SELECT directory_key, mode, line_id, updated_at FROM work_directories WHERE account_id = ? ORDER BY directory_key'
@@ -204,12 +243,14 @@ export class WorkLinesStore {
     createLine(accountId: number, input: {
         name: string
         goal?: string | null
+        hypothesis?: string | null
         sort?: number
         primaryMachineId: string
         primaryPath: string
     }): WorkLine {
         const name = cleanRequired(input.name, 'name', NAME_MAX)
         const goal = cleanGoal(input.goal)
+        const hypothesis = cleanOptionalText(input.hypothesis, 'hypothesis', HYPOTHESIS_MAX)
         const sort = input.sort ?? 0
         if (!Number.isInteger(sort)) throw new WorkMapError('sort 必须是整数')
         const machineId = cleanRequired(input.primaryMachineId, 'primaryMachineId', 200)
@@ -221,9 +262,9 @@ export class WorkLinesStore {
         this.db.transaction(() => {
             this.assertDirectoryFree(accountId, key, id)
             this.db.prepare(`
-                INSERT INTO work_lines (account_id, id, name, goal, sort, primary_machine_id, primary_path, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            `).run(accountId, id, name, goal, sort, machineId, path, now, now)
+                INSERT INTO work_lines (account_id, id, name, goal, hypothesis, sort, primary_machine_id, primary_path, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            `).run(accountId, id, name, goal, hypothesis, sort, machineId, path, now, now)
             this.upsertDirectory(accountId, key, 'line', id, now)
         })()
         return this.requireLine(accountId, id)
@@ -232,6 +273,7 @@ export class WorkLinesStore {
     updateLine(accountId: number, id: string, input: {
         name?: string
         goal?: string | null
+        hypothesis?: string | null
         sort?: number
         primaryMachineId?: string
         primaryPath?: string
@@ -239,6 +281,7 @@ export class WorkLinesStore {
         const existing = this.requireLine(accountId, id)
         const name = input.name === undefined ? existing.name : cleanRequired(input.name, 'name', NAME_MAX)
         const goal = input.goal === undefined ? existing.goal : cleanGoal(input.goal)
+        const hypothesis = input.hypothesis === undefined ? existing.hypothesis : cleanOptionalText(input.hypothesis, 'hypothesis', HYPOTHESIS_MAX)
         const sort = input.sort === undefined ? existing.sort : input.sort
         if (!Number.isInteger(sort)) throw new WorkMapError('sort 必须是整数')
         const changingPrimary = input.primaryMachineId !== undefined || input.primaryPath !== undefined
@@ -254,9 +297,9 @@ export class WorkLinesStore {
             if (changingPrimary) this.assertDirectoryFree(accountId, key, id)
             this.db.prepare(`
                 UPDATE work_lines
-                SET name = ?, goal = ?, sort = ?, primary_machine_id = ?, primary_path = ?, updated_at = ?
+                SET name = ?, goal = ?, hypothesis = ?, sort = ?, primary_machine_id = ?, primary_path = ?, updated_at = ?
                 WHERE account_id = ? AND id = ?
-            `).run(name, goal, sort, machineId, path, now, accountId, id)
+            `).run(name, goal, hypothesis, sort, machineId, path, now, accountId, id)
             if (changingPrimary) this.upsertDirectory(accountId, key, 'line', id, now)
         })()
         return this.requireLine(accountId, id)
@@ -267,6 +310,8 @@ export class WorkLinesStore {
         this.db.transaction(() => {
             this.db.prepare('DELETE FROM work_directories WHERE account_id = ? AND line_id = ?').run(accountId, id)
             this.db.prepare('DELETE FROM work_sessions WHERE account_id = ? AND line_id = ?').run(accountId, id)
+            this.db.prepare('DELETE FROM work_references WHERE account_id = ? AND line_id = ?').run(accountId, id)
+            this.removeTrainingSlots(accountId, id)
             this.db.prepare('DELETE FROM work_lines WHERE account_id = ? AND id = ?').run(accountId, id)
         })()
     }
@@ -355,13 +400,18 @@ export class WorkLinesStore {
         `).run(accountId, surface, JSON.stringify(normalized), Date.now())
         return normalized
     }
-    bindTrainingLine(accountId: number, lineId: string, run: string, metrics: string[] = []): WorkLayout {
-        const cleanLine = cleanRequired(lineId, 'lineId', LAYOUT_VALUE_MAX)
-        const cleanRun = cleanRequired(run, 'run', LAYOUT_VALUE_MAX)
-        const cleanMetrics = [...new Set(metrics.map((metric) => metric.trim()).filter((metric) => metric.length > 0))]
+    bindTrainingLine(accountId: number, input: { lineId: string; run: string; metrics?: string[]; instanceId?: string; xAxis?: string }): { layout: WorkLayout; instanceId: string } {
+        const cleanLine = cleanRequired(input.lineId, 'lineId', LAYOUT_VALUE_MAX)
+        const cleanRun = cleanRequired(input.run, 'run', LAYOUT_VALUE_MAX)
+        const cleanMetrics = [...new Set((input.metrics ?? []).map((metric) => metric.trim()).filter((metric) => metric.length > 0))]
         if (cleanMetrics.length > 32 || cleanMetrics.some((metric) => metric.length > LAYOUT_VALUE_MAX)) {
             throw new WorkMapError('metrics 不合法')
         }
+        const requestedId = input.instanceId?.trim() ?? ''
+        if (requestedId.length > LAYOUT_VALUE_MAX) throw new WorkMapError('instanceId 不合法')
+        const axisProvided = input.xAxis !== undefined
+        const cleanAxis = input.xAxis?.trim() ?? ''
+        if (cleanAxis.length > LAYOUT_VALUE_MAX) throw new WorkMapError('xAxis 不合法')
         return this.db.transaction(() => {
             this.requireLine(accountId, cleanLine)
             if (!this.getTrainingRun(accountId, cleanRun)) throw new WorkMapError('训练不存在', 404)
@@ -375,14 +425,47 @@ export class WorkLinesStore {
                 },
             }
             const main = [...(current.regions.main ?? [])]
-            const args: Record<string, string> = { run: cleanRun, lineId: cleanLine }
+            const index = requestedId.length > 0
+                ? main.findIndex((item) => item.cardId === 'example.training-curves' && item.args?.instanceId === requestedId)
+                : -1
+            if (requestedId.length > 0 && (index < 0 || main[index]?.args?.lineId !== cleanLine)) {
+                throw new WorkMapError('卡片不存在', 404)
+            }
+            const id = requestedId.length > 0 ? requestedId : randomUUID()
+            const previous = index >= 0 ? main[index]?.args ?? {} : {}
+            const args: Record<string, string> = { ...previous, run: cleanRun, lineId: cleanLine, instanceId: id }
             if (cleanMetrics.length > 0) args.metrics = JSON.stringify(cleanMetrics)
+            else delete args.metrics
+            if (axisProvided) {
+                if (cleanAxis.length > 0) args.xAxis = cleanAxis
+                else delete args.xAxis
+            }
             const slot = { cardId: 'example.training-curves', args }
-            const index = main.findIndex((item) => item.cardId === slot.cardId && item.args?.lineId === cleanLine)
             if (index >= 0) main[index] = slot
             else main.push(slot)
+            const layout = this.putLayout(accountId, 'workbench', { revision: current.revision, regions: { ...current.regions, main } })
+            return { layout, instanceId: id }
+        })()
+    }
+
+    unbindTrainingCard(accountId: number, instanceId: string): WorkLayout {
+        const id = cleanRequired(instanceId, 'instanceId', LAYOUT_VALUE_MAX)
+        return this.db.transaction(() => {
+            const current = this.getLayout(accountId, 'workbench')
+            const main = [...(current?.regions.main ?? [])]
+            const index = main.findIndex((item) => item.cardId === 'example.training-curves' && item.args?.instanceId === id)
+            if (!current || index < 0) throw new WorkMapError('卡片不存在', 404)
+            main.splice(index, 1)
             return this.putLayout(accountId, 'workbench', { revision: current.revision, regions: { ...current.regions, main } })
         })()
+    }
+
+    listVerificationCards(accountId: number, lineId: string): WorkVerificationCard[] {
+        this.requireLine(accountId, lineId)
+        const layout = this.getLayout(accountId, 'workbench')
+        return (layout?.regions.main ?? [])
+            .filter((item) => item.cardId === 'example.training-curves' && item.args?.lineId === lineId && item.args.instanceId && item.args.run)
+            .map((item) => verificationCard(item.args!))
     }
 
     registerTrainingRun(accountId: number, input: { run: string; machineId: string; runDir: string }): WorkTrainingRun {
@@ -416,17 +499,92 @@ export class WorkLinesStore {
         return { run: row.run, machineId: row.machine_id, runDir: row.run_dir, createdAt: row.created_at }
     }
 
+    getHypothesis(accountId: number, lineId: string): string | null {
+        return this.requireLine(accountId, lineId).hypothesis
+    }
+
+    setHypothesis(accountId: number, lineId: string, text: string): string | null {
+        return this.updateLine(accountId, lineId, { hypothesis: text }).hypothesis
+    }
+
+    /** Explicit work_sessions row. A null lineId means the session was unlinked on purpose. */
+    getSessionBinding(accountId: number, sessionId: string): { lineId: string | null } | null {
+        const row = this.db.prepare(
+            'SELECT line_id FROM work_sessions WHERE account_id = ? AND session_id = ?'
+        ).get(accountId, sessionId) as { line_id: string | null } | null
+        if (!row) return null
+        return { lineId: row.line_id }
+    }
+
+    /** Directory owned by a line, used when the session has no explicit row. */
+    lineForDirectory(accountId: number, machineId: string, path: string): string | null {
+        const row = this.db.prepare(
+            "SELECT line_id FROM work_directories WHERE account_id = ? AND directory_key = ? AND mode = 'line'"
+        ).get(accountId, primaryKey(machineId, path)) as { line_id: string | null } | null
+        return row?.line_id ?? null
+    }
+
+    listLinkedSessions(accountId: number, lineId: string): { sessionId: string; updatedAt: number }[] {
+        this.requireLine(accountId, lineId)
+        const rows = this.db.prepare(
+            'SELECT session_id, updated_at FROM work_sessions WHERE account_id = ? AND line_id = ? ORDER BY updated_at DESC'
+        ).all(accountId, lineId) as { session_id: string; updated_at: number }[]
+        return rows.map((row) => ({ sessionId: row.session_id, updatedAt: row.updated_at }))
+    }
+
+    listReferences(accountId: number, lineId: string): WorkReference[] {
+        this.requireLine(accountId, lineId)
+        const rows = this.db.prepare(
+            'SELECT id, line_id, format, citation, created_at FROM work_references WHERE account_id = ? AND line_id = ? ORDER BY created_at'
+        ).all(accountId, lineId) as Array<{ id: string; line_id: string; format: string; citation: string; created_at: number }>
+        return rows.map(toReference)
+    }
+
+    addReference(accountId: number, input: { lineId: string; format: string; citation: string }): WorkReference {
+        this.requireLine(accountId, input.lineId)
+        if (!REFERENCE_FORMATS.includes(input.format as never)) throw new WorkMapError('format 不合法')
+        const citation = cleanRequired(input.citation, 'citation', CITATION_MAX)
+        const now = Date.now()
+        const id = randomUUID()
+        this.db.prepare(`
+            INSERT INTO work_references (account_id, id, line_id, format, citation, created_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+        `).run(accountId, id, input.lineId, input.format, citation, now)
+        return this.requireReference(accountId, id)
+    }
+
+    removeReference(accountId: number, lineId: string, referenceId: string): void {
+        this.requireReference(accountId, referenceId, lineId)
+        this.db.prepare('DELETE FROM work_references WHERE account_id = ? AND id = ? AND line_id = ?').run(accountId, referenceId, lineId)
+    }
+
     purgeAccount(accountId: number): void {
         this.db.transaction(() => {
-            for (const table of ['work_lines', 'work_directories', 'work_sessions', 'work_dismissed', 'work_layouts', 'work_training_runs']) {
+            for (const table of ['work_lines', 'work_directories', 'work_sessions', 'work_dismissed', 'work_layouts', 'work_training_runs', 'work_references']) {
                 this.db.prepare(`DELETE FROM ${table} WHERE account_id = ?`).run(accountId)
             }
         })()
     }
 
+    private removeTrainingSlots(accountId: number, lineId: string): void {
+        const current = this.getLayout(accountId, 'workbench')
+        if (!current) return
+        const main = (current.regions.main ?? []).filter((item) => !(item.cardId === 'example.training-curves' && item.args?.lineId === lineId))
+        if (main.length === (current.regions.main ?? []).length) return
+        this.putLayout(accountId, 'workbench', { revision: current.revision, regions: { ...current.regions, main } })
+    }
+
+    private requireReference(accountId: number, id: string, lineId?: string): WorkReference {
+        const row = this.db.prepare(
+            'SELECT id, line_id, format, citation, created_at FROM work_references WHERE account_id = ? AND id = ?'
+        ).get(accountId, id) as { id: string; line_id: string; format: string; citation: string; created_at: number } | null
+        if (!row || (lineId !== undefined && row.line_id !== lineId)) throw new WorkMapError('参考资料不存在', 404)
+        return toReference(row)
+    }
+
     private requireLine(accountId: number, id: string): WorkLine {
         const row = this.db.prepare(
-            'SELECT id, name, goal, sort, primary_machine_id, primary_path, created_at, updated_at FROM work_lines WHERE account_id = ? AND id = ?'
+            'SELECT id, name, goal, hypothesis, sort, primary_machine_id, primary_path, created_at, updated_at FROM work_lines WHERE account_id = ? AND id = ?'
         ).get(accountId, id) as LineRow | null
         if (!row) throw new WorkMapError('主线不存在', 404)
         return toLine(row)
@@ -461,11 +619,41 @@ function toLine(row: LineRow): WorkLine {
         id: row.id,
         name: row.name,
         goal: row.goal,
+        hypothesis: row.hypothesis,
         sort: row.sort,
         primaryMachineId: row.primary_machine_id,
         primaryPath: row.primary_path,
         createdAt: row.created_at,
         updatedAt: row.updated_at
+    }
+}
+
+function toReference(row: { id: string; line_id: string; format: string; citation: string; created_at: number }): WorkReference {
+    return {
+        id: row.id,
+        lineId: row.line_id,
+        format: row.format as WorkReference['format'],
+        citation: row.citation,
+        createdAt: row.created_at,
+    }
+}
+
+function verificationCard(args: Record<string, string>): WorkVerificationCard {
+    let metrics: string[] = []
+    if (args.metrics) {
+        try {
+            const parsed = JSON.parse(args.metrics) as unknown
+            if (Array.isArray(parsed)) metrics = parsed.filter((item): item is string => typeof item === 'string')
+        } catch {
+            metrics = []
+        }
+    }
+    return {
+        cardId: args.instanceId ?? '',
+        lineId: args.lineId ?? '',
+        run: args.run ?? '',
+        metrics,
+        xAxis: args.xAxis ?? null,
     }
 }
 

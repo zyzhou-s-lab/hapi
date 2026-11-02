@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
+import { EXPLORE_TOOLS } from '@/modules/training/exploreMcp';
 import { OmpInputQueue } from './OmpInputQueue';
 import type { OmpMode, PermissionMode } from './types';
 import type {
@@ -510,7 +511,7 @@ describe('ompRemoteLauncher RPC lifecycle', () => {
                     'send_file',
                     'register_training_run',
                     'query_training_run',
-                    'bind_training_card',
+                    ...EXPLORE_TOOLS,
                     'skill_lookup'
                 ]
             });
@@ -520,7 +521,7 @@ describe('ompRemoteLauncher RPC lifecycle', () => {
 
         expect(capabilityUpdates).toContainEqual({ tools: ['read'] });
         expect(capabilityUpdates).toContainEqual({
-            tools: ['read', 'change_title', 'display_image', 'display_video', 'send_file', 'register_training_run', 'query_training_run', 'bind_training_card', 'skill_lookup'],
+            tools: ['read', 'change_title', 'display_image', 'display_video', 'send_file', 'register_training_run', 'query_training_run', ...EXPLORE_TOOLS, 'skill_lookup'],
             slashCommands: ['review']
         });
         expect(capabilityUpdates).toContainEqual({ slashCommands: ['inspect'] });

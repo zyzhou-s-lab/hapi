@@ -22,7 +22,7 @@ import {
   PING_PEER_TOOL_DESCRIPTION,
   SESSION_ID_PREFIX_PARAM_DESCRIPTION,
 } from '@hapi/protocol/sessionCitation';
-
+import { EXPLORE_TOOLS, exploreToolDescription, exploreToolSchemas } from '@/modules/training/exploreMcp';
 const DEFAULT_TOOL_NAMES = ['change_title', 'display_image', 'display_video', 'display_media', 'list_peers', 'ping_peer', 'inspect_peer'];
 
 function parseArgs(argv: string[]): { url: string | null; toolNames: Set<string> } {
@@ -366,11 +366,9 @@ export async function runHappyMcpStdioBridge(argv: string[]): Promise<void> {
       machineId: z.string().optional(),
     }));
     forward('query_training_run', 'Query metric names for a registered W&B run.', z.object({ run: z.string() }));
-    forward('bind_training_card', 'Bind a registered run and optional metrics onto a work-line training card.', z.object({
-      lineId: z.string(),
-      run: z.string(),
-      metrics: z.array(z.string()).optional(),
-    }));
+    for (const name of EXPLORE_TOOLS) {
+      forward(name, exploreToolDescription(name), exploreToolSchemas[name]);
+    }
 
     // Start STDIO transport
     const stdio = new StdioServerTransport();
