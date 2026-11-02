@@ -4,7 +4,9 @@ import { formatDuration } from '@/chat/presentation'
 import type { ToolCallBlock } from '@/chat/types'
 import { useOptionalHappyChatContext } from '@/components/AssistantChat/context'
 import { NotifySummaryText } from '@/components/AssistantChat/messages/NotifySummaryText'
+import { GeneratedFileCard, GeneratedImageCard } from '@/components/AssistantChat/messages/ToolMessage'
 import { partitionTurn, turnDurationMs, type TurnContentPart, type TurnPartition, type TurnRow, type TurnToolRow } from '@/components/AssistantChat/messages/turnBlockModel'
+import { PermissionFooter } from '@/components/ToolCard/PermissionFooter'
 import { ToolDetailDialogContent } from '@/components/ToolCard/ToolCard'
 import { extractImagesFromResult } from '@/components/ToolCard/views/_results'
 import { useReasoningCollapse } from '@/hooks/useReasoningCollapse'
@@ -104,13 +106,14 @@ function PermissionButtons(props: { block: ToolCallBlock }) {
             >
                 {t('tool.deny')}
             </button>
-            {failed ? <span className="text-xs text-[var(--app-badge-error-text)]">Failed</span> : null}
+            {failed ? <span className="text-xs text-[var(--app-badge-error-text)]">{t('turn.permissionFailed')}</span> : null}
         </div>
     )
 }
 
 function ToolStep(props: { row: TurnToolRow }) {
     const ctx = useOptionalHappyChatContext()
+    const { t } = useTranslation()
     const [open, setOpen] = useState(false)
     const images = extractImagesFromResult(props.row.block.tool.result)
     const thumb = images[0]
@@ -124,7 +127,7 @@ function ToolStep(props: { row: TurnToolRow }) {
                     onClick={() => setOpen((value) => !value)}
                 >
                     {props.row.error ? <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-[var(--app-badge-error-text)]" /> : null}
-                    <span className={cn('shrink-0', props.row.error ? 'text-[var(--app-badge-error-text)]' : 'text-[var(--app-hint)]')}>{props.row.verb}</span>
+                    <span className={cn('shrink-0', props.row.error ? 'text-[var(--app-badge-error-text)]' : 'text-[var(--app-hint)]')}>{t(props.row.verb)}</span>
                     {props.row.intent ? <span className="min-w-0 flex-1 truncate font-medium text-[var(--app-fg)]">{props.row.intent}</span> : <span className="min-w-0 flex-1" />}
                     {thumb ? <img src={thumb} alt="" className="h-10 w-10 shrink-0 rounded-md border border-[var(--app-border)] object-cover" /> : null}
                     <Chevron open={open} />
@@ -134,6 +137,16 @@ function ToolStep(props: { row: TurnToolRow }) {
             {open ? (
                 <div className="px-4 pb-3">
                     <ToolDetailDialogContent block={props.row.block} metadata={ctx?.metadata ?? null} hideTiming />
+                    {props.row.permission && ctx ? (
+                        <PermissionFooter
+                            api={ctx.api}
+                            sessionId={ctx.sessionId}
+                            metadata={ctx.metadata}
+                            tool={props.row.block.tool}
+                            disabled={ctx.disabled}
+                            onDone={ctx.onRefresh}
+                        />
+                    ) : null}
                 </div>
             ) : null}
         </div>
@@ -141,17 +154,27 @@ function ToolStep(props: { row: TurnToolRow }) {
 }
 
 function Step(props: { row: TurnRow; folded: boolean }) {
-    const quiet = !(props.row.kind === 'tool' && props.row.pinned)
+    const quiet = props.row.kind !== 'image'
+        && props.row.kind !== 'file'
+        && !(props.row.kind === 'tool' && props.row.pinned)
     if (props.row.kind === 'text' && props.row.trailing) return null
     return (
         <div className={cn(quiet && props.folded && 'hidden')} data-hapi-turn-quiet={quiet ? 'true' : undefined}>
             {props.row.kind === 'text' ? (
-                <div className="px-4 py-3 text-[15px] leading-6 text-[var(--app-fg)]">{props.row.text}</div>
+                <div className="px-4 py-3 text-[15px] leading-6 text-[var(--app-fg)]">
+                    <NotifySummaryText type="text" text={props.row.text} status={{ type: 'complete' }} />
+                </div>
             ) : null}
             {props.row.kind === 'reasoning' ? (
                 <div data-hapi-share-exclude="true" className="px-4 py-3 text-[15px] leading-6 text-[var(--app-fg)]">{props.row.text}</div>
             ) : null}
             {props.row.kind === 'tool' ? <ToolStep row={props.row} /> : null}
+            {props.row.kind === 'image' ? (
+                <div className="px-4 py-3"><GeneratedImageCard block={props.row.block} /></div>
+            ) : null}
+            {props.row.kind === 'file' ? (
+                <div className="px-4 py-3"><GeneratedFileCard block={props.row.block} /></div>
+            ) : null}
         </div>
     )
 }
@@ -162,6 +185,7 @@ export function TurnBlockView(props: {
     durationMs: number | null
     initiallyOpen: boolean
 }) {
+    const { t } = useTranslation()
     const [open, setOpen] = useState(props.initiallyOpen)
     const sawStream = useRef(props.streaming)
 
@@ -170,9 +194,20 @@ export function TurnBlockView(props: {
         sawStream.current = props.streaming
     }, [props.streaming])
 
-    if (!props.partition.hasActivity) return null
-
     const trailing = props.partition.rows.filter((row): row is Extract<TurnRow, { kind: 'text' }> => row.kind === 'text' && row.trailing)
+    if (!props.partition.hasActivity) {
+        if (trailing.length === 0) return null
+        return (
+            <>
+                {trailing.map((row) => (
+                    <div key={row.key} className="mt-3">
+                        <NotifySummaryText type="text" text={row.text} status={{ type: props.streaming ? 'running' : 'complete' }} />
+                    </div>
+                ))}
+            </>
+        )
+    }
+
     const failed = props.partition.rows.some((row) => row.kind === 'tool' && row.error)
 
     return (
@@ -187,7 +222,7 @@ export function TurnBlockView(props: {
                     <Chevron open={open} />
                     <span className={cn('inline-block h-1.5 w-1.5 shrink-0 rounded-full', failed ? 'bg-[var(--app-badge-error-text)]' : 'bg-current', props.streaming && 'animate-pulse')} />
                     <span className="min-w-0 flex-1">
-                        {props.partition.title}
+                        {t(props.partition.title)}
                         {props.durationMs != null ? <span className="ml-1 font-normal tabular-nums">{formatDuration(props.durationMs)}</span> : null}
                     </span>
                 </button>
@@ -235,5 +270,5 @@ export function TurnBlock() {
 }
 
 export function messageHasTurnActivity(content: readonly { type: string }[]): boolean {
-    return content.some((part) => part.type === 'reasoning' || part.type === 'tool-call')
+    return partitionTurn(contentParts(content), null).hasActivity
 }

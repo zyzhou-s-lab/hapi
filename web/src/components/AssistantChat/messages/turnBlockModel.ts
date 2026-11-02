@@ -1,4 +1,4 @@
-import type { ChatToolCall, RoundSummary, ToolCallBlock } from '@/chat/types'
+import type { ChatToolCall, GeneratedFileBlock, GeneratedImageBlock, RoundSummary, ToolCallBlock } from '@/chat/types'
 import type { ToolGroupBlock } from '@/chat/toolGroups'
 import { isSubagentToolName } from '@/chat/subagentTool'
 import { isAskUserQuestionToolName } from '@/components/ToolCard/askUserQuestion'
@@ -46,7 +46,19 @@ export type TurnReasoningRow = {
     text: string
 }
 
-export type TurnRow = TurnTextRow | TurnToolRow | TurnReasoningRow
+export type TurnImageRow = {
+    kind: 'image'
+    key: string
+    block: GeneratedImageBlock
+}
+
+export type TurnFileRow = {
+    kind: 'file'
+    key: string
+    block: GeneratedFileBlock
+}
+
+export type TurnRow = TurnTextRow | TurnToolRow | TurnReasoningRow | TurnImageRow | TurnFileRow
 
 export type TurnPartition = {
     rows: TurnRow[]
@@ -123,14 +135,14 @@ function basename(path: string): string {
 }
 
 function verbFor(tool: ChatToolCall, fallbackTitle: string): string {
-    if (tool.name === 'Read') return 'Read'
-    if (tool.name === 'Grep') return 'Grep'
-    if (tool.name === 'Glob') return 'Glob'
-    if (tool.name === 'Bash' || tool.name === 'CodexBash') return 'Ran'
-    if (tool.name === 'Edit' || tool.name === 'MultiEdit' || tool.name === 'Write') return tool.name === 'Write' ? 'Wrote' : 'Edit'
-    if (isSubagentToolName(tool.name)) return 'Ran agent'
-    if (TODO_TOOL_NAMES[tool.name]) return 'Todo'
-    if (tool.name === 'CodexReasoning') return 'Reasoning'
+    if (tool.name === 'Read') return 'turn.verb.read'
+    if (tool.name === 'Grep') return 'turn.verb.grep'
+    if (tool.name === 'Glob') return 'turn.verb.glob'
+    if (tool.name === 'Bash' || tool.name === 'CodexBash') return 'turn.verb.ran'
+    if (tool.name === 'Edit' || tool.name === 'MultiEdit' || tool.name === 'Write') return tool.name === 'Write' ? 'turn.verb.wrote' : 'turn.verb.edit'
+    if (isSubagentToolName(tool.name)) return 'turn.verb.ranAgent'
+    if (TODO_TOOL_NAMES[tool.name]) return 'turn.verb.todo'
+    if (tool.name === 'CodexReasoning') return 'turn.verb.reasoning'
     return fallbackTitle
 }
 
@@ -182,6 +194,20 @@ function isToolCall(part: TurnContentPart): part is TurnContentPart & { artifact
         && part.artifact.kind === 'tool-call'
 }
 
+function isGeneratedImage(part: TurnContentPart): part is TurnContentPart & { artifact: GeneratedImageBlock } {
+    return part.type === 'tool-call' && isObject(part.artifact) && part.artifact.kind === 'generated-image'
+}
+
+function isGeneratedFile(part: TurnContentPart): part is TurnContentPart & { artifact: GeneratedFileBlock } {
+    return part.type === 'tool-call' && isObject(part.artifact) && part.artifact.kind === 'generated-file'
+}
+
+function shownTitle(value: string | null | undefined): string | null {
+    if (typeof value !== 'string') return null
+    const text = value.trim()
+    return text.length > 0 ? text : null
+}
+
 function toolRows(block: ToolCallBlock, metadata: SessionMetadataSummary | null): TurnToolRow[] {
     const added = newTodoTexts(block.tool)
     if (added.length > 0) {
@@ -189,7 +215,7 @@ function toolRows(block: ToolCallBlock, metadata: SessionMetadataSummary | null)
             kind: 'tool',
             key: `${block.id}:added:${index}`,
             block,
-            verb: 'Added task',
+            verb: 'turn.verb.addedTask',
             intent: text,
             pinned: false,
             error: false,
@@ -256,12 +282,20 @@ export function partitionTurn(
         if (isToolCall(part)) {
             if (part.artifact.tool.name === 'CodexReasoning') return
             rows.push(...toolRows(part.artifact, metadata))
+            return
+        }
+        if (isGeneratedImage(part)) {
+            rows.push({ kind: 'image', key: part.artifact.id, block: part.artifact })
+            return
+        }
+        if (isGeneratedFile(part)) {
+            rows.push({ kind: 'file', key: part.artifact.id, block: part.artifact })
         }
     })
 
     let lastTool = -1
     rows.forEach((row, index) => {
-        if (row.kind === 'tool') lastTool = index
+        if (row.kind === 'tool' || row.kind === 'image' || row.kind === 'file') lastTool = index
     })
     for (let index = lastTool + 1; index < rows.length; index += 1) {
         const row = rows[index]
@@ -271,17 +305,18 @@ export function partitionTurn(
     const foldable = rows.filter((row) => {
         if (row.kind === 'text') return !row.trailing
         if (row.kind === 'tool') return !row.pinned
+        if (row.kind === 'image' || row.kind === 'file') return false
         return true
     })
     const tools = rows.filter((row): row is TurnToolRow => row.kind === 'tool')
     const running = tools.find((row) => row.block.tool.state === 'running' || row.block.tool.state === 'pending')
     const reasoning = rows.find((row): row is TurnReasoningRow => row.kind === 'reasoning')
-    const title = titles[0]
-        ?? (reasoning ? firstLine(reasoning.text) : null)
-        ?? running?.intent
-        ?? running?.verb
-        ?? tools[tools.length - 1]?.intent
-        ?? tools[tools.length - 1]?.verb
+    const title = shownTitle(titles[0])
+        ?? shownTitle(reasoning ? firstLine(reasoning.text) : null)
+        ?? shownTitle(running?.intent)
+        ?? shownTitle(running?.verb)
+        ?? shownTitle(tools[tools.length - 1]?.intent)
+        ?? shownTitle(tools[tools.length - 1]?.verb)
         ?? ''
 
     return {
@@ -289,7 +324,7 @@ export function partitionTurn(
         title,
         hasFoldable: foldable.length > 0,
         hasPinned: rows.some((row) => row.kind === 'tool' && row.pinned),
-        hasActivity: rows.some((row) => row.kind === 'reasoning' || row.kind === 'tool'),
+        hasActivity: rows.some((row) => row.kind === 'reasoning' || row.kind === 'tool' || row.kind === 'image' || row.kind === 'file'),
         streaming,
     }
 }

@@ -89,15 +89,15 @@ describe('partitionTurn', () => {
             call(tool('todo', 'TodoWrite', { result: { newTodos: [{ content: '截图' }, { content: '打包' }] } })),
         ], null)
         expect(added.rows.map((row) => row.kind === 'tool' ? `${row.verb} ${row.intent}` : '')).toEqual([
-            'Added task 截图',
-            'Added task 打包',
+            'turn.verb.addedTask 截图',
+            'turn.verb.addedTask 打包',
         ])
 
         const full = partitionTurn([
             call(tool('todo', 'TodoWrite', { input: { todos: [{ content: '旧项', status: 'pending' }] } })),
         ], null)
         expect(full.rows).toHaveLength(1)
-        expect(full.rows[0]?.kind === 'tool' && full.rows[0].verb).toBe('Todo')
+        expect(full.rows[0]?.kind === 'tool' && full.rows[0].verb).toBe('turn.verb.todo')
     })
 
     it('pins errors and pending permissions, and keeps a subagent as a row', () => {
@@ -107,9 +107,9 @@ describe('partitionTurn', () => {
             call(tool('agent', 'Task', { description: 'Report this machine identity' })),
         ], null)
         expect(partition.rows.map((row) => row.kind === 'tool' ? [row.verb, row.pinned, row.error, row.permission] : null)).toEqual([
-            ['Ran', true, true, false],
-            ['Edit', true, false, true],
-            ['Ran agent', true, false, false],
+            ['turn.verb.ran', true, true, false],
+            ['turn.verb.edit', true, false, true],
+            ['turn.verb.ranAgent', true, false, false],
         ])
     })
 
@@ -120,6 +120,66 @@ describe('partitionTurn', () => {
         ], null)
         expect(partition.title).toBe('Building a screenshot script')
         expect(partition.rows.map((row) => row.kind)).toEqual(['tool'])
+    })
+
+    it('does not treat an empty intent as the block title', () => {
+        const partition = partitionTurn([
+            call(tool('custom', 'MysteryTool', { state: 'running' })),
+        ], null)
+        expect(partition.title).toBe('MysteryTool')
+    })
+
+    it('keeps generated images and files, and leaves text beside them', () => {
+        const image = {
+            kind: 'generated-image' as const,
+            id: 'img',
+            localId: null,
+            createdAt: 1,
+            imageId: 'image-1',
+            fileName: 'shot.png',
+            mimeType: 'image/png',
+        }
+        const file = {
+            kind: 'generated-file' as const,
+            id: 'file',
+            localId: null,
+            createdAt: 1,
+            fileId: 'file-1',
+            fileName: 'notes.txt',
+            mimeType: 'text/plain',
+            size: 12,
+        }
+        const onlyImage = partitionTurn([{ type: 'tool-call', toolName: 'GeneratedImage', artifact: image }], null)
+        expect(onlyImage.hasActivity).toBe(true)
+        expect(onlyImage.rows.map((row) => row.kind)).toEqual(['image'])
+
+        const textAndImage = partitionTurn([
+            { type: 'text', text: '图在这里。' },
+            { type: 'tool-call', toolName: 'GeneratedImage', artifact: image },
+        ], null)
+        expect(textAndImage.rows.map((row) => row.kind === 'text' ? row.text : row.kind)).toEqual(['图在这里。', 'image'])
+
+        const toolAndFile = partitionTurn([
+            call(tool('read', 'Read', { input: { file_path: 'home.tsx' } })),
+            { type: 'tool-call', toolName: 'GeneratedFile', artifact: file },
+        ], null)
+        expect(toolAndFile.rows.map((row) => row.kind)).toEqual(['tool', 'file'])
+    })
+
+    it('reports no activity for blank reasoning or a Codex reasoning tool alone', () => {
+        const blank = partitionTurn([
+            { type: 'reasoning', text: '   ' },
+            { type: 'text', text: '空白思考后的回答' },
+        ], null)
+        expect(blank.hasActivity).toBe(false)
+        expect(blank.rows.map((row) => row.kind === 'text' ? row.text : row.kind)).toEqual(['空白思考后的回答'])
+
+        const codex = partitionTurn([
+            call(tool('reason', 'CodexReasoning', { input: { title: 'Thinking' } })),
+            { type: 'text', text: '只有推理标题后的回答' },
+        ], null)
+        expect(codex.hasActivity).toBe(false)
+        expect(codex.rows.map((row) => row.kind === 'text' ? row.text : row.kind)).toEqual(['只有推理标题后的回答'])
     })
 })
 
