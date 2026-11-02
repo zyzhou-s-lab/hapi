@@ -145,7 +145,8 @@ describe('SessionConfigPage', () => {
         })
         renderPage()
         expect(await screen.findByText('Loaded')).toBeTruthy()
-        expect(screen.getByText('notion').className).toContain('min-w-0 flex-1 truncate')
+        expect(screen.getByText('notion').className).toContain('shrink-0')
+        expect(screen.getByText('notion').className).not.toContain('flex-1')
         expect(screen.getByText('Not loaded')).toBeTruthy()
         expect(screen.getByText('No skills configured')).toBeTruthy()
         expect(screen.getByText('No hooks configured')).toBeTruthy()
@@ -203,7 +204,8 @@ describe('SessionConfigPage', () => {
         expect(locked.getAttribute('title')).toBeNull()
         expect(screen.getByRole('button', { name: /cannot be changed/ })).toBeTruthy()
         expect(screen.getByRole('tooltip', { hidden: true, name: /cannot be changed/ })).toBeTruthy()
-        expect(screen.getByText('Applies to new sessions, for every session.')).toBeTruthy()
+        expect(screen.queryByText('Applies to new sessions, for every session.')).toBeNull()
+        expect(screen.getByRole('switch', { name: 'Enable docs' }).getAttribute('title')).toBe('Changes apply the next time you start a session or restart the agent.')
         expect(screen.queryByRole('button', { name: /^docs/ })).toBeNull()
         expect(screen.getByRole('button', { name: /^hapi/ })).toBeTruthy()
         expect(screen.getByText('docs')).toBeTruthy()
@@ -298,7 +300,8 @@ describe('SessionConfigPage', () => {
         const lockedSwitch = screen.getByRole('switch', { name: 'Enable bundled' })
         expect(userSwitch).toBeEnabled()
         expect(lockedSwitch).toBeDisabled()
-        expect(screen.getAllByText('Applies to new sessions, for every session.')).toHaveLength(1)
+        expect(screen.queryByText('Applies to new sessions, for every session.')).toBeNull()
+        expect(userSwitch.getAttribute('title')).toBe('Changes apply the next time you start a session or restart the agent.')
         expect(screen.getByText('Injected, system, tool, and plugin items cannot be changed here.')).toBeTruthy()
         expect(lockedSwitch.getAttribute('title')).toBeNull()
 
@@ -312,6 +315,32 @@ describe('SessionConfigPage', () => {
             name: 'agent-browser',
             source: 'user',
         }, false)
+    })
+
+    it('keeps a short name beside a long description and shows why an MCP server is down', async () => {
+        mocks.getSessionConfig.mockResolvedValue({
+            success: true,
+            mcp: {
+                kind: 'servers',
+                servers: [
+                    { name: 'notion', source: 'user', loaded: false, loadError: "magpie's sign-in to the MCP server notion has run out: sign in to it again in magpie's Library" },
+                    { name: 'android-remote-control-mi10pro', source: 'user', loaded: false, loadError: 'timeout' },
+                ],
+            },
+            agents: {
+                items: [{ name: 'discuss:divergent', source: 'user', description: 'Read-only discussion partner, expansive stance: reframes the problem, questions the given constraints, and raises a materially different alternative.' }],
+            },
+            skills: { items: [{ name: 'agent-browser', source: 'user', description: 'Browser automation CLI for AI agents. Use when the user needs to interact with websites.' }] },
+            hooks: { availability: 'none', items: [] },
+        })
+        renderPage()
+        const name = await screen.findByText('discuss:divergent')
+        expect(name.className).toContain('shrink-0')
+        expect(name.className).not.toContain('flex-1')
+        expect(screen.getByText('agent-browser').className).toContain('shrink-0')
+        expect(screen.getByText(/sign in to it again/)).toBeTruthy()
+        expect(screen.getByText('Not loaded · Timed out')).toBeTruthy()
+        expect(screen.queryByText('Applies to new sessions, for every session.')).toBeNull()
     })
 
     it('checks one project server and can recheck omp without the cache', async () => {

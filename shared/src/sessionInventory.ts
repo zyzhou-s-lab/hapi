@@ -19,8 +19,10 @@ export const SessionInventoryMcpServerSchema = z.object({
     name: z.string().min(1).max(200),
     source: SessionInventorySourceSchema,
     enabled: z.boolean().optional(),
-    /** True when the live session tool list includes this server. Omitted when no tool list was reported. */
+    /** True when a check succeeded, or the check timed out while the live tool list still includes this server. Omitted when a project server has not been checked. */
     loaded: z.boolean().optional(),
+    /** Why the last check failed. `timeout` and `exit` are codes; any other value is redacted text safe to show. */
+    loadError: z.string().min(1).max(160).optional(),
     filePath: z.string().min(1).max(4096).optional(),
     line: z.number().int().min(1).max(1_000_000).optional(),
     /** Short display path. `filePath` stays absolute so the file page can open it. */

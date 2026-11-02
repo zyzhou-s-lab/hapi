@@ -4,6 +4,7 @@ import { homedir } from 'node:os';
 import { dirname, extname, isAbsolute, join, resolve, sep } from 'node:path';
 import { logger } from '@/ui/logger';
 import {
+    redactConfigSecrets,
     type SessionInventory,
     type SessionInventoryHook,
     type SessionInventoryMcpServer,
@@ -14,7 +15,7 @@ import {
 import { buildHookSettings, readMachineClaudeSettings } from '@/modules/common/hooks/generateHookSettings';
 import { listInventorySkills } from '@/modules/common/skills';
 import { clipCodeUnits, collectSessionPrompts, getSessionPromptLive, type SessionPromptLive } from './sessionPrompts';
-import { cachedProbe, cachedProbeTools, checkMcpServers, probeTargetsFromConfig, type McpProbeTarget } from './mcpServerCheck';
+import { cachedProbeReport, cachedProbeTools, probeMcpServers, probeTargetsFromConfig, type McpProbeReport, type McpProbeTarget } from './mcpServerCheck';
 import { lineOfJsonKey, lineOfSnippet, listedConfigFilePath, tryRealpath } from './configFilePath';
 
 const MAX_CONFIG_BYTES = 1_000_000;
@@ -463,6 +464,85 @@ export function mcpServerNameFromTool(tool: string): string | undefined {
     return isSafeInventoryName(server) ? server : undefined;
 }
 
+/** omp stores `mcp__<sanitized>_<tool>`, with every character outside `[A-Za-z0-9_]` replaced by `_`. Claude stores `mcp__<server>__<tool>`. */
+export function sanitizeMcpServerToken(name: string): string {
+    return name.replace(/[^A-Za-z0-9_]/g, '_')
+}
+
+export function mcpToolMatchesServer(tool: string, serverName: string): boolean {
+    if (!tool.startsWith('mcp__')) return false
+    const sanitized = sanitizeMcpServerToken(serverName)
+    if (tool.startsWith(`mcp__${serverName}__`)) return true
+    if (tool.startsWith(`mcp__${sanitized}_`)) return true
+    return tool === `mcp__${serverName}` || tool === `mcp__${sanitized}`
+}
+
+/** The configured server with the longest sanitized name wins, so `android` does not steal `android-remote-control-mi10pro`. */
+export function liveToolsForServer(serverName: string, tools: readonly string[] | undefined, knownNames: readonly string[]): string[] {
+    if (!tools || tools.length === 0) return []
+    const hits: string[] = []
+    for (const tool of tools) {
+        let winner: string | undefined
+        let winnerLength = -1
+        for (const name of knownNames) {
+            if (!mcpToolMatchesServer(tool, name)) continue
+            const length = sanitizeMcpServerToken(name).length
+            if (length > winnerLength) {
+                winner = name
+                winnerLength = length
+            }
+        }
+        if (winner === serverName) hits.push(tool)
+    }
+    return hits
+}
+
+function liveToolLabels(serverName: string, tools: readonly string[]): { name: string }[] {
+    const sanitized = sanitizeMcpServerToken(serverName)
+    const prefixes = [`mcp__${serverName}__`, `mcp__${sanitized}_`]
+    const labels: { name: string }[] = []
+    for (const tool of tools) {
+        const prefix = prefixes.find((item) => tool.startsWith(item) && tool.length > item.length)
+        if (!prefix) continue
+        const name = tool.slice(prefix.length).slice(0, 120)
+        if (name && isSafeInventoryName(name)) labels.push({ name })
+        if (labels.length >= 200) break
+    }
+    return labels
+}
+
+function publicLoadError(report: McpProbeReport): string | undefined {
+    if (report.timedOut || report.reason === 'timeout') return 'timeout'
+    if (!report.reason || report.reason === 'exit') return 'exit'
+    const text = redactStoredText(redactConfigSecrets(report.reason), 160)
+    if (!text || /:\/\//.test(text)) return 'exit'
+    return text
+}
+
+export function applyOmpProbeReport(
+    server: SessionInventoryMcpServer,
+    report: McpProbeReport,
+    tools: readonly string[] | undefined,
+    knownNames: readonly string[],
+    listed?: { tools: { name: string; description?: string }[]; truncated: boolean },
+): SessionInventoryMcpServer {
+    const { tools: _tools, toolsTruncated: _truncated, loadError: _error, ...rest } = server
+    if (report.ok) {
+        return {
+            ...rest,
+            loaded: true,
+            ...(listed ? { tools: listed.tools, ...(listed.truncated ? { toolsTruncated: true } : {}) } : {}),
+        }
+    }
+    const matched = liveToolsForServer(server.name, tools, knownNames)
+    if (report.timedOut && matched.length > 0) {
+        const labels = liveToolLabels(server.name, matched)
+        return { ...rest, loaded: true, ...(labels.length > 0 ? { tools: labels } : {}) }
+    }
+    const loadError = publicLoadError(report)
+    return { ...rest, loaded: false, ...(loadError ? { loadError } : {}) }
+}
+
 /** Configured servers stay. A reported tool list sets `loaded` and adds servers that are running but not in a config file. */
 export function withMcpLoadState(servers: readonly SessionInventoryMcpServer[], tools: readonly string[] | undefined): SessionInventoryMcpServer[] {
     if (!tools) return [...servers];
@@ -506,68 +586,67 @@ async function withOmpCheckedLoadState(
     cwd: string,
     options?: { fresh?: boolean; check?: string },
 ): Promise<SessionInventoryMcpServer[]> {
-    const known = new Set(servers.map((server) => server.name));
+    const knownNames = servers.map((server) => server.name)
+    const known = new Set(knownNames)
     const extras = tools
-        ? withMcpLoadState([], tools).filter((server) => !known.has(server.name))
-        : [];
-    const byName = new Map(ompProbeTargets(cwd).map((target) => [target.name, target]));
-    const selected = options?.check?.trim();
-    const probing: McpProbeTarget[] = [];
-    const forced: McpProbeTarget[] = [];
-    const cachedProject = new Map<string, boolean>();
+        ? withMcpLoadState([], tools).filter((server) => {
+            if (known.has(server.name)) return false
+            const tool = `mcp__${server.name}`
+            return !knownNames.some((name) => liveToolsForServer(name, [tool], knownNames).length > 0)
+        })
+        : []
+    const byName = new Map(ompProbeTargets(cwd).map((target) => [target.name, target]))
+    const selected = options?.check?.trim()
+    const probing: McpProbeTarget[] = []
+    const forced: McpProbeTarget[] = []
+    const cachedProject = new Map<string, McpProbeReport>()
     for (const server of servers) {
-        if (server.enabled === false) continue;
-        const target = byName.get(server.name);
-        if (!target) continue;
+        if (server.enabled === false) continue
+        const target = byName.get(server.name)
+        if (!target) continue
         if (selected === server.name) {
-            forced.push(target);
-            continue;
+            forced.push(target)
+            continue
         }
         if (server.source === 'project') {
-            const hit = cachedProbe(target);
-            if (hit === undefined) continue;
+            const hit = cachedProbeReport(target)
+            if (hit === undefined) continue
             if (options?.fresh) {
-                probing.push(target);
-                continue;
+                probing.push(target)
+                continue
             }
-            cachedProject.set(server.name, hit);
-            continue;
+            cachedProject.set(server.name, hit)
+            continue
         }
-        probing.push(target);
+        probing.push(target)
     }
     const [loaded, again] = await Promise.all([
-        checkMcpServers(probing, { fresh: options?.fresh === true }),
-        forced.length > 0 ? checkMcpServers(forced, { fresh: true }) : Promise.resolve(new Map<string, boolean>()),
-    ]);
-    for (const [name, ok] of again) loaded.set(name, ok);
-    const probed = (server: SessionInventoryMcpServer, ok: boolean): SessionInventoryMcpServer => {
-        const { tools: _tools, toolsTruncated: _truncated, ...rest } = server;
-        if (!ok) return { ...rest, loaded: false };
-        const target = byName.get(server.name);
-        const listed = target ? cachedProbeTools(target) : undefined;
-        return {
-            ...rest,
-            loaded: true,
-            ...(listed ? { tools: listed.tools, ...(listed.truncated ? { toolsTruncated: true } : {}) } : {}),
-        };
-    };
+        probeMcpServers(probing, { fresh: options?.fresh === true }),
+        forced.length > 0 ? probeMcpServers(forced, { fresh: true }) : Promise.resolve(new Map<string, McpProbeReport>()),
+    ])
+    for (const [name, report] of again) loaded.set(name, report)
+    const probed = (server: SessionInventoryMcpServer, report: McpProbeReport): SessionInventoryMcpServer => {
+        const target = byName.get(server.name)
+        const listed = report.ok && target ? cachedProbeTools(target) : undefined
+        return applyOmpProbeReport(server, report, tools, knownNames, listed)
+    }
     return [
         ...servers.map((server) => {
             if (server.enabled === false) {
-                const { tools: _tools, toolsTruncated: _truncated, ...rest } = server;
-                return { ...rest, loaded: false as const };
+                const { tools: _tools, toolsTruncated: _truncated, loadError: _error, ...rest } = server
+                return { ...rest, loaded: false as const }
             }
-            if (loaded.has(server.name)) return probed(server, loaded.get(server.name) === true);
-            if (cachedProject.has(server.name)) return probed(server, cachedProject.get(server.name) === true);
+            const report = loaded.get(server.name) ?? cachedProject.get(server.name)
+            if (report) return probed(server, report)
             if (server.source === 'project') {
-                const { loaded: _loaded, tools: _tools, toolsTruncated: _truncated, ...rest } = server;
-                return rest;
+                const { loaded: _loaded, tools: _tools, toolsTruncated: _truncated, loadError: _error, ...rest } = server
+                return rest
             }
-            const { tools: _tools, toolsTruncated: _truncated, ...rest } = server;
-            return { ...rest, loaded: false as const };
+            const { tools: _tools, toolsTruncated: _truncated, loadError: _error, ...rest } = server
+            return { ...rest, loaded: false as const }
         }),
         ...extras,
-    ];
+    ]
 }
 
 export function ompInventoryFromTools(tools: readonly string[]): SessionInventoryPatch {

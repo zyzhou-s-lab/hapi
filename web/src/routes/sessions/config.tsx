@@ -16,6 +16,7 @@ import { encodeBase64 } from '@/lib/utils'
 import {
     agentsSection,
     hooksSection,
+    mcpLoadSentence,
     mcpSection,
     promptSection,
     skillsSection,
@@ -23,6 +24,15 @@ import {
     type InventoryGroup,
     type InventorySection,
 } from '@/lib/sessionInventoryView'
+
+function mcpBadge(item: InventoryRow, t: (key: string) => string): string {
+    const notLoaded = t('session.config.mcp.notLoaded')
+    if (item.loaded) return t('session.config.mcp.loaded')
+    if (item.loadError === 'timeout') return `${notLoaded} · ${t('session.config.mcp.timeout')}`
+    if (item.loadError === 'exit') return `${notLoaded} · ${t('session.config.mcp.exited')}`
+    if (item.loadError?.startsWith('HTTP ')) return `${notLoaded} · ${item.loadError}`
+    return notLoaded
+}
 
 
 function promptCopy(code: string | undefined, t: (key: string) => string): string | null {
@@ -127,17 +137,15 @@ function LockMark(props: { reason: string; children?: ReactNode }) {
 function ConfigSwitch(props: { row: InventoryRow; pending: boolean; onToggle: (enabled: boolean) => void }) {
     const { t } = useTranslation()
     const reason = lockReason(props.row, t)
-    const skillHint = props.row.mutable && props.row.ref.kind === 'skill' ? t('session.config.skillHint') : undefined
     return (
         <span className="inline-flex shrink-0 items-center gap-2">
-            {skillHint ? <span className="whitespace-nowrap text-right text-[11px] leading-4 text-[var(--app-hint)]">{skillHint}</span> : null}
             <button
                 type="button"
                 role="switch"
                 aria-checked={props.row.enabled}
                 aria-label={t('session.config.toggle', { name: props.row.title })}
                 disabled={!props.row.mutable || props.pending}
-                title={reason ? undefined : skillHint ?? t('session.config.effect')}
+                title={reason ? undefined : t('session.config.effect')}
                 onClick={(event) => {
                     event.stopPropagation()
                     props.onToggle(!props.row.enabled)
@@ -150,14 +158,15 @@ function ConfigSwitch(props: { row: InventoryRow; pending: boolean; onToggle: (e
     )
 }
 
+
 function RowText(props: { item: InventoryRow }) {
     const { t } = useTranslation()
     return (
         <>
             <div className="flex min-w-0 items-baseline gap-2">
-                <span className="min-w-0 flex-1 truncate text-sm text-[var(--app-fg)]">{promptTitle(props.item.title, t)}</span>
+                <span className="max-w-[55%] shrink-0 truncate text-sm text-[var(--app-fg)]">{promptTitle(props.item.title, t)}</span>
                 {props.item.detail ? (
-                    <span className="min-w-0 truncate text-xs text-[var(--app-hint)]">{promptPathLabel(props.item.detail, t)}</span>
+                    <span className="min-w-0 flex-1 truncate text-xs text-[var(--app-hint)]">{promptPathLabel(props.item.detail, t)}</span>
                 ) : null}
             </div>
             {props.item.preview ? (
@@ -300,8 +309,8 @@ function ConfigSection(props: {
                                                                 {t('session.config.mcp.unchecked')}
                                                             </span>
                                                         ) : item.loaded === undefined ? null : (
-                                                            <span className="shrink-0 rounded-full bg-[var(--app-subtle-bg)] px-2 py-0.5 text-[11px] text-[var(--app-hint)]">
-                                                                {t(item.loaded ? 'session.config.mcp.loaded' : 'session.config.mcp.notLoaded')}
+                                                            <span className="shrink-0 rounded-full bg-[var(--app-subtle-bg)] px-2 py-0.5 text-[11px] text-[var(--app-hint)]" title={mcpLoadSentence(item.loadError)}>
+                                                                {mcpBadge(item, t)}
                                                             </span>
                                                         )}
                                                         {item.source && !item.filePath ? (

@@ -21,6 +21,7 @@ export type InventoryRow = {
     line?: number
     scriptPath?: string
     loaded?: boolean
+    loadError?: string
     /** Project server: the row can be probed again after the first check. */
     checkable?: boolean
     /** Set after a successful check, including an empty list. */
@@ -103,11 +104,16 @@ function rowsOrEmpty(rows: InventoryRow[]): InventorySection {
     return rows.length === 0 ? { status: 'empty' } : { status: 'list', rows }
 }
 
+export function mcpLoadSentence(loadError: string | undefined): string | undefined {
+    if (!loadError || loadError === 'timeout' || loadError === 'exit' || loadError.startsWith('HTTP ')) return undefined
+    return loadError
+}
+
 export function mcpSection(inventory: SessionInventory | null | undefined, flavor?: string | null): InventorySection {
     const mcp = inventory?.mcp
     if (!mcp) return { status: 'unreported' }
     const rows = mcp.servers.flatMap((server) => {
-        const next = row(server.name, server.source, undefined, { kind: 'mcp', name: server.name, source: server.source }, server.enabled, flavor, server.filePath, server.line)
+        const next = row(server.name, server.source, mcpLoadSentence(server.loadError), { kind: 'mcp', name: server.name, source: server.source }, server.enabled, flavor, server.filePath, server.line)
         if (!next) return []
         const checkable = mcp.kind === 'servers' && server.source === 'project'
         const tools = server.tools?.flatMap((tool) => {
@@ -119,6 +125,7 @@ export function mcpSection(inventory: SessionInventory | null | undefined, flavo
         return [{
             ...next,
             ...(server.loaded === undefined ? {} : { loaded: server.loaded }),
+            ...(server.loadError ? { loadError: server.loadError } : {}),
             ...(checkable ? { checkable: true } : {}),
             ...(tools ? { tools } : {}),
             ...(server.toolsTruncated ? { toolsTruncated: true } : {}),
