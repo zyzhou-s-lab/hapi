@@ -165,15 +165,19 @@ describe('TurnBlockView', () => {
             size: 12,
         }
         const onlyImage = partitionTurn([{ type: 'tool-call', toolName: 'GeneratedImage', artifact: image }], null)
-        renderBlock(<TurnBlockView partition={onlyImage} streaming={false} durationMs={null} initiallyOpen={false} />)
+        const { container: imageOnly } = renderBlock(<TurnBlockView partition={onlyImage} streaming={false} durationMs={0} initiallyOpen={false} />)
         expect(screen.getByText('image shot.png')).toBeInTheDocument()
+        expect(imageOnly.querySelector('[data-hapi-turn-block-list]')).toBeNull()
+        expect(screen.queryByText('0.0s')).toBeNull()
 
         const textAndImage = partitionTurn([
             { type: 'text', text: '图在这里。' },
             { type: 'tool-call', toolName: 'GeneratedImage', artifact: image },
         ], null)
-        renderBlock(<TurnBlockView partition={textAndImage} streaming={false} durationMs={null} initiallyOpen={false} />)
-        expect(screen.getByText('图在这里。')).toBeInTheDocument()
+        renderBlock(<TurnBlockView partition={textAndImage} streaming={false} durationMs={0} initiallyOpen={false} />)
+        const caption = screen.getByText('图在这里。')
+        expect(caption.closest('.hidden')).toBeNull()
+        expect(caption.closest('[data-hapi-turn-quiet]')).toBeNull()
 
         const toolAndFile = partitionTurn([
             {
@@ -183,8 +187,9 @@ describe('TurnBlockView', () => {
             },
             { type: 'tool-call', toolName: 'GeneratedFile', artifact: file },
         ], null)
-        renderBlock(<TurnBlockView partition={toolAndFile} streaming={false} durationMs={null} initiallyOpen={false} />)
+        renderBlock(<TurnBlockView partition={toolAndFile} streaming={false} durationMs={0} initiallyOpen={false} />)
         expect(screen.getByText('file notes.txt')).toBeInTheDocument()
+        expect(screen.queryByText('0.0s')).toBeNull()
     })
 
     it('keeps the full permission options inside the expanded pending row', () => {
@@ -199,11 +204,37 @@ describe('TurnBlockView', () => {
                 }),
             },
         ], null)
-        renderBlock(<TurnBlockView partition={partition} streaming={false} durationMs={null} initiallyOpen />)
+        renderBlock(<TurnBlockView partition={partition} streaming={false} durationMs={null} initiallyOpen={false} />)
         expect(screen.getByRole('button', { name: 'Allow' })).toBeInTheDocument()
         expect(screen.getByRole('button', { name: 'Deny' })).toBeInTheDocument()
         expect(screen.queryByText('permission options')).toBeNull()
         fireEvent.click(screen.getByRole('button', { name: /Ran/ }))
         expect(screen.getByText('permission options')).toBeInTheDocument()
+        expect(screen.queryByRole('button', { name: 'Allow' })).toBeNull()
+        expect(screen.queryByRole('button', { name: 'Deny' })).toBeNull()
+    })
+
+    it('shows the question and its options instead of allow and deny', () => {
+        const partition = partitionTurn([
+            {
+                type: 'tool-call',
+                toolName: 'AskUserQuestion',
+                artifact: tool('ask', 'AskUserQuestion', {
+                    state: 'pending',
+                    permission: { id: 'perm', status: 'pending' },
+                    input: {
+                        questions: [{
+                            question: '用哪种布局？',
+                            options: [{ label: '单列' }, { label: '双列' }],
+                        }],
+                    },
+                }),
+            },
+        ], null)
+        renderBlock(<TurnBlockView partition={partition} streaming={false} durationMs={null} initiallyOpen={false} />)
+        expect(screen.getByText('用哪种布局？')).toBeInTheDocument()
+        expect(screen.getByRole('radio', { name: '单列' })).toBeInTheDocument()
+        expect(screen.queryByRole('button', { name: 'Allow' })).toBeNull()
+        expect(screen.queryByRole('button', { name: 'Deny' })).toBeNull()
     })
 })

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { useAuiState } from '@assistant-ui/react'
+import { TextMessagePartProvider, useAuiState } from '@assistant-ui/react'
 import { formatDuration } from '@/chat/presentation'
 import type { ToolCallBlock } from '@/chat/types'
 import { useOptionalHappyChatContext } from '@/components/AssistantChat/context'
@@ -7,6 +7,10 @@ import { NotifySummaryText } from '@/components/AssistantChat/messages/NotifySum
 import { GeneratedFileCard, GeneratedImageCard } from '@/components/AssistantChat/messages/ToolMessage'
 import { partitionTurn, turnDurationMs, type TurnContentPart, type TurnPartition, type TurnRow, type TurnToolRow } from '@/components/AssistantChat/messages/turnBlockModel'
 import { PermissionFooter } from '@/components/ToolCard/PermissionFooter'
+import { AskUserQuestionFooter } from '@/components/ToolCard/AskUserQuestionFooter'
+import { RequestUserInputFooter } from '@/components/ToolCard/RequestUserInputFooter'
+import { isAskUserQuestionToolName } from '@/components/ToolCard/askUserQuestion'
+import { isRequestUserInputToolName } from '@/components/ToolCard/requestUserInput'
 import { ToolDetailDialogContent } from '@/components/ToolCard/ToolCard'
 import { extractImagesFromResult } from '@/components/ToolCard/views/_results'
 import { useReasoningCollapse } from '@/hooks/useReasoningCollapse'
@@ -111,10 +115,21 @@ function PermissionButtons(props: { block: ToolCallBlock }) {
     )
 }
 
+function TurnText(props: { text: string; streaming: boolean }) {
+    return (
+        <TextMessagePartProvider text={props.text} isRunning={props.streaming}>
+            <NotifySummaryText type="text" text={props.text} status={{ type: props.streaming ? 'running' : 'complete' }} />
+        </TextMessagePartProvider>
+    )
+}
+
 function ToolStep(props: { row: TurnToolRow }) {
     const ctx = useOptionalHappyChatContext()
     const { t } = useTranslation()
     const [open, setOpen] = useState(false)
+    const asks = isAskUserQuestionToolName(props.row.block.tool.name)
+    const requestsInput = isRequestUserInputToolName(props.row.block.tool.name)
+    const interactive = Boolean((asks || requestsInput) && props.row.permission && ctx)
     const images = extractImagesFromResult(props.row.block.tool.result)
     const thumb = images[0]
     return (
@@ -132,9 +147,30 @@ function ToolStep(props: { row: TurnToolRow }) {
                     {thumb ? <img src={thumb} alt="" className="h-10 w-10 shrink-0 rounded-md border border-[var(--app-border)] object-cover" /> : null}
                     <Chevron open={open} />
                 </button>
-                {props.row.permission ? <PermissionButtons block={props.row.block} /> : null}
+                {props.row.permission && !open && !interactive ? <PermissionButtons block={props.row.block} /> : null}
             </div>
-            {open ? (
+            {interactive && ctx ? (
+                <div className="px-4 pb-3">
+                    {asks ? (
+                        <AskUserQuestionFooter
+                            api={ctx.api}
+                            sessionId={ctx.sessionId}
+                            tool={props.row.block.tool}
+                            disabled={ctx.disabled}
+                            onDone={ctx.onRefresh}
+                        />
+                    ) : (
+                        <RequestUserInputFooter
+                            api={ctx.api}
+                            sessionId={ctx.sessionId}
+                            tool={props.row.block.tool}
+                            disabled={ctx.disabled}
+                            onDone={ctx.onRefresh}
+                        />
+                    )}
+                </div>
+            ) : null}
+            {open && !interactive ? (
                 <div className="px-4 pb-3">
                     <ToolDetailDialogContent block={props.row.block} metadata={ctx?.metadata ?? null} hideTiming />
                     {props.row.permission && ctx ? (
@@ -153,8 +189,9 @@ function ToolStep(props: { row: TurnToolRow }) {
     )
 }
 
-function Step(props: { row: TurnRow; folded: boolean }) {
-    const quiet = props.row.kind !== 'image'
+function Step(props: { row: TurnRow; folded: boolean; keepVisible: boolean }) {
+    const quiet = !props.keepVisible
+        && props.row.kind !== 'image'
         && props.row.kind !== 'file'
         && !(props.row.kind === 'tool' && props.row.pinned)
     if (props.row.kind === 'text' && props.row.trailing) return null
@@ -162,7 +199,7 @@ function Step(props: { row: TurnRow; folded: boolean }) {
         <div className={cn(quiet && props.folded && 'hidden')} data-hapi-turn-quiet={quiet ? 'true' : undefined}>
             {props.row.kind === 'text' ? (
                 <div className="px-4 py-3 text-[15px] leading-6 text-[var(--app-fg)]">
-                    <NotifySummaryText type="text" text={props.row.text} status={{ type: 'complete' }} />
+                    <TurnText text={props.row.text} streaming={false} />
                 </div>
             ) : null}
             {props.row.kind === 'reasoning' ? (
@@ -201,7 +238,7 @@ export function TurnBlockView(props: {
             <>
                 {trailing.map((row) => (
                     <div key={row.key} className="mt-3">
-                        <NotifySummaryText type="text" text={row.text} status={{ type: props.streaming ? 'running' : 'complete' }} />
+                        <TurnText text={row.text} streaming={props.streaming} />
                     </div>
                 ))}
             </>
@@ -209,6 +246,25 @@ export function TurnBlockView(props: {
     }
 
     const failed = props.partition.rows.some((row) => row.kind === 'tool' && row.error)
+    const hasSteps = props.partition.rows.some((row) => row.kind === 'reasoning' || row.kind === 'tool')
+    const durationMs = props.durationMs
+    const steps = props.partition.rows.map((row, index) => {
+        const keepVisible = row.kind === 'text' && props.partition.rows.slice(index + 1).some((later) => later.kind === 'image' || later.kind === 'file')
+        return <Step key={row.key} row={row} folded={hasSteps && !open} keepVisible={keepVisible} />
+    })
+
+    if (!hasSteps) {
+        return (
+            <div className="my-3">
+                {steps}
+                {trailing.map((row) => (
+                    <div key={row.key} className="mt-3">
+                        <TurnText text={row.text} streaming={props.streaming} />
+                    </div>
+                ))}
+            </div>
+        )
+    }
 
     return (
         <div className="my-3">
@@ -223,14 +279,14 @@ export function TurnBlockView(props: {
                     <span className={cn('inline-block h-1.5 w-1.5 shrink-0 rounded-full', failed ? 'bg-[var(--app-badge-error-text)]' : 'bg-current', props.streaming && 'animate-pulse')} />
                     <span className="min-w-0 flex-1">
                         {t(props.partition.title)}
-                        {props.durationMs != null ? <span className="ml-1 font-normal tabular-nums">{formatDuration(props.durationMs)}</span> : null}
+                        {durationMs != null && durationMs > 0 ? <span className="ml-1 font-normal tabular-nums">{formatDuration(durationMs)}</span> : null}
                     </span>
                 </button>
-                {props.partition.rows.map((row) => <Step key={row.key} row={row} folded={!open} />)}
+                {steps}
             </div>
             {trailing.map((row) => (
                 <div key={row.key} className="mt-3">
-                    <NotifySummaryText type="text" text={row.text} status={{ type: props.streaming ? 'running' : 'complete' }} />
+                    <TurnText text={row.text} streaming={props.streaming} />
                 </div>
             ))}
         </div>
