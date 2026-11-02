@@ -370,6 +370,7 @@ export function ToolDetailDialogContent(props: {
     block: ToolCallBlock
     metadata: SessionMetadataSummary | null
     onClose?: () => void
+    hideTiming?: boolean
 }) {
     const { t } = useTranslation()
     const toolName = props.block.tool.name
@@ -417,7 +418,7 @@ export function ToolDetailDialogContent(props: {
     const durationMs = toolDurationMs(props.block.tool)
     return (
         <div className="mt-3 flex max-h-[75vh] flex-col gap-4 overflow-auto">
-            <ToolTimingDetails block={props.block} />
+            {props.hideTiming ? null : <ToolTimingDetails block={props.block} />}
             <div>
                 <div className="mb-1 text-xs font-medium text-[var(--app-hint)]">
                     {isQuestionToolWithAnswers ? t('tool.questionsAnswers') : t('tool.input')}
