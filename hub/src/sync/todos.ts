@@ -6,16 +6,13 @@ import type { TodoItem } from '@hapi/protocol/types'
 export { TodoItemSchema, TodosSchema }
 export type { TodoItem }
 
-const OMP_TODO_OPS: Record<string, true> = {
+// Known ops still decide whether an empty phase array is a real clear.
+// A result can also publish the live list without one of these ops; the
+// message card renders that list, so the session snapshot must too.
+const OMP_TODO_CLEAR_OPS: Record<string, true> = {
     init: true,
-    start: true,
-    done: true,
-    rm: true,
-    drop: true,
-    block: true,
-    unblock: true,
-    append: true,
-    view: true
+    view: true,
+    rm: true
 }
 
 function isOmpTodoToolName(name: string | null): boolean {
@@ -44,9 +41,10 @@ function ompTodoId(phaseName: string, index: number, id: unknown): string {
     return `${phaseName}:${index}`
 }
 
-function ompTodoDetails(value: Record<string, unknown>): { op: string; phases: unknown[] } | null {
-    if (typeof value.op !== 'string' || OMP_TODO_OPS[value.op] !== true || !Array.isArray(value.phases)) return null
-    return { op: value.op, phases: value.phases }
+function ompTodoDetails(value: Record<string, unknown>): { op: string | null; phases: unknown[] } | null {
+    if (!Array.isArray(value.phases)) return null
+    const op = typeof value.op === 'string' ? value.op : null
+    return { op, phases: value.phases }
 }
 
 // Result details only: `{ op, phases }` or `{ content, details: { op, phases } }`.
@@ -84,13 +82,14 @@ function extractOmpTodoSnapshot(value: unknown): TodoItem[] | null {
 
     if (todos.length > 0) return todosFromClaudeArray(todos)
     if (opaque) return null
-    // phases: [] is a whole-list publish only for init (replace), view (read of
-    // an empty list), and rm. Other ops do not emit an empty phase array on
-    // success; an errored rm keeps the previous phases and is skipped earlier.
-    // A non-empty phase list with no remaining tasks is a real clear (rm emptied
-    // every task, or every task was abandoned and is hidden).
-    if (details.phases.length === 0 && details.op !== 'init' && details.op !== 'view' && details.op !== 'rm') {
-        return null
+    // phases: [] is a whole-list clear only for init (replace), view (read of
+    // an empty list), and rm. Other known ops do not emit an empty phase array
+    // on success; an errored rm keeps the previous phases and is skipped earlier.
+    // A result with no recognized op is still the list the message card draws,
+    // including an empty one. A non-empty phase list with no remaining tasks is
+    // a real clear (rm emptied every task, or every task was abandoned and is hidden).
+    if (details.phases.length === 0 && (details.op === null || OMP_TODO_CLEAR_OPS[details.op] !== true)) {
+        if (details.op !== null) return null
     }
     return []
 }
@@ -110,12 +109,15 @@ function extractTodosFromClaudeOutput(content: Record<string, unknown>): TodoIte
     for (const block of modelContent) {
         if (!isObject(block) || block.type !== 'tool_use') continue
         const name = typeof block.name === 'string' ? block.name : null
-        if (name !== 'TodoWrite') continue
+        if (!isOmpTodoToolName(name)) continue
         const input = 'input' in block ? (block as Record<string, unknown>).input : null
         if (!isObject(input)) continue
-
-        const parsed = todosFromClaudeArray(input.todos)
-        if (parsed) return parsed
+        // Incremental omp calls carry phases as the pre-call list. Only a
+        // full todos array on the call is a snapshot; the result replaces it.
+        if (Array.isArray(input.todos)) {
+            const parsed = todosFromClaudeArray(input.todos)
+            if (parsed) return parsed
+        }
     }
 
     return null
@@ -161,7 +163,7 @@ function extractTodosFromCodexMessage(content: Record<string, unknown>): TodoIte
 
     if (data.type !== 'tool-call') return null
     const name = typeof data.name === 'string' ? data.name : null
-    if (name !== 'TodoWrite') return null
+    if (!isOmpTodoToolName(name)) return null
     const input = 'input' in data ? (data as Record<string, unknown>).input : null
     if (!isObject(input) || !Array.isArray(input.todos)) return null
     return todosFromClaudeArray(input.todos)
