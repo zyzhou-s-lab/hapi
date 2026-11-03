@@ -385,6 +385,27 @@ function derivePosition(
     return selected
 }
 
+/** The next older page must include every dropped row. Append trimming can
+ * keep an older agent-run row while dropping a newer regular row, so the
+ * cursor is the oldest kept row that is still newer than every dropped row.
+ * `before` is exclusive, so a window whose kept rows are all older than a
+ * dropped row uses the position just after that dropped row. */
+function oldestReachableCursor(
+    kept: DecryptedMessage[],
+    dropped: DecryptedMessage[]
+): MessagePosition | null {
+    const newestDropped = derivePosition(dropped, 'newest')
+    if (!newestDropped) return derivePosition(kept, 'oldest')
+    const contiguous = kept.filter((message) => {
+        const position = messagePosition(message)
+        return position !== null && comparePosition(position, newestDropped) > 0
+    })
+    return derivePosition(contiguous, 'oldest') ?? {
+        at: newestDropped.at,
+        seq: newestDropped.seq + 1
+    }
+}
+
 function getNewestCursor(state: InternalState): MessagePosition | null {
     return readPosition(state.newestPositionAt, state.newestPositionSeq)
 }
@@ -628,9 +649,14 @@ function mergeIntoWindow(
         return previous
     }
     const mode = options.mode ?? (previous.viewMode === 'history' ? 'prepend' : 'append')
-    const regularLimit = options.regularLimit
-        ?? (previous.viewMode === 'history' ? HISTORY_WINDOW_SIZE : VISIBLE_WINDOW_SIZE)
     const merged = mergeMessages(previous.messages, retainedIncoming)
+    const retainHistory = previous.viewMode === 'history' && options.regularLimit === undefined
+    const historyLimit = Math.min(
+        OLDER_LOAD_WINDOW_SIZE,
+        Math.max(HISTORY_WINDOW_SIZE, merged.length)
+    )
+    const regularLimit = options.regularLimit
+        ?? (retainHistory ? historyLimit : VISIBLE_WINDOW_SIZE)
     const { kept, dropped } = trimConversation(
         merged,
         regularLimit,
@@ -638,8 +664,8 @@ function mergeIntoWindow(
         previous.finalizedStreamIds,
         mode === 'append' ? TURN_PAGE_SIZE : HISTORY_TURN_LIMIT,
         {
-            agentRunLimit: options.agentRunLimit,
-            reserveQueuedBudget: options.reserveQueuedBudget
+            agentRunLimit: options.agentRunLimit ?? (retainHistory ? historyLimit : undefined),
+            reserveQueuedBudget: options.reserveQueuedBudget ?? !retainHistory
         }
     )
     let next = buildState(previous, {
@@ -652,7 +678,7 @@ function mergeIntoWindow(
         return next
     }
     if (mode === 'append') {
-        const oldest = derivePosition(kept, 'oldest')
+        const oldest = oldestReachableCursor(kept, dropped)
         return buildState(next, {
             hasMore: true,
             oldestPositionAt: oldest?.at ?? next.oldestPositionAt,
@@ -709,7 +735,7 @@ function applyLatestResponse(
     const responseOldest = pagePosition(response.page.nextBeforeAt, response.page.nextBeforeSeq)
     const previousOldest = readPosition(previous.oldestPositionAt, previous.oldestPositionSeq)
     const oldest = dropped.length > 0
-        ? derivePosition(kept, 'oldest')
+        ? oldestReachableCursor(kept, dropped)
         : options.replaceServerRows
             ? responseOldest
             : responseOldest ?? previousOldest
@@ -928,7 +954,7 @@ function enterTailMode(previous: InternalState): InternalState {
     )
     const forceLatest = previous.requiresLatestReset
     const oldest = dropped.length > 0
-        ? derivePosition(kept, 'oldest')
+        ? oldestReachableCursor(kept, dropped)
         : readPosition(previous.oldestPositionAt, previous.oldestPositionSeq)
     return buildState(previous, {
         messages: kept,
