@@ -1,5 +1,5 @@
 {
-    "description": "A tail sync that gets page.reset:true replaces every server row from before the request but keeps optimistic rows (id === localId): the not-yet-echoed send survives the epoch bump and the window adopts the new epoch and cursors.",
+    "description": "A tail sync whose catch-up page reports reset discards that body and refetches the latest turn page. The turn page replaces every server row from before the request but keeps optimistic rows (id === localId): the not-yet-echoed send survives the epoch bump and the window adopts the new epoch and cursors.",
     "expectedState": {
         "epoch": 2,
         "hasMore": false,
@@ -40,7 +40,7 @@
         {
             "expectedRequests": [
                 {
-                    "limit": 200
+                    "turns": 20
                 }
             ],
             "op": "sync-tail",
@@ -108,10 +108,47 @@
                     "limit": 200,
                     "untilAt": null,
                     "untilSeq": null
+                },
+                {
+                    "turns": 20
                 }
             ],
             "op": "sync-tail",
             "responses": [
+                {
+                    "messages": [
+                        {
+                            "content": {
+                                "content": {
+                                    "data": {
+                                        "message": "stale-reset",
+                                        "type": "message"
+                                    },
+                                    "type": "codex"
+                                },
+                                "role": "agent"
+                            },
+                            "createdAt": 2000,
+                            "id": "stale-reset",
+                            "invokedAt": 2000,
+                            "localId": null,
+                            "seq": 2
+                        }
+                    ],
+                    "page": {
+                        "direction": "latest",
+                        "epoch": 2,
+                        "hasMore": false,
+                        "limit": 200,
+                        "nextAfterAt": null,
+                        "nextAfterSeq": null,
+                        "nextBeforeAt": 2000,
+                        "nextBeforeSeq": 2,
+                        "reset": true,
+                        "snapshotHeadAt": 2000,
+                        "snapshotHeadSeq": 2
+                    }
+                },
                 {
                     "messages": [
                         {
@@ -141,7 +178,7 @@
                         "nextAfterSeq": null,
                         "nextBeforeAt": 2000,
                         "nextBeforeSeq": 2,
-                        "reset": true,
+                        "reset": false,
                         "snapshotHeadAt": 2000,
                         "snapshotHeadSeq": 2
                     }

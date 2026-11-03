@@ -24,7 +24,8 @@ Query parameters (`MessagesQuerySchema`; all numbers coerced from strings):
 
 | Param | Type | Constraint |
 |---|---|---|
-| `limit` | int | 1–200. **Default 50** when omitted (the web reference always sends 200). |
+| `limit` | int | 1–200. **Default 50** when omitted. Ignored as a row cap when `turns` is set. The web reference sends `turns=20` for the latest page and for “load earlier”, and still sends `limit=200` on the forward `after` catch-up. |
+| `turns` | int | 1–50. Optional. Latest or `before` only — **rejected with `after`**. Returns that many complete human turns (an invoked user prompt plus every later row until the next one), including a turn larger than 200 rows. `page.limit` echoes the requested turn count. `nextBefore*` is the oldest in-band row of that page. `hasMore` is still “a row exists before that”. Queued uninvoked prompts stay pinned on the latest page and do not count as turns. |
 | `beforeSeq` + `beforeAt` | int + int | Page strictly older than this position. Pairwise required. |
 | `afterSeq` + `afterAt` | int + int | Page strictly newer than this position. Pairwise required. |
 | `untilSeq` + `untilAt` | int + int | Inclusive snapshot head for a catch-up loop. Pairwise required; **requires an `after` cursor**. |

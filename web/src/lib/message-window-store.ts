@@ -1,4 +1,5 @@
 import { getLiveMessageStreamId, getMessageStreamId } from '@hapi/protocol/messages'
+import { TURN_PAGE_SIZE, isHumanTurnStart } from '@hapi/protocol/turnBoundary'
 import type { ApiClient } from '@/api/client'
 import { normalizeDecryptedMessage } from '@/chat/normalize'
 import type { DecryptedMessage, MessageStatus, MessagesResponse } from '@/types/api'
@@ -511,6 +512,58 @@ function trimPreservingQueued(
     }
 }
 
+const HISTORY_TURN_LIMIT = TURN_PAGE_SIZE * 3
+
+function trimConversation(
+    incoming: DecryptedMessage[],
+    regularLimit: number,
+    mode: 'append' | 'prepend',
+    finalizedStreamIds: Set<string>,
+    turnLimit: number
+): { kept: DecryptedMessage[]; dropped: DecryptedMessage[] } {
+    const messages = dropSupersededStreamSnapshots(incoming, finalizedStreamIds)
+    const queued = messages.filter(isQueuedForInvocation)
+    const queuedIds = new Set(queued.map((message) => message.id))
+    const ordered = messages.filter((message) => !queuedIds.has(message.id))
+    if (!ordered.some(isHumanTurnStart)) {
+        return trimPreservingQueued(incoming, regularLimit, mode, finalizedStreamIds)
+    }
+
+    const slices: DecryptedMessage[][] = []
+    for (const message of ordered) {
+        const start = isHumanTurnStart(message)
+        if (slices.length === 0 || start) {
+            slices.push([message])
+            continue
+        }
+        slices[slices.length - 1]!.push(message)
+    }
+    const preamble = slices[0] && !isHumanTurnStart(slices[0][0]!) ? slices[0] : null
+    const turns = preamble ? slices.slice(1) : slices
+    let keptTurns = turns
+    let droppedTurns: DecryptedMessage[][] = []
+    if (turns.length > turnLimit) {
+        if (mode === 'append') {
+            droppedTurns = turns.slice(0, turns.length - turnLimit)
+            keptTurns = turns.slice(turns.length - turnLimit)
+        } else {
+            keptTurns = turns.slice(0, turnLimit)
+            droppedTurns = turns.slice(turnLimit)
+        }
+    }
+    const dropPreamble = preamble !== null && mode === 'append' && droppedTurns.length > 0
+    return {
+        kept: mergeMessages([
+            ...(preamble && !dropPreamble ? preamble : []),
+            ...keptTurns.flat()
+        ], queued),
+        dropped: [
+            ...(dropPreamble && preamble ? preamble : []),
+            ...droppedTurns.flat()
+        ]
+    }
+}
+
 function optimisticMessage(message: DecryptedMessage): boolean {
     return Boolean(message.localId && message.id === message.localId)
 }
@@ -558,7 +611,13 @@ function mergeIntoWindow(
     const regularLimit = options.regularLimit
         ?? (previous.viewMode === 'history' ? HISTORY_WINDOW_SIZE : VISIBLE_WINDOW_SIZE)
     const merged = mergeMessages(previous.messages, retainedIncoming)
-    const { kept, dropped } = trimPreservingQueued(merged, regularLimit, mode, previous.finalizedStreamIds)
+    const { kept, dropped } = trimConversation(
+        merged,
+        regularLimit,
+        mode,
+        previous.finalizedStreamIds,
+        mode === 'append' ? TURN_PAGE_SIZE : HISTORY_TURN_LIMIT
+    )
     let next = buildState(previous, {
         messages: kept,
         ...(options.advanceTailRevision
@@ -610,7 +669,13 @@ function applyLatestResponse(
         : previous.messages
     const authoritative = mergeMessages(preserved, retainedResponseMessages)
     const incoming = mergeMessages(authoritative, concurrentServerRows)
-    const { kept, dropped } = trimPreservingQueued(incoming, VISIBLE_WINDOW_SIZE, 'append', previous.finalizedStreamIds)
+    const { kept, dropped } = trimConversation(
+        incoming,
+        VISIBLE_WINDOW_SIZE,
+        'append',
+        previous.finalizedStreamIds,
+        TURN_PAGE_SIZE
+    )
     const snapshotHead = pagePosition(response.page.snapshotHeadAt, response.page.snapshotHeadSeq)
         ?? derivePosition(response.messages, 'newest')
     const newestKept = derivePosition(kept, 'newest')
@@ -697,7 +762,7 @@ async function runTailSync(api: ApiClient, sessionId: string): Promise<void> {
 
         if (!canIncrement) {
             const requestBaseline = new Map(getState(sessionId).messages.map((message) => [message.id, message]))
-            const response = await api.getMessages(sessionId, { limit: PAGE_SIZE })
+            const response = await api.getMessages(sessionId, { turns: TURN_PAGE_SIZE })
             if (!isCurrentTailSync(sessionId, generation)) return
             updateState(sessionId, (previous) => {
                 if (previous.syncGeneration !== generation) return previous
@@ -728,9 +793,11 @@ async function runTailSync(api: ApiClient, sessionId: string): Promise<void> {
             if (!isCurrentTailSync(sessionId, generation)) return
 
             if (response.page.reset || response.page.direction === 'latest') {
+                const turnPage = await api.getMessages(sessionId, { turns: TURN_PAGE_SIZE })
+                if (!isCurrentTailSync(sessionId, generation)) return
                 updateState(sessionId, (previous) => {
                     if (previous.syncGeneration !== generation) return previous
-                    return applyLatestResponse(previous, response, {
+                    return applyLatestResponse(previous, turnPage, {
                         replaceServerRows: true,
                         requestBaseline
                     })
@@ -830,7 +897,13 @@ async function waitForTailSyncDrain(
 }
 
 function enterTailMode(previous: InternalState): InternalState {
-    const { kept, dropped } = trimPreservingQueued(previous.messages, VISIBLE_WINDOW_SIZE, 'append', previous.finalizedStreamIds)
+    const { kept, dropped } = trimConversation(
+        previous.messages,
+        VISIBLE_WINDOW_SIZE,
+        'append',
+        previous.finalizedStreamIds,
+        TURN_PAGE_SIZE
+    )
     const forceLatest = previous.requiresLatestReset
     const oldest = dropped.length > 0
         ? derivePosition(kept, 'oldest')
@@ -850,7 +923,13 @@ function enterTailMode(previous: InternalState): InternalState {
 export function activateMessageWindow(sessionId: string): void {
     let requestedLatest = false
     updateState(sessionId, (previous) => {
-        const { kept } = trimPreservingQueued(previous.messages, VISIBLE_WINDOW_SIZE, 'append', previous.finalizedStreamIds)
+        const { kept } = trimConversation(
+            previous.messages,
+            VISIBLE_WINDOW_SIZE,
+            'append',
+            previous.finalizedStreamIds,
+            TURN_PAGE_SIZE
+        )
         const forceLatest = previous.requiresLatestReset
         const hasUsableCursor = getNewestCursor(previous) !== null
             && previous.epoch !== null
@@ -958,7 +1037,7 @@ export async function fetchOlderMessages(
         const response = await api.getMessages(sessionId, {
             beforeAt: before.at,
             beforeSeq: before.seq,
-            limit: PAGE_SIZE
+            turns: TURN_PAGE_SIZE
         })
         if (getState(sessionId).olderGeneration !== generation) {
             return { kind: 'stopped', reason: 'invalidated' }

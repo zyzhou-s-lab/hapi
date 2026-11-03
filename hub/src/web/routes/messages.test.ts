@@ -194,6 +194,38 @@ describe('GET /api/sessions/:id/messages', () => {
         expect(await response.json()).toMatchObject({ error: 'Invalid query' })
         expect(called).toBe(false)
     })
+
+    it('forwards a turn page and rejects turns combined with after', async () => {
+        const calls: Array<{ sessionId: string; options: Parameters<GetMessagesPage>[1] }> = []
+        const { app } = createApp({
+            getMessagesPage: (sessionId, options) => {
+                calls.push({ sessionId, options })
+                return {
+                    messages: [],
+                    page: {
+                        direction: 'latest',
+                        limit: options.turns ?? options.limit,
+                        epoch: 1,
+                        reset: false,
+                        nextBeforeSeq: null,
+                        nextBeforeAt: null,
+                        nextAfterSeq: null,
+                        nextAfterAt: null,
+                        snapshotHeadSeq: null,
+                        snapshotHeadAt: null,
+                        hasMore: false
+                    }
+                }
+            }
+        })
+
+        const ok = await app.request('/api/sessions/session-1/messages?turns=20')
+        expect(ok.status).toBe(200)
+        expect(calls[0]?.options.turns).toBe(20)
+
+        const rejected = await app.request('/api/sessions/session-1/messages?turns=20&afterAt=1&afterSeq=1')
+        expect(rejected.status).toBe(400)
+    })
 })
 
 // ---------------------------------------------------------------------------

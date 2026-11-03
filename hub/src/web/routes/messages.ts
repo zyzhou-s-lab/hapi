@@ -36,6 +36,7 @@ export function createMessagesRoutes(getSyncEngine: () => SyncEngine | null): Ho
             : null
         return c.json(engine.getMessagesPage(sessionId, {
             limit,
+            ...(parsed.data.turns !== undefined ? { turns: parsed.data.turns } : {}),
             before,
             after,
             until,

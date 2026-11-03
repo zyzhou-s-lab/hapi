@@ -227,7 +227,7 @@ export const paginationFixtureCases: PaginationFixtureCase[] = [
     },
     {
         name: 'reset-latest-preserves-optimistic',
-        description: 'A tail sync that gets page.reset:true replaces every server row from before the request but keeps optimistic rows (id === localId): the not-yet-echoed send survives the epoch bump and the window adopts the new epoch and cursors.',
+        description: 'A tail sync whose catch-up page reports reset discards that body and refetches the latest turn page. The turn page replaces every server row from before the request but keeps optimistic rows (id === localId): the not-yet-echoed send survives the epoch bump and the window adopts the new epoch and cursors.',
         ops: [
             {
                 op: 'sync-tail',
@@ -255,11 +255,18 @@ export const paginationFixtureCases: PaginationFixtureCase[] = [
             {
                 op: 'sync-tail',
                 responses: [
-                    pageResponse([agentMessage({ id: 'fresh-2', seq: 2, at: 2_000 })], {
+                    pageResponse([agentMessage({ id: 'stale-reset', seq: 2, at: 2_000 })], {
                         direction: 'latest',
                         epoch: 2,
                         hasMore: false,
                         reset: true,
+                        nextBefore: { at: 2_000, seq: 2 },
+                        snapshotHead: { at: 2_000, seq: 2 }
+                    }),
+                    pageResponse([agentMessage({ id: 'fresh-2', seq: 2, at: 2_000 })], {
+                        direction: 'latest',
+                        epoch: 2,
+                        hasMore: false,
                         nextBefore: { at: 2_000, seq: 2 },
                         snapshotHead: { at: 2_000, seq: 2 }
                     })

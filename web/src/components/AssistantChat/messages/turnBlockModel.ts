@@ -5,7 +5,7 @@ import { isAskUserQuestionToolName } from '@/components/ToolCard/askUserQuestion
 import { extractTodoChecklist } from '@/components/ToolCard/checklist'
 import { getToolPresentation } from '@/components/ToolCard/knownTools'
 import { isRequestUserInputToolName } from '@/components/ToolCard/requestUserInput'
-import { getInputStringAny } from '@/lib/toolInputUtils'
+import { getInputStringAny, truncate } from '@/lib/toolInputUtils'
 import { isObject } from '@hapi/protocol'
 import type { SessionMetadataSummary } from '@/types/api'
 
@@ -146,7 +146,50 @@ function verbFor(tool: ChatToolCall, fallbackTitle: string): string {
     return fallbackTitle
 }
 
+
+const SUBAGENT_INTENT_LIMIT = 80
+
+function stripMarkdownLine(line: string): string {
+    return line
+        .replace(/^\s{0,3}#{1,6}\s+/, '')
+        .replace(/^\s*[-*+]\s+/, '')
+        .replace(/^\s*\d+[.)]\s+/, '')
+        .replace(/[`*_]+/g, '')
+        .replace(/\s+/g, ' ')
+        .trim()
+}
+
+function plainSubagentLabel(value: string): string {
+    const lines = value.split(/\r?\n/).map((part) => part.trim()).filter((part) => part.length > 0)
+    if (lines.length === 0) return ''
+    const heading = /^\s{0,3}#{1,6}\s+/.test(lines[0] ?? '')
+    const body = heading
+        ? lines.slice(1).map(stripMarkdownLine).find((line) => line.length > 0)
+        : stripMarkdownLine(lines[0] ?? '')
+    const label = body || stripMarkdownLine(lines[0] ?? '')
+    if (!label) return ''
+    return truncate(label, SUBAGENT_INTENT_LIMIT)
+}
+
+function subagentIntent(tool: ChatToolCall): string | null {
+    const candidates = [
+        stringField(tool.input, ['description', 'name', 'task_name', 'summary', 'title', 'task']),
+        tool.description,
+        tool.nativeTitle,
+        stringField(tool.input, ['prompt', 'message']),
+    ]
+    for (const candidate of candidates) {
+        if (!candidate) continue
+        const label = plainSubagentLabel(candidate)
+        if (label) return label
+    }
+    return null
+}
+
 function intentFor(tool: ChatToolCall, verb: string, fallbackTitle: string): string {
+    if (isSubagentToolName(tool.name)) {
+        return subagentIntent(tool) ?? (fallbackTitle === verb ? '' : fallbackTitle)
+    }
     if (tool.name === 'Read') {
         const file = stringField(tool.input, ['file_path', 'path'])
         return intentSentence(tool) ?? (file ? basename(file) : fallbackTitle)

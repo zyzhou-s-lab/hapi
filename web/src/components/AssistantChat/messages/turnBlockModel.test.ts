@@ -113,6 +113,35 @@ describe('partitionTurn', () => {
         ])
     })
 
+    it('titles a subagent from its description, not the prompt heading', () => {
+        const named = partitionTurn([
+            call(tool('agent', 'Task', {
+                nativeTitle: '# Target\n\nRead the files',
+                input: {
+                    description: 'Inspect auth',
+                    prompt: '# Target\n\nRead the files',
+                },
+            })),
+        ], null)
+        expect(named.rows[0]?.kind === 'tool' && named.rows[0].intent).toBe('Inspect auth')
+
+        const promptOnly = partitionTurn([
+            call(tool('prompt-only', 'Agent', {
+                input: { prompt: '# Target\n\nRead the session cursor and report where paging starts' },
+            })),
+        ], null)
+        expect(promptOnly.rows[0]?.kind === 'tool' && promptOnly.rows[0].intent).toBe(
+            'Read the session cursor and report where paging starts'
+        )
+
+        const long = partitionTurn([
+            call(tool('long', 'Task', {
+                input: { description: 'D'.repeat(90) },
+            })),
+        ], null)
+        expect(long.rows[0]?.kind === 'tool' && long.rows[0].intent).toBe(`${'D'.repeat(77)}...`)
+    })
+
     it('uses a Codex reasoning title and does not render that tool as a row', () => {
         const partition = partitionTurn([
             call(tool('reason', 'CodexReasoning', { input: { title: 'Building a screenshot script' } })),
