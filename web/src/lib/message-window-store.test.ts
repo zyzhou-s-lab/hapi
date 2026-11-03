@@ -18,6 +18,7 @@ import {
     syncTailMessages,
     updateMessageStatus,
 } from '@/lib/message-window-store'
+import { TURN_PAGE_ROW_MAX } from '@hapi/protocol/turnBoundary'
 
 const touchedSessions = new Set<string>()
 
@@ -1317,6 +1318,82 @@ describe('history view and older pagination', () => {
         expect(kept[0]).toBe('prompt')
         expect(kept).toContain('o799')
         expect(kept.at(-1)).toBe('o1499')
+    })
+
+    it('keeps every row of a 2000-row agent-run older page', async () => {
+        const id = sessionId('agent-run-older-page')
+        const latest = Array.from({ length: 200 }, (_, index) =>
+            makeAgentRunMessage(`latest-${index}`, 2001 + index, 3001 + index)
+        )
+        const older = Array.from({ length: TURN_PAGE_ROW_MAX }, (_, index) =>
+            makeAgentRunMessage(`r${index}`, index + 1, index + 1)
+        )
+        const getMessages = vi.fn()
+            .mockResolvedValueOnce(latestResponse(latest, {
+                epoch: 1,
+                hasMore: true,
+                nextBeforeAt: 3001,
+                nextBeforeSeq: 2001,
+            }))
+            .mockResolvedValueOnce(beforeResponse(older, {
+                epoch: 1,
+                hasMore: false,
+                nextBeforeAt: 1,
+                nextBeforeSeq: 1,
+            }))
+        const api = createApi(getMessages)
+        await syncTailMessages(api, id)
+
+        const loaded = await fetchOlderMessages(api, id)
+
+        expect(loaded).toMatchObject({ kind: 'applied', hasMore: false })
+        const kept = getMessageWindowState(id).messages.map((message) => message.id)
+        expect(kept).toHaveLength(TURN_PAGE_ROW_MAX)
+        expect(kept[0]).toBe('r0')
+        expect(kept).toContain('r800')
+        expect(kept.at(-1)).toBe('r1999')
+    })
+
+    it('keeps the last row of a full older page when one prompt is queued', async () => {
+        const id = sessionId('queued-older-page')
+        const rows = [
+            makeUserMessage({ id: 'prompt', seq: 1, invokedAt: 1, createdAt: 1 }),
+            ...Array.from({ length: TURN_PAGE_ROW_MAX - 1 }, (_, index) =>
+                makeAgentMessage({ id: `o${index}`, seq: index + 2, at: index + 2 })
+            ),
+        ]
+        const queued = makeUserMessage({
+            id: 'local-queued',
+            localId: 'local-queued',
+            createdAt: TURN_PAGE_ROW_MAX + 10,
+            invokedAt: null,
+            status: 'queued',
+        })
+        const getMessages = vi.fn()
+            .mockResolvedValueOnce(latestResponse(rows, {
+                epoch: 1,
+                hasMore: true,
+                nextBeforeAt: 1,
+                nextBeforeSeq: 1,
+            }))
+            .mockResolvedValueOnce(beforeResponse(rows, {
+                epoch: 1,
+                hasMore: false,
+                nextBeforeAt: 1,
+                nextBeforeSeq: 1,
+            }))
+        const api = createApi(getMessages)
+        await syncTailMessages(api, id)
+        appendOptimisticMessage(id, queued)
+
+        const loaded = await fetchOlderMessages(api, id)
+
+        expect(loaded).toMatchObject({ kind: 'applied', hasMore: false })
+        const kept = getMessageWindowState(id).messages.map((message) => message.id)
+        expect(kept).toHaveLength(TURN_PAGE_ROW_MAX + 1)
+        expect(kept[0]).toBe('prompt')
+        expect(kept).toContain('o1998')
+        expect(kept).toContain('local-queued')
     })
 })
 

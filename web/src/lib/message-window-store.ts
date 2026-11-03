@@ -496,7 +496,9 @@ function trimPreservingQueued(
     incoming: DecryptedMessage[],
     regularLimit: number,
     mode: 'append' | 'prepend',
-    finalizedStreamIds: Set<string>
+    finalizedStreamIds: Set<string>,
+    agentRunLimit: number = AGENT_RUN_WINDOW_SIZE,
+    reserveQueuedBudget = true
 ): { kept: DecryptedMessage[]; dropped: DecryptedMessage[] } {
     const messages = dropSupersededStreamSnapshots(incoming, finalizedStreamIds)
     const queued = messages.filter(isQueuedForInvocation)
@@ -504,8 +506,9 @@ function trimPreservingQueued(
     const nonQueued = messages.filter((message) => !queuedIds.has(message.id))
     const agentRuns = nonQueued.filter(isCodexAgentRunMessage)
     const regular = nonQueued.filter((message) => !isCodexAgentRunMessage(message))
-    const regularTrim = sliceForTrim(regular, Math.max(0, regularLimit - queued.length), mode)
-    const agentRunTrim = sliceForTrim(agentRuns, AGENT_RUN_WINDOW_SIZE, mode)
+    const queuedBudget = reserveQueuedBudget ? queued.length : 0
+    const regularTrim = sliceForTrim(regular, Math.max(0, regularLimit - queuedBudget), mode)
+    const agentRunTrim = sliceForTrim(agentRuns, agentRunLimit, mode)
     return {
         kept: mergeMessages([...regularTrim.kept, ...agentRunTrim.kept], queued),
         dropped: [...regularTrim.dropped, ...agentRunTrim.dropped]
@@ -519,14 +522,25 @@ function trimConversation(
     regularLimit: number,
     mode: 'append' | 'prepend',
     finalizedStreamIds: Set<string>,
-    turnLimit: number
+    turnLimit: number,
+    options: {
+        agentRunLimit?: number
+        reserveQueuedBudget?: boolean
+    } = {}
 ): { kept: DecryptedMessage[]; dropped: DecryptedMessage[] } {
     const messages = dropSupersededStreamSnapshots(incoming, finalizedStreamIds)
     const queued = messages.filter(isQueuedForInvocation)
     const queuedIds = new Set(queued.map((message) => message.id))
     const ordered = messages.filter((message) => !queuedIds.has(message.id))
     if (!ordered.some(isHumanTurnStart)) {
-        return trimPreservingQueued(incoming, regularLimit, mode, finalizedStreamIds)
+        return trimPreservingQueued(
+            incoming,
+            regularLimit,
+            mode,
+            finalizedStreamIds,
+            options.agentRunLimit,
+            options.reserveQueuedBudget
+        )
     }
 
     const slices: DecryptedMessage[][] = []
@@ -560,7 +574,8 @@ function trimConversation(
         ...(dropPreamble && preamble ? preamble : []),
         ...droppedTurns.flat()
     ]
-    const limited = sliceForTrim(regularKept, Math.max(0, regularLimit - queued.length), mode)
+    const queuedBudget = options.reserveQueuedBudget === false ? 0 : queued.length
+    const limited = sliceForTrim(regularKept, Math.max(0, regularLimit - queuedBudget), mode)
     return {
         kept: mergeMessages(limited.kept, queued),
         dropped: [...turnDropped, ...limited.dropped]
@@ -603,6 +618,8 @@ function mergeIntoWindow(
     options: {
         mode?: 'append' | 'prepend'
         regularLimit?: number
+        agentRunLimit?: number
+        reserveQueuedBudget?: boolean
         advanceTailRevision?: boolean
     } = {}
 ): InternalState {
@@ -619,7 +636,11 @@ function mergeIntoWindow(
         regularLimit,
         mode,
         previous.finalizedStreamIds,
-        mode === 'append' ? TURN_PAGE_SIZE : HISTORY_TURN_LIMIT
+        mode === 'append' ? TURN_PAGE_SIZE : HISTORY_TURN_LIMIT,
+        {
+            agentRunLimit: options.agentRunLimit,
+            reserveQueuedBudget: options.reserveQueuedBudget
+        }
     )
     let next = buildState(previous, {
         messages: kept,
@@ -1079,7 +1100,9 @@ export async function fetchOlderMessages(
             }
             const merged = mergeIntoWindow(previous, response.messages, {
                 mode: 'prepend',
-                regularLimit: OLDER_LOAD_WINDOW_SIZE
+                regularLimit: OLDER_LOAD_WINDOW_SIZE,
+                agentRunLimit: OLDER_LOAD_WINDOW_SIZE,
+                reserveQueuedBudget: false
             })
             historyVersion = nextHistoryVersion
             return buildState(merged, {
