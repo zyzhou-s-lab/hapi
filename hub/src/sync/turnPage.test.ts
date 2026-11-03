@@ -99,15 +99,20 @@ describe('getMessagesPage turns', () => {
         expect(page.page.hasMore).toBe(true)
     })
 
-    it('cuts a capped page at the newest turn start inside the ceiling', () => {
+    it('keeps every complete turn inside the row ceiling', () => {
         const store = new Store(':memory:')
         const session = store.sessions.getOrCreateSession('cap-start', { path: '/tmp/cap-start' }, null, 'default')
         const base = Date.now() - 500_000
-        store.messages.addMessage(session.id, user('older'), undefined, undefined, base)
-        for (let index = 0; index < 1900; index += 1) {
-            store.messages.addMessage(session.id, agent(`old ${index}`), undefined, undefined, base + 1 + index)
+        store.messages.addMessage(session.id, user('outside'), undefined, undefined, base)
+        for (let index = 0; index < 100; index += 1) {
+            store.messages.addMessage(session.id, agent(`outside ${index}`), undefined, undefined, base + 1 + index)
         }
-        const newerAt = base + 2_000
+        const firstAt = base + 200
+        store.messages.addMessage(session.id, user('first'), undefined, undefined, firstAt)
+        for (let index = 0; index < 1800; index += 1) {
+            store.messages.addMessage(session.id, agent(`old ${index}`), undefined, undefined, firstAt + 1 + index)
+        }
+        const newerAt = firstAt + 2_000
         store.messages.addMessage(session.id, user('newer'), undefined, undefined, newerAt)
         for (let index = 0; index < 150; index += 1) {
             store.messages.addMessage(session.id, agent(`new ${index}`), undefined, undefined, newerAt + 1 + index)
@@ -115,10 +120,12 @@ describe('getMessagesPage turns', () => {
 
         const page = service(store).getMessagesPage(session.id, { limit: 50, turns: 20, before: null })
         const texts = page.messages.map((message) => messageText(message.content))
-        expect(texts[0]).toBe('newer')
-        expect(texts).toHaveLength(151)
+        expect(texts[0]).toBe('first')
+        expect(texts).toHaveLength(1952)
+        expect(texts).toContain('old 0')
+        expect(texts).toContain('newer')
         expect(texts.at(-1)).toBe('new 149')
-        expect(texts).not.toContain('older')
+        expect(texts).not.toContain('outside')
         expect(page.page.hasMore).toBe(true)
     })
 

@@ -357,7 +357,7 @@ export class MessageService {
                 ? scanned.slice(scanned.length - TURN_PAGE_ROW_MAX)
                 : scanned
             let cut = 0
-            for (let index = capped.length - 1; index >= 0; index -= 1) {
+            for (let index = 0; index < capped.length; index += 1) {
                 if (isHumanTurnStart(capped[index]!)) {
                     cut = index
                     break
