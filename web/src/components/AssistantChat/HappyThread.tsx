@@ -150,6 +150,9 @@ const TOP_PULL_TRIGGER_PX = 64
 // Trackpads emit a burst per swipe; one signal is enough to restart a paused
 // run after its bounded retry budget is exhausted.
 const WHEEL_GESTURE_GAP_MS = 250
+// Leftover upward deltas are swallowed only for the rest of the gesture,
+// and never longer than this from the moment the anchor is pinned.
+export const ANCHOR_PIN_MAX_MS = 1000
 const KEYBOARD_SCROLL_INTENT_WINDOW_MS = 750
 const POINTER_CANCEL_INTENT_WINDOW_MS = 750
 const UPWARD_SCROLL_KEYS = new Set(['ArrowUp', 'PageUp', 'Home'])
@@ -242,6 +245,15 @@ export function shouldRecapturePendingHistoryAnchor(
  * gesture that triggered the load. Applying them moves the restored row. */
 export function shouldSuppressPinnedWheel(deltaY: number, pinUntil: number, now: number): boolean {
     return deltaY < 0 && pinUntil > now
+}
+
+export function nextPinnedAnchorUntil(
+    startedAt: number,
+    now: number,
+    gapMs: number,
+    maxMs: number
+): number {
+    return Math.min(now + gapMs, startedAt + maxMs)
 }
 
 export function hasAppliedHistoryVersion(
@@ -617,6 +629,7 @@ export function HappyThread(props: {
     const wheelGestureUntilRef = useRef(0)
     const pinnedAnchorRef = useRef<ScrollAnchor | null>(null)
     const pinnedAnchorUntilRef = useRef(0)
+    const pinnedAnchorStartedAtRef = useRef(0)
     const isLoadingMoreRef = useRef(props.isLoadingMoreMessages)
     const hasMoreMessagesRef = useRef(props.hasMoreMessages)
     const isSyncingTailRef = useRef(props.isSyncingTail)
@@ -848,6 +861,9 @@ export function HappyThread(props: {
                 pending
                 && historyLoaderRef.current.runId === pending.runId
                 && shouldRecapturePendingHistoryAnchor(historyLoaderRef.current.phase)
+                // The wheel burst that started this load is not a new anchor.
+                // Recapturing it aims the restore at whatever the burst moved.
+                && wheelGestureUntilRef.current <= Date.now()
             ) {
                 pending.anchor = captureScrollAnchor(viewport)
                 pending.scrollTop = viewport.scrollTop
@@ -927,8 +943,14 @@ export function HappyThread(props: {
             setPullToLoadState(state)
         }
 
+        const clearPinnedAnchor = () => {
+            pinnedAnchorRef.current = null
+            pinnedAnchorUntilRef.current = 0
+            pinnedAnchorStartedAtRef.current = 0
+        }
+
         const handleKeyDown = (event: KeyboardEvent) => {
-            if (isNestedScrollEvent(event)) return
+            clearPinnedAnchor()
             const target = event.target
             if (
                 event.defaultPrevented
@@ -960,6 +982,7 @@ export function HappyThread(props: {
             if (isNestedScrollEvent(event) || event.button !== 0) {
                 return
             }
+            clearPinnedAnchor()
             armPointerIntent()
         }
 
@@ -977,6 +1000,7 @@ export function HappyThread(props: {
         const handleWindowPointerDown = (event: PointerEvent) => {
             if (isNestedScrollEvent(event)) return
             if (event.button === 0 && isInsideViewport(event.clientX, event.clientY)) {
+                clearPinnedAnchor()
                 armPointerIntent()
             }
         }
@@ -984,6 +1008,7 @@ export function HappyThread(props: {
         const handleWindowMouseDown = (event: MouseEvent) => {
             if (isNestedScrollEvent(event)) return
             if (event.button === 0 && isInsideViewport(event.clientX, event.clientY)) {
+                clearPinnedAnchor()
                 armPointerIntent()
             }
         }
@@ -1014,13 +1039,21 @@ export function HappyThread(props: {
             const now = Date.now()
             if (shouldSuppressPinnedWheel(event.deltaY, pinnedAnchorUntilRef.current, now)) {
                 event.preventDefault()
-                pinnedAnchorUntilRef.current = now + WHEEL_GESTURE_GAP_MS
+                const startedAt = pinnedAnchorStartedAtRef.current || now
+                pinnedAnchorStartedAtRef.current = startedAt
+                pinnedAnchorUntilRef.current = nextPinnedAnchorUntil(
+                    startedAt,
+                    now,
+                    WHEEL_GESTURE_GAP_MS,
+                    ANCHOR_PIN_MAX_MS
+                )
                 wheelGestureUntilRef.current = pinnedAnchorUntilRef.current
                 return
             }
             if (event.deltaY >= 0) {
                 wheelIntentUntil = 0
                 wheelGestureUntilRef.current = 0
+                clearPinnedAnchor()
                 return
             }
             // One trigger per gesture: a trackpad swipe is a burst of wheel
@@ -1091,6 +1124,9 @@ export function HappyThread(props: {
         viewport.addEventListener('scroll', handleScroll, { passive: true })
         viewport.addEventListener('keydown', handleKeyDown)
         viewport.addEventListener('pointerdown', handlePointerDown, { passive: true })
+        // passive: false so preventDefault can drop leftover upward wheel
+        // deltas after the anchor is restored. Downward wheel, pointer, and
+        // key clear that pin; otherwise preventDefault would swallow them too.
         viewport.addEventListener('wheel', handleWheel, { passive: false })
         viewport.addEventListener('touchstart', handleTouchStart, { passive: true })
         viewport.addEventListener('touchmove', handleTouchMove, { passive: true })
@@ -1593,8 +1629,15 @@ export function HappyThread(props: {
             }
             const restoredByAnchor = pending.anchor ? restoreScrollAnchor(viewport, pending.anchor) : false
             if (restoredByAnchor && pending.anchor && wheelGestureUntilRef.current > Date.now()) {
+                const startedAt = Date.now()
                 pinnedAnchorRef.current = pending.anchor
-                pinnedAnchorUntilRef.current = wheelGestureUntilRef.current
+                pinnedAnchorStartedAtRef.current = startedAt
+                pinnedAnchorUntilRef.current = nextPinnedAnchorUntil(
+                    startedAt,
+                    startedAt,
+                    WHEEL_GESTURE_GAP_MS,
+                    ANCHOR_PIN_MAX_MS
+                )
             } else if (!restoredByAnchor) {
                 const delta = viewport.scrollHeight - pending.scrollHeight
                 viewport.scrollTop = pending.scrollTop + delta

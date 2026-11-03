@@ -1076,6 +1076,169 @@ describe('history view and older pagination', () => {
         expect(kept.at(-1)).toBe('answer')
     })
 
+    it('keeps the end of a 2202-row turn after two older pages when a later turn is visible', async () => {
+        const id = sessionId('two-page-turn')
+        const turn = [
+            makeUserMessage({ id: 'prompt', seq: 1, invokedAt: 1, createdAt: 1 }),
+            ...Array.from({ length: 2201 }, (_, index) => makeAgentMessage({
+                id: index === 2099 ? 'f1100' : index === 2200 ? 'answer' : `row-${index}`,
+                seq: index + 2,
+                at: index + 2,
+            })),
+        ]
+        const later = makeUserMessage({ id: 'L56', seq: 2204, invokedAt: 2204, createdAt: 2204 })
+        const all = [...turn, later]
+        const getMessages = vi.fn(async (_sessionId: string, query: { beforeSeq?: number | null } = {}) => {
+            const beforeSeq = query.beforeSeq ?? null
+            const eligible = beforeSeq === null
+                ? [later]
+                : all.filter((message) => (message.seq ?? 0) < beforeSeq).slice(-TURN_PAGE_ROW_MAX)
+            const oldest = eligible[0]
+            const oldestSeq = oldest?.seq ?? 1
+            const oldestAt = oldest?.invokedAt ?? oldest?.createdAt ?? 1
+            const page = {
+                epoch: 1,
+                hasMore: oldestSeq > 1,
+                nextBeforeAt: oldestAt,
+                nextBeforeSeq: oldestSeq,
+            }
+            return beforeSeq === null ? latestResponse(eligible, page) : beforeResponse(eligible, page)
+        })
+        const api = createApi(getMessages)
+        await syncTailMessages(api, id)
+        setMessageViewMode(id, 'history')
+
+        expect(await fetchOlderMessages(api, id)).toMatchObject({ kind: 'applied' })
+        expect(await fetchOlderMessages(api, id)).toMatchObject({ kind: 'applied', hasMore: false })
+        const kept = getMessageWindowState(id).messages.map((message) => message.id)
+        expect(kept).toHaveLength(turn.length + 1)
+        expect(kept[0]).toBe('prompt')
+        expect(kept).toContain('f1100')
+        expect(kept).toContain('answer')
+        expect(kept.at(-1)).toBe('L56')
+    })
+
+    it('keeps the end of a 5000-row turn across older pages', async () => {
+        const id = sessionId('five-thousand-turn')
+        const rows = [
+            makeUserMessage({ id: 'prompt', seq: 1, invokedAt: 1, createdAt: 1 }),
+            ...Array.from({ length: 4999 }, (_, index) => makeAgentMessage({
+                id: index === 4998 ? 'answer' : `row-${index}`,
+                seq: index + 2,
+                at: index + 2,
+            })),
+        ]
+        const getMessages = vi.fn(async (_sessionId: string, query: { beforeSeq?: number | null } = {}) => {
+            const beforeSeq = query.beforeSeq ?? null
+            const eligible = beforeSeq === null
+                ? rows.slice(-VISIBLE_WINDOW_SIZE)
+                : rows.filter((message) => (message.seq ?? 0) < beforeSeq).slice(-TURN_PAGE_ROW_MAX)
+            const oldest = eligible[0]
+            const oldestSeq = oldest?.seq ?? 1
+            const oldestAt = oldest?.invokedAt ?? oldest?.createdAt ?? 1
+            const page = {
+                epoch: 1,
+                hasMore: oldestSeq > 1,
+                nextBeforeAt: oldestAt,
+                nextBeforeSeq: oldestSeq,
+            }
+            return beforeSeq === null ? latestResponse(eligible, page) : beforeResponse(eligible, page)
+        })
+        const api = createApi(getMessages)
+        await syncTailMessages(api, id)
+        setMessageViewMode(id, 'history')
+
+        let guard = 0
+        while (getMessageWindowState(id).hasMore && guard < 6) {
+            const loaded = await fetchOlderMessages(api, id)
+            expect(loaded.kind).toBe('applied')
+            guard += 1
+        }
+
+        const kept = getMessageWindowState(id).messages.map((message) => message.id)
+        expect(guard).toBeGreaterThan(1)
+        expect(kept).toHaveLength(5000)
+        expect(kept[0]).toBe('prompt')
+        expect(kept.at(-1)).toBe('answer')
+    })
+
+    it('does not grow the window for a second page of a tailless older turn', async () => {
+        const id = sessionId('tailless-preamble')
+        const tail = Array.from({ length: 4500 }, (_, index) => makeAgentMessage({
+            id: `tail-${index}`,
+            seq: index + 1,
+            at: index + 1,
+        }))
+        const later = makeUserMessage({ id: 'later', seq: 4501, invokedAt: 4501, createdAt: 4501 })
+        const all = [...tail, later]
+        const getMessages = vi.fn(async (_sessionId: string, query: { beforeSeq?: number | null } = {}) => {
+            const beforeSeq = query.beforeSeq ?? null
+            const eligible = beforeSeq === null
+                ? [later]
+                : all.filter((message) => (message.seq ?? 0) < beforeSeq).slice(-TURN_PAGE_ROW_MAX)
+            const oldest = eligible[0]
+            const oldestSeq = oldest?.seq ?? 1
+            const oldestAt = oldest?.invokedAt ?? oldest?.createdAt ?? 1
+            const page = {
+                epoch: 1,
+                hasMore: oldestSeq > 1,
+                nextBeforeAt: oldestAt,
+                nextBeforeSeq: oldestSeq,
+            }
+            return beforeSeq === null ? latestResponse(eligible, page) : beforeResponse(eligible, page)
+        })
+        const api = createApi(getMessages)
+        await syncTailMessages(api, id)
+        setMessageViewMode(id, 'history')
+
+        await fetchOlderMessages(api, id)
+        await fetchOlderMessages(api, id)
+        const kept = getMessageWindowState(id).messages.map((message) => message.id)
+        expect(kept).toHaveLength(TURN_PAGE_ROW_MAX)
+        expect(kept.at(-1)).toBe('later')
+        expect(kept).toContain('tail-4499')
+        expect(kept).not.toContain('tail-0')
+    })
+
+    it('does not collapse a loaded long turn when a live row arrives in history', async () => {
+        const id = sessionId('history-long-turn-live')
+        const rows = [
+            makeUserMessage({ id: 'prompt', seq: 1, invokedAt: 1, createdAt: 1 }),
+            ...Array.from({ length: 2201 }, (_, index) => makeAgentMessage({
+                id: index === 2200 ? 'answer' : `row-${index}`,
+                seq: index + 2,
+                at: index + 2,
+            })),
+        ]
+        const latest = rows.slice(-VISIBLE_WINDOW_SIZE)
+        const older = rows.slice(0, -VISIBLE_WINDOW_SIZE)
+        const getMessages = vi.fn()
+            .mockResolvedValueOnce(latestResponse(latest, {
+                epoch: 1,
+                hasMore: true,
+                nextBeforeAt: latest[0]?.invokedAt ?? 1,
+                nextBeforeSeq: latest[0]?.seq ?? 1,
+            }))
+            .mockResolvedValueOnce(beforeResponse(older, {
+                epoch: 1,
+                hasMore: false,
+                nextBeforeAt: 1,
+                nextBeforeSeq: 1,
+            }))
+        const api = createApi(getMessages)
+        await syncTailMessages(api, id)
+        setMessageViewMode(id, 'history')
+        await fetchOlderMessages(api, id)
+
+        ingestIncomingMessages(id, [
+            makeAgentMessage({ id: 'live', seq: 3000, at: 3000 })
+        ])
+        const kept = getMessageWindowState(id).messages.map((message) => message.id)
+        expect(kept).toHaveLength(rows.length)
+        expect(kept[0]).toBe('prompt')
+        expect(kept).toContain('answer')
+    })
+
     it('loads exactly one raw older page with the paired composite cursor', async () => {
         const id = sessionId('older-page')
         const latest = makeAgentMessage({ id: 'latest', seq: 10, at: 10_000 })

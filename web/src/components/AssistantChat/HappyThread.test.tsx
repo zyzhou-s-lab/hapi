@@ -4,6 +4,7 @@ import { useState, type ComponentProps } from 'react'
 import { I18nProvider } from '@/lib/i18n-context'
 import {
     ConversationOutlinePanel,
+    ANCHOR_PIN_MAX_MS,
     captureScrollAnchor,
     getHistoryCoverageRetryDelay,
     getPullToLoadState,
@@ -13,6 +14,7 @@ import {
     measureComposerDockInset,
     loadUntilVisibleBoundaryChanges,
     locateOutlineTargetMessage,
+    nextPinnedAnchorUntil,
     prependMissingUserSnapshot,
     restoreScrollAnchor,
     shouldRecapturePendingHistoryAnchor,
@@ -419,6 +421,11 @@ describe('scroll anchor helpers', () => {
         expect(shouldSuppressPinnedWheel(-490, 2_000, 1_900)).toBe(true)
         expect(shouldSuppressPinnedWheel(-490, 1_000, 1_900)).toBe(false)
         expect(shouldSuppressPinnedWheel(120, 2_000, 1_900)).toBe(false)
+    })
+
+    it('stops extending the anchor pin once the absolute cap is reached', () => {
+        expect(nextPinnedAnchorUntil(1_000, 1_100, 250, ANCHOR_PIN_MAX_MS)).toBe(1_350)
+        expect(nextPinnedAnchorUntil(1_000, 1_900, 250, ANCHOR_PIN_MAX_MS)).toBe(2_000)
     })
 
     it('waits until assistant-ui has applied the loaded history version', () => {
