@@ -1653,10 +1653,11 @@ describe('history view and older pagination', () => {
         expect(kept.at(-1)).toBe('latest-199')
     })
 
-    it('stops instead of retrying when every row of an older page is discarded', async () => {
+    it('loads the next older page when every row of an older page is discarded', async () => {
         const id = sessionId('discarded-older-page')
         const finalSnapshot = makeReasoningMessage('final', 'stream-1', 10, 10_000, false)
         const liveReplay = makeReasoningMessage('live-old', 'stream-1', 9, 9_000, true)
+        const earlier = makeAgentMessage({ id: 'earlier', seq: 5, at: 5_000 })
         const getMessages = vi.fn()
             .mockResolvedValueOnce(latestResponse([finalSnapshot], {
                 epoch: 1,
@@ -1670,19 +1671,41 @@ describe('history view and older pagination', () => {
                 nextBeforeAt: 9_000,
                 nextBeforeSeq: 9,
             }))
+            .mockResolvedValueOnce(beforeResponse([earlier], {
+                epoch: 1,
+                hasMore: false,
+                nextBeforeAt: 5_000,
+                nextBeforeSeq: 5,
+            }))
         const api = createApi(getMessages)
         await syncTailMessages(api, id)
 
-        const loaded = await fetchOlderMessages(api, id)
+        const discarded = await fetchOlderMessages(api, id)
 
-        expect(loaded).toMatchObject({ kind: 'applied', hasMore: false, addedRenderableCount: 0 })
+        expect(discarded).toMatchObject({ kind: 'applied', hasMore: true, addedRenderableCount: 0 })
         expect(getMessageWindowState(id)).toMatchObject({
-            hasMore: false,
-            oldestPositionSeq: 10,
+            hasMore: true,
+            oldestPositionAt: 9_000,
+            oldestPositionSeq: 9,
         })
         expect(getMessageWindowState(id).messages.map((message) => message.id)).toEqual(['final'])
+        expect(getMessages.mock.calls[1]?.[1]).toEqual({
+            beforeAt: 10_000,
+            beforeSeq: 10,
+            turns: 20,
+        })
+
+        const loaded = await fetchOlderMessages(api, id)
+
+        expect(loaded).toMatchObject({ kind: 'applied', hasMore: false, addedRenderableCount: 1 })
+        expect(getMessages.mock.calls[2]?.[1]).toEqual({
+            beforeAt: 9_000,
+            beforeSeq: 9,
+            turns: 20,
+        })
+        expect(getMessageWindowState(id).messages.map((message) => message.id)).toEqual(['earlier', 'final'])
         expect(await fetchOlderMessages(api, id)).toEqual({ kind: 'stopped', reason: 'exhausted' })
-        expect(getMessages).toHaveBeenCalledTimes(2)
+        expect(getMessages).toHaveBeenCalledTimes(3)
     })
 
     it('keeps the last row of a full older page when one prompt is queued', async () => {

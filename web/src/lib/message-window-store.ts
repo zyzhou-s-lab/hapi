@@ -1154,15 +1154,15 @@ export async function fetchOlderMessages(
                 && hubOlder !== null
                 && comparePosition(keptOldest, hubOlder) > 0
             // Every renderable row of this page was discarded, for example a
-            // live snapshot of a stream that already has a final. Stop here.
-            // Leaving hasMore set would make the next coverage pass request
-            // this same cursor again.
+            // live snapshot of a stream that already has a final. Those rows
+            // are superseded, so nextBefore is the next page, not a hole.
+            // Advance to that hub cursor and keep hub hasMore. Stopping, or
+            // leaving the previous cursor, hides every older page, and a
+            // latest reset requests this same page again.
             if (heldOldest) addedRenderableCount = 0
-            reportedHasMore = heldOldest ? false : (resumeAtKept || response.page.hasMore)
-            const oldestAt = heldOldest?.at
-                ?? (resumeAtKept ? keptOldest!.at : response.page.nextBeforeAt)
-            const oldestSeq = heldOldest?.seq
-                ?? (resumeAtKept ? keptOldest!.seq : response.page.nextBeforeSeq)
+            reportedHasMore = resumeAtKept || response.page.hasMore
+            const oldestAt = resumeAtKept ? keptOldest!.at : response.page.nextBeforeAt
+            const oldestSeq = resumeAtKept ? keptOldest!.seq : response.page.nextBeforeSeq
             historyVersion = nextHistoryVersion
             return buildState(merged, {
                 hasMore: reportedHasMore,
