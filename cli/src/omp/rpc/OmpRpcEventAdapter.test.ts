@@ -236,6 +236,28 @@ describe('OmpRpcEventAdapter', () => {
         });
     });
 
+    it('preserves top-level tool_execution_start intent in tool_call input when stripped from args', () => {
+        const harness = createHarness();
+        harness.adapter.handle(rpcEvent({
+            type: 'tool_execution_start',
+            toolCallId: 'read-intent',
+            toolName: 'read',
+            args: { path: 'session://01a1a178/timeline:-40' },
+            intent: 'Reading timeline of PAGING session 01a1a178'
+        }));
+        const call = harness.agentMessages.find((message) => message.type === 'tool_call');
+        expect(call).toMatchObject({
+            type: 'tool_call',
+            id: 'read-intent',
+            name: 'read',
+            input: {
+                path: 'session://01a1a178/timeline:-40',
+                i: 'Reading timeline of PAGING session 01a1a178'
+            },
+            status: 'in_progress'
+        });
+    });
+
     it('owns two OMP subagents with stable cards, exact retry state, child traces, and terminal results', () => {
         const harness = createHarness();
         for (const [index, id] of ['alpha', 'beta'].entries()) {

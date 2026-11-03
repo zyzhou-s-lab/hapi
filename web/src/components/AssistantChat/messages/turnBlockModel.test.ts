@@ -113,6 +113,45 @@ describe('partitionTurn', () => {
         ])
     })
 
+    it('normalizes lowercase OMP tool names and folds recovered mid-turn tool errors', () => {
+        const partition = partitionTurn([
+            { type: 'reasoning', text: 'Inspecting Tern sessions' },
+            call(tool('read-err', 'read', {
+                state: 'error',
+                input: {
+                    path: 'session://01a1a178-20a6-7795-a647-aaa2418531e5/timeline:-40',
+                    i: 'Reading timeline of PAGING session 01a1a178',
+                },
+            })),
+            call(tool('read-fallback', 'read', {
+                state: 'error',
+                input: {
+                    path: 'session://01a19c9a-a35e-769c-9dad-36421e1aa5e9/timeline:-40',
+                },
+            })),
+            call(tool('bash-ok', 'bash', {
+                state: 'completed',
+                input: {
+                    command: 'tern capture 95988224098306 --surfaces',
+                    i: 'Capturing surface text of HAPI blocks in Tern',
+                },
+            })),
+            { type: 'text', text: '查询完成。' },
+        ], null)
+
+        expect(partition.hasPinned).toBe(false)
+        expect(partition.rows.filter((row) => row.kind === 'tool').map((row) => [
+            row.verb,
+            row.intent,
+            row.pinned,
+            row.error,
+        ])).toEqual([
+            ['turn.verb.read', 'Reading timeline of PAGING session 01a1a178', false, true],
+            ['turn.verb.read', 'timeline:-40', false, true],
+            ['turn.verb.ran', 'Capturing surface text of HAPI blocks in Tern', false, false],
+        ])
+    })
+
     it('uses a Codex reasoning title and does not render that tool as a row', () => {
         const partition = partitionTurn([
             call(tool('reason', 'CodexReasoning', { input: { title: 'Building a screenshot script' } })),
