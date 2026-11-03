@@ -951,6 +951,7 @@ export function HappyThread(props: {
 
         const handleKeyDown = (event: KeyboardEvent) => {
             clearPinnedAnchor()
+            if (isNestedScrollEvent(event)) return
             const target = event.target
             if (
                 event.defaultPrevented

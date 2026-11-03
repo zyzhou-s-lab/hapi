@@ -547,9 +547,6 @@ function trimConversation(
     options: {
         agentRunLimit?: number
         reserveQueuedBudget?: boolean
-        // Older-page cap keeps the rows already on screen. Drop the far
-        // (oldest) edge of a tailless preamble instead of the visible end.
-        keepNewest?: boolean
     } = {}
 ): { kept: DecryptedMessage[]; dropped: DecryptedMessage[] } {
     const messages = dropSupersededStreamSnapshots(incoming, finalizedStreamIds)
@@ -581,7 +578,7 @@ function trimConversation(
     let keptTurns = turns
     let droppedTurns: DecryptedMessage[][] = []
     if (turns.length > turnLimit) {
-        if (mode === 'append' || options.keepNewest) {
+        if (mode === 'append') {
             droppedTurns = turns.slice(0, turns.length - turnLimit)
             keptTurns = turns.slice(turns.length - turnLimit)
         } else {
@@ -589,9 +586,7 @@ function trimConversation(
             droppedTurns = turns.slice(turnLimit)
         }
     }
-    const dropPreamble = preamble !== null
-        && (mode === 'append' || options.keepNewest)
-        && droppedTurns.length > 0
+    const dropPreamble = preamble !== null && mode === 'append' && droppedTurns.length > 0
     const regularKept = [
         ...(preamble && !dropPreamble ? preamble : []),
         ...keptTurns.flat()
@@ -601,11 +596,7 @@ function trimConversation(
         ...droppedTurns.flat()
     ]
     const queuedBudget = options.reserveQueuedBudget === false ? 0 : queued.length
-    const limited = sliceForTrim(
-        regularKept,
-        Math.max(0, regularLimit - queuedBudget),
-        options.keepNewest ? 'append' : mode
-    )
+    const limited = sliceForTrim(regularKept, Math.max(0, regularLimit - queuedBudget), mode)
     return {
         kept: mergeMessages(limited.kept, queued),
         dropped: [...turnDropped, ...limited.dropped]
@@ -651,7 +642,6 @@ function mergeIntoWindow(
         agentRunLimit?: number
         reserveQueuedBudget?: boolean
         advanceTailRevision?: boolean
-        keepNewest?: boolean
     } = {}
 ): InternalState {
     const retainedIncoming = incoming.filter(shouldRetainWindowMessage)
@@ -679,7 +669,6 @@ function mergeIntoWindow(
         {
             agentRunLimit: options.agentRunLimit ?? (retainHistory ? historyLimit : undefined),
             reserveQueuedBudget: options.reserveQueuedBudget ?? !retainHistory,
-            keepNewest: options.keepNewest
         }
     )
     let next = buildState(previous, {
@@ -1140,45 +1129,41 @@ export async function fetchOlderMessages(
                 })
             }
             const mergedRows = mergeMessages(previous.messages, response.messages)
-            let starts = 0
-            let firstStart = -1
-            for (let index = 0; index < mergedRows.length; index += 1) {
-                if (!isHumanTurnStart(mergedRows[index]!)) continue
-                if (firstStart < 0) firstStart = index
-                starts += 1
-            }
-            // No turn start yet, or the oldest row is itself a turn start:
-            // every turn in this window is complete. Keep every row, including
-            // the end of a turn longer than one hub page. A start that sits
-            // behind an older turn's tailless tail must not lift the cap.
-            const oldestTurnIsComplete = starts === 0 || firstStart === 0
-            const rowLimit = oldestTurnIsComplete
-                ? Math.max(OLDER_LOAD_WINDOW_SIZE, mergedRows.length)
-                : Math.max(OLDER_LOAD_WINDOW_SIZE, previous.messages.length)
+            // Keep the fetched page. A 2000-row ceiling is not applied here:
+            // a long history is rendered by a virtual list, not cut off.
+            // Dropping the page and stepping the cursor to nextBefore leaves
+            // a hole that the next load cannot fill.
+            const rowLimit = Math.max(OLDER_LOAD_WINDOW_SIZE, mergedRows.length)
             const merged = mergeIntoWindow(previous, response.messages, {
                 mode: 'prepend',
                 regularLimit: rowLimit,
-                agentRunLimit: OLDER_LOAD_WINDOW_SIZE,
-                reserveQueuedBudget: false,
-                keepNewest: !oldestTurnIsComplete && mergedRows.length > rowLimit
+                agentRunLimit: rowLimit,
+                reserveQueuedBudget: false
             })
             const hubOlder = pagePosition(response.page.nextBeforeAt, response.page.nextBeforeSeq)
             const keptOldest = derivePosition(merged.messages, 'oldest')
             const keptIds = new Set(merged.messages.map((message) => message.id))
-            const keptIncoming = response.messages.some((message) => keptIds.has(message.id))
-            // Rows dropped from the oldest edge are still older than the
-            // window. The next page has to start at the oldest row we kept,
-            // or that edge is skipped.
-            const keptIsNewer = keptIncoming && Boolean(
-                keptOldest && hubOlder && comparePosition(keptOldest, hubOlder) > 0
-            )
-            reportedHasMore = keptIsNewer || response.page.hasMore
+            const renderableIncoming = response.messages.filter(shouldRetainWindowMessage)
+            const keptIncoming = renderableIncoming.some((message) => keptIds.has(message.id))
+            const heldOldest = renderableIncoming.length > 0 && !keptIncoming
+                ? keptOldest ?? pagePosition(previous.oldestPositionAt, previous.oldestPositionSeq)
+                : null
+            const resumeAtKept = keptIncoming
+                && keptOldest !== null
+                && hubOlder !== null
+                && comparePosition(keptOldest, hubOlder) > 0
+            if (heldOldest) addedRenderableCount = 0
+            reportedHasMore = heldOldest !== null || resumeAtKept || response.page.hasMore
+            const oldestAt = heldOldest?.at
+                ?? (resumeAtKept ? keptOldest!.at : response.page.nextBeforeAt)
+            const oldestSeq = heldOldest?.seq
+                ?? (resumeAtKept ? keptOldest!.seq : response.page.nextBeforeSeq)
             historyVersion = nextHistoryVersion
             return buildState(merged, {
                 hasMore: reportedHasMore,
                 epoch: response.page.epoch,
-                oldestPositionAt: keptIsNewer ? keptOldest!.at : response.page.nextBeforeAt,
-                oldestPositionSeq: keptIsNewer ? keptOldest!.seq : response.page.nextBeforeSeq,
+                oldestPositionAt: oldestAt,
+                oldestPositionSeq: oldestSeq,
                 isLoadingMore: false,
                 historyVersion,
                 warning: null

@@ -1162,19 +1162,29 @@ describe('history view and older pagination', () => {
         expect(kept.at(-1)).toBe('answer')
     })
 
-    it('does not grow the window for a second page of a tailless older turn', async () => {
-        const id = sessionId('tailless-preamble')
-        const tail = Array.from({ length: 4500 }, (_, index) => makeAgentMessage({
-            id: `tail-${index}`,
-            seq: index + 1,
-            at: index + 1,
-        }))
-        const later = makeUserMessage({ id: 'later', seq: 4501, invokedAt: 4501, createdAt: 4501 })
-        const all = [...tail, later]
+    it('loads the middle of a 5000-row turn that sits before a 2500-row turn', async () => {
+        const id = sessionId('earlier-turn-hole')
+        const earlier = [
+            makeUserMessage({ id: 'a-prompt', seq: 1, invokedAt: 1, createdAt: 1 }),
+            ...Array.from({ length: 4999 }, (_, index) => makeAgentMessage({
+                id: index === 2499 ? 'a-middle' : `a-${index}`,
+                seq: index + 2,
+                at: index + 2,
+            })),
+        ]
+        const later = [
+            makeUserMessage({ id: 'b-prompt', seq: 5001, invokedAt: 5001, createdAt: 5001 }),
+            ...Array.from({ length: 2499 }, (_, index) => makeAgentMessage({
+                id: `b-${index}`,
+                seq: 5002 + index,
+                at: 5002 + index,
+            })),
+        ]
+        const all = [...earlier, ...later]
         const getMessages = vi.fn(async (_sessionId: string, query: { beforeSeq?: number | null } = {}) => {
             const beforeSeq = query.beforeSeq ?? null
             const eligible = beforeSeq === null
-                ? [later]
+                ? all.slice(-VISIBLE_WINDOW_SIZE)
                 : all.filter((message) => (message.seq ?? 0) < beforeSeq).slice(-TURN_PAGE_ROW_MAX)
             const oldest = eligible[0]
             const oldestSeq = oldest?.seq ?? 1
@@ -1191,13 +1201,24 @@ describe('history view and older pagination', () => {
         await syncTailMessages(api, id)
         setMessageViewMode(id, 'history')
 
-        await fetchOlderMessages(api, id)
-        await fetchOlderMessages(api, id)
-        const kept = getMessageWindowState(id).messages.map((message) => message.id)
-        expect(kept).toHaveLength(TURN_PAGE_ROW_MAX)
-        expect(kept.at(-1)).toBe('later')
-        expect(kept).toContain('tail-4499')
-        expect(kept).not.toContain('tail-0')
+        let guard = 0
+        while (getMessageWindowState(id).hasMore && guard < 8) {
+            const loaded = await fetchOlderMessages(api, id)
+            expect(loaded.kind).toBe('applied')
+            guard += 1
+        }
+
+        const kept = getMessageWindowState(id).messages
+        const seqs = kept.map((message) => message.seq).filter((seq): seq is number => typeof seq === 'number')
+        expect(guard).toBeGreaterThan(1)
+        expect(kept.map((message) => message.id)).toContain('a-prompt')
+        expect(kept.map((message) => message.id)).toContain('a-middle')
+        expect(kept.map((message) => message.id)).toContain('b-prompt')
+        expect(seqs).toHaveLength(all.length)
+        const ordered = [...seqs].sort((left, right) => left - right)
+        for (let index = 1; index < ordered.length; index += 1) {
+            expect(ordered[index]).toBe(ordered[index - 1]! + 1)
+        }
     })
 
     it('does not collapse a loaded long turn when a live row arrives in history', async () => {
@@ -1626,10 +1647,10 @@ describe('history view and older pagination', () => {
 
         expect(loaded).toMatchObject({ kind: 'applied', hasMore: false })
         const kept = getMessageWindowState(id).messages.map((message) => message.id)
-        expect(kept).toHaveLength(TURN_PAGE_ROW_MAX)
+        expect(kept).toHaveLength(TURN_PAGE_ROW_MAX + latest.length)
         expect(kept[0]).toBe('r0')
-        expect(kept).toContain('r800')
-        expect(kept.at(-1)).toBe('r1999')
+        expect(kept).toContain('r1999')
+        expect(kept.at(-1)).toBe('latest-199')
     })
 
     it('keeps the last row of a full older page when one prompt is queued', async () => {
