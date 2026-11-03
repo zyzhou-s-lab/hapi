@@ -27,6 +27,11 @@ describe('OMP event visibility', () => {
         expect(isEventVisibleForFlavor({ type: 'limit-warning' }, 'claude')).toBe(true)
     })
 
+    it('hides legacy OMP host_tool_call session events but keeps other OMP session events', () => {
+        expect(isEventVisibleForFlavor({ type: 'omp-session-event', eventType: 'host_tool_call' }, 'omp')).toBe(false)
+        expect(isEventVisibleForFlavor({ type: 'omp-session-event', eventType: 'ttsr_triggered' }, 'omp')).toBe(true)
+    })
+
     it('filters only unsupported OMP quota blocks', () => {
         const blocks: VisibleChatBlock[] = [
             agentEvent('warning', { type: 'limit-warning', utilization: 0.9, endsAt: 1, limitType: 'five_hour' }),

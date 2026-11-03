@@ -144,6 +144,37 @@ export function getResponseGroupTimestamps(
     return timestamps
 }
 
+function isTitleChangedBlock(block: VisibleChatBlock): boolean {
+    return block.kind === 'agent-event' && block.event.type === 'title-changed'
+}
+
+/**
+ * A title change emitted mid-turn would end the assistant run that
+ * assistant-ui joins into one card, splitting a single turn into two.
+ * Move each such event to the start of its run, so the "Title changed"
+ * line sits between the prompt and the turn it belongs to.
+ */
+export function hoistMidTurnTitleEvents(blocks: readonly VisibleChatBlock[]): readonly VisibleChatBlock[] {
+    if (!blocks.some(isTitleChangedBlock)) return blocks
+    const result: VisibleChatBlock[] = []
+    let runStart = -1
+    for (const block of blocks) {
+        if (visibleBlockRole(block) === 'assistant') {
+            if (runStart < 0) runStart = result.length
+            result.push(block)
+            continue
+        }
+        if (runStart >= 0 && isTitleChangedBlock(block)) {
+            result.splice(runStart, 0, block)
+            runStart += 1
+            continue
+        }
+        runStart = -1
+        result.push(block)
+    }
+    return result
+}
+
 type TurnSource = {
     localId: string | null
     invokedAt: number | null
@@ -972,7 +1003,7 @@ export function useHappyRuntime(props: {
     const flavor = props.session.metadata?.flavor
 
     const visibleBlocks = useMemo(
-        () => filterVisibleBlocksForFlavor(props.blocks, flavor),
+        () => hoistMidTurnTitleEvents(filterVisibleBlocksForFlavor(props.blocks, flavor)),
         [flavor, props.blocks]
     )
 
@@ -997,8 +1028,8 @@ export function useHappyRuntime(props: {
         [visibleBlocks]
     )
     const responseGroupTimestamps = useMemo(
-        () => getResponseGroupTimestamps(props.blocks),
-        [props.blocks]
+        () => getResponseGroupTimestamps(visibleBlocks),
+        [visibleBlocks]
     )
 
     const convertBlock = useCallback(

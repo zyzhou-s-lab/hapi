@@ -202,14 +202,32 @@ export function collectToolIdsFromMessages(messages: NormalizedMessage[]): Set<s
     return ids
 }
 
-export function isChangeTitleToolName(name: string): boolean {
-    return name === 'mcp__hapi__change_title' || name === 'hapi__change_title'
+const CHANGE_TITLE_TOOL_NAMES: Record<string, true> = {
+    mcp__hapi__change_title: true,
+    hapi__change_title: true,
+    change_title: true
+}
+const CHANGE_TITLE_DEVICE = 'xd://change_title'
+
+function trimmedTitle(value: unknown): string | null {
+    return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null
 }
 
-export function extractTitleFromChangeTitleInput(input: unknown): string | null {
-    if (!input || typeof input !== 'object') return null
-    const title = (input as { title?: unknown }).title
-    return typeof title === 'string' && title.trim().length > 0 ? title.trim() : null
+/**
+ * Title carried by a change-title tool call: the MCP/host tool (`{ title }`) or
+ * OMP's device form, `write` to `xd://change_title` with JSON `content`.
+ * Returns null for every other tool.
+ */
+export function titleFromChangeTitleCall(name: string, input: unknown): string | null {
+    if (!isObject(input)) return null
+    if (CHANGE_TITLE_TOOL_NAMES[name]) return trimmedTitle(input.title)
+    if (name !== 'write' || input.path !== CHANGE_TITLE_DEVICE || typeof input.content !== 'string') return null
+    try {
+        const parsed: unknown = JSON.parse(input.content)
+        return isObject(parsed) ? trimmedTitle(parsed.title) : null
+    } catch {
+        return null
+    }
 }
 
 export function collectTitleChanges(messages: NormalizedMessage[]): Map<string, string> {
@@ -218,8 +236,7 @@ export function collectTitleChanges(messages: NormalizedMessage[]): Map<string, 
         if (msg.role !== 'agent') continue
         for (const content of msg.content) {
             if (content.type !== 'tool-call') continue
-            if (!isChangeTitleToolName(content.name)) continue
-            const title = extractTitleFromChangeTitleInput(content.input)
+            const title = titleFromChangeTitleCall(content.name, content.input)
             if (!title) continue
             map.set(content.id, title)
         }
