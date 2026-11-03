@@ -15,6 +15,8 @@ import {
     locateOutlineTargetMessage,
     prependMissingUserSnapshot,
     restoreScrollAnchor,
+    shouldRecapturePendingHistoryAnchor,
+    shouldSuppressPinnedWheel,
     shouldLoadOlderForViewport,
     shouldCancelInitialScrollSettling,
     ThreadMessagesById,
@@ -405,6 +407,18 @@ describe('scroll anchor helpers', () => {
         expect(viewport.scrollTop).toBe(250)
 
         viewport.remove()
+    })
+
+    it('does not recapture the anchor once the older page is applied', () => {
+        expect(shouldRecapturePendingHistoryAnchor('loading')).toBe(true)
+        expect(shouldRecapturePendingHistoryAnchor('awaiting-render')).toBe(false)
+        expect(shouldRecapturePendingHistoryAnchor('idle')).toBe(false)
+    })
+
+    it('suppresses leftover upward wheel deltas while the anchor is pinned', () => {
+        expect(shouldSuppressPinnedWheel(-490, 2_000, 1_900)).toBe(true)
+        expect(shouldSuppressPinnedWheel(-490, 1_000, 1_900)).toBe(false)
+        expect(shouldSuppressPinnedWheel(120, 2_000, 1_900)).toBe(false)
     })
 
     it('waits until assistant-ui has applied the loaded history version', () => {

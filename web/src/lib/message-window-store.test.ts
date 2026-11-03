@@ -1037,6 +1037,45 @@ describe('history view and older pagination', () => {
         expect(state.hasMore).toBe(true)
     })
 
+    it('keeps the end of a 2202-row turn after loading its older rows', async () => {
+        const id = sessionId('over-cap-turn')
+        const rows = [
+            makeUserMessage({ id: 'prompt', seq: 1, invokedAt: 1, createdAt: 1 }),
+            ...Array.from({ length: 2201 }, (_, index) => makeAgentMessage({
+                id: index === 2099 ? 'f1100' : index === 2200 ? 'answer' : `row-${index}`,
+                seq: index + 2,
+                at: index + 2,
+            })),
+        ]
+        const latest = rows.slice(-VISIBLE_WINDOW_SIZE)
+        const older = rows.slice(0, -VISIBLE_WINDOW_SIZE)
+        const getMessages = vi.fn()
+            .mockResolvedValueOnce(latestResponse(latest, {
+                epoch: 1,
+                hasMore: true,
+                nextBeforeAt: latest[0]?.invokedAt ?? latest[0]?.createdAt ?? 1,
+                nextBeforeSeq: latest[0]?.seq ?? 1,
+            }))
+            .mockResolvedValueOnce(beforeResponse(older, {
+                epoch: 1,
+                hasMore: false,
+                nextBeforeAt: 1,
+                nextBeforeSeq: 1,
+            }))
+        const api = createApi(getMessages)
+        await syncTailMessages(api, id)
+        setMessageViewMode(id, 'history')
+
+        const loaded = await fetchOlderMessages(api, id)
+
+        expect(loaded).toMatchObject({ kind: 'applied', hasMore: false })
+        const kept = getMessageWindowState(id).messages.map((message) => message.id)
+        expect(kept).toHaveLength(2202)
+        expect(kept[0]).toBe('prompt')
+        expect(kept).toContain('f1100')
+        expect(kept.at(-1)).toBe('answer')
+    })
+
     it('loads exactly one raw older page with the paired composite cursor', async () => {
         const id = sessionId('older-page')
         const latest = makeAgentMessage({ id: 'latest', seq: 10, at: 10_000 })

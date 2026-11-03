@@ -228,6 +228,22 @@ export function restoreScrollAnchor(viewport: HTMLElement, anchor: ScrollAnchor)
     return true
 }
 
+/** Scroll events while the older page is in flight still belong to the user.
+ * Once the response is applied, those events are the prepend itself or the
+ * rest of the wheel gesture, and recapturing would aim the restore at the
+ * newly inserted rows. */
+export function shouldRecapturePendingHistoryAnchor(
+    phase: HistoryLoaderState['phase']
+): boolean {
+    return phase === 'loading'
+}
+
+/** Upward wheel deltas that arrive after the anchor is restored belong to the
+ * gesture that triggered the load. Applying them moves the restored row. */
+export function shouldSuppressPinnedWheel(deltaY: number, pinUntil: number, now: number): boolean {
+    return deltaY < 0 && pinUntil > now
+}
+
 export function hasAppliedHistoryVersion(
     pendingHistoryVersion: number,
     appliedHistoryVersion: number
@@ -598,6 +614,9 @@ export function HappyThread(props: {
     const shareTurnIdRef = useRef(0)
     const topSentinelRef = useRef<HTMLDivElement | null>(null)
     const pendingScrollRef = useRef<PendingScrollRestore | null>(null)
+    const wheelGestureUntilRef = useRef(0)
+    const pinnedAnchorRef = useRef<ScrollAnchor | null>(null)
+    const pinnedAnchorUntilRef = useRef(0)
     const isLoadingMoreRef = useRef(props.isLoadingMoreMessages)
     const hasMoreMessagesRef = useRef(props.hasMoreMessages)
     const isSyncingTailRef = useRef(props.isSyncingTail)
@@ -816,7 +835,20 @@ export function HappyThread(props: {
             // Keep the pending baseline aligned with the latest visible row;
             // the eventual prepend will preserve that row instead.
             const pending = pendingScrollRef.current
-            if (pending && historyLoaderRef.current.runId === pending.runId) {
+            if (
+                pinnedAnchorUntilRef.current > Date.now()
+                && pinnedAnchorRef.current
+                && historyLoaderRef.current.phase !== 'loading'
+            ) {
+                restoreScrollAnchor(viewport, pinnedAnchorRef.current)
+                lastScrollTopRef.current = viewport.scrollTop
+                return
+            }
+            if (
+                pending
+                && historyLoaderRef.current.runId === pending.runId
+                && shouldRecapturePendingHistoryAnchor(historyLoaderRef.current.phase)
+            ) {
                 pending.anchor = captureScrollAnchor(viewport)
                 pending.scrollTop = viewport.scrollTop
                 pending.scrollHeight = viewport.scrollHeight
@@ -979,20 +1011,28 @@ export function HappyThread(props: {
 
         const handleWheel = (event: WheelEvent) => {
             if (isNestedScrollEvent(event)) return
+            const now = Date.now()
+            if (shouldSuppressPinnedWheel(event.deltaY, pinnedAnchorUntilRef.current, now)) {
+                event.preventDefault()
+                pinnedAnchorUntilRef.current = now + WHEEL_GESTURE_GAP_MS
+                wheelGestureUntilRef.current = pinnedAnchorUntilRef.current
+                return
+            }
             if (event.deltaY >= 0) {
                 wheelIntentUntil = 0
+                wheelGestureUntilRef.current = 0
                 return
             }
             // One trigger per gesture: a trackpad swipe is a burst of wheel
             // events. Remember the gesture before the following scroll event
             // so an approach from outside the preload area is also classified
             // as explicit user intent.
-            const now = Date.now()
             if (now - lastWheelAt > WHEEL_GESTURE_GAP_MS) {
                 wheelLatched = false
             }
             lastWheelAt = now
             wheelIntentUntil = now + WHEEL_GESTURE_GAP_MS
+            wheelGestureUntilRef.current = wheelIntentUntil
             if (!needsViewportCoverageRef.current() || wheelLatched) {
                 return
             }
@@ -1051,7 +1091,7 @@ export function HappyThread(props: {
         viewport.addEventListener('scroll', handleScroll, { passive: true })
         viewport.addEventListener('keydown', handleKeyDown)
         viewport.addEventListener('pointerdown', handlePointerDown, { passive: true })
-        viewport.addEventListener('wheel', handleWheel, { passive: true })
+        viewport.addEventListener('wheel', handleWheel, { passive: false })
         viewport.addEventListener('touchstart', handleTouchStart, { passive: true })
         viewport.addEventListener('touchmove', handleTouchMove, { passive: true })
         viewport.addEventListener('touchend', handleTouchEnd, { passive: true })
@@ -1552,7 +1592,10 @@ export function HappyThread(props: {
                 return
             }
             const restoredByAnchor = pending.anchor ? restoreScrollAnchor(viewport, pending.anchor) : false
-            if (!restoredByAnchor) {
+            if (restoredByAnchor && pending.anchor && wheelGestureUntilRef.current > Date.now()) {
+                pinnedAnchorRef.current = pending.anchor
+                pinnedAnchorUntilRef.current = wheelGestureUntilRef.current
+            } else if (!restoredByAnchor) {
                 const delta = viewport.scrollHeight - pending.scrollHeight
                 viewport.scrollTop = pending.scrollTop + delta
             }

@@ -1124,10 +1124,21 @@ export async function fetchOlderMessages(
                     warning: null
                 })
             }
+            const mergedRows = mergeMessages(previous.messages, response.messages)
+            const turnStarts = mergedRows.reduce(
+                (count, message) => count + (isHumanTurnStart(message) ? 1 : 0),
+                0
+            )
+            // One turn can be longer than a hub page. Prepend trimming would
+            // keep the oldest rows and drop the end of that turn, and scrolling
+            // down cannot load those rows back. Hold the whole turn.
+            const rowLimit = turnStarts === 1
+                ? Math.max(OLDER_LOAD_WINDOW_SIZE, mergedRows.length)
+                : OLDER_LOAD_WINDOW_SIZE
             const merged = mergeIntoWindow(previous, response.messages, {
                 mode: 'prepend',
-                regularLimit: OLDER_LOAD_WINDOW_SIZE,
-                agentRunLimit: OLDER_LOAD_WINDOW_SIZE,
+                regularLimit: rowLimit,
+                agentRunLimit: rowLimit,
                 reserveQueuedBudget: false
             })
             historyVersion = nextHistoryVersion
