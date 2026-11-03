@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { reduceTimeline } from './reducerTimeline'
 import { toolDurationMs } from '@/components/ToolCard/toolDuration'
 import type { TracedMessage } from './tracer'
+import type { ToolCallBlock } from './types'
 
 function makeContext() {
     return {
@@ -501,6 +502,52 @@ describe('reduceTimeline', () => {
         const toolBlock = blocks.find(b => b.kind === 'tool-call') as any
         expect(toolBlock).toBeDefined()
         expect(toolBlock.invokedAt).toBe(1_700_000_000_500)
+    })
+
+    it('preserves tool-call i/intent fields on subsequent input updates without re-injecting stale description', () => {
+        const initialToolUse: TracedMessage = {
+            id: 'msg-tool-use',
+            localId: null,
+            createdAt: 1_700_000_000_000,
+            role: 'agent',
+            content: [{
+                type: 'tool-call',
+                id: 'tc-intent',
+                name: 'read',
+                input: {
+                    path: 'session://01a1a178/timeline:-40',
+                    i: 'Reading timeline of PAGING session 01a1a178',
+                    description: 'stale description parameter'
+                },
+                description: null,
+                uuid: 'u-1',
+                parentUUID: null
+            }],
+            isSidechain: false
+        } as TracedMessage
+        const lifecycleStart: TracedMessage = {
+            id: 'msg-tool-start',
+            localId: null,
+            createdAt: 1_700_000_000_100,
+            role: 'agent',
+            content: [{
+                type: 'tool-call',
+                id: 'tc-intent',
+                name: 'read',
+                input: { path: 'session://01a1a178/timeline:-40' },
+                description: null,
+                uuid: 'u-2',
+                parentUUID: null
+            }],
+            isSidechain: false
+        } as TracedMessage
+
+        const { blocks } = reduceTimeline([initialToolUse, lifecycleStart], makeContext())
+        const toolBlock = blocks.find((b): b is ToolCallBlock => b.kind === 'tool-call')
+        expect(toolBlock?.tool.input).toEqual({
+            path: 'session://01a1a178/timeline:-40',
+            i: 'Reading timeline of PAGING session 01a1a178'
+        })
     })
 
     describe('exec-timestamp (Claude entry clock) tool duration source', () => {

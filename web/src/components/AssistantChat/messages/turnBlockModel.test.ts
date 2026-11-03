@@ -149,6 +149,100 @@ describe('partitionTurn', () => {
         expect(long.rows[0]?.kind === 'tool' && long.rows[0].intent).toBe(`${'D'.repeat(77)}...`)
     })
 
+    it('normalizes lowercase OMP tool names and folds recovered mid-turn tool errors', () => {
+        const partition = partitionTurn([
+            { type: 'reasoning', text: 'Inspecting Tern sessions' },
+            call(tool('read-err', 'read', {
+                state: 'error',
+                input: {
+                    path: 'session://01a1a178-20a6-7795-a647-aaa2418531e5/timeline:-40',
+                    i: 'Reading timeline of PAGING session 01a1a178',
+                },
+            })),
+            call(tool('read-fallback', 'read', {
+                state: 'error',
+                input: {
+                    path: 'session://01a19c9a-a35e-769c-9dad-36421e1aa5e9/timeline:-40',
+                },
+            })),
+            call(tool('bash-ok', 'bash', {
+                state: 'completed',
+                input: {
+                    command: 'tern capture 95988224098306 --surfaces',
+                    i: 'Capturing surface text of HAPI blocks in Tern',
+                },
+            })),
+            { type: 'text', text: '查询完成。' },
+        ], null)
+
+        expect(partition.hasPinned).toBe(false)
+        expect(partition.rows.filter((row) => row.kind === 'tool').map((row) => [
+            row.verb,
+            row.intent,
+            row.pinned,
+            row.error,
+        ])).toEqual([
+            ['turn.verb.read', 'Reading timeline of PAGING session 01a1a178', false, true],
+            ['turn.verb.read', 'timeline:-40', false, true],
+            ['turn.verb.ran', 'Capturing surface text of HAPI blocks in Tern', false, false],
+        ])
+    })
+
+    it('keeps the last tool error pinned when followed only by trailing text', () => {
+        const partition = partitionTurn([
+            call(tool('read-ok', 'Read', {
+                state: 'completed',
+                input: { file_path: 'db/schema.sql' },
+            })),
+            call(tool('bash-err', 'Bash', {
+                state: 'error',
+                description: 'Run database migration',
+                input: { command: 'bun run migrate' },
+            })),
+            { type: 'text', text: '没能跑迁移，因为数据库连接被拒绝。' },
+        ], null)
+
+        expect(partition.hasPinned).toBe(true)
+        expect(partition.rows.filter((row) => row.kind === 'tool').map((row) => [
+            row.key,
+            row.pinned,
+            row.error,
+        ])).toEqual([
+            ['read-ok', false, false],
+            ['bash-err', true, true],
+        ])
+    })
+
+    it('keeps earlier tool errors pinned while any tool in the turn is pending', () => {
+        const partition = partitionTurn([
+            call(tool('read-err', 'Read', {
+                state: 'error',
+                input: { file_path: 'missing.ts' },
+            })),
+            call(tool('read-ok', 'Read', {
+                state: 'completed',
+                input: { file_path: 'present.ts' },
+            })),
+            call(tool('bash-pending', 'Bash', {
+                state: 'pending',
+                permission: { id: 'perm-1', status: 'pending' },
+                input: { command: 'bun test' },
+            })),
+        ], null)
+
+        expect(partition.hasPinned).toBe(true)
+        expect(partition.rows.filter((row) => row.kind === 'tool').map((row) => [
+            row.key,
+            row.pinned,
+            row.error,
+            row.permission,
+        ])).toEqual([
+            ['read-err', true, true, false],
+            ['read-ok', false, false, false],
+            ['bash-pending', true, false, true],
+        ])
+    })
+
     it('uses a Codex reasoning title and does not render that tool as a row', () => {
         const partition = partitionTurn([
             call(tool('reason', 'CodexReasoning', { input: { title: 'Building a screenshot script' } })),

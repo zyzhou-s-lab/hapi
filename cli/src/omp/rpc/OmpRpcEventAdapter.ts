@@ -92,7 +92,8 @@ const ToolStartSchema = z.object({
     type: z.literal('tool_execution_start'),
     toolCallId: z.string(),
     toolName: z.string(),
-    args: JsonValueSchema
+    args: JsonValueSchema,
+    intent: z.string().optional()
 });
 
 const ToolUpdateSchema = z.object({
@@ -100,8 +101,24 @@ const ToolUpdateSchema = z.object({
     toolCallId: z.string(),
     toolName: z.string(),
     args: JsonValueSchema,
-    partialResult: JsonValueSchema
+    partialResult: JsonValueSchema,
+    intent: z.string().optional()
 });
+
+function withToolIntent(args: JsonValue, intent: unknown): JsonValue {
+    if (
+        typeof intent === 'string'
+        && intent.trim().length > 0
+        && args !== null
+        && typeof args === 'object'
+        && !Array.isArray(args)
+        && args.i === undefined
+        && args.intent === undefined
+    ) {
+        return { ...args, i: intent };
+    }
+    return args;
+}
 
 const ToolEndSchema = z.object({
     type: z.literal('tool_execution_end'),
@@ -821,7 +838,7 @@ export class OmpRpcEventAdapter {
                     type: 'tool_use',
                     id: block.id,
                     name: block.name,
-                    input: block.arguments
+                    input: withToolIntent(block.arguments, block.intent)
                 }];
             }
             if (!['image', 'redactedThinking', 'fallback'].includes(String(block.type))) {
@@ -920,7 +937,7 @@ export class OmpRpcEventAdapter {
         const tool: ToolLifecycle = {
             id: parsed.data.toolCallId,
             name: parsed.data.toolName,
-            args: parsed.data.args
+            args: withToolIntent(parsed.data.args, parsed.data.intent)
         };
         this.tools.set(tool.id, tool);
         this.emitToolLifecycle(output, tool, 'in_progress');
@@ -937,7 +954,7 @@ export class OmpRpcEventAdapter {
         const tool: ToolLifecycle = {
             id: parsed.data.toolCallId,
             name: existing?.name ?? parsed.data.toolName,
-            args: existing?.args ?? parsed.data.args,
+            args: withToolIntent(existing?.args ?? parsed.data.args, parsed.data.intent),
             partialResult: parsed.data.partialResult,
             executionResult: existing?.executionResult,
             executionFailed: existing?.executionFailed
@@ -1240,7 +1257,7 @@ export class OmpRpcEventAdapter {
                         type: 'tool_call',
                         id: block.id,
                         name: block.name,
-                        input: block.arguments,
+                        input: withToolIntent(block.arguments ?? null, block.intent),
                         status: 'in_progress',
                         model,
                         usage
@@ -1287,7 +1304,7 @@ export class OmpRpcEventAdapter {
         const tool: ToolLifecycle = {
             id: event.toolCallId,
             name: existing?.name ?? event.toolName,
-            args: existing?.args ?? event.args ?? {},
+            args: withToolIntent(existing?.args ?? (event.args ?? {}), event.intent),
             partialResult: event.partialResult ?? existing?.partialResult,
             executionResult: event.result ?? existing?.executionResult,
             executionFailed: event.isError === true || existing?.executionFailed

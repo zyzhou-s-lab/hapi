@@ -5,6 +5,7 @@ import { isAskUserQuestionToolName } from '@/components/ToolCard/askUserQuestion
 import { extractTodoChecklist } from '@/components/ToolCard/checklist'
 import { getToolPresentation } from '@/components/ToolCard/knownTools'
 import { isRequestUserInputToolName } from '@/components/ToolCard/requestUserInput'
+import { resolveToolViewName } from '@/components/ToolCard/toolNameAliases'
 import { getInputStringAny, truncate } from '@/lib/toolInputUtils'
 import { isObject } from '@hapi/protocol'
 import type { SessionMetadataSummary } from '@/types/api'
@@ -135,14 +136,15 @@ function basename(path: string): string {
 }
 
 function verbFor(tool: ChatToolCall, fallbackTitle: string): string {
-    if (tool.name === 'Read') return 'turn.verb.read'
-    if (tool.name === 'Grep') return 'turn.verb.grep'
-    if (tool.name === 'Glob') return 'turn.verb.glob'
-    if (tool.name === 'Bash' || tool.name === 'CodexBash') return 'turn.verb.ran'
-    if (tool.name === 'Edit' || tool.name === 'MultiEdit' || tool.name === 'Write') return tool.name === 'Write' ? 'turn.verb.wrote' : 'turn.verb.edit'
+    const name = resolveToolViewName(tool.name)
+    if (name === 'Read') return 'turn.verb.read'
+    if (name === 'Grep') return 'turn.verb.grep'
+    if (name === 'Glob') return 'turn.verb.glob'
+    if (name === 'Bash' || name === 'CodexBash') return 'turn.verb.ran'
+    if (name === 'Edit' || name === 'MultiEdit' || name === 'Write') return name === 'Write' ? 'turn.verb.wrote' : 'turn.verb.edit'
     if (isSubagentToolName(tool.name)) return 'turn.verb.ranAgent'
-    if (TODO_TOOL_NAMES[tool.name]) return 'turn.verb.todo'
-    if (tool.name === 'CodexReasoning') return 'turn.verb.reasoning'
+    if (TODO_TOOL_NAMES[name] || TODO_TOOL_NAMES[tool.name]) return 'turn.verb.todo'
+    if (name === 'CodexReasoning') return 'turn.verb.reasoning'
     return fallbackTitle
 }
 
@@ -190,17 +192,18 @@ function subagentIntent(tool: ChatToolCall): string | null {
 }
 
 function intentFor(tool: ChatToolCall, verb: string, fallbackTitle: string): string {
+    const name = resolveToolViewName(tool.name)
     if (isSubagentToolName(tool.name)) {
         return subagentIntent(tool) ?? (fallbackTitle === verb ? '' : fallbackTitle)
     }
-    if (tool.name === 'Read') {
+    if (name === 'Read') {
         const file = stringField(tool.input, ['file_path', 'path'])
         return intentSentence(tool) ?? (file ? basename(file) : fallbackTitle)
     }
-    if (tool.name === 'Bash' || tool.name === 'CodexBash' || tool.name === 'Grep' || tool.name === 'Glob') {
+    if (name === 'Bash' || name === 'CodexBash' || name === 'Grep' || name === 'Glob') {
         return intentSentence(tool) ?? fallbackTitle
     }
-    if (tool.name === 'Edit' || tool.name === 'MultiEdit' || tool.name === 'Write') {
+    if (name === 'Edit' || name === 'MultiEdit' || name === 'Write') {
         const file = stringField(tool.input, ['file_path', 'path'])
         return intentSentence(tool) ?? (file ? basename(file) : fallbackTitle)
     }
@@ -208,7 +211,8 @@ function intentFor(tool: ChatToolCall, verb: string, fallbackTitle: string): str
 }
 
 export function newTodoTexts(tool: ChatToolCall): string[] {
-    if (!TODO_TOOL_NAMES[tool.name]) return []
+    const name = resolveToolViewName(tool.name)
+    if (!TODO_TOOL_NAMES[name] && !TODO_TOOL_NAMES[tool.name]) return []
     if (isObject(tool.input) && Array.isArray(tool.input.todos) && tool.input.todos.length > 0) return []
     const result = tool.result
     if (!isObject(result) || !Array.isArray(result.newTodos)) return []
@@ -221,11 +225,12 @@ function needsUser(tool: ChatToolCall): boolean {
     return tool.permission?.status === 'pending'
 }
 
-function isPinned(tool: ChatToolCall): boolean {
-    if (tool.state === 'error') return true
+function isPinned(tool: ChatToolCall, errorRecovered = false): boolean {
+    const name = resolveToolViewName(tool.name)
+    if (tool.state === 'error' && !errorRecovered) return true
     if (needsUser(tool)) return true
-    if (isSubagentToolName(tool.name) || MILESTONE_TOOL_NAMES[tool.name]) return true
-    if (PLAN_TOOL_NAMES[tool.name] && tool.name !== 'CodexReasoning') return true
+    if (isSubagentToolName(tool.name) || MILESTONE_TOOL_NAMES[name] || MILESTONE_TOOL_NAMES[tool.name]) return true
+    if ((PLAN_TOOL_NAMES[name] || PLAN_TOOL_NAMES[tool.name]) && name !== 'CodexReasoning') return true
     return false
 }
 
@@ -347,6 +352,17 @@ export function partitionTurn(
         const row = rows[index]
         if (row.kind === 'text') row.trailing = true
     }
+
+    const hasPendingTool = rows.some((row) => row.kind === 'tool' && row.block.tool.state === 'pending')
+    rows.forEach((row, index) => {
+        if (row.kind !== 'tool' || !row.error || hasPendingTool) return
+        const recovered = rows
+            .slice(index + 1)
+            .some((later) => later.kind === 'tool' && (later.block.tool.state === 'completed' || later.block.tool.state === 'running'))
+        if (recovered) {
+            row.pinned = isPinned(row.block.tool, true)
+        }
+    })
 
     const foldable = rows.filter((row) => {
         if (row.kind === 'text') return !row.trailing

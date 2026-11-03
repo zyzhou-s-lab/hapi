@@ -1,5 +1,6 @@
 import type { AgentState } from '@/types/api'
 import type { ChatBlock, ChatToolCall, NormalizedMessage, ToolCallBlock, ToolPermission, UsageData } from '@/chat/types'
+import { isObject } from '@hapi/protocol'
 
 export type PermissionEntry = {
     toolName: string
@@ -100,7 +101,14 @@ export function ensureToolBlock(
             existing.tool = { ...existing.tool, name: seed.name }
         }
         if (seed.input !== null && seed.input !== undefined) {
-            existing.tool = { ...existing.tool, input: seed.input }
+            const nextInput = isObject(existing.tool.input) && isObject(seed.input)
+                ? {
+                    ...(typeof existing.tool.input.i === 'string' ? { i: existing.tool.input.i } : {}),
+                    ...(typeof existing.tool.input.intent === 'string' ? { intent: existing.tool.input.intent } : {}),
+                    ...seed.input
+                }
+                : seed.input
+            existing.tool = { ...existing.tool, input: nextInput }
         }
         if (seed.description !== null) {
             existing.tool = { ...existing.tool, description: seed.description }
