@@ -74,7 +74,7 @@ type ShareTurnSnapshot = {
 }
 
 const VERTICAL_OVERFLOW_CLASS_RE = /\boverflow-(?:y-)?(?:auto|scroll)\b/
-const HORIZONTAL_ONLY_OVERFLOW_CLASS_RE = /\boverflow-x-(?:auto|scroll)\b/
+const HORIZONTAL_ONLY_OVERFLOW_CLASS_RE = /\boverflow-x-(?:auto|scroll|hidden|clip)\b/
 const VERTICAL_OVERFLOW_HIDDEN_CLASS_RE = /\boverflow-(?:y-)?(?:hidden|clip|visible)\b/
 
 const computedVerticalOverflowCache = new WeakMap<
@@ -164,11 +164,11 @@ function getEventVerticalScrollDelta(event: Event, deltaY?: number): number {
 }
 
 function isNestedScrollableElement(element: HTMLElement, deltaY = 0): boolean {
-    if (element.classList.contains('chat-scroll-y')) {
+    if (element.classList.contains('chat-scroll-y') || element.classList.contains('happy-message')) {
         return false
     }
     const isExplicitNestedScroll = element.getAttribute('data-hapi-nested-scroll') === 'true'
-    if (isExplicitNestedScroll && element.clientHeight === 0 && element.scrollHeight === 0) {
+    if (isExplicitNestedScroll && (deltaY === 0 || (element.clientHeight === 0 && element.scrollHeight === 0))) {
         return true
     }
     if (element.scrollHeight <= element.clientHeight) {
@@ -204,6 +204,105 @@ export function isNestedScrollEvent(event: Event, boundary?: Element | null, del
             }
         } else if (current.getAttribute('data-hapi-nested-scroll') === 'true') {
             return true
+        }
+        current = current.parentElement
+    }
+    return false
+}
+
+function findNestedScrollContainer(target: EventTarget | null, boundary?: Element | null): HTMLElement | null {
+    let current = typeof Element !== 'undefined' && target instanceof Element
+        ? target
+        : typeof Node !== 'undefined' && target instanceof Node
+            ? target.parentElement
+            : null
+    while (current && current !== boundary) {
+        if (current.classList.contains('chat-scroll-y')) {
+            return null
+        }
+        if (current instanceof HTMLElement && isNestedScrollableElement(current, 0)) {
+            return current
+        }
+        current = current.parentElement
+    }
+    return null
+}
+
+const NESTED_SCROLL_KEYS: Record<string, true> = {
+    ArrowUp: true,
+    ArrowDown: true,
+    PageUp: true,
+    PageDown: true,
+    Home: true,
+    End: true,
+    ' ': true
+}
+
+function applyKeyboardScrollToNestedContainer(container: HTMLElement, key: string, shiftKey = false): boolean {
+    if (!NESTED_SCROLL_KEYS[key]) {
+        return false
+    }
+    const target = container.scrollHeight > container.clientHeight
+        ? container
+        : Array.from(container.querySelectorAll<HTMLElement>('[data-hapi-code-body="true"], .overflow-auto, .overflow-y-auto'))
+            .find((child) => child.scrollHeight > child.clientHeight) ?? container
+    const maxScrollTop = Math.max(0, target.scrollHeight - target.clientHeight)
+    const pageStep = Math.max(1, Math.round((target.clientHeight || 200) * 0.9))
+    if (key === 'Home') {
+        target.scrollTop = 0
+    } else if (key === 'End') {
+        target.scrollTop = maxScrollTop
+    } else if (key === 'PageUp' || (key === ' ' && shiftKey)) {
+        target.scrollTop = Math.max(0, target.scrollTop - pageStep)
+    } else if (key === 'PageDown' || (key === ' ' && !shiftKey)) {
+        target.scrollTop = Math.min(maxScrollTop, target.scrollTop + pageStep)
+    } else if (key === 'ArrowUp') {
+        target.scrollTop = Math.max(0, target.scrollTop - 40)
+    } else if (key === 'ArrowDown') {
+        target.scrollTop = Math.min(maxScrollTop, target.scrollTop + 40)
+    }
+    return true
+}
+
+function isHorizontalOnlyScrollElement(element: HTMLElement): boolean {
+    if (element.classList.contains('chat-scroll-y') || element.classList.contains('happy-message')) {
+        return false
+    }
+    if (isNestedScrollableElement(element, 0)) {
+        return false
+    }
+    if (element.getAttribute('data-hapi-code-body') === 'true') {
+        return true
+    }
+    const className = typeof element.className === 'string' ? element.className : ''
+    if (/\boverflow-x-(?:auto|scroll)\b/.test(className)) {
+        return true
+    }
+    const inlineOverflowX = element.style?.overflowX ?? ''
+    if (inlineOverflowX === 'auto' || inlineOverflowX === 'scroll') {
+        return true
+    }
+    return element.scrollWidth > element.clientWidth && element.scrollHeight <= element.clientHeight + 1
+}
+
+function isHorizontalOnlyScrollEvent(event: Event, boundary?: Element | null): boolean {
+    const target = event.target
+    let current = typeof Element !== 'undefined' && target instanceof Element
+        ? target
+        : typeof Node !== 'undefined' && target instanceof Node
+            ? target.parentElement
+            : null
+    while (current && current !== boundary) {
+        if (current.classList.contains('chat-scroll-y')) {
+            return false
+        }
+        if (current instanceof HTMLElement) {
+            if (isNestedScrollableElement(current, 0)) {
+                return false
+            }
+            if (isHorizontalOnlyScrollElement(current)) {
+                return true
+            }
         }
         current = current.parentElement
     }
@@ -333,16 +432,23 @@ export function shouldCancelInitialScrollSettling(
         && intent.distanceFromBottom > MANUAL_SCROLL_EPSILON_PX
 }
 
+const capturedAnchorHeights = new WeakMap<ScrollAnchor, number>()
+
 export function captureScrollAnchor(viewport: HTMLElement): ScrollAnchor | null {
     const viewportRect = viewport.getBoundingClientRect()
     const messages = Array.from(viewport.querySelectorAll<HTMLElement>(MESSAGE_ANCHOR_SELECTOR))
     for (const message of messages) {
         const rect = message.getBoundingClientRect()
         if (rect.bottom > viewportRect.top && rect.top < viewportRect.bottom) {
-            return {
+            const anchor: ScrollAnchor = {
                 id: message.id,
                 topOffset: rect.top - viewportRect.top
             }
+            const height = rect.bottom - rect.top
+            if (height > 0) {
+                capturedAnchorHeights.set(anchor, height)
+            }
+            return anchor
         }
     }
     return null
@@ -355,7 +461,16 @@ export function restoreScrollAnchor(viewport: HTMLElement, anchor: ScrollAnchor)
     }
     const viewportRect = viewport.getBoundingClientRect()
     const targetRect = target.getBoundingClientRect()
-    viewport.scrollTop += targetRect.top - viewportRect.top - anchor.topOffset
+    const previousHeight = capturedAnchorHeights.get(anchor)
+    const currentHeight = targetRect.bottom - targetRect.top
+    const prependedInsideTarget =
+        previousHeight !== undefined && previousHeight > 0 && currentHeight > previousHeight
+            ? currentHeight - previousHeight
+            : 0
+    viewport.scrollTop += targetRect.top - viewportRect.top - anchor.topOffset + prependedInsideTarget
+    if (prependedInsideTarget > 0) {
+        capturedAnchorHeights.set(anchor, currentHeight)
+    }
     return true
 }
 
@@ -934,6 +1049,11 @@ export function HappyThread(props: {
         let wheelIntentUntil = 0
         let wheelLatched = false
         let nestedScrollFocused = false
+        let focusedNestedScroller: HTMLElement | null = null
+        let outerWheelActive = false
+        let outerWheelClientX = 0
+        let outerWheelClientY = 0
+        let lastOuterWheelAt = 0
         const hasExplicitUpwardIntent = (intent: ScrollIntent): boolean => {
             return intent.isScrollingUp && (
                 pointerResumeActive
@@ -989,10 +1109,6 @@ export function HappyThread(props: {
                 pending
                 && historyLoaderRef.current.runId === pending.runId
                 && shouldRecapturePendingHistoryAnchor(historyLoaderRef.current.phase)
-                // The wheel burst that started this load is not a new anchor.
-                // Recapturing it aims the restore at whatever the burst moved.
-                && !pending.pinOnRestore
-                && wheelGestureUntilRef.current <= Date.now()
             ) {
                 pending.anchor = captureScrollAnchor(viewport)
                 pending.scrollTop = viewport.scrollTop
@@ -1081,11 +1197,47 @@ export function HappyThread(props: {
             }
         }
 
+        const isEditableKeyTarget = (target: EventTarget | null): boolean => {
+            return target instanceof HTMLInputElement
+                || target instanceof HTMLTextAreaElement
+                || (target instanceof HTMLElement && target.isContentEditable)
+        }
+
+        const handleNestedKeyScroll = (event: KeyboardEvent, container: HTMLElement | null): boolean => {
+            if (
+                event.defaultPrevented
+                || event.altKey
+                || event.ctrlKey
+                || event.metaKey
+                || isEditableKeyTarget(event.target)
+                || !NESTED_SCROLL_KEYS[event.key]
+            ) {
+                return false
+            }
+            event.preventDefault()
+            if (container && container.isConnected) {
+                applyKeyboardScrollToNestedContainer(container, event.key, event.shiftKey)
+            }
+            return true
+        }
+
         const handleKeyDown = (event: KeyboardEvent) => {
             clearPinnedAnchor()
-            if (isNestedScrollEvent(event, viewport)) return
+            outerWheelActive = false
+            const nestedContainer = findNestedScrollContainer(event.target, viewport)
+            if (nestedContainer || isNestedScrollEvent(event, viewport)) {
+                if (nestedContainer) {
+                    nestedScrollFocused = true
+                    focusedNestedScroller = nestedContainer
+                }
+                handleNestedKeyScroll(event, nestedContainer ?? focusedNestedScroller)
+                return
+            }
             const target = event.target
-            if (target === viewport && nestedScrollFocused) return
+            if (target === viewport && nestedScrollFocused) {
+                handleNestedKeyScroll(event, focusedNestedScroller)
+                return
+            }
             if (
                 event.defaultPrevented
                 || event.repeat
@@ -1093,9 +1245,7 @@ export function HappyThread(props: {
                 || event.ctrlKey
                 || event.metaKey
                 || !UPWARD_SCROLL_KEYS.has(event.key)
-                || target instanceof HTMLInputElement
-                || target instanceof HTMLTextAreaElement
-                || (target instanceof HTMLElement && target.isContentEditable)
+                || isEditableKeyTarget(target)
             ) {
                 return
             }
@@ -1106,6 +1256,19 @@ export function HappyThread(props: {
             }
         }
 
+        const handleWindowKeyDown = (event: KeyboardEvent) => {
+            if (!nestedScrollFocused) {
+                return
+            }
+            const target = event.target
+            if (target instanceof Node && viewport.contains(target)) {
+                return
+            }
+            clearPinnedAnchor()
+            outerWheelActive = false
+            handleNestedKeyScroll(event, focusedNestedScroller)
+        }
+
         const armPointerIntent = () => {
             pointerResumeActive = true
             pointerResumeUntil = 0
@@ -1113,11 +1276,15 @@ export function HappyThread(props: {
         }
 
         const handlePointerDown = (event: PointerEvent) => {
-            if (isNestedScrollEvent(event, viewport)) {
+            outerWheelActive = false
+            const nestedContainer = findNestedScrollContainer(event.target, viewport)
+            if (nestedContainer || isNestedScrollEvent(event, viewport)) {
                 nestedScrollFocused = true
+                focusedNestedScroller = nestedContainer
                 return
             }
             nestedScrollFocused = false
+            focusedNestedScroller = null
             if (event.button !== 0) {
                 return
             }
@@ -1137,26 +1304,46 @@ export function HappyThread(props: {
         // listeners. Capture pointer and mouse input at the window boundary,
         // then scope it back to the chat viewport by coordinates.
         const handleWindowPointerDown = (event: PointerEvent) => {
-            if (isNestedScrollEvent(event, viewport)) {
+            outerWheelActive = false
+            const nestedContainer = findNestedScrollContainer(event.target, viewport)
+            if (nestedContainer || isNestedScrollEvent(event, viewport)) {
                 nestedScrollFocused = true
+                focusedNestedScroller = nestedContainer
                 return
             }
             if (event.button === 0 && isInsideViewport(event.clientX, event.clientY)) {
                 nestedScrollFocused = false
+                focusedNestedScroller = null
                 clearPinnedAnchor()
                 armPointerIntent()
             }
         }
 
         const handleWindowMouseDown = (event: MouseEvent) => {
-            if (isNestedScrollEvent(event, viewport)) {
+            outerWheelActive = false
+            const nestedContainer = findNestedScrollContainer(event.target, viewport)
+            if (nestedContainer || isNestedScrollEvent(event, viewport)) {
                 nestedScrollFocused = true
+                focusedNestedScroller = nestedContainer
                 return
             }
             if (event.button === 0 && isInsideViewport(event.clientX, event.clientY)) {
                 nestedScrollFocused = false
+                focusedNestedScroller = null
                 clearPinnedAnchor()
                 armPointerIntent()
+            }
+        }
+
+        const handleWindowPointerMove = (event: PointerEvent) => {
+            if (!outerWheelActive) {
+                return
+            }
+            if (
+                Math.abs(event.clientX - outerWheelClientX) > 4
+                || Math.abs(event.clientY - outerWheelClientY) > 4
+            ) {
+                outerWheelActive = false
             }
         }
 
@@ -1182,8 +1369,22 @@ export function HappyThread(props: {
         }
 
         const handleWheel = (event: WheelEvent) => {
-            if (isNestedScrollEvent(event, viewport)) return
             const now = Date.now()
+            if (
+                Math.abs(event.clientX - outerWheelClientX) > 4
+                || Math.abs(event.clientY - outerWheelClientY) > 4
+                || now - lastOuterWheelAt > ANCHOR_PIN_MAX_MS
+            ) {
+                outerWheelActive = false
+            }
+            const nestedScroll = isNestedScrollEvent(event, viewport)
+            if (nestedScroll && !outerWheelActive) return
+            if (!nestedScroll) {
+                outerWheelActive = true
+                outerWheelClientX = event.clientX
+                outerWheelClientY = event.clientY
+            }
+            lastOuterWheelAt = now
             if (shouldSuppressPinnedWheel(event.deltaY, pinnedAnchorUntilRef.current, now)) {
                 event.preventDefault()
                 const startedAt = pinnedAnchorStartedAtRef.current || now
@@ -1199,6 +1400,35 @@ export function HappyThread(props: {
                 wheelIntentUntil = pinnedAnchorUntilRef.current
                 wheelGestureUntilRef.current = pinnedAnchorUntilRef.current
                 return
+            }
+            const shouldForwardVerticalWheel =
+                !event.ctrlKey
+                && !event.shiftKey
+                && event.deltaY !== 0
+                && Math.abs(event.deltaY) >= Math.abs(event.deltaX)
+                && (nestedScroll || isHorizontalOnlyScrollEvent(event, viewport))
+            if (shouldForwardVerticalWheel && viewport.scrollHeight > viewport.clientHeight) {
+                const pixelDeltaY = event.deltaMode === 1
+                    ? event.deltaY * 40
+                    : event.deltaMode === 2
+                        ? event.deltaY * (viewport.clientHeight || 400)
+                        : event.deltaY
+                const maxScrollTop = Math.max(0, viewport.scrollHeight - viewport.clientHeight)
+                const nextScrollTop = Math.max(0, Math.min(maxScrollTop, viewport.scrollTop + pixelDeltaY))
+                event.preventDefault()
+                if (nextScrollTop !== viewport.scrollTop) {
+                    viewport.scrollTop = nextScrollTop
+                    const pending = pendingScrollRef.current
+                    if (
+                        pending
+                        && historyLoaderRef.current.runId === pending.runId
+                        && shouldRecapturePendingHistoryAnchor(historyLoaderRef.current.phase)
+                    ) {
+                        pending.anchor = captureScrollAnchor(viewport)
+                        pending.scrollTop = viewport.scrollTop
+                        pending.scrollHeight = viewport.scrollHeight
+                    }
+                }
             }
             if (event.deltaY >= 0) {
                 wheelIntentUntil = 0
@@ -1227,8 +1457,15 @@ export function HappyThread(props: {
         }
 
         const handleTouchStart = (event: TouchEvent) => {
+            const nestedContainer = findNestedScrollContainer(event.target, viewport)
+            if (nestedContainer) {
+                nestedScrollFocused = true
+                focusedNestedScroller = nestedContainer
+            } else {
+                nestedScrollFocused = false
+                focusedNestedScroller = null
+            }
             if (isNestedScrollEvent(event, viewport, -1)) return
-            updatePullToLoadState('idle')
             pullStartY = (
                 viewport.scrollTop <= 0
                 && hasMoreMessagesRef.current
@@ -1292,8 +1529,10 @@ export function HappyThread(props: {
         viewport.addEventListener('touchmove', handleTouchMove, { passive: true })
         viewport.addEventListener('touchend', handleTouchEnd, { passive: true })
         viewport.addEventListener('touchcancel', handleTouchCancel, { passive: true })
+        window.addEventListener('keydown', handleWindowKeyDown)
         window.addEventListener('pointerdown', handleWindowPointerDown, { capture: true, passive: true })
         window.addEventListener('mousedown', handleWindowMouseDown, { capture: true, passive: true })
+        window.addEventListener('pointermove', handleWindowPointerMove, { passive: true })
         window.addEventListener('pointerup', clearPointerIntent, { passive: true })
         window.addEventListener('mouseup', clearPointerIntent, { passive: true })
         window.addEventListener('pointercancel', handlePointerCancel, { passive: true })
@@ -1307,8 +1546,10 @@ export function HappyThread(props: {
             viewport.removeEventListener('touchmove', handleTouchMove)
             viewport.removeEventListener('touchend', handleTouchEnd)
             viewport.removeEventListener('touchcancel', handleTouchCancel)
+            window.removeEventListener('keydown', handleWindowKeyDown)
             window.removeEventListener('pointerdown', handleWindowPointerDown, true)
             window.removeEventListener('mousedown', handleWindowMouseDown, true)
+            window.removeEventListener('pointermove', handleWindowPointerMove)
             window.removeEventListener('pointerup', clearPointerIntent)
             window.removeEventListener('mouseup', clearPointerIntent)
             window.removeEventListener('pointercancel', handlePointerCancel)
@@ -1745,6 +1986,17 @@ export function HappyThread(props: {
         }
 
         const observer = new ResizeObserver(() => {
+            const viewport = viewportRef.current
+            if (
+                viewport
+                && pinnedAnchorUntilRef.current > Date.now()
+                && pinnedAnchorRef.current
+                && historyLoaderRef.current.phase !== 'loading'
+            ) {
+                restoreScrollAnchor(viewport, pinnedAnchorRef.current)
+                lastScrollTopRef.current = viewport.scrollTop
+                return
+            }
             // Message DOM can grow after messagesVersion commits (assistant-ui
             // updates its external runtime in an effect, then markdown/tool
             // content may resize). Keep following while the user is at bottom.

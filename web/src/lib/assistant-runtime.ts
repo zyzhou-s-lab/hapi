@@ -372,16 +372,84 @@ export type BlockWithThreadMessageId = {
  * `useExternalMessageConverter`'s WeakMap caches stay warm across streaming
  * appends (see PR review).
  */
+const assistantGroupIdCache = new WeakMap<
+    WeakMap<VisibleChatBlock, BlockWithThreadMessageId>,
+    Map<string, string>
+>()
+
 export function assignThreadMessageIdsWithStableWrappers(
     blocks: readonly VisibleChatBlock[],
     wrapperCache: WeakMap<VisibleChatBlock, BlockWithThreadMessageId>
 ): BlockWithThreadMessageId[] {
     const seen = new Map<string, number>()
-    return blocks.map((block) => {
+    const rawIds = blocks.map((block) => {
         const base = `${block.kind}:${block.id}`
         const occurrence = seen.get(base) ?? 0
         seen.set(base, occurrence + 1)
-        const threadMessageId = occurrence === 0 ? base : `${base}~${occurrence}`
+        return occurrence === 0 ? base : `${base}~${occurrence}`
+    })
+
+    const previousGroupByRawId = assistantGroupIdCache.get(wrapperCache)
+    const nextGroupByRawId = new Map<string, string>()
+    const assignedIds = [...rawIds]
+    const usedGroupIds = new Set<string>()
+    for (let index = 0; index < blocks.length; index += 1) {
+        if (visibleBlockRole(blocks[index]!) !== 'assistant') {
+            usedGroupIds.add(rawIds[index]!)
+        }
+    }
+
+    let index = 0
+    while (index < blocks.length) {
+        if (visibleBlockRole(blocks[index]!) !== 'assistant') {
+            index += 1
+            continue
+        }
+        const runStart = index
+        while (index < blocks.length && visibleBlockRole(blocks[index]!) === 'assistant') {
+            index += 1
+        }
+        const runEnd = index - 1
+
+        let groupId: string | undefined
+        if (previousGroupByRawId) {
+            const startCandidate = previousGroupByRawId.get(rawIds[runStart]!)
+            const endCandidate = previousGroupByRawId.get(rawIds[runEnd]!)
+            if (startCandidate && !usedGroupIds.has(startCandidate)) {
+                groupId = startCandidate
+            } else if (endCandidate && !usedGroupIds.has(endCandidate)) {
+                groupId = endCandidate
+            } else {
+                for (let cursor = runStart; cursor <= runEnd; cursor += 1) {
+                    const candidate = previousGroupByRawId.get(rawIds[cursor]!)
+                    if (candidate && !usedGroupIds.has(candidate)) {
+                        groupId = candidate
+                        break
+                    }
+                }
+            }
+        }
+
+        const resolvedGroupId = groupId ?? rawIds[runStart]!
+        usedGroupIds.add(resolvedGroupId)
+        if (resolvedGroupId !== assignedIds[runStart]!) {
+            const existingHolder = assignedIds.findIndex(
+                (id, cursor) => cursor !== runStart && id === resolvedGroupId
+            )
+            const displacedId = assignedIds[runStart]!
+            assignedIds[runStart] = resolvedGroupId
+            if (existingHolder >= 0) {
+                assignedIds[existingHolder] = displacedId
+            }
+        }
+        for (let cursor = runStart; cursor <= runEnd; cursor += 1) {
+            nextGroupByRawId.set(rawIds[cursor]!, resolvedGroupId)
+        }
+    }
+    assistantGroupIdCache.set(wrapperCache, nextGroupByRawId)
+
+    return blocks.map((block, blockIndex) => {
+        const threadMessageId = assignedIds[blockIndex]!
         const cached = wrapperCache.get(block)
         if (cached?.threadMessageId === threadMessageId) {
             return cached

@@ -155,6 +155,28 @@ describe('nested scroll event ownership', () => {
         expect(isNestedScrollEvent(viewportKey, viewport)).toBe(false)
         expect(computedStyleSpy).not.toHaveBeenCalled()
 
+        const assistantRoot = document.createElement('div')
+        assistantRoot.className = 'happy-message mx-auto w-full max-w-content min-w-0 overflow-x-clip px-4 py-2'
+        Object.defineProperties(assistantRoot, {
+            clientHeight: { configurable: true, value: 400 },
+            scrollHeight: { configurable: true, value: 900 },
+            scrollTop: { configurable: true, writable: true, value: 120 }
+        })
+        const nestedCodeBody = document.createElement('div')
+        nestedCodeBody.dataset.hapiCodeBody = 'true'
+        nestedCodeBody.className = 'overflow-x-auto overflow-y-hidden'
+        Object.defineProperties(nestedCodeBody, {
+            clientWidth: { configurable: true, value: 400 },
+            scrollWidth: { configurable: true, value: 2_000 },
+            clientHeight: { configurable: true, value: 120 },
+            scrollHeight: { configurable: true, value: 120 }
+        })
+        assistantRoot.append(nestedCodeBody)
+        viewport.append(assistantRoot)
+        const wheelOnCodeInsideAssistant = new WheelEvent('wheel', { deltaY: -120 })
+        Object.defineProperty(wheelOnCodeInsideAssistant, 'target', { value: nestedCodeBody })
+        expect(isNestedScrollEvent(wheelOnCodeInsideAssistant, viewport)).toBe(false)
+
         computedStyleSpy.mockRestore()
         viewport.remove()
     })
@@ -488,10 +510,43 @@ describe('scroll anchor helpers', () => {
 
         expect(restoreScrollAnchor(viewport, { id: 'anchored-message', topOffset: 30 })).toBe(true)
         expect(viewport.scrollTop).toBe(250)
-
         viewport.remove()
     })
 
+    it('offsets scrollTop by height growth when older blocks are prepended inside the anchored split turn', () => {
+        const viewport = document.createElement('div')
+        const messages = document.createElement('div')
+        messages.className = 'happy-thread-messages'
+        const splitTurn = document.createElement('div')
+        splitTurn.id = 'hapi-message-split-turn'
+        messages.append(splitTurn)
+        viewport.append(messages)
+        document.body.append(viewport)
+        viewport.scrollTop = 0
+
+        let currentHeight = 400
+        let prependedAbove = 0
+        vi.spyOn(viewport, 'getBoundingClientRect').mockReturnValue(rect({ top: 100, bottom: 700 }))
+        vi.spyOn(splitTurn, 'getBoundingClientRect').mockImplementation(() => rect({
+            top: 100 + prependedAbove - viewport.scrollTop,
+            bottom: 100 + prependedAbove + currentHeight - viewport.scrollTop
+        }))
+
+        const anchor = captureScrollAnchor(viewport)
+        expect(anchor).toEqual({
+            id: 'hapi-message-split-turn',
+            topOffset: 0
+        })
+
+        // Prepending earlier blocks inside the split turn grows its height by 600px at the top,
+        // plus 200px of an earlier user message inserted above it.
+        currentHeight = 1_000
+        prependedAbove = 200
+        expect(restoreScrollAnchor(viewport, anchor!)).toBe(true)
+        expect(viewport.scrollTop).toBe(800)
+
+        viewport.remove()
+    })
     it('does not recapture the anchor once the older page is applied', () => {
         expect(shouldRecapturePendingHistoryAnchor('loading')).toBe(true)
         expect(shouldRecapturePendingHistoryAnchor('awaiting-render')).toBe(false)
