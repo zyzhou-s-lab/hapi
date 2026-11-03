@@ -1129,10 +1129,11 @@ export async function fetchOlderMessages(
                 })
             }
             const mergedRows = mergeMessages(previous.messages, response.messages)
-            // Keep the fetched page. A 2000-row ceiling is not applied here:
-            // a long history is rendered by a virtual list, not cut off.
-            // Dropping the page and stepping the cursor to nextBefore leaves
-            // a hole that the next load cannot fill.
+            // Keep the fetched page. Offscreen messages skip layout and paint
+            // through content-visibility: auto in index.css. The window is not
+            // row-capped; HISTORY_TURN_LIMIT is the only bound. A virtual list
+            // is later work. Dropping the page and stepping the cursor to
+            // nextBefore leaves a hole the next load cannot fill.
             const rowLimit = Math.max(OLDER_LOAD_WINDOW_SIZE, mergedRows.length)
             const merged = mergeIntoWindow(previous, response.messages, {
                 mode: 'prepend',
@@ -1152,8 +1153,12 @@ export async function fetchOlderMessages(
                 && keptOldest !== null
                 && hubOlder !== null
                 && comparePosition(keptOldest, hubOlder) > 0
+            // Every renderable row of this page was discarded, for example a
+            // live snapshot of a stream that already has a final. Stop here.
+            // Leaving hasMore set would make the next coverage pass request
+            // this same cursor again.
             if (heldOldest) addedRenderableCount = 0
-            reportedHasMore = heldOldest !== null || resumeAtKept || response.page.hasMore
+            reportedHasMore = heldOldest ? false : (resumeAtKept || response.page.hasMore)
             const oldestAt = heldOldest?.at
                 ?? (resumeAtKept ? keptOldest!.at : response.page.nextBeforeAt)
             const oldestSeq = heldOldest?.seq

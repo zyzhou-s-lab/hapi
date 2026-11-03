@@ -1619,7 +1619,7 @@ describe('history view and older pagination', () => {
         expect(kept.at(-1)).toBe('o1499')
     })
 
-    it('keeps every row of a 2000-row agent-run older page', async () => {
+    it('keeps an agent-run older page together with the agent-run rows already on screen', async () => {
         const id = sessionId('agent-run-older-page')
         const latest = Array.from({ length: 200 }, (_, index) =>
             makeAgentRunMessage(`latest-${index}`, 2001 + index, 3001 + index)
@@ -1651,6 +1651,38 @@ describe('history view and older pagination', () => {
         expect(kept[0]).toBe('r0')
         expect(kept).toContain('r1999')
         expect(kept.at(-1)).toBe('latest-199')
+    })
+
+    it('stops instead of retrying when every row of an older page is discarded', async () => {
+        const id = sessionId('discarded-older-page')
+        const finalSnapshot = makeReasoningMessage('final', 'stream-1', 10, 10_000, false)
+        const liveReplay = makeReasoningMessage('live-old', 'stream-1', 9, 9_000, true)
+        const getMessages = vi.fn()
+            .mockResolvedValueOnce(latestResponse([finalSnapshot], {
+                epoch: 1,
+                hasMore: true,
+                nextBeforeAt: 10_000,
+                nextBeforeSeq: 10,
+            }))
+            .mockResolvedValueOnce(beforeResponse([liveReplay], {
+                epoch: 1,
+                hasMore: true,
+                nextBeforeAt: 9_000,
+                nextBeforeSeq: 9,
+            }))
+        const api = createApi(getMessages)
+        await syncTailMessages(api, id)
+
+        const loaded = await fetchOlderMessages(api, id)
+
+        expect(loaded).toMatchObject({ kind: 'applied', hasMore: false, addedRenderableCount: 0 })
+        expect(getMessageWindowState(id)).toMatchObject({
+            hasMore: false,
+            oldestPositionSeq: 10,
+        })
+        expect(getMessageWindowState(id).messages.map((message) => message.id)).toEqual(['final'])
+        expect(await fetchOlderMessages(api, id)).toEqual({ kind: 'stopped', reason: 'exhausted' })
+        expect(getMessages).toHaveBeenCalledTimes(2)
     })
 
     it('keeps the last row of a full older page when one prompt is queued', async () => {
