@@ -354,6 +354,28 @@ describe('session prompts', () => {
         expect(items.filter((item) => item.title === 'AGENTS.md')).toEqual([])
     })
 
+    it('lists ~/AGENTS.md once in the omp user prompt column', () => {
+        const home = tempDir()
+        const cwd = tempDir()
+        mkdirSync(join(cwd, '.git'))
+        mkdirSync(join(home, '.agent'), { recursive: true })
+        writeFileSync(join(home, 'AGENTS.md'), 'Home root instructions that omp loads.')
+        writeFileSync(join(home, '.agent', 'AGENTS.md'), 'Dot-agent instructions that stay separate.')
+        writeFileSync(join(cwd, 'AGENTS.md'), 'Project agents text.')
+        const prompts = titles(cwd, home, 'omp', {
+            flavor: 'omp',
+            cwd,
+            home,
+            env: { PI_CODING_AGENT_DIR: join(home, 'agent') },
+        })
+        const agents = (prompts?.user?.items ?? []).filter((item) => item.title === 'AGENTS.md')
+        const homeRoot = agents.filter((item) => item.pathLabel === '~/AGENTS.md')
+        expect(homeRoot).toHaveLength(1)
+        expect(homeRoot[0]?.scope).toBe('user')
+        expect(agents.filter((item) => item.pathLabel === '~/.agent/AGENTS.md')).toHaveLength(1)
+        expect(agents.filter((item) => item.pathLabel === 'AGENTS.md' && item.scope === 'project')).toHaveLength(1)
+    })
+
 
     it('reports no user files for flavors that do not read them', () => {
         const home = tempDir()
