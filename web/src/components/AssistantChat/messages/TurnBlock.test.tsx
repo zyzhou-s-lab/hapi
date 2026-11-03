@@ -123,6 +123,46 @@ describe('TurnBlockView', () => {
         expect(screen.getByText('夹在工具之间的说明').closest('[data-hapi-turn-quiet]')?.classList.contains('hidden')).toBe(false)
     })
 
+    it('folds recovered mid-turn OMP tool errors and keeps the turn header dot neutral', () => {
+        const partition = partitionTurn([
+            { type: 'reasoning', text: 'Initial inspection revealed nothing immediately suspicious.' },
+            {
+                type: 'tool-call',
+                toolName: 'read',
+                artifact: tool('read-1', 'read', {
+                    state: 'error',
+                    input: {
+                        path: 'session://01a1a178-20a6-7795-a647-aaa2418531e5/timeline:-40',
+                        i: 'Reading timeline of PAGING session 01a1a178',
+                    },
+                }),
+            },
+            {
+                type: 'tool-call',
+                toolName: 'bash',
+                artifact: tool('bash-1', 'bash', {
+                    state: 'completed',
+                    input: {
+                        command: 'tern capture 95988224098306 --surfaces',
+                        i: 'Capturing surface text of HAPI blocks in Tern',
+                    },
+                }),
+            },
+            { type: 'text', text: '全部整理完毕。' },
+        ], null)
+
+        renderBlock(
+            <TurnBlockView partition={partition} streaming={false} durationMs={134_000} initiallyOpen={false} />
+        )
+
+        const header = screen.getByRole('button', { name: /Initial inspection/ })
+        const headerDot = header.querySelector('span.rounded-full')
+        expect(headerDot?.className).toContain('bg-current')
+        expect(headerDot?.className).not.toContain('bg-[var(--app-badge-error-text)]')
+        expect(screen.getByText('Reading timeline of PAGING session 01a1a178').closest('[data-hapi-turn-quiet]')).toHaveClass('hidden')
+        expect(screen.getByText('全部整理完毕。')).toBeInTheDocument()
+    })
+
     it('renders the answer when reasoning is blank or the only tool is Codex reasoning', () => {
         const blank = partitionTurn([
             { type: 'reasoning', text: '   ' },

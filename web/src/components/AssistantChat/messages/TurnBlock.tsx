@@ -245,7 +245,7 @@ export function TurnBlockView(props: {
         )
     }
 
-    const failed = props.partition.rows.some((row) => row.kind === 'tool' && row.error)
+    const failed = props.partition.rows.some((row) => row.kind === 'tool' && row.error && row.pinned)
     const hasSteps = props.partition.rows.some((row) => row.kind === 'reasoning' || row.kind === 'tool')
     const durationMs = props.durationMs
     const steps = props.partition.rows.map((row, index) => {
