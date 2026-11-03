@@ -77,6 +77,33 @@ describe('nested scroll event ownership', () => {
 
         nested.remove()
     })
+
+    it('recognizes an unmarked scrollable ancestor between the target and the thread viewport', () => {
+        const viewport = document.createElement('div')
+        viewport.className = 'app-scroll-y chat-scroll-y'
+        const toolResult = document.createElement('div')
+        toolResult.className = 'mt-3 flex max-h-[75vh] flex-col gap-4 overflow-auto'
+        const codeLine = document.createElement('span')
+        codeLine.textContent = 'longlog.ts line 1'
+        const plainRow = document.createElement('div')
+        plainRow.textContent = 'ordinary row'
+        toolResult.append(codeLine)
+        viewport.append(toolResult, plainRow)
+        document.body.append(viewport)
+
+        const pageUpInToolResult = new KeyboardEvent('keydown', { key: 'PageUp' })
+        Object.defineProperty(pageUpInToolResult, 'target', { value: codeLine })
+        const homeInPlainRow = new KeyboardEvent('keydown', { key: 'Home' })
+        Object.defineProperty(homeInPlainRow, 'target', { value: plainRow })
+        const viewportKey = new KeyboardEvent('keydown', { key: 'PageUp' })
+        Object.defineProperty(viewportKey, 'target', { value: viewport })
+
+        expect(isNestedScrollEvent(pageUpInToolResult, viewport)).toBe(true)
+        expect(isNestedScrollEvent(homeInPlainRow, viewport)).toBe(false)
+        expect(isNestedScrollEvent(viewportKey, viewport)).toBe(false)
+
+        viewport.remove()
+    })
 })
 
 describe('ThreadMessagesById', () => {

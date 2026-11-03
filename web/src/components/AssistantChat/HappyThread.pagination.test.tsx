@@ -186,4 +186,144 @@ describe('HappyThread older-history pagination lifecycle', () => {
         expect(anchor.getBoundingClientRect().top).toBe(61)
         expect(screen.queryByRole('button', { name: 'Load earlier' })).not.toBeInTheDocument()
     })
+
+    it('keeps the anchor at 305px on the final 1.5s-delayed wheel page when hasMore becomes false', async () => {
+        let now = 1_000
+        const nowSpy = vi.spyOn(Date, 'now').mockImplementation(() => now)
+        try {
+            const onRequest = vi.fn()
+            const controls: {
+                resolvePage: ((outcome: OlderLoadOutcome) => void) | null
+                beforeApply: ((historyVersion: number) => boolean) | null
+            } = {
+                resolvePage: null,
+                beforeApply: null,
+            }
+
+            function DelayedFinalPageHarness() {
+                const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+                const [page, setPage] = useState(2)
+                const [isLoadingMore, setIsLoadingMore] = useState(false)
+                const onLoadMore = useCallback((onBeforeApply?: (historyVersion: number) => boolean) => {
+                    onRequest()
+                    controls.beforeApply = onBeforeApply ?? null
+                    setIsLoadingMore(true)
+                    const { promise, resolve } = Promise.withResolvers<OlderLoadOutcome>()
+                    controls.resolvePage = (outcome) => {
+                        setIsLoadingMore(false)
+                        if (outcome.kind === 'applied') {
+                            setPage(outcome.historyVersion)
+                        }
+                        resolve(outcome)
+                    }
+                    return promise
+                }, [])
+
+                return (
+                    <QueryClientProvider client={queryClient}>
+                        <I18nProvider>
+                            <output data-testid="delayed-page">{page}</output>
+                            <HappyThread
+                                api={api}
+                                session={session}
+                                sessionId="pagination-session"
+                                metadata={null}
+                                disabled={false}
+                                onRefresh={() => undefined}
+                                messagesWarning={null}
+                                hasMoreMessages={page < 3}
+                                isLoadingMoreMessages={isLoadingMore}
+                                onLoadMore={onLoadMore}
+                                onCancelLoadMore={() => undefined}
+                                onViewModeChange={() => undefined}
+                                isSyncingTail={false}
+                                unseenCount={0}
+                                rawMessagesCount={1}
+                                normalizedMessagesCount={1}
+                                messagesVersion={page}
+                                historyVersion={page}
+                                forceScrollToken={0}
+                                outlineOpen={false}
+                                outlineItems={[]}
+                                onOutlineOpenChange={() => undefined}
+                            />
+                        </I18nProvider>
+                    </QueryClientProvider>
+                )
+            }
+
+            render(<DelayedFinalPageHarness />)
+            const viewport = document.querySelector<HTMLElement>('.app-scroll-y')!
+            const anchor = screen.getByTestId('stable-visible-message')
+            const pageOut = screen.getByTestId('delayed-page')
+            Object.defineProperty(viewport, 'clientHeight', { configurable: true, value: 900 })
+            Object.defineProperty(viewport, 'scrollHeight', {
+                configurable: true,
+                get: () => pageOut.textContent === '3' ? 3_486 : 3_000,
+            })
+            viewport.getBoundingClientRect = () => DOMRect.fromRect({ y: 0, height: 900, width: 800 })
+            anchor.getBoundingClientRect = () => {
+                const prepended = pageOut.textContent === '3' ? 486 : 0
+                return DOMRect.fromRect({
+                    y: 305 + prepended - viewport.scrollTop,
+                    height: 162,
+                    width: 600,
+                })
+            }
+            viewport.scrollTop = 0
+            expect(anchor.getBoundingClientRect().top).toBe(305)
+
+            fireEvent.wheel(viewport, { deltaY: -486 })
+            await waitFor(() => expect(onRequest).toHaveBeenCalledTimes(1))
+
+            // 1.5s network delay: past the 250ms wheel gesture gap before the final page resolves.
+            now += 1_500
+            expect(controls.beforeApply?.(3)).toBe(true)
+            controls.resolvePage?.({
+                kind: 'applied',
+                historyVersion: 3,
+                hasMore: false,
+                addedRenderableCount: 3,
+            })
+
+            await waitFor(() => expect(pageOut.textContent).toBe('3'))
+            expect(viewport.scrollTop).toBe(486)
+            expect(anchor.getBoundingClientRect().top).toBe(305)
+
+            // A leftover upward wheel event immediately after the final page restore must be suppressed.
+            const tailWheel = new WheelEvent('wheel', { bubbles: true, cancelable: true, deltaY: -486 })
+            viewport.dispatchEvent(tailWheel)
+            expect(tailWheel.defaultPrevented).toBe(true)
+            expect(anchor.getBoundingClientRect().top).toBe(305)
+        } finally {
+            nowSpy.mockRestore()
+        }
+    })
+
+    it('does not load older messages when PageUp or Home is pressed inside an unmarked scrollable tool result', async () => {
+        const onRequest = vi.fn()
+        render(<PaginationHarness onRequest={onRequest} />)
+
+        const viewport = document.querySelector<HTMLElement>('.app-scroll-y')!
+        const anchor = screen.getByTestId('stable-visible-message')
+        Object.defineProperty(viewport, 'clientHeight', { configurable: true, value: 600 })
+        Object.defineProperty(viewport, 'scrollHeight', { configurable: true, value: 2_000 })
+        viewport.getBoundingClientRect = () => DOMRect.fromRect({ y: 0, height: 600, width: 800 })
+        viewport.scrollTop = 0
+
+        const toolResultScroller = document.createElement('div')
+        toolResultScroller.className = 'mt-3 flex max-h-[75vh] flex-col gap-4 overflow-auto'
+        const codeBlock = document.createElement('pre')
+        codeBlock.textContent = 'longlog.ts contents'
+        toolResultScroller.append(codeBlock)
+        anchor.append(toolResultScroller)
+
+        fireEvent.keyDown(codeBlock, { key: 'PageUp' })
+        fireEvent.keyDown(codeBlock, { key: 'Home' })
+        fireEvent.pointerDown(codeBlock, { button: 0 })
+        fireEvent.keyDown(viewport, { key: 'PageUp' })
+        fireEvent.keyDown(viewport, { key: 'Home' })
+
+        expect(onRequest).not.toHaveBeenCalled()
+    })
 })

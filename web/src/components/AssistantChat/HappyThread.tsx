@@ -47,6 +47,7 @@ type PendingScrollRestore = {
     scrollTop: number
     scrollHeight: number
     targetHistoryVersion: number | null
+    pinOnRestore?: boolean
 }
 
 type HistoryLoadSource = 'coverage' | 'user' | 'consumer'
@@ -72,14 +73,57 @@ type ShareTurnSnapshot = {
     role?: 'user' | 'assistant'
 }
 
-export function isNestedScrollEvent(event: Event): boolean {
+const NESTED_SCROLL_OVERFLOW_RE = /\boverflow(?:-[xy])?-(?:auto|scroll)\b/
+
+function isNestedScrollableElement(element: HTMLElement): boolean {
+    if (element.classList.contains('chat-scroll-y')) {
+        return false
+    }
+    const className = typeof element.className === 'string' ? element.className : ''
+    const hasOverflowClass = NESTED_SCROLL_OVERFLOW_RE.test(className)
+    let hasScrollableStyle = false
+    if (typeof window !== 'undefined' && typeof window.getComputedStyle === 'function') {
+        const style = window.getComputedStyle(element)
+        hasScrollableStyle =
+            style.overflowY === 'auto'
+            || style.overflowY === 'scroll'
+            || style.overflowY === 'overlay'
+            || style.overflowX === 'auto'
+            || style.overflowX === 'scroll'
+            || style.overflowX === 'overlay'
+    }
+    if (!hasOverflowClass && !hasScrollableStyle) {
+        return false
+    }
+    if (element.scrollHeight > element.clientHeight || element.scrollWidth > element.clientWidth) {
+        return true
+    }
+    if (element.clientHeight === 0 && element.clientWidth === 0) {
+        return true
+    }
+    return /\bmax-h-/.test(className) || Boolean(element.style?.maxHeight)
+}
+
+export function isNestedScrollEvent(event: Event, boundary?: Element | null): boolean {
     const target = event.target
-    const element = typeof Element !== 'undefined' && target instanceof Element
+    let current = typeof Element !== 'undefined' && target instanceof Element
         ? target
         : typeof Node !== 'undefined' && target instanceof Node
             ? target.parentElement
             : null
-    return element?.closest('[data-hapi-nested-scroll="true"]') != null
+    while (current && current !== boundary) {
+        if (current.classList.contains('chat-scroll-y')) {
+            return false
+        }
+        if (current.getAttribute('data-hapi-nested-scroll') === 'true') {
+            return true
+        }
+        if (current instanceof HTMLElement && isNestedScrollableElement(current)) {
+            return true
+        }
+        current = current.parentElement
+    }
+    return false
 }
 
 function findNearestMessageElement(content: HTMLElement, clientY?: number): HTMLElement | null {
@@ -805,7 +849,7 @@ export function HappyThread(props: {
         let lastWheelAt = 0
         let wheelIntentUntil = 0
         let wheelLatched = false
-
+        let nestedScrollFocused = false
         const hasExplicitUpwardIntent = (intent: ScrollIntent): boolean => {
             return intent.isScrollingUp && (
                 pointerResumeActive
@@ -863,6 +907,7 @@ export function HappyThread(props: {
                 && shouldRecapturePendingHistoryAnchor(historyLoaderRef.current.phase)
                 // The wheel burst that started this load is not a new anchor.
                 // Recapturing it aims the restore at whatever the burst moved.
+                && !pending.pinOnRestore
                 && wheelGestureUntilRef.current <= Date.now()
             ) {
                 pending.anchor = captureScrollAnchor(viewport)
@@ -947,12 +992,16 @@ export function HappyThread(props: {
             pinnedAnchorRef.current = null
             pinnedAnchorUntilRef.current = 0
             pinnedAnchorStartedAtRef.current = 0
+            if (pendingScrollRef.current) {
+                pendingScrollRef.current.pinOnRestore = false
+            }
         }
 
         const handleKeyDown = (event: KeyboardEvent) => {
             clearPinnedAnchor()
-            if (isNestedScrollEvent(event)) return
+            if (isNestedScrollEvent(event, viewport)) return
             const target = event.target
+            if (target === viewport && nestedScrollFocused) return
             if (
                 event.defaultPrevented
                 || event.repeat
@@ -980,7 +1029,12 @@ export function HappyThread(props: {
         }
 
         const handlePointerDown = (event: PointerEvent) => {
-            if (isNestedScrollEvent(event) || event.button !== 0) {
+            if (isNestedScrollEvent(event, viewport)) {
+                nestedScrollFocused = true
+                return
+            }
+            nestedScrollFocused = false
+            if (event.button !== 0) {
                 return
             }
             clearPinnedAnchor()
@@ -999,16 +1053,24 @@ export function HappyThread(props: {
         // listeners. Capture pointer and mouse input at the window boundary,
         // then scope it back to the chat viewport by coordinates.
         const handleWindowPointerDown = (event: PointerEvent) => {
-            if (isNestedScrollEvent(event)) return
+            if (isNestedScrollEvent(event, viewport)) {
+                nestedScrollFocused = true
+                return
+            }
             if (event.button === 0 && isInsideViewport(event.clientX, event.clientY)) {
+                nestedScrollFocused = false
                 clearPinnedAnchor()
                 armPointerIntent()
             }
         }
 
         const handleWindowMouseDown = (event: MouseEvent) => {
-            if (isNestedScrollEvent(event)) return
+            if (isNestedScrollEvent(event, viewport)) {
+                nestedScrollFocused = true
+                return
+            }
             if (event.button === 0 && isInsideViewport(event.clientX, event.clientY)) {
+                nestedScrollFocused = false
                 clearPinnedAnchor()
                 armPointerIntent()
             }
@@ -1021,7 +1083,7 @@ export function HappyThread(props: {
         }
 
         const handlePointerCancel = (event: PointerEvent) => {
-            if (isNestedScrollEvent(event)) return
+            if (isNestedScrollEvent(event, viewport)) return
             const hadActivePointer = pointerResumeActive
             pointerResumeActive = false
             if (hadActivePointer && (event.pointerType === 'touch' || event.pointerType === 'pen')) {
@@ -1036,7 +1098,7 @@ export function HappyThread(props: {
         }
 
         const handleWheel = (event: WheelEvent) => {
-            if (isNestedScrollEvent(event)) return
+            if (isNestedScrollEvent(event, viewport)) return
             const now = Date.now()
             if (shouldSuppressPinnedWheel(event.deltaY, pinnedAnchorUntilRef.current, now)) {
                 event.preventDefault()
@@ -1048,6 +1110,9 @@ export function HappyThread(props: {
                     WHEEL_GESTURE_GAP_MS,
                     ANCHOR_PIN_MAX_MS
                 )
+                lastWheelAt = now
+                wheelLatched = true
+                wheelIntentUntil = pinnedAnchorUntilRef.current
                 wheelGestureUntilRef.current = pinnedAnchorUntilRef.current
                 return
             }
@@ -1067,6 +1132,9 @@ export function HappyThread(props: {
             lastWheelAt = now
             wheelIntentUntil = now + WHEEL_GESTURE_GAP_MS
             wheelGestureUntilRef.current = wheelIntentUntil
+            if (pendingScrollRef.current) {
+                pendingScrollRef.current.pinOnRestore = true
+            }
             if (!needsViewportCoverageRef.current() || wheelLatched) {
                 return
             }
@@ -1075,7 +1143,7 @@ export function HappyThread(props: {
         }
 
         const handleTouchStart = (event: TouchEvent) => {
-            if (isNestedScrollEvent(event)) return
+            if (isNestedScrollEvent(event, viewport)) return
             updatePullToLoadState('idle')
             pullStartY = (
                 viewport.scrollTop <= 0
@@ -1089,7 +1157,7 @@ export function HappyThread(props: {
         }
 
         const handleTouchMove = (event: TouchEvent) => {
-            if (isNestedScrollEvent(event)) return
+            if (isNestedScrollEvent(event, viewport)) return
             if (pullStartY === null) {
                 return
             }
@@ -1105,7 +1173,7 @@ export function HappyThread(props: {
         }
 
         const handleTouchEnd = (event: TouchEvent) => {
-            if (isNestedScrollEvent(event)) return
+            if (isNestedScrollEvent(event, viewport)) return
             const shouldLoad = pullStartY !== null
                 && pullToLoadStateRef.current === 'ready'
                 && viewport.scrollTop <= 0
@@ -1117,7 +1185,7 @@ export function HappyThread(props: {
         }
 
         const handleTouchCancel = (event: TouchEvent) => {
-            if (isNestedScrollEvent(event)) return
+            if (isNestedScrollEvent(event, viewport)) return
             pullStartY = null
             updatePullToLoadState('idle')
         }
@@ -1361,7 +1429,8 @@ export function HappyThread(props: {
             anchor: captureScrollAnchor(viewport),
             scrollTop: viewport.scrollTop,
             scrollHeight: viewport.scrollHeight,
-            targetHistoryVersion: null
+            targetHistoryVersion: null,
+            pinOnRestore: state.source === 'user' && wheelGestureUntilRef.current > Date.now()
         }
         autoScrollEnabledRef.current = false
         historyLoaderRef.current = { ...state, phase: 'loading' }
@@ -1629,7 +1698,11 @@ export function HappyThread(props: {
                 return
             }
             const restoredByAnchor = pending.anchor ? restoreScrollAnchor(viewport, pending.anchor) : false
-            if (restoredByAnchor && pending.anchor && wheelGestureUntilRef.current > Date.now()) {
+            if (
+                restoredByAnchor
+                && pending.anchor
+                && (pending.pinOnRestore || wheelGestureUntilRef.current > Date.now())
+            ) {
                 const startedAt = Date.now()
                 pinnedAnchorRef.current = pending.anchor
                 pinnedAnchorStartedAtRef.current = startedAt
@@ -1684,6 +1757,9 @@ export function HappyThread(props: {
     }, [bottomInsetPx, scrollToBottomInstant])
 
 
+    const isAwaitingHistoryRender = appliedHistoryVersion < props.historyVersion
+    const isLoadingMoreOrApplying = props.isLoadingMoreMessages || isAwaitingHistoryRender
+    const showLoadEarlierButton = (props.hasMoreMessages || isAwaitingHistoryRender) && !props.isSyncingTail
     const showSkeleton = props.isSyncingTail && props.rawMessagesCount === 0
     const handleShareTurn = useCallback((
         messageTarget: HTMLElement | string | null,
@@ -1776,18 +1852,18 @@ export function HappyThread(props: {
         }}>
             <ThreadPrimitive.Root className="flex min-h-0 flex-1 flex-col relative">
                 {!props.isSyncingTail && (
-                    props.isLoadingMoreMessages || pullToLoadState !== 'idle'
+                    isLoadingMoreOrApplying || pullToLoadState !== 'idle'
                 ) ? (
                     <div
                         role="status"
                         aria-live="polite"
                         className="pointer-events-none absolute left-1/2 top-3 z-20 flex -translate-x-1/2 items-center gap-1.5 rounded-full border border-[var(--app-border)] bg-[var(--app-bg)]/90 px-2.5 py-1 text-xs text-[var(--app-hint)] shadow-sm backdrop-blur"
                     >
-                        {props.isLoadingMoreMessages ? (
+                        {isLoadingMoreOrApplying ? (
                             <Spinner size="sm" label={null} className="text-current" />
                         ) : null}
                         <span>
-                            {props.isLoadingMoreMessages
+                            {isLoadingMoreOrApplying
                                 ? t('misc.loading')
                                 : pullToLoadState === 'ready'
                                     ? t('misc.releaseToLoadOlder')
@@ -1823,7 +1899,7 @@ export function HappyThread(props: {
                                         </div>
                                     ) : null}
 
-                                    {props.hasMoreMessages && !props.isSyncingTail ? (
+                                    {showLoadEarlierButton ? (
                                         <div className="py-1 mb-2">
                                             <div className="mx-auto w-fit">
                                                 <Button
@@ -1832,12 +1908,12 @@ export function HappyThread(props: {
                                                     onClick={() => {
                                                         void loadOlderUntilVisible()
                                                     }}
-                                                    disabled={props.isLoadingMoreMessages || props.isSyncingTail}
-                                                    aria-busy={props.isLoadingMoreMessages}
+                                                    disabled={isLoadingMoreOrApplying || props.isSyncingTail}
+                                                    aria-busy={isLoadingMoreOrApplying}
                                                     className="gap-1.5 text-xs opacity-80 hover:opacity-100"
                                                 >
                                                     <span aria-hidden="true" className="inline-flex w-4 shrink-0 items-center justify-center">
-                                                        {props.isLoadingMoreMessages ? (
+                                                        {isLoadingMoreOrApplying ? (
                                                             <Spinner size="sm" label={null} className="text-current" />
                                                         ) : (
                                                             '↑'
