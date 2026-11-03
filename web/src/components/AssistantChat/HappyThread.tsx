@@ -112,6 +112,12 @@ function hasVerticalOverflowStyle(element: HTMLElement): boolean {
     ) {
         return false
     }
+    // Per CSS Overflow, setting overflow-x to auto/scroll coerces an unset
+    // overflow-y: visible to auto in computed styles. Short-circuiting pure
+    // overflow-x-* utility classes avoids per-event getComputedStyle calls on
+    // horizontal code/table wrappers; any container that combines overflow-x-auto
+    // with max-h-* to scroll on both axes should use overflow-auto or mark itself
+    // with data-hapi-nested-scroll="true".
     if (HORIZONTAL_ONLY_OVERFLOW_CLASS_RE.test(className)) {
         return false
     }
@@ -172,10 +178,10 @@ function isNestedScrollableElement(element: HTMLElement, deltaY = 0): boolean {
         return false
     }
     if (deltaY < 0) {
-        return element.scrollTop > 0
+        return element.scrollTop > 1
     }
     if (deltaY > 0) {
-        return element.scrollTop + element.clientHeight < element.scrollHeight
+        return element.scrollTop + element.clientHeight < element.scrollHeight - 1
     }
     return true
 }

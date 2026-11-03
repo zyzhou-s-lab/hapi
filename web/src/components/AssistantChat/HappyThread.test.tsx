@@ -128,8 +128,12 @@ describe('nested scroll event ownership', () => {
         expect(isNestedScrollEvent(wheelUpAtTop, viewport)).toBe(false)
         expect(isNestedScrollEvent(wheelDownFromTop, viewport)).toBe(true)
 
+        toolResult.scrollTop = 0.5
+        expect(isNestedScrollEvent(wheelUpAtTop, viewport)).toBe(false)
         toolResult.scrollTop = 120
         expect(isNestedScrollEvent(wheelUpAtTop, viewport)).toBe(true)
+        toolResult.scrollTop = 399.5
+        expect(isNestedScrollEvent(wheelDownFromTop, viewport)).toBe(false)
         toolResult.scrollTop = 400
         expect(isNestedScrollEvent(wheelDownFromTop, viewport)).toBe(false)
 
