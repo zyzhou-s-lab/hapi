@@ -160,7 +160,10 @@ function stripMarkdownLine(line: string): string {
 }
 
 function plainSubagentLabel(value: string): string {
-    const lines = value.split(/\r?\n/).map((part) => part.trim()).filter((part) => part.length > 0)
+    const lines = value
+        .split(/\r?\n/)
+        .map((part) => part.trim())
+        .filter((part) => part.length > 0 && !/^-{3,}$/.test(part))
     if (lines.length === 0) return ''
     const heading = /^\s{0,3}#{1,6}\s+/.test(lines[0] ?? '')
     const body = heading

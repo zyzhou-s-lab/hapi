@@ -14,6 +14,7 @@ const SYSTEM_INJECTION_PREFIXES = [
 
 export const TURN_PAGE_SIZE = 20
 export const TURN_PAGE_MAX = 50
+export const TURN_PAGE_ROW_MAX = 2000
 
 function textFromContent(content: unknown): string | null {
     if (typeof content === 'string') return content

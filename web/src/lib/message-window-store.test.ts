@@ -718,7 +718,6 @@ describe('message tail synchronization', () => {
         const getMessages = vi.fn()
             .mockResolvedValueOnce(latestResponse([old], { epoch: 1 }))
             .mockResolvedValueOnce(latestResponse([fresh], { epoch: 2, reset: true }))
-            .mockResolvedValueOnce(latestResponse([fresh], { epoch: 2 }))
         const api = createApi(getMessages)
         await syncTailMessages(api, id)
         appendOptimisticMessage(id, optimistic)
@@ -737,9 +736,6 @@ describe('message tail synchronization', () => {
         const getMessages = vi.fn()
             .mockResolvedValueOnce(latestResponse([old], { epoch: 1 }))
             .mockImplementationOnce(async () => await reset.promise)
-            .mockResolvedValueOnce(latestResponse([
-                makeAgentMessage({ id: 'fresh', seq: 2, at: 2_000 })
-            ], { epoch: 2 }))
         const api = createApi(getMessages)
         await syncTailMessages(api, id)
         appendOptimisticMessage(id, makeUserMessage({
@@ -788,9 +784,6 @@ describe('message tail synchronization', () => {
                 hasMore: true
             }))
             .mockImplementationOnce(async () => await reset.promise)
-            .mockResolvedValueOnce(latestResponse([
-                makeAgentMessage({ id: 'fresh', seq: 10, at: 10_000 })
-            ], { epoch: 2 }))
         const api = createApi(getMessages)
         await syncTailMessages(api, id)
 
@@ -1118,21 +1111,14 @@ describe('history view and older pagination', () => {
     it('discards an older response invalidated by a concurrent epoch reset', async () => {
         const id = sessionId('older-reset-race')
         const older = deferred<MessagesResponse>()
-        let turnPage = 0
         const getMessages = vi.fn(async (_sessionId: string, options?: Parameters<ApiClient['getMessages']>[1]) => {
             if (options?.beforeAt !== undefined) {
                 return await older.promise
             }
             if (options?.afterAt !== undefined) {
                 return latestResponse([
-                    makeAgentMessage({ id: 'reset-body', seq: 19, at: 19_000 })
-                ], { epoch: 2, reset: true })
-            }
-            turnPage += 1
-            if (turnPage > 1) {
-                return latestResponse([
                     makeAgentMessage({ id: 'fresh', seq: 20, at: 20_000 })
-                ], { epoch: 2 })
+                ], { epoch: 2, reset: true })
             }
             return latestResponse([
                 makeAgentMessage({ id: 'initial', seq: 10, at: 10_000 })
@@ -1171,21 +1157,14 @@ describe('history view and older pagination', () => {
     it('treats an invalidated older request rejection as a stopped load', async () => {
         const id = sessionId('older-rejection-after-reset')
         const older = deferred<MessagesResponse>()
-        let turnPage = 0
         const getMessages = vi.fn(async (_sessionId: string, options?: Parameters<ApiClient['getMessages']>[1]) => {
             if (options?.beforeAt !== undefined) {
                 return await older.promise
             }
             if (options?.afterAt !== undefined) {
                 return latestResponse([
-                    makeAgentMessage({ id: 'reset-body', seq: 19, at: 19_000 })
-                ], { epoch: 2, reset: true })
-            }
-            turnPage += 1
-            if (turnPage > 1) {
-                return latestResponse([
                     makeAgentMessage({ id: 'fresh', seq: 20, at: 20_000 })
-                ], { epoch: 2 })
+                ], { epoch: 2, reset: true })
             }
             return latestResponse([
                 makeAgentMessage({ id: 'initial', seq: 10, at: 10_000 })
@@ -1214,19 +1193,12 @@ describe('history view and older pagination', () => {
         const id = sessionId('older-before-reset-response')
         const older = deferred<MessagesResponse>()
         const reset = deferred<MessagesResponse>()
-        let turnPage = 0
         const getMessages = vi.fn(async (_sessionId: string, options?: Parameters<ApiClient['getMessages']>[1]) => {
             if (options?.beforeAt !== undefined) {
                 return await older.promise
             }
             if (options?.afterAt !== undefined) {
                 return await reset.promise
-            }
-            turnPage += 1
-            if (turnPage > 1) {
-                return latestResponse([
-                    makeAgentMessage({ id: 'fresh', seq: 20, at: 20_000 })
-                ], { epoch: 2 })
             }
             return latestResponse([
                 makeAgentMessage({ id: 'initial', seq: 10, at: 10_000 })
@@ -1295,7 +1267,7 @@ describe('history view and older pagination', () => {
         expect(getMessageWindowState(id).epoch).toBe(2)
     })
 
-    it('protects regular conversation rows from an agent-run flood', () => {
+    it('cuts a huge turn down to the visible message cap', () => {
         const id = sessionId('agent-run-budget')
         const root = makeUserMessage({ id: 'root', seq: 1, invokedAt: 1, createdAt: 1 })
         ingestIncomingMessages(id, [
@@ -1305,7 +1277,11 @@ describe('history view and older pagination', () => {
             )
         ])
 
-        expect(getMessageWindowState(id).messages.some((message) => message.id === 'root')).toBe(true)
+        const kept = getMessageWindowState(id).messages
+        expect(kept).toHaveLength(VISIBLE_WINDOW_SIZE)
+        expect(kept.some((message) => message.id === 'root')).toBe(false)
+        expect(kept.at(-1)?.id).toBe(`run-${VISIBLE_WINDOW_SIZE}`)
+        expect(getMessageWindowState(id).hasMore).toBe(true)
     })
 })
 

@@ -552,15 +552,18 @@ function trimConversation(
         }
     }
     const dropPreamble = preamble !== null && mode === 'append' && droppedTurns.length > 0
+    const regularKept = [
+        ...(preamble && !dropPreamble ? preamble : []),
+        ...keptTurns.flat()
+    ]
+    const turnDropped = [
+        ...(dropPreamble && preamble ? preamble : []),
+        ...droppedTurns.flat()
+    ]
+    const limited = sliceForTrim(regularKept, Math.max(0, regularLimit - queued.length), mode)
     return {
-        kept: mergeMessages([
-            ...(preamble && !dropPreamble ? preamble : []),
-            ...keptTurns.flat()
-        ], queued),
-        dropped: [
-            ...(dropPreamble && preamble ? preamble : []),
-            ...droppedTurns.flat()
-        ]
+        kept: mergeMessages(limited.kept, queued),
+        dropped: [...turnDropped, ...limited.dropped]
     }
 }
 
@@ -793,11 +796,9 @@ async function runTailSync(api: ApiClient, sessionId: string): Promise<void> {
             if (!isCurrentTailSync(sessionId, generation)) return
 
             if (response.page.reset || response.page.direction === 'latest') {
-                const turnPage = await api.getMessages(sessionId, { turns: TURN_PAGE_SIZE })
-                if (!isCurrentTailSync(sessionId, generation)) return
                 updateState(sessionId, (previous) => {
                     if (previous.syncGeneration !== generation) return previous
-                    return applyLatestResponse(previous, turnPage, {
+                    return applyLatestResponse(previous, response, {
                         replaceServerRows: true,
                         requestBaseline
                     })

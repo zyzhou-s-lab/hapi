@@ -11,7 +11,7 @@ import {
     isRedundantGoalStatusEventContent,
     unwrapRoleWrappedRecordEnvelope
 } from '@hapi/protocol/messages'
-import { isHumanTurnStart } from '@hapi/protocol/turnBoundary'
+import { TURN_PAGE_ROW_MAX, isHumanTurnStart } from '@hapi/protocol/turnBoundary'
 import { isObject } from '@hapi/protocol'
 import type { MessageDeliveryMode, MessagesResponse, QueuedStateResponse } from '@hapi/protocol/apiTypes'
 import type { Server } from 'socket.io'
@@ -320,10 +320,13 @@ export class MessageService {
         let cursor = requestedBefore ?? undefined
         let starts = 0
         let boundaryId: string | null = null
+        let scannedCount = 0
+        let hitRowCap = false
         while (starts < turns) {
             const batch = this.store.messages.getMessagesByPosition(sessionId, 200, cursor)
             if (batch.length === 0) break
             batches.push(batch)
+            scannedCount += batch.length
             for (let index = batch.length - 1; index >= 0; index -= 1) {
                 const row = batch[index]!
                 if (!isHumanTurnStart(row)) continue
@@ -334,6 +337,10 @@ export class MessageService {
                 }
             }
             if (boundaryId !== null || batch.length < 200) break
+            if (scannedCount >= TURN_PAGE_ROW_MAX) {
+                hitRowCap = true
+                break
+            }
             const oldestInBatch = batch[0]!
             const next = messagePosition(oldestInBatch)
             if (cursor && next.at === cursor.at && next.seq === cursor.seq) break
@@ -341,10 +348,25 @@ export class MessageService {
         }
 
         const scanned = batches.slice().reverse().flat()
-        const boundaryIndex = boundaryId === null
-            ? -1
-            : scanned.findIndex((row) => row.id === boundaryId)
-        const pageRows = boundaryIndex < 0 ? scanned : scanned.slice(boundaryIndex)
+        let pageRows: StoredMessageForDelivery[]
+        if (boundaryId !== null) {
+            const boundaryIndex = scanned.findIndex((row) => row.id === boundaryId)
+            pageRows = boundaryIndex < 0 ? scanned : scanned.slice(boundaryIndex)
+        } else if (hitRowCap) {
+            const capped = scanned.length > TURN_PAGE_ROW_MAX
+                ? scanned.slice(scanned.length - TURN_PAGE_ROW_MAX)
+                : scanned
+            let cut = 0
+            for (let index = capped.length - 1; index >= 0; index -= 1) {
+                if (isHumanTurnStart(capped[index]!)) {
+                    cut = index
+                    break
+                }
+            }
+            pageRows = capped.slice(cut)
+        } else {
+            pageRows = scanned
+        }
         const oldest = pageRows[0] ?? null
         const hasMore = oldest !== null && this.store.messages.getMessagesByPosition(
             sessionId,

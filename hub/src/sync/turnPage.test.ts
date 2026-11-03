@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'bun:test'
+import { TURN_PAGE_ROW_MAX } from '@hapi/protocol/turnBoundary'
 import { MessageService } from './messageService'
 import { Store } from '../store'
 import type { Server } from 'socket.io'
@@ -78,6 +79,47 @@ describe('getMessagesPage turns', () => {
         expect(texts.at(-1)).toBe('step 200')
         expect(page.page.hasMore).toBe(true)
         expect(texts).not.toContain('older')
+    })
+
+    it('stops at 2000 rows when the ceiling contains no turn start', () => {
+        const store = new Store(':memory:')
+        const session = store.sessions.getOrCreateSession('cap', { path: '/tmp/cap' }, null, 'default')
+        const base = Date.now() - 500_000
+        store.messages.addMessage(session.id, user('prompt'), undefined, undefined, base)
+        for (let index = 0; index < TURN_PAGE_ROW_MAX + 5; index += 1) {
+            store.messages.addMessage(session.id, agent(`step ${index}`), undefined, undefined, base + 1 + index)
+        }
+
+        const page = service(store).getMessagesPage(session.id, { limit: 50, turns: 20, before: null })
+        const texts = page.messages.map((message) => messageText(message.content))
+        expect(texts).toHaveLength(TURN_PAGE_ROW_MAX)
+        expect(texts[0]).toBe('step 5')
+        expect(texts.at(-1)).toBe(`step ${TURN_PAGE_ROW_MAX + 4}`)
+        expect(texts).not.toContain('prompt')
+        expect(page.page.hasMore).toBe(true)
+    })
+
+    it('cuts a capped page at the newest turn start inside the ceiling', () => {
+        const store = new Store(':memory:')
+        const session = store.sessions.getOrCreateSession('cap-start', { path: '/tmp/cap-start' }, null, 'default')
+        const base = Date.now() - 500_000
+        store.messages.addMessage(session.id, user('older'), undefined, undefined, base)
+        for (let index = 0; index < 1900; index += 1) {
+            store.messages.addMessage(session.id, agent(`old ${index}`), undefined, undefined, base + 1 + index)
+        }
+        const newerAt = base + 2_000
+        store.messages.addMessage(session.id, user('newer'), undefined, undefined, newerAt)
+        for (let index = 0; index < 150; index += 1) {
+            store.messages.addMessage(session.id, agent(`new ${index}`), undefined, undefined, newerAt + 1 + index)
+        }
+
+        const page = service(store).getMessagesPage(session.id, { limit: 50, turns: 20, before: null })
+        const texts = page.messages.map((message) => messageText(message.content))
+        expect(texts[0]).toBe('newer')
+        expect(texts).toHaveLength(151)
+        expect(texts.at(-1)).toBe('new 149')
+        expect(texts).not.toContain('older')
+        expect(page.page.hasMore).toBe(true)
     })
 
     it('keeps injected user rows inside the turn and pins queued prompts off the cursor', () => {

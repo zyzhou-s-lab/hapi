@@ -134,6 +134,13 @@ describe('partitionTurn', () => {
             'Read the session cursor and report where paging starts'
         )
 
+        const ruled = partitionTurn([
+            call(tool('ruled', 'Agent', {
+                input: { prompt: '# Target\n\n---\n\nRead the session cursor' },
+            })),
+        ], null)
+        expect(ruled.rows[0]?.kind === 'tool' && ruled.rows[0].intent).toBe('Read the session cursor')
+
         const long = partitionTurn([
             call(tool('long', 'Task', {
                 input: { description: 'D'.repeat(90) },
