@@ -264,6 +264,32 @@ describe('assignThreadMessageIds', () => {
         expect(second[0].threadMessageId).toBe('agent-text:a')
         expect(second[1].threadMessageId).toBe('user-text:u')
     })
+
+    it('keeps the joined assistant run head threadMessageId stable when older blocks are prepended into a split turn', () => {
+        const cache = new WeakMap<VisibleChatBlock, BlockWithThreadMessageId>()
+        const tailText = agentText('b-tail')
+        const tailTools = toolGroup('b-tools', [toolCall('read-tail')])
+        const initial = assignThreadMessageIdsWithStableWrappers([tailText, tailTools], cache)
+        expect(initial[0].threadMessageId).toBe('agent-text:b-tail')
+
+        const midTools = toolGroup('b-mid-tools', [toolCall('read-mid')])
+        const afterFirstPrepend = assignThreadMessageIdsWithStableWrappers(
+            [midTools, tailText, tailTools],
+            cache
+        )
+        expect(afterFirstPrepend[0].threadMessageId).toBe('agent-text:b-tail')
+        expect(new Set(afterFirstPrepend.map((entry) => entry.threadMessageId)).size).toBe(3)
+
+        const userPrompt = userText('u-b')
+        const headText = agentText('b-head')
+        const afterSecondPrepend = assignThreadMessageIdsWithStableWrappers(
+            [userPrompt, headText, midTools, tailText, tailTools],
+            cache
+        )
+        expect(afterSecondPrepend[0].threadMessageId).toBe('user-text:u-b')
+        expect(afterSecondPrepend[1].threadMessageId).toBe('agent-text:b-tail')
+        expect(new Set(afterSecondPrepend.map((entry) => entry.threadMessageId)).size).toBe(5)
+    })
 })
 
 describe('aggregateResponseGroups generation duration', () => {

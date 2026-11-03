@@ -13,6 +13,7 @@
         "./buildInfo": "./src/buildInfo.ts",
         "./conversationHistory": "./src/conversationHistory.ts",
         "./modes": "./src/modes.ts",
+        "./turnBoundary": "./src/turnBoundary.ts",
         "./omp": "./src/omp.ts",
         "./ompSessionMutation": "./src/ompSessionMutation.ts",
         "./rpcMethods": "./src/rpcMethods.ts",

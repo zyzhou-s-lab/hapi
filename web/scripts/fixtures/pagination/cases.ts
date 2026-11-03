@@ -227,7 +227,7 @@ export const paginationFixtureCases: PaginationFixtureCase[] = [
     },
     {
         name: 'reset-latest-preserves-optimistic',
-        description: 'A tail sync that gets page.reset:true replaces every server row from before the request but keeps optimistic rows (id === localId): the not-yet-echoed send survives the epoch bump and the window adopts the new epoch and cursors.',
+        description: 'A tail sync whose catch-up page reports reset applies that page directly. It replaces every server row from before the request but keeps optimistic rows (id === localId): the not-yet-echoed send survives the epoch bump and the window adopts the new epoch and cursors.',
         ops: [
             {
                 op: 'sync-tail',

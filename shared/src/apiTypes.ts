@@ -503,6 +503,7 @@ export const MessagesQuerySchema = z.object({
     untilSeq: z.coerce.number().int().min(1).optional(),
     untilAt: z.coerce.number().int().min(0).optional(),
     epoch: z.coerce.number().int().min(0).optional(),
+    turns: z.coerce.number().int().min(1).max(50).optional(),
 })
     .refine((data) => (data.beforeAt === undefined) === (data.beforeSeq === undefined), {
         message: 'beforeAt and beforeSeq must be provided together',
@@ -527,6 +528,10 @@ export const MessagesQuerySchema = z.object({
     .refine((data) => data.epoch === undefined || data.afterAt !== undefined, {
         message: 'epoch requires an after cursor',
         path: ['epoch'],
+    })
+    .refine((data) => data.turns === undefined || data.afterAt === undefined, {
+        message: 'turns cannot be combined with an after cursor',
+        path: ['turns'],
     })
 
 export type MessagesQuery = z.infer<typeof MessagesQuerySchema>

@@ -11,6 +11,7 @@ import {
     isRedundantGoalStatusEventContent,
     unwrapRoleWrappedRecordEnvelope
 } from '@hapi/protocol/messages'
+import { TURN_PAGE_ROW_MAX, isHumanTurnStart } from '@hapi/protocol/turnBoundary'
 import { isObject } from '@hapi/protocol'
 import type { MessageDeliveryMode, MessagesResponse, QueuedStateResponse } from '@hapi/protocol/apiTypes'
 import type { Server } from 'socket.io'
@@ -272,6 +273,7 @@ export class MessageService {
         sessionId: string,
         options: {
             limit: number
+            turns?: number | null
             before?: MessagePosition | null
             after?: MessagePosition | null
             until?: MessagePosition | null
@@ -291,6 +293,15 @@ export class MessageService {
                 epoch
             )
         }
+        if (options.turns != null) {
+            return this.getTurnMessagesPage(
+                sessionId,
+                options.turns,
+                options.before ?? null,
+                epoch,
+                false
+            )
+        }
         return this.getLatestOrBeforeMessagesPage(
             sessionId,
             options.limit,
@@ -298,6 +309,132 @@ export class MessageService {
             epoch,
             false
         )
+    }
+
+    private collectTurnRows(
+        sessionId: string,
+        turns: number,
+        requestedBefore: MessagePosition | null
+    ): { pageRows: StoredMessageForDelivery[]; hasMore: boolean } {
+        const batches: StoredMessageForDelivery[][] = []
+        let cursor = requestedBefore ?? undefined
+        let starts = 0
+        let boundaryId: string | null = null
+        let scannedCount = 0
+        let hitRowCap = false
+        while (starts < turns) {
+            const batch = this.store.messages.getMessagesByPosition(sessionId, 200, cursor)
+            if (batch.length === 0) break
+            batches.push(batch)
+            scannedCount += batch.length
+            for (let index = batch.length - 1; index >= 0; index -= 1) {
+                const row = batch[index]!
+                if (!isHumanTurnStart(row)) continue
+                starts += 1
+                if (starts === turns) {
+                    boundaryId = row.id
+                    break
+                }
+            }
+            if (boundaryId !== null || batch.length < 200) break
+            if (scannedCount >= TURN_PAGE_ROW_MAX) {
+                hitRowCap = true
+                break
+            }
+            const oldestInBatch = batch[0]!
+            const next = messagePosition(oldestInBatch)
+            if (cursor && next.at === cursor.at && next.seq === cursor.seq) break
+            cursor = next
+        }
+
+        const scanned = batches.slice().reverse().flat()
+        let pageRows: StoredMessageForDelivery[]
+        if (boundaryId !== null) {
+            const boundaryIndex = scanned.findIndex((row) => row.id === boundaryId)
+            pageRows = boundaryIndex < 0 ? scanned : scanned.slice(boundaryIndex)
+        } else if (hitRowCap) {
+            const capped = scanned.length > TURN_PAGE_ROW_MAX
+                ? scanned.slice(scanned.length - TURN_PAGE_ROW_MAX)
+                : scanned
+            let cut = 0
+            for (let index = 0; index < capped.length; index += 1) {
+                if (isHumanTurnStart(capped[index]!)) {
+                    cut = index
+                    break
+                }
+            }
+            pageRows = capped.slice(cut)
+        } else {
+            pageRows = scanned
+        }
+        const oldest = pageRows[0] ?? null
+        const hasMore = oldest !== null && this.store.messages.getMessagesByPosition(
+            sessionId,
+            1,
+            messagePosition(oldest)
+        ).length > 0
+        return { pageRows, hasMore }
+    }
+
+    private getTurnMessagesPage(
+        sessionId: string,
+        turns: number,
+        requestedBefore: MessagePosition | null,
+        epoch: number,
+        reset: boolean
+    ): MessagesResponse {
+        const direction = requestedBefore ? 'before' as const : 'latest' as const
+        const snapshotHead = this.store.messages.getNewestMessagePosition(sessionId)
+        let before = requestedBefore
+        let collected = this.collectTurnRows(sessionId, turns, before)
+        let pageRows = collected.pageRows
+        let hasMore = collected.hasMore
+        let queuedRows = requestedBefore === null
+            ? this.store.messages.getUninvokedLocalMessages(sessionId)
+            : []
+
+        const assemble = () => {
+            const byId = new Map<string, typeof pageRows[number]>()
+            for (const row of pageRows) byId.set(row.id, row)
+            for (const row of queuedRows) byId.set(row.id, row)
+            return [...byId.values()].sort((a, b) => {
+                const at = (a.invokedAt ?? a.createdAt) - (b.invokedAt ?? b.createdAt)
+                return at !== 0 ? at : a.seq - b.seq
+            })
+        }
+
+        let stored = assemble()
+        let messages = toVisibleDecryptedMessages(stored)
+        let oldest = pageRows[0] ?? null
+
+        while (messages.length === 0 && hasMore && oldest) {
+            before = messagePosition(oldest)
+            collected = this.collectTurnRows(sessionId, turns, before)
+            pageRows = collected.pageRows
+            hasMore = collected.hasMore
+            queuedRows = []
+            stored = assemble()
+            messages = toVisibleDecryptedMessages(stored)
+            oldest = pageRows[0] ?? null
+        }
+
+        const oldestPosition = oldest ? messagePosition(oldest) : null
+        return {
+            messages,
+            page: {
+                direction,
+                limit: turns,
+                epoch,
+                reset,
+                nextBeforeSeq: oldestPosition?.seq ?? null,
+                nextBeforeAt: oldestPosition?.at ?? null,
+                nextAfterSeq: null,
+                nextAfterAt: null,
+                snapshotHeadSeq: snapshotHead?.seq ?? null,
+                snapshotHeadAt: snapshotHead?.at ?? null,
+                hasMore
+            }
+        }
     }
 
     private getLatestOrBeforeMessagesPage(

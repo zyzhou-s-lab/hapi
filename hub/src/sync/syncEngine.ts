@@ -416,6 +416,7 @@ export class SyncEngine {
         sessionId: string,
         options: {
             limit: number
+            turns?: number | null
             before?: { at: number; seq: number } | null
             after?: { at: number; seq: number } | null
             until?: { at: number; seq: number } | null

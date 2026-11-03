@@ -82,7 +82,7 @@ function countRenderedRowsAfter(blocks: readonly VisibleChatBlock[], anchor: num
  * prepended history (loadMore) free: older blocks land before the anchor.
  *
  * Only counts blocks that are actually in the window. When the user scrolls far
- * enough back that the history window fills up (HISTORY_WINDOW_SIZE), incoming
+ * enough back that the history window fills up (the older-page row cap), incoming
  * messages are trimmed off the tail by mergeIntoWindow and never reach the
  * reducer, so this reports 0. That is intentional: under-reporting beats the
  * old behaviour of counting raw messages, and entering tail mode force-refetches

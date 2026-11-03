@@ -394,7 +394,7 @@ export function ToolDetailDialogContent(props: {
             props.onClose?.()
         }
         return (
-            <div className="mt-3 flex max-h-[75vh] flex-col gap-4 overflow-auto">
+            <div data-hapi-nested-scroll="true" tabIndex={0} className="mt-3 flex max-h-[75vh] flex-col gap-4 overflow-auto">
                 {isAskUserQuestion ? (
                     <AskUserQuestionFooter
                         api={chatCtx.api}
@@ -417,7 +417,7 @@ export function ToolDetailDialogContent(props: {
     }
     const durationMs = toolDurationMs(props.block.tool)
     return (
-        <div className="mt-3 flex max-h-[75vh] flex-col gap-4 overflow-auto">
+        <div data-hapi-nested-scroll="true" tabIndex={0} className="mt-3 flex max-h-[75vh] flex-col gap-4 overflow-auto">
             {props.hideTiming ? null : <ToolTimingDetails block={props.block} />}
             <div>
                 <div className="mb-1 text-xs font-medium text-[var(--app-hint)]">

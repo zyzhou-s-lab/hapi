@@ -121,6 +121,17 @@ describe('MessagesQuerySchema', () => {
     it('rejects epoch without a forward cursor', () => {
         expect(MessagesQuerySchema.safeParse({ epoch: 1 }).success).toBe(false)
     })
+
+    it('parses a turn page and rejects turns with an after cursor', () => {
+        expect(MessagesQuerySchema.parse({ turns: '20', beforeAt: '5', beforeSeq: '5' })).toEqual({
+            turns: 20,
+            beforeAt: 5,
+            beforeSeq: 5
+        })
+        expect(MessagesQuerySchema.safeParse({ turns: 20, afterAt: 1, afterSeq: 1 }).success).toBe(false)
+        expect(MessagesQuerySchema.safeParse({ turns: 0 }).success).toBe(false)
+        expect(MessagesQuerySchema.safeParse({ turns: 51 }).success).toBe(false)
+    })
 })
 
 describe('SendMessageRequestSchema deliveryMode', () => {

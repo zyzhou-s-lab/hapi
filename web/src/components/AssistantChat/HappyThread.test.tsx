@@ -4,6 +4,7 @@ import { useState, type ComponentProps } from 'react'
 import { I18nProvider } from '@/lib/i18n-context'
 import {
     ConversationOutlinePanel,
+    ANCHOR_PIN_MAX_MS,
     captureScrollAnchor,
     getHistoryCoverageRetryDelay,
     getPullToLoadState,
@@ -13,8 +14,11 @@ import {
     measureComposerDockInset,
     loadUntilVisibleBoundaryChanges,
     locateOutlineTargetMessage,
+    nextPinnedAnchorUntil,
     prependMissingUserSnapshot,
     restoreScrollAnchor,
+    shouldRecapturePendingHistoryAnchor,
+    shouldSuppressPinnedWheel,
     shouldLoadOlderForViewport,
     shouldCancelInitialScrollSettling,
     ThreadMessagesById,
@@ -72,6 +76,109 @@ describe('nested scroll event ownership', () => {
         expect(isNestedScrollEvent(childEvent)).toBe(true)
 
         nested.remove()
+    })
+
+    it('recognizes an unmarked vertically scrollable ancestor only when it can scroll vertically', () => {
+        const computedStyleSpy = vi.spyOn(window, 'getComputedStyle')
+        const viewport = document.createElement('div')
+        viewport.className = 'app-scroll-y chat-scroll-y'
+        const toolResult = document.createElement('div')
+        toolResult.className = 'mt-3 flex max-h-[75vh] flex-col gap-4 overflow-auto'
+        Object.defineProperties(toolResult, {
+            clientHeight: { configurable: true, value: 200 },
+            scrollHeight: { configurable: true, value: 600 },
+            scrollTop: { configurable: true, writable: true, value: 0 }
+        })
+        const codeLine = document.createElement('span')
+        codeLine.textContent = 'longlog.ts line 1'
+        toolResult.append(codeLine)
+
+        const wideCodeBlock = document.createElement('div')
+        wideCodeBlock.className = 'overflow-x-auto'
+        Object.defineProperties(wideCodeBlock, {
+            clientWidth: { configurable: true, value: 300 },
+            scrollWidth: { configurable: true, value: 900 },
+            clientHeight: { configurable: true, value: 80 },
+            scrollHeight: { configurable: true, value: 80 }
+        })
+        const wideToken = document.createElement('span')
+        wideToken.textContent = 'wide line'
+        wideCodeBlock.append(wideToken)
+
+        const shortDiff = document.createElement('div')
+        shortDiff.className = 'mt-3 max-h-[75vh] overflow-auto'
+        Object.defineProperties(shortDiff, {
+            clientHeight: { configurable: true, value: 80 },
+            scrollHeight: { configurable: true, value: 80 }
+        })
+
+        const plainRow = document.createElement('div')
+        plainRow.textContent = 'ordinary row'
+        viewport.append(toolResult, wideCodeBlock, shortDiff, plainRow)
+        document.body.append(viewport)
+
+        const pageUpInToolResult = new KeyboardEvent('keydown', { key: 'PageUp' })
+        Object.defineProperty(pageUpInToolResult, 'target', { value: codeLine })
+        const wheelUpAtTop = new WheelEvent('wheel', { deltaY: -40 })
+        Object.defineProperty(wheelUpAtTop, 'target', { value: codeLine })
+        const wheelDownFromTop = new WheelEvent('wheel', { deltaY: 40 })
+        Object.defineProperty(wheelDownFromTop, 'target', { value: codeLine })
+
+        expect(isNestedScrollEvent(pageUpInToolResult, viewport)).toBe(true)
+        expect(isNestedScrollEvent(wheelUpAtTop, viewport)).toBe(false)
+        expect(isNestedScrollEvent(wheelDownFromTop, viewport)).toBe(true)
+
+        toolResult.scrollTop = 0.5
+        expect(isNestedScrollEvent(wheelUpAtTop, viewport)).toBe(false)
+        toolResult.scrollTop = 120
+        expect(isNestedScrollEvent(wheelUpAtTop, viewport)).toBe(true)
+        toolResult.scrollTop = 399.5
+        expect(isNestedScrollEvent(wheelDownFromTop, viewport)).toBe(false)
+        toolResult.scrollTop = 400
+        expect(isNestedScrollEvent(wheelDownFromTop, viewport)).toBe(false)
+
+        const wheelOnWideCode = new WheelEvent('wheel', { deltaY: -40 })
+        Object.defineProperty(wheelOnWideCode, 'target', { value: wideToken })
+        const keyOnWideCode = new KeyboardEvent('keydown', { key: 'PageUp' })
+        Object.defineProperty(keyOnWideCode, 'target', { value: wideToken })
+        const keyOnShortDiff = new KeyboardEvent('keydown', { key: 'PageUp' })
+        Object.defineProperty(keyOnShortDiff, 'target', { value: shortDiff })
+        const homeInPlainRow = new KeyboardEvent('keydown', { key: 'Home' })
+        Object.defineProperty(homeInPlainRow, 'target', { value: plainRow })
+        const viewportKey = new KeyboardEvent('keydown', { key: 'PageUp' })
+        Object.defineProperty(viewportKey, 'target', { value: viewport })
+
+        expect(isNestedScrollEvent(wheelOnWideCode, viewport)).toBe(false)
+        expect(isNestedScrollEvent(keyOnWideCode, viewport)).toBe(false)
+        expect(isNestedScrollEvent(keyOnShortDiff, viewport)).toBe(false)
+        expect(isNestedScrollEvent(homeInPlainRow, viewport)).toBe(false)
+        expect(isNestedScrollEvent(viewportKey, viewport)).toBe(false)
+        expect(computedStyleSpy).not.toHaveBeenCalled()
+
+        const assistantRoot = document.createElement('div')
+        assistantRoot.className = 'happy-message mx-auto w-full max-w-content min-w-0 overflow-x-clip px-4 py-2'
+        Object.defineProperties(assistantRoot, {
+            clientHeight: { configurable: true, value: 400 },
+            scrollHeight: { configurable: true, value: 900 },
+            scrollTop: { configurable: true, writable: true, value: 120 }
+        })
+        const nestedCodeBody = document.createElement('div')
+        nestedCodeBody.dataset.hapiCodeBody = 'true'
+        nestedCodeBody.className = 'overflow-x-auto overflow-y-hidden'
+        Object.defineProperties(nestedCodeBody, {
+            clientWidth: { configurable: true, value: 400 },
+            scrollWidth: { configurable: true, value: 2_000 },
+            clientHeight: { configurable: true, value: 120 },
+            scrollHeight: { configurable: true, value: 120 }
+        })
+        assistantRoot.append(nestedCodeBody)
+        viewport.append(assistantRoot)
+        const wheelOnCodeInsideAssistant = new WheelEvent('wheel', { deltaY: -120 })
+        Object.defineProperty(wheelOnCodeInsideAssistant, 'target', { value: nestedCodeBody })
+        expect(isNestedScrollEvent(wheelOnCodeInsideAssistant, viewport)).toBe(false)
+
+        computedStyleSpy.mockRestore()
+        viewport.remove()
     })
 })
 
@@ -403,8 +510,64 @@ describe('scroll anchor helpers', () => {
 
         expect(restoreScrollAnchor(viewport, { id: 'anchored-message', topOffset: 30 })).toBe(true)
         expect(viewport.scrollTop).toBe(250)
+        viewport.remove()
+    })
+
+    it('offsets scrollTop by height growth when older blocks are prepended inside the anchored split turn', () => {
+        const viewport = document.createElement('div')
+        const messages = document.createElement('div')
+        messages.className = 'happy-thread-messages'
+        const splitTurn = document.createElement('div')
+        splitTurn.id = 'hapi-message-split-turn'
+        messages.append(splitTurn)
+        viewport.append(messages)
+        document.body.append(viewport)
+        viewport.scrollTop = 0
+
+        let currentHeight = 400
+        let prependedAbove = 0
+        vi.spyOn(viewport, 'getBoundingClientRect').mockReturnValue(rect({ top: 100, bottom: 700 }))
+        vi.spyOn(splitTurn, 'getBoundingClientRect').mockImplementation(() => rect({
+            top: 100 + prependedAbove - viewport.scrollTop,
+            bottom: 100 + prependedAbove + currentHeight - viewport.scrollTop
+        }))
+
+        const anchor = captureScrollAnchor(viewport)
+        expect(anchor).toEqual({
+            id: 'hapi-message-split-turn',
+            topOffset: 0
+        })
+
+        // Prepending earlier blocks inside the split turn grows its height by 600px at the top,
+        // plus 200px of an earlier user message inserted above it.
+        currentHeight = 1_000
+        prependedAbove = 200
+        expect(restoreScrollAnchor(viewport, anchor!)).toBe(true)
+        expect(viewport.scrollTop).toBe(800)
+
+        // Subsequent pinned-anchor restores (from scroll or ResizeObserver events)
+        // must preserve the 800px position rather than snapping back or re-adding bottom growth.
+        currentHeight = 1_150
+        expect(restoreScrollAnchor(viewport, anchor!)).toBe(true)
+        expect(viewport.scrollTop).toBe(800)
 
         viewport.remove()
+    })
+    it('does not recapture the anchor once the older page is applied', () => {
+        expect(shouldRecapturePendingHistoryAnchor('loading')).toBe(true)
+        expect(shouldRecapturePendingHistoryAnchor('awaiting-render')).toBe(false)
+        expect(shouldRecapturePendingHistoryAnchor('idle')).toBe(false)
+    })
+
+    it('suppresses leftover upward wheel deltas while the anchor is pinned', () => {
+        expect(shouldSuppressPinnedWheel(-490, 2_000, 1_900)).toBe(true)
+        expect(shouldSuppressPinnedWheel(-490, 1_000, 1_900)).toBe(false)
+        expect(shouldSuppressPinnedWheel(120, 2_000, 1_900)).toBe(false)
+    })
+
+    it('stops extending the anchor pin once the absolute cap is reached', () => {
+        expect(nextPinnedAnchorUntil(1_000, 1_100, 250, ANCHOR_PIN_MAX_MS)).toBe(1_350)
+        expect(nextPinnedAnchorUntil(1_000, 1_900, 250, ANCHOR_PIN_MAX_MS)).toBe(2_000)
     })
 
     it('waits until assistant-ui has applied the loaded history version', () => {

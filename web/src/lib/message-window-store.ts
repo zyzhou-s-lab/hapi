@@ -1,4 +1,5 @@
 import { getLiveMessageStreamId, getMessageStreamId } from '@hapi/protocol/messages'
+import { TURN_PAGE_ROW_MAX, TURN_PAGE_SIZE, isHumanTurnStart } from '@hapi/protocol/turnBoundary'
 import type { ApiClient } from '@/api/client'
 import { normalizeDecryptedMessage } from '@/chat/normalize'
 import type { DecryptedMessage, MessageStatus, MessagesResponse } from '@/types/api'
@@ -41,7 +42,7 @@ export type MessageWindowState = {
 export const VISIBLE_WINDOW_SIZE = 400
 export const HISTORY_WINDOW_SIZE = 600
 const AGENT_RUN_WINDOW_SIZE = 800
-const OLDER_LOAD_WINDOW_SIZE = 800
+const OLDER_LOAD_WINDOW_SIZE = TURN_PAGE_ROW_MAX
 const PAGE_SIZE = 200
 
 type MessagePosition = {
@@ -384,6 +385,27 @@ function derivePosition(
     return selected
 }
 
+/** The next older page must include every dropped row. Append trimming can
+ * keep an older agent-run row while dropping a newer regular row, so the
+ * cursor is the oldest kept row that is still newer than every dropped row.
+ * `before` is exclusive, so a window whose kept rows are all older than a
+ * dropped row uses the position just after that dropped row. */
+function oldestReachableCursor(
+    kept: DecryptedMessage[],
+    dropped: DecryptedMessage[]
+): MessagePosition | null {
+    const newestDropped = derivePosition(dropped, 'newest')
+    if (!newestDropped) return derivePosition(kept, 'oldest')
+    const contiguous = kept.filter((message) => {
+        const position = messagePosition(message)
+        return position !== null && comparePosition(position, newestDropped) > 0
+    })
+    return derivePosition(contiguous, 'oldest') ?? {
+        at: newestDropped.at,
+        seq: newestDropped.seq + 1
+    }
+}
+
 function getNewestCursor(state: InternalState): MessagePosition | null {
     return readPosition(state.newestPositionAt, state.newestPositionSeq)
 }
@@ -495,7 +517,9 @@ function trimPreservingQueued(
     incoming: DecryptedMessage[],
     regularLimit: number,
     mode: 'append' | 'prepend',
-    finalizedStreamIds: Set<string>
+    finalizedStreamIds: Set<string>,
+    agentRunLimit: number = AGENT_RUN_WINDOW_SIZE,
+    reserveQueuedBudget = true
 ): { kept: DecryptedMessage[]; dropped: DecryptedMessage[] } {
     const messages = dropSupersededStreamSnapshots(incoming, finalizedStreamIds)
     const queued = messages.filter(isQueuedForInvocation)
@@ -503,11 +527,79 @@ function trimPreservingQueued(
     const nonQueued = messages.filter((message) => !queuedIds.has(message.id))
     const agentRuns = nonQueued.filter(isCodexAgentRunMessage)
     const regular = nonQueued.filter((message) => !isCodexAgentRunMessage(message))
-    const regularTrim = sliceForTrim(regular, Math.max(0, regularLimit - queued.length), mode)
-    const agentRunTrim = sliceForTrim(agentRuns, AGENT_RUN_WINDOW_SIZE, mode)
+    const queuedBudget = reserveQueuedBudget ? queued.length : 0
+    const regularTrim = sliceForTrim(regular, Math.max(0, regularLimit - queuedBudget), mode)
+    const agentRunTrim = sliceForTrim(agentRuns, agentRunLimit, mode)
     return {
         kept: mergeMessages([...regularTrim.kept, ...agentRunTrim.kept], queued),
         dropped: [...regularTrim.dropped, ...agentRunTrim.dropped]
+    }
+}
+
+const HISTORY_TURN_LIMIT = TURN_PAGE_SIZE * 3
+
+function trimConversation(
+    incoming: DecryptedMessage[],
+    regularLimit: number,
+    mode: 'append' | 'prepend',
+    finalizedStreamIds: Set<string>,
+    turnLimit: number,
+    options: {
+        agentRunLimit?: number
+        reserveQueuedBudget?: boolean
+    } = {}
+): { kept: DecryptedMessage[]; dropped: DecryptedMessage[] } {
+    const messages = dropSupersededStreamSnapshots(incoming, finalizedStreamIds)
+    const queued = messages.filter(isQueuedForInvocation)
+    const queuedIds = new Set(queued.map((message) => message.id))
+    const ordered = messages.filter((message) => !queuedIds.has(message.id))
+    if (!ordered.some(isHumanTurnStart)) {
+        return trimPreservingQueued(
+            incoming,
+            regularLimit,
+            mode,
+            finalizedStreamIds,
+            options.agentRunLimit,
+            options.reserveQueuedBudget
+        )
+    }
+
+    const slices: DecryptedMessage[][] = []
+    for (const message of ordered) {
+        const start = isHumanTurnStart(message)
+        if (slices.length === 0 || start) {
+            slices.push([message])
+            continue
+        }
+        slices[slices.length - 1]!.push(message)
+    }
+    const preamble = slices[0] && !isHumanTurnStart(slices[0][0]!) ? slices[0] : null
+    const turns = preamble ? slices.slice(1) : slices
+    let keptTurns = turns
+    let droppedTurns: DecryptedMessage[][] = []
+    if (turns.length > turnLimit) {
+        if (mode === 'append') {
+            droppedTurns = turns.slice(0, turns.length - turnLimit)
+            keptTurns = turns.slice(turns.length - turnLimit)
+        } else {
+            keptTurns = turns.slice(0, turnLimit)
+            droppedTurns = turns.slice(turnLimit)
+        }
+    }
+    const dropPreamble = preamble !== null && mode === 'append' && droppedTurns.length > 0
+    const regularKept = [
+        ...(preamble && !dropPreamble ? preamble : []),
+        ...keptTurns.flat()
+    ]
+    const turnDropped = [
+        ...(dropPreamble && preamble ? preamble : []),
+        ...droppedTurns.flat()
+    ]
+    const queuedBudget = options.reserveQueuedBudget === false ? 0 : queued.length
+    const limited = sliceForTrim(regularKept, Math.max(0, regularLimit - queuedBudget), mode)
+    return {
+        kept: mergeMessages(limited.kept, queued),
+        dropped: [...turnDropped, ...limited.dropped]
     }
 }
 
@@ -547,6 +639,8 @@ function mergeIntoWindow(
     options: {
         mode?: 'append' | 'prepend'
         regularLimit?: number
+        agentRunLimit?: number
+        reserveQueuedBudget?: boolean
         advanceTailRevision?: boolean
     } = {}
 ): InternalState {
@@ -555,10 +649,28 @@ function mergeIntoWindow(
         return previous
     }
     const mode = options.mode ?? (previous.viewMode === 'history' ? 'prepend' : 'append')
-    const regularLimit = options.regularLimit
-        ?? (previous.viewMode === 'history' ? HISTORY_WINDOW_SIZE : VISIBLE_WINDOW_SIZE)
     const merged = mergeMessages(previous.messages, retainedIncoming)
-    const { kept, dropped } = trimPreservingQueued(merged, regularLimit, mode, previous.finalizedStreamIds)
+    const retainHistory = previous.viewMode === 'history' && options.regularLimit === undefined
+    const historyFloor = Math.min(
+        OLDER_LOAD_WINDOW_SIZE,
+        Math.max(HISTORY_WINDOW_SIZE, merged.length)
+    )
+    // A live row, tail sync, or optimistic send must not shrink a history
+    // window. The anchor sits on rows that are already loaded.
+    const historyLimit = Math.max(previous.messages.length, historyFloor)
+    const regularLimit = options.regularLimit
+        ?? (retainHistory ? historyLimit : VISIBLE_WINDOW_SIZE)
+    const { kept, dropped } = trimConversation(
+        merged,
+        regularLimit,
+        mode,
+        previous.finalizedStreamIds,
+        mode === 'append' ? TURN_PAGE_SIZE : HISTORY_TURN_LIMIT,
+        {
+            agentRunLimit: options.agentRunLimit ?? (retainHistory ? historyLimit : undefined),
+            reserveQueuedBudget: options.reserveQueuedBudget ?? !retainHistory,
+        }
+    )
     let next = buildState(previous, {
         messages: kept,
         ...(options.advanceTailRevision
@@ -569,7 +681,7 @@ function mergeIntoWindow(
         return next
     }
     if (mode === 'append') {
-        const oldest = derivePosition(kept, 'oldest')
+        const oldest = oldestReachableCursor(kept, dropped)
         return buildState(next, {
             hasMore: true,
             oldestPositionAt: oldest?.at ?? next.oldestPositionAt,
@@ -610,7 +722,13 @@ function applyLatestResponse(
         : previous.messages
     const authoritative = mergeMessages(preserved, retainedResponseMessages)
     const incoming = mergeMessages(authoritative, concurrentServerRows)
-    const { kept, dropped } = trimPreservingQueued(incoming, VISIBLE_WINDOW_SIZE, 'append', previous.finalizedStreamIds)
+    const { kept, dropped } = trimConversation(
+        incoming,
+        VISIBLE_WINDOW_SIZE,
+        'append',
+        previous.finalizedStreamIds,
+        TURN_PAGE_SIZE
+    )
     const snapshotHead = pagePosition(response.page.snapshotHeadAt, response.page.snapshotHeadSeq)
         ?? derivePosition(response.messages, 'newest')
     const newestKept = derivePosition(kept, 'newest')
@@ -620,7 +738,7 @@ function applyLatestResponse(
     const responseOldest = pagePosition(response.page.nextBeforeAt, response.page.nextBeforeSeq)
     const previousOldest = readPosition(previous.oldestPositionAt, previous.oldestPositionSeq)
     const oldest = dropped.length > 0
-        ? derivePosition(kept, 'oldest')
+        ? oldestReachableCursor(kept, dropped)
         : options.replaceServerRows
             ? responseOldest
             : responseOldest ?? previousOldest
@@ -697,7 +815,7 @@ async function runTailSync(api: ApiClient, sessionId: string): Promise<void> {
 
         if (!canIncrement) {
             const requestBaseline = new Map(getState(sessionId).messages.map((message) => [message.id, message]))
-            const response = await api.getMessages(sessionId, { limit: PAGE_SIZE })
+            const response = await api.getMessages(sessionId, { turns: TURN_PAGE_SIZE })
             if (!isCurrentTailSync(sessionId, generation)) return
             updateState(sessionId, (previous) => {
                 if (previous.syncGeneration !== generation) return previous
@@ -830,10 +948,16 @@ async function waitForTailSyncDrain(
 }
 
 function enterTailMode(previous: InternalState): InternalState {
-    const { kept, dropped } = trimPreservingQueued(previous.messages, VISIBLE_WINDOW_SIZE, 'append', previous.finalizedStreamIds)
+    const { kept, dropped } = trimConversation(
+        previous.messages,
+        VISIBLE_WINDOW_SIZE,
+        'append',
+        previous.finalizedStreamIds,
+        TURN_PAGE_SIZE
+    )
     const forceLatest = previous.requiresLatestReset
     const oldest = dropped.length > 0
-        ? derivePosition(kept, 'oldest')
+        ? oldestReachableCursor(kept, dropped)
         : readPosition(previous.oldestPositionAt, previous.oldestPositionSeq)
     return buildState(previous, {
         messages: kept,
@@ -850,7 +974,13 @@ function enterTailMode(previous: InternalState): InternalState {
 export function activateMessageWindow(sessionId: string): void {
     let requestedLatest = false
     updateState(sessionId, (previous) => {
-        const { kept } = trimPreservingQueued(previous.messages, VISIBLE_WINDOW_SIZE, 'append', previous.finalizedStreamIds)
+        const { kept } = trimConversation(
+            previous.messages,
+            VISIBLE_WINDOW_SIZE,
+            'append',
+            previous.finalizedStreamIds,
+            TURN_PAGE_SIZE
+        )
         const forceLatest = previous.requiresLatestReset
         const hasUsableCursor = getNewestCursor(previous) !== null
             && previous.epoch !== null
@@ -958,7 +1088,7 @@ export async function fetchOlderMessages(
         const response = await api.getMessages(sessionId, {
             beforeAt: before.at,
             beforeSeq: before.seq,
-            limit: PAGE_SIZE
+            turns: TURN_PAGE_SIZE
         })
         if (getState(sessionId).olderGeneration !== generation) {
             return { kind: 'stopped', reason: 'invalidated' }
@@ -981,6 +1111,7 @@ export async function fetchOlderMessages(
 
         let historyVersion = 0
         let addedRenderableCount = 0
+        let reportedHasMore = false
         let applyRejected = false
         // Prepend trimming and its prepared scroll restore must reach the UI
         // in one publication; the normal 150ms notification throttle would
@@ -997,16 +1128,45 @@ export async function fetchOlderMessages(
                     warning: null
                 })
             }
+            const mergedRows = mergeMessages(previous.messages, response.messages)
+            // Keep the fetched page. Offscreen messages skip layout and paint
+            // through content-visibility: auto in index.css. The window is not
+            // row-capped; HISTORY_TURN_LIMIT is the only bound. A virtual list
+            // is later work. Dropping the page and stepping the cursor to
+            // nextBefore leaves a hole the next load cannot fill.
+            const rowLimit = Math.max(OLDER_LOAD_WINDOW_SIZE, mergedRows.length)
             const merged = mergeIntoWindow(previous, response.messages, {
                 mode: 'prepend',
-                regularLimit: OLDER_LOAD_WINDOW_SIZE
+                regularLimit: rowLimit,
+                agentRunLimit: rowLimit,
+                reserveQueuedBudget: false
             })
+            const hubOlder = pagePosition(response.page.nextBeforeAt, response.page.nextBeforeSeq)
+            const keptOldest = derivePosition(merged.messages, 'oldest')
+            const keptIds = new Set(merged.messages.map((message) => message.id))
+            const renderableIncoming = response.messages.filter(shouldRetainWindowMessage)
+            const keptIncoming = renderableIncoming.some((message) => keptIds.has(message.id))
+            const allIncomingDiscarded = renderableIncoming.length > 0 && !keptIncoming
+            const resumeAtKept = keptIncoming
+                && keptOldest !== null
+                && hubOlder !== null
+                && comparePosition(keptOldest, hubOlder) > 0
+            // Every renderable row of this page was discarded, for example a
+            // live snapshot of a stream that already has a final. Those rows
+            // are superseded, so nextBefore is the next page, not a hole.
+            // Advance to that hub cursor and keep hub hasMore. Stopping, or
+            // leaving the previous cursor, hides every older page, and a
+            // latest reset requests this same page again.
+            if (allIncomingDiscarded) addedRenderableCount = 0
+            reportedHasMore = resumeAtKept || response.page.hasMore
+            const oldestAt = resumeAtKept ? keptOldest!.at : response.page.nextBeforeAt
+            const oldestSeq = resumeAtKept ? keptOldest!.seq : response.page.nextBeforeSeq
             historyVersion = nextHistoryVersion
             return buildState(merged, {
-                hasMore: response.page.hasMore,
+                hasMore: reportedHasMore,
                 epoch: response.page.epoch,
-                oldestPositionAt: response.page.nextBeforeAt,
-                oldestPositionSeq: response.page.nextBeforeSeq,
+                oldestPositionAt: oldestAt,
+                oldestPositionSeq: oldestSeq,
                 isLoadingMore: false,
                 historyVersion,
                 warning: null
@@ -1018,7 +1178,7 @@ export async function fetchOlderMessages(
         return {
             kind: 'applied',
             historyVersion,
-            hasMore: response.page.hasMore,
+            hasMore: reportedHasMore,
             addedRenderableCount
         }
     } catch (error) {

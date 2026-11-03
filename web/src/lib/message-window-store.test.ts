@@ -2,7 +2,6 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { ApiClient } from '@/api/client'
 import type { DecryptedMessage, MessagesResponse } from '@/types/api'
 import {
-    HISTORY_WINDOW_SIZE,
     VISIBLE_WINDOW_SIZE,
     activateMessageWindow,
     appendOptimisticMessage,
@@ -18,6 +17,7 @@ import {
     syncTailMessages,
     updateMessageStatus,
 } from '@/lib/message-window-store'
+import { TURN_PAGE_ROW_MAX } from '@hapi/protocol/turnBoundary'
 
 const touchedSessions = new Set<string>()
 
@@ -287,7 +287,7 @@ describe('message tail synchronization', () => {
         }))
         await syncTailMessages(createApi(getMessages), id)
 
-        expect(getMessages).toHaveBeenCalledWith(id, { limit: 200 })
+        expect(getMessages).toHaveBeenCalledWith(id, { turns: 20 })
         expect(getMessageWindowState(id).messages.map((message) => message.id)).toEqual(['latest'])
         expect(getMessageWindowState(id).hasMore).toBe(true)
         expect('pending' in getMessageWindowState(id)).toBe(false)
@@ -318,7 +318,7 @@ describe('message tail synchronization', () => {
         const getMessages = vi.fn(async () => latestResponse([latest], { epoch: 3 }))
         await syncTailMessages(createApi(getMessages), id)
 
-        expect(getMessages).toHaveBeenCalledWith(id, { limit: 200 })
+        expect(getMessages).toHaveBeenCalledWith(id, { turns: 20 })
         expect(getMessageWindowState(id).messages.map((message) => message.id)).toEqual([
             'local-1',
             'latest'
@@ -456,7 +456,7 @@ describe('message tail synchronization', () => {
         expect(getMessages.mock.calls[1]?.[1]).toEqual({
             beforeAt: 251,
             beforeSeq: 251,
-            limit: 200
+            turns: 20
         })
     })
 
@@ -583,7 +583,7 @@ describe('message tail synchronization', () => {
         activateMessageWindow(id)
         const reentrySync = syncTailMessages(api, id)
         await vi.waitFor(() => expect(getMessages).toHaveBeenCalledTimes(2))
-        expect(getMessages.mock.calls[1]?.[1]).toEqual({ limit: 200 })
+        expect(getMessages.mock.calls[1]?.[1]).toEqual({ turns: 20 })
         staleResponse.resolve(afterResponse([
             makeAgentMessage({ id: 'stale-page', seq: 41, at: 41_000 })
         ], {
@@ -896,7 +896,7 @@ describe('history view and older pagination', () => {
         expect(getMessages).toHaveBeenCalledWith(id, {
             beforeAt: 3,
             beforeSeq: 3,
-            limit: 200
+            turns: 20
         })
         expect(getMessageWindowState(id).messages).toHaveLength(VISIBLE_WINDOW_SIZE + 2)
     })
@@ -914,9 +914,9 @@ describe('history view and older pagination', () => {
         await syncTailMessages(api, id)
         setMessageViewMode(id, 'history')
 
-        // Overflow the bounded history window so the tail gets evicted and
+        // Overflow the 2000-row history cap so the newest rows are evicted and
         // requiresLatestReset is recorded while the user is still reading.
-        ingestIncomingMessages(id, Array.from({ length: HISTORY_WINDOW_SIZE + 10 }, (_, index) =>
+        ingestIncomingMessages(id, Array.from({ length: TURN_PAGE_ROW_MAX + 10 }, (_, index) =>
             makeAgentMessage({ id: `overflow-${index}`, seq: index + 2, at: index + 2 })
         ))
         const before = getMessageWindowState(id).messages.map((message) => message.id)
@@ -932,7 +932,7 @@ describe('history view and older pagination', () => {
         // Returning to tail mode performs the deferred latest reset.
         setMessageViewMode(id, 'tail')
         await syncTailMessages(api, id)
-        expect(getMessages.mock.calls[1]?.[1]).toEqual({ limit: 200 })
+        expect(getMessages.mock.calls[1]?.[1]).toEqual({ turns: 20 })
         expect(getMessageWindowState(id).messages.map((message) => message.id)).toContain('latest')
     })
 
@@ -948,16 +948,316 @@ describe('history view and older pagination', () => {
         await syncTailMessages(api, id)
         setMessageViewMode(id, 'history')
 
-        ingestIncomingMessages(id, Array.from({ length: HISTORY_WINDOW_SIZE + 10 }, (_, index) =>
+        ingestIncomingMessages(id, Array.from({ length: TURN_PAGE_ROW_MAX + 10 }, (_, index) =>
             makeAgentMessage({ id: `overflow-${index}`, seq: index + 2, at: index + 2 })
         ))
-        expect(getMessageWindowState(id).messages).toHaveLength(HISTORY_WINDOW_SIZE)
+        expect(getMessageWindowState(id).messages).toHaveLength(TURN_PAGE_ROW_MAX)
 
         setMessageViewMode(id, 'tail')
         await syncTailMessages(api, id)
 
-        expect(getMessages.mock.calls[1]?.[1]).toEqual({ limit: 200 })
+        expect(getMessages.mock.calls[1]?.[1]).toEqual({ turns: 20 })
         expect(getMessageWindowState(id).messages.map((message) => message.id)).toContain('latest')
+    })
+
+    it('keeps a loaded older page when one live message arrives in history view', async () => {
+        const id = sessionId('history-live-keeps-page')
+        const latest = Array.from({ length: VISIBLE_WINDOW_SIZE }, (_, index) =>
+            makeAgentMessage({ id: `u${index + 1}`, seq: 1501 + index, at: 1501 + index })
+        )
+        const older = [
+            makeUserMessage({ id: 'prompt', seq: 1, invokedAt: 1, createdAt: 1 }),
+            ...Array.from({ length: 1499 }, (_, index) =>
+                makeAgentMessage({ id: `o${index}`, seq: index + 2, at: index + 2 })
+            ),
+        ]
+        const getMessages = vi.fn()
+            .mockResolvedValueOnce(latestResponse(latest, {
+                epoch: 1,
+                hasMore: true,
+                nextBeforeAt: 1501,
+                nextBeforeSeq: 1501,
+            }))
+            .mockResolvedValueOnce(beforeResponse(older, {
+                epoch: 1,
+                hasMore: false,
+                nextBeforeAt: 1,
+                nextBeforeSeq: 1,
+            }))
+        const api = createApi(getMessages)
+        await syncTailMessages(api, id)
+        setMessageViewMode(id, 'history')
+        await fetchOlderMessages(api, id)
+
+        ingestIncomingMessages(id, [
+            makeAgentMessage({ id: 'live', seq: 1901, at: 1901 })
+        ])
+        const kept = getMessageWindowState(id).messages.map((message) => message.id)
+        expect(kept).toHaveLength(1901)
+        expect(kept[0]).toBe('prompt')
+        expect(kept).toContain('o599')
+        expect(kept).toContain('o1498')
+        expect(kept).toContain('u1')
+        expect(kept.at(-1)).toBe('live')
+        await vi.waitFor(() => {
+            expect(JSON.parse(sessionStorage.getItem(`hapi:message-window:v2:${id}`) ?? '{}')).toMatchObject({
+                newestPositionSeq: 1901,
+                epoch: 1,
+            })
+        })
+    })
+
+    it('points the older cursor past regular rows dropped beside older agent-run rows', async () => {
+        const id = sessionId('mixed-budget-cursor')
+        ingestIncomingMessages(id, Array.from({ length: 1000 }, (_, index) =>
+            index % 2 === 0
+                ? makeAgentMessage({ id: `g${index}`, seq: index + 1, at: index + 1 })
+                : makeAgentRunMessage(`r${index}`, index + 1, index + 1)
+        ))
+
+        const state = getMessageWindowState(id)
+        const kept = new Set(state.messages.map((message) => message.id))
+        const persisted = JSON.parse(sessionStorage.getItem(`hapi:message-window:v2:${id}`) ?? '{}') as {
+            oldestPositionAt: number
+            oldestPositionSeq: number
+        }
+        expect(kept.has('g0')).toBe(false)
+        expect(kept.has('g198')).toBe(false)
+        expect(kept.has('r1')).toBe(true)
+        expect(kept.has('g200')).toBe(true)
+        expect(kept.has('r199')).toBe(true)
+        await vi.waitFor(() => {
+            const persisted = JSON.parse(sessionStorage.getItem(`hapi:message-window:v2:${id}`) ?? '{}') as {
+                oldestPositionAt?: number
+                oldestPositionSeq?: number
+            }
+            expect(persisted.oldestPositionAt).toBe(200)
+            expect(persisted.oldestPositionSeq).toBe(200)
+        })
+        expect(state.hasMore).toBe(true)
+    })
+
+    it('keeps the end of a 2202-row turn after loading its older rows', async () => {
+        const id = sessionId('over-cap-turn')
+        const rows = [
+            makeUserMessage({ id: 'prompt', seq: 1, invokedAt: 1, createdAt: 1 }),
+            ...Array.from({ length: 2201 }, (_, index) => makeAgentMessage({
+                id: index === 2099 ? 'f1100' : index === 2200 ? 'answer' : `row-${index}`,
+                seq: index + 2,
+                at: index + 2,
+            })),
+        ]
+        const latest = rows.slice(-VISIBLE_WINDOW_SIZE)
+        const older = rows.slice(0, -VISIBLE_WINDOW_SIZE)
+        const getMessages = vi.fn()
+            .mockResolvedValueOnce(latestResponse(latest, {
+                epoch: 1,
+                hasMore: true,
+                nextBeforeAt: latest[0]?.invokedAt ?? latest[0]?.createdAt ?? 1,
+                nextBeforeSeq: latest[0]?.seq ?? 1,
+            }))
+            .mockResolvedValueOnce(beforeResponse(older, {
+                epoch: 1,
+                hasMore: false,
+                nextBeforeAt: 1,
+                nextBeforeSeq: 1,
+            }))
+        const api = createApi(getMessages)
+        await syncTailMessages(api, id)
+        setMessageViewMode(id, 'history')
+
+        const loaded = await fetchOlderMessages(api, id)
+
+        expect(loaded).toMatchObject({ kind: 'applied', hasMore: false })
+        const kept = getMessageWindowState(id).messages.map((message) => message.id)
+        expect(kept).toHaveLength(2202)
+        expect(kept[0]).toBe('prompt')
+        expect(kept).toContain('f1100')
+        expect(kept.at(-1)).toBe('answer')
+    })
+
+    it('keeps the end of a 2202-row turn after two older pages when a later turn is visible', async () => {
+        const id = sessionId('two-page-turn')
+        const turn = [
+            makeUserMessage({ id: 'prompt', seq: 1, invokedAt: 1, createdAt: 1 }),
+            ...Array.from({ length: 2201 }, (_, index) => makeAgentMessage({
+                id: index === 2099 ? 'f1100' : index === 2200 ? 'answer' : `row-${index}`,
+                seq: index + 2,
+                at: index + 2,
+            })),
+        ]
+        const later = makeUserMessage({ id: 'L56', seq: 2204, invokedAt: 2204, createdAt: 2204 })
+        const all = [...turn, later]
+        const getMessages = vi.fn(async (_sessionId: string, query: { beforeSeq?: number | null } = {}) => {
+            const beforeSeq = query.beforeSeq ?? null
+            const eligible = beforeSeq === null
+                ? [later]
+                : all.filter((message) => (message.seq ?? 0) < beforeSeq).slice(-TURN_PAGE_ROW_MAX)
+            const oldest = eligible[0]
+            const oldestSeq = oldest?.seq ?? 1
+            const oldestAt = oldest?.invokedAt ?? oldest?.createdAt ?? 1
+            const page = {
+                epoch: 1,
+                hasMore: oldestSeq > 1,
+                nextBeforeAt: oldestAt,
+                nextBeforeSeq: oldestSeq,
+            }
+            return beforeSeq === null ? latestResponse(eligible, page) : beforeResponse(eligible, page)
+        })
+        const api = createApi(getMessages)
+        await syncTailMessages(api, id)
+        setMessageViewMode(id, 'history')
+
+        expect(await fetchOlderMessages(api, id)).toMatchObject({ kind: 'applied' })
+        expect(await fetchOlderMessages(api, id)).toMatchObject({ kind: 'applied', hasMore: false })
+        const kept = getMessageWindowState(id).messages.map((message) => message.id)
+        expect(kept).toHaveLength(turn.length + 1)
+        expect(kept[0]).toBe('prompt')
+        expect(kept).toContain('f1100')
+        expect(kept).toContain('answer')
+        expect(kept.at(-1)).toBe('L56')
+    })
+
+    it('keeps the end of a 5000-row turn across older pages', async () => {
+        const id = sessionId('five-thousand-turn')
+        const rows = [
+            makeUserMessage({ id: 'prompt', seq: 1, invokedAt: 1, createdAt: 1 }),
+            ...Array.from({ length: 4999 }, (_, index) => makeAgentMessage({
+                id: index === 4998 ? 'answer' : `row-${index}`,
+                seq: index + 2,
+                at: index + 2,
+            })),
+        ]
+        const getMessages = vi.fn(async (_sessionId: string, query: { beforeSeq?: number | null } = {}) => {
+            const beforeSeq = query.beforeSeq ?? null
+            const eligible = beforeSeq === null
+                ? rows.slice(-VISIBLE_WINDOW_SIZE)
+                : rows.filter((message) => (message.seq ?? 0) < beforeSeq).slice(-TURN_PAGE_ROW_MAX)
+            const oldest = eligible[0]
+            const oldestSeq = oldest?.seq ?? 1
+            const oldestAt = oldest?.invokedAt ?? oldest?.createdAt ?? 1
+            const page = {
+                epoch: 1,
+                hasMore: oldestSeq > 1,
+                nextBeforeAt: oldestAt,
+                nextBeforeSeq: oldestSeq,
+            }
+            return beforeSeq === null ? latestResponse(eligible, page) : beforeResponse(eligible, page)
+        })
+        const api = createApi(getMessages)
+        await syncTailMessages(api, id)
+        setMessageViewMode(id, 'history')
+
+        let guard = 0
+        while (getMessageWindowState(id).hasMore && guard < 6) {
+            const loaded = await fetchOlderMessages(api, id)
+            expect(loaded.kind).toBe('applied')
+            guard += 1
+        }
+
+        const kept = getMessageWindowState(id).messages.map((message) => message.id)
+        expect(guard).toBeGreaterThan(1)
+        expect(kept).toHaveLength(5000)
+        expect(kept[0]).toBe('prompt')
+        expect(kept.at(-1)).toBe('answer')
+    })
+
+    it('loads the middle of a 5000-row turn that sits before a 2500-row turn', async () => {
+        const id = sessionId('earlier-turn-hole')
+        const earlier = [
+            makeUserMessage({ id: 'a-prompt', seq: 1, invokedAt: 1, createdAt: 1 }),
+            ...Array.from({ length: 4999 }, (_, index) => makeAgentMessage({
+                id: index === 2499 ? 'a-middle' : `a-${index}`,
+                seq: index + 2,
+                at: index + 2,
+            })),
+        ]
+        const later = [
+            makeUserMessage({ id: 'b-prompt', seq: 5001, invokedAt: 5001, createdAt: 5001 }),
+            ...Array.from({ length: 2499 }, (_, index) => makeAgentMessage({
+                id: `b-${index}`,
+                seq: 5002 + index,
+                at: 5002 + index,
+            })),
+        ]
+        const all = [...earlier, ...later]
+        const getMessages = vi.fn(async (_sessionId: string, query: { beforeSeq?: number | null } = {}) => {
+            const beforeSeq = query.beforeSeq ?? null
+            const eligible = beforeSeq === null
+                ? all.slice(-VISIBLE_WINDOW_SIZE)
+                : all.filter((message) => (message.seq ?? 0) < beforeSeq).slice(-TURN_PAGE_ROW_MAX)
+            const oldest = eligible[0]
+            const oldestSeq = oldest?.seq ?? 1
+            const oldestAt = oldest?.invokedAt ?? oldest?.createdAt ?? 1
+            const page = {
+                epoch: 1,
+                hasMore: oldestSeq > 1,
+                nextBeforeAt: oldestAt,
+                nextBeforeSeq: oldestSeq,
+            }
+            return beforeSeq === null ? latestResponse(eligible, page) : beforeResponse(eligible, page)
+        })
+        const api = createApi(getMessages)
+        await syncTailMessages(api, id)
+        setMessageViewMode(id, 'history')
+
+        let guard = 0
+        while (getMessageWindowState(id).hasMore && guard < 8) {
+            const loaded = await fetchOlderMessages(api, id)
+            expect(loaded.kind).toBe('applied')
+            guard += 1
+        }
+
+        const kept = getMessageWindowState(id).messages
+        const seqs = kept.map((message) => message.seq).filter((seq): seq is number => typeof seq === 'number')
+        expect(guard).toBeGreaterThan(1)
+        expect(kept.map((message) => message.id)).toContain('a-prompt')
+        expect(kept.map((message) => message.id)).toContain('a-middle')
+        expect(kept.map((message) => message.id)).toContain('b-prompt')
+        expect(seqs).toHaveLength(all.length)
+        const ordered = [...seqs].sort((left, right) => left - right)
+        for (let index = 1; index < ordered.length; index += 1) {
+            expect(ordered[index]).toBe(ordered[index - 1]! + 1)
+        }
+    })
+
+    it('does not collapse a loaded long turn when a live row arrives in history', async () => {
+        const id = sessionId('history-long-turn-live')
+        const rows = [
+            makeUserMessage({ id: 'prompt', seq: 1, invokedAt: 1, createdAt: 1 }),
+            ...Array.from({ length: 2201 }, (_, index) => makeAgentMessage({
+                id: index === 2200 ? 'answer' : `row-${index}`,
+                seq: index + 2,
+                at: index + 2,
+            })),
+        ]
+        const latest = rows.slice(-VISIBLE_WINDOW_SIZE)
+        const older = rows.slice(0, -VISIBLE_WINDOW_SIZE)
+        const getMessages = vi.fn()
+            .mockResolvedValueOnce(latestResponse(latest, {
+                epoch: 1,
+                hasMore: true,
+                nextBeforeAt: latest[0]?.invokedAt ?? 1,
+                nextBeforeSeq: latest[0]?.seq ?? 1,
+            }))
+            .mockResolvedValueOnce(beforeResponse(older, {
+                epoch: 1,
+                hasMore: false,
+                nextBeforeAt: 1,
+                nextBeforeSeq: 1,
+            }))
+        const api = createApi(getMessages)
+        await syncTailMessages(api, id)
+        setMessageViewMode(id, 'history')
+        await fetchOlderMessages(api, id)
+
+        ingestIncomingMessages(id, [
+            makeAgentMessage({ id: 'live', seq: 3000, at: 3000 })
+        ])
+        const kept = getMessageWindowState(id).messages.map((message) => message.id)
+        expect(kept).toHaveLength(rows.length)
+        expect(kept[0]).toBe('prompt')
+        expect(kept).toContain('answer')
     })
 
     it('loads exactly one raw older page with the paired composite cursor', async () => {
@@ -991,7 +1291,7 @@ describe('history view and older pagination', () => {
         expect(getMessages.mock.calls[1]?.[1]).toEqual({
             beforeAt: 10_000,
             beforeSeq: 10,
-            limit: 200
+            turns: 20
         })
         expect(getMessageWindowState(id).messages.map((message) => message.id)).toEqual(['older', 'latest'])
     })
@@ -1267,7 +1567,7 @@ describe('history view and older pagination', () => {
         expect(getMessageWindowState(id).epoch).toBe(2)
     })
 
-    it('protects regular conversation rows from an agent-run flood', () => {
+    it('cuts a huge turn down to the visible message cap', () => {
         const id = sessionId('agent-run-budget')
         const root = makeUserMessage({ id: 'root', seq: 1, invokedAt: 1, createdAt: 1 })
         ingestIncomingMessages(id, [
@@ -1277,7 +1577,177 @@ describe('history view and older pagination', () => {
             )
         ])
 
-        expect(getMessageWindowState(id).messages.some((message) => message.id === 'root')).toBe(true)
+        const kept = getMessageWindowState(id).messages
+        expect(kept).toHaveLength(VISIBLE_WINDOW_SIZE)
+        expect(kept.some((message) => message.id === 'root')).toBe(false)
+        expect(kept.at(-1)?.id).toBe(`run-${VISIBLE_WINDOW_SIZE}`)
+        expect(getMessageWindowState(id).hasMore).toBe(true)
+    })
+
+    it('keeps the middle and the tail of a 1501-row turn after loading earlier', async () => {
+        const id = sessionId('long-single-turn')
+        const rows = [
+            makeUserMessage({ id: 'prompt', seq: 1, invokedAt: 1, createdAt: 1 }),
+            ...Array.from({ length: 1500 }, (_, index) =>
+                makeAgentMessage({ id: `o${index}`, seq: index + 2, at: index + 2 })
+            ),
+        ]
+        const getMessages = vi.fn()
+            .mockResolvedValueOnce(latestResponse(rows, {
+                epoch: 1,
+                hasMore: true,
+                nextBeforeAt: 1,
+                nextBeforeSeq: 1,
+            }))
+            .mockResolvedValueOnce(beforeResponse(rows, {
+                epoch: 1,
+                hasMore: false,
+                nextBeforeAt: 1,
+                nextBeforeSeq: 1,
+            }))
+        const api = createApi(getMessages)
+        await syncTailMessages(api, id)
+
+        expect(getMessageWindowState(id).messages.at(-1)?.id).toBe('o1499')
+        const loaded = await fetchOlderMessages(api, id)
+
+        expect(loaded).toMatchObject({ kind: 'applied', hasMore: false })
+        const kept = getMessageWindowState(id).messages.map((message) => message.id)
+        expect(kept).toHaveLength(1501)
+        expect(kept[0]).toBe('prompt')
+        expect(kept).toContain('o799')
+        expect(kept.at(-1)).toBe('o1499')
+    })
+
+    it('keeps an agent-run older page together with the agent-run rows already on screen', async () => {
+        const id = sessionId('agent-run-older-page')
+        const latest = Array.from({ length: 200 }, (_, index) =>
+            makeAgentRunMessage(`latest-${index}`, 2001 + index, 3001 + index)
+        )
+        const older = Array.from({ length: TURN_PAGE_ROW_MAX }, (_, index) =>
+            makeAgentRunMessage(`r${index}`, index + 1, index + 1)
+        )
+        const getMessages = vi.fn()
+            .mockResolvedValueOnce(latestResponse(latest, {
+                epoch: 1,
+                hasMore: true,
+                nextBeforeAt: 3001,
+                nextBeforeSeq: 2001,
+            }))
+            .mockResolvedValueOnce(beforeResponse(older, {
+                epoch: 1,
+                hasMore: false,
+                nextBeforeAt: 1,
+                nextBeforeSeq: 1,
+            }))
+        const api = createApi(getMessages)
+        await syncTailMessages(api, id)
+
+        const loaded = await fetchOlderMessages(api, id)
+
+        expect(loaded).toMatchObject({ kind: 'applied', hasMore: false })
+        const kept = getMessageWindowState(id).messages.map((message) => message.id)
+        expect(kept).toHaveLength(TURN_PAGE_ROW_MAX + latest.length)
+        expect(kept[0]).toBe('r0')
+        expect(kept).toContain('r1999')
+        expect(kept.at(-1)).toBe('latest-199')
+    })
+
+    it('loads the next older page when every row of an older page is discarded', async () => {
+        const id = sessionId('discarded-older-page')
+        const finalSnapshot = makeReasoningMessage('final', 'stream-1', 10, 10_000, false)
+        const liveReplay = makeReasoningMessage('live-old', 'stream-1', 9, 9_000, true)
+        const earlier = makeAgentMessage({ id: 'earlier', seq: 5, at: 5_000 })
+        const getMessages = vi.fn()
+            .mockResolvedValueOnce(latestResponse([finalSnapshot], {
+                epoch: 1,
+                hasMore: true,
+                nextBeforeAt: 10_000,
+                nextBeforeSeq: 10,
+            }))
+            .mockResolvedValueOnce(beforeResponse([liveReplay], {
+                epoch: 1,
+                hasMore: true,
+                nextBeforeAt: 9_000,
+                nextBeforeSeq: 9,
+            }))
+            .mockResolvedValueOnce(beforeResponse([earlier], {
+                epoch: 1,
+                hasMore: false,
+                nextBeforeAt: 5_000,
+                nextBeforeSeq: 5,
+            }))
+        const api = createApi(getMessages)
+        await syncTailMessages(api, id)
+
+        const discarded = await fetchOlderMessages(api, id)
+
+        expect(discarded).toMatchObject({ kind: 'applied', hasMore: true, addedRenderableCount: 0 })
+        expect(getMessageWindowState(id)).toMatchObject({
+            hasMore: true,
+            oldestPositionAt: 9_000,
+            oldestPositionSeq: 9,
+        })
+        expect(getMessageWindowState(id).messages.map((message) => message.id)).toEqual(['final'])
+        expect(getMessages.mock.calls[1]?.[1]).toEqual({
+            beforeAt: 10_000,
+            beforeSeq: 10,
+            turns: 20,
+        })
+
+        const loaded = await fetchOlderMessages(api, id)
+
+        expect(loaded).toMatchObject({ kind: 'applied', hasMore: false, addedRenderableCount: 1 })
+        expect(getMessages.mock.calls[2]?.[1]).toEqual({
+            beforeAt: 9_000,
+            beforeSeq: 9,
+            turns: 20,
+        })
+        expect(getMessageWindowState(id).messages.map((message) => message.id)).toEqual(['earlier', 'final'])
+        expect(await fetchOlderMessages(api, id)).toEqual({ kind: 'stopped', reason: 'exhausted' })
+        expect(getMessages).toHaveBeenCalledTimes(3)
+    })
+
+    it('keeps the last row of a full older page when one prompt is queued', async () => {
+        const id = sessionId('queued-older-page')
+        const rows = [
+            makeUserMessage({ id: 'prompt', seq: 1, invokedAt: 1, createdAt: 1 }),
+            ...Array.from({ length: TURN_PAGE_ROW_MAX - 1 }, (_, index) =>
+                makeAgentMessage({ id: `o${index}`, seq: index + 2, at: index + 2 })
+            ),
+        ]
+        const queued = makeUserMessage({
+            id: 'local-queued',
+            localId: 'local-queued',
+            createdAt: TURN_PAGE_ROW_MAX + 10,
+            invokedAt: null,
+            status: 'queued',
+        })
+        const getMessages = vi.fn()
+            .mockResolvedValueOnce(latestResponse(rows, {
+                epoch: 1,
+                hasMore: true,
+                nextBeforeAt: 1,
+                nextBeforeSeq: 1,
+            }))
+            .mockResolvedValueOnce(beforeResponse(rows, {
+                epoch: 1,
+                hasMore: false,
+                nextBeforeAt: 1,
+                nextBeforeSeq: 1,
+            }))
+        const api = createApi(getMessages)
+        await syncTailMessages(api, id)
+        appendOptimisticMessage(id, queued)
+
+        const loaded = await fetchOlderMessages(api, id)
+
+        expect(loaded).toMatchObject({ kind: 'applied', hasMore: false })
+        const kept = getMessageWindowState(id).messages.map((message) => message.id)
+        expect(kept).toHaveLength(TURN_PAGE_ROW_MAX + 1)
+        expect(kept[0]).toBe('prompt')
+        expect(kept).toContain('o1998')
+        expect(kept).toContain('local-queued')
     })
 })
 
@@ -1448,11 +1918,8 @@ describe('reasoning snapshot compaction', () => {
         expect(getMessageWindowState(id).messages).toHaveLength(3)
     })
 
-    it('spends the window budget on conversation rather than duplicate snapshots', () => {
+    it('keeps the newest turns when a snapshot flood precedes them', () => {
         const id = sessionId('reasoning-window-budget')
-        // A session already carrying a flood of stored snapshots: without
-        // compaction they consume the whole window and the conversation that
-        // surrounds them falls out of it.
         const flood = Array.from({ length: VISIBLE_WINDOW_SIZE }, (_, index) =>
             makeReasoningMessage(`flood-${index}`, 'stream-1', index + 1, index + 1)
         )
@@ -1467,10 +1934,13 @@ describe('reasoning snapshot compaction', () => {
         ingestIncomingMessages(id, [...flood, ...conversation])
 
         const kept = getMessageWindowState(id).messages
-        for (const message of conversation) {
+        const newestTurns = conversation.slice(-20)
+        for (const message of newestTurns) {
             expect(kept.some((candidate) => candidate.id === message.id)).toBe(true)
         }
-        expect(kept.filter((message) => message.id.startsWith('flood-'))).toHaveLength(1)
+        expect(kept.filter((message) => message.id.startsWith('talk-'))).toHaveLength(20)
+        expect(kept.filter((message) => message.id.startsWith('flood-'))).toHaveLength(0)
+        expect(getMessageWindowState(id).hasMore).toBe(true)
     })
 
     // The seq bounds are a view over what the window currently holds; the
