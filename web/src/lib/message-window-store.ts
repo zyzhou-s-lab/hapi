@@ -1,5 +1,5 @@
 import { getLiveMessageStreamId, getMessageStreamId } from '@hapi/protocol/messages'
-import { TURN_PAGE_SIZE, isHumanTurnStart } from '@hapi/protocol/turnBoundary'
+import { TURN_PAGE_ROW_MAX, TURN_PAGE_SIZE, isHumanTurnStart } from '@hapi/protocol/turnBoundary'
 import type { ApiClient } from '@/api/client'
 import { normalizeDecryptedMessage } from '@/chat/normalize'
 import type { DecryptedMessage, MessageStatus, MessagesResponse } from '@/types/api'
@@ -42,7 +42,7 @@ export type MessageWindowState = {
 export const VISIBLE_WINDOW_SIZE = 400
 export const HISTORY_WINDOW_SIZE = 600
 const AGENT_RUN_WINDOW_SIZE = 800
-const OLDER_LOAD_WINDOW_SIZE = 800
+const OLDER_LOAD_WINDOW_SIZE = TURN_PAGE_ROW_MAX
 const PAGE_SIZE = 200
 
 type MessagePosition = {

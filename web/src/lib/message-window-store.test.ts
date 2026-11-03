@@ -1283,6 +1283,41 @@ describe('history view and older pagination', () => {
         expect(kept.at(-1)?.id).toBe(`run-${VISIBLE_WINDOW_SIZE}`)
         expect(getMessageWindowState(id).hasMore).toBe(true)
     })
+
+    it('keeps the middle and the tail of a 1501-row turn after loading earlier', async () => {
+        const id = sessionId('long-single-turn')
+        const rows = [
+            makeUserMessage({ id: 'prompt', seq: 1, invokedAt: 1, createdAt: 1 }),
+            ...Array.from({ length: 1500 }, (_, index) =>
+                makeAgentMessage({ id: `o${index}`, seq: index + 2, at: index + 2 })
+            ),
+        ]
+        const getMessages = vi.fn()
+            .mockResolvedValueOnce(latestResponse(rows, {
+                epoch: 1,
+                hasMore: true,
+                nextBeforeAt: 1,
+                nextBeforeSeq: 1,
+            }))
+            .mockResolvedValueOnce(beforeResponse(rows, {
+                epoch: 1,
+                hasMore: false,
+                nextBeforeAt: 1,
+                nextBeforeSeq: 1,
+            }))
+        const api = createApi(getMessages)
+        await syncTailMessages(api, id)
+
+        expect(getMessageWindowState(id).messages.at(-1)?.id).toBe('o1499')
+        const loaded = await fetchOlderMessages(api, id)
+
+        expect(loaded).toMatchObject({ kind: 'applied', hasMore: false })
+        const kept = getMessageWindowState(id).messages.map((message) => message.id)
+        expect(kept).toHaveLength(1501)
+        expect(kept[0]).toBe('prompt')
+        expect(kept).toContain('o799')
+        expect(kept.at(-1)).toBe('o1499')
+    })
 })
 
 describe('optimistic and queued-message operations', () => {
