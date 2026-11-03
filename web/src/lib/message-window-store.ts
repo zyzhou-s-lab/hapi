@@ -1146,9 +1146,7 @@ export async function fetchOlderMessages(
             const keptIds = new Set(merged.messages.map((message) => message.id))
             const renderableIncoming = response.messages.filter(shouldRetainWindowMessage)
             const keptIncoming = renderableIncoming.some((message) => keptIds.has(message.id))
-            const heldOldest = renderableIncoming.length > 0 && !keptIncoming
-                ? keptOldest ?? pagePosition(previous.oldestPositionAt, previous.oldestPositionSeq)
-                : null
+            const allIncomingDiscarded = renderableIncoming.length > 0 && !keptIncoming
             const resumeAtKept = keptIncoming
                 && keptOldest !== null
                 && hubOlder !== null
@@ -1159,7 +1157,7 @@ export async function fetchOlderMessages(
             // Advance to that hub cursor and keep hub hasMore. Stopping, or
             // leaving the previous cursor, hides every older page, and a
             // latest reset requests this same page again.
-            if (heldOldest) addedRenderableCount = 0
+            if (allIncomingDiscarded) addedRenderableCount = 0
             reportedHasMore = resumeAtKept || response.page.hasMore
             const oldestAt = resumeAtKept ? keptOldest!.at : response.page.nextBeforeAt
             const oldestSeq = resumeAtKept ? keptOldest!.seq : response.page.nextBeforeSeq
