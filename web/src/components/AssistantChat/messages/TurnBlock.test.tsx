@@ -100,7 +100,7 @@ describe('TurnBlockView', () => {
             <TurnBlockView partition={partition} streaming={false} durationMs={151_000} initiallyOpen={false} />
         )
 
-        const header = screen.getByRole('button', { name: /先看页面/ })
+        const header = screen.getByRole('button', { name: /home\.tsx 2m 31s/ })
         expect(header).toHaveAttribute('aria-expanded', 'false')
         expect(header.className).not.toContain('app-reasoning-bg')
         expect(header.parentElement).toHaveAttribute('data-hapi-turn-block-list', 'true')
@@ -155,7 +155,7 @@ describe('TurnBlockView', () => {
             <TurnBlockView partition={partition} streaming={false} durationMs={134_000} initiallyOpen={false} />
         )
 
-        const header = screen.getByRole('button', { name: /Initial inspection/ })
+        const header = screen.getByRole('button', { name: /Capturing surface text of HAPI blocks in Tern 2m 14s/ })
         const headerDot = header.querySelector('span.rounded-full')
         expect(headerDot?.className).toContain('bg-current')
         expect(headerDot?.className).not.toContain('bg-[var(--app-badge-error-text)]')
@@ -182,10 +182,11 @@ describe('TurnBlockView', () => {
             <TurnBlockView partition={partition} streaming={false} durationMs={12_000} initiallyOpen={false} />
         )
 
-        const header = screen.getByRole('button', { name: /尝试执行迁移/ })
+        const header = screen.getByRole('button', { name: /Run database migration 12\.0s/ })
         const headerDot = header.querySelector('span.rounded-full')
         expect(headerDot?.className).toContain('bg-[var(--app-badge-error-text)]')
-        expect(screen.getByText('Run database migration').closest('[data-hapi-turn-quiet]')).toBeNull()
+        const errorRow = screen.getAllByText('Run database migration').find((node) => !header.contains(node))
+        expect(errorRow?.closest('[data-hapi-turn-quiet]')).toBeNull()
         expect(screen.getByText('没能跑迁移。')).toBeInTheDocument()
     })
 
