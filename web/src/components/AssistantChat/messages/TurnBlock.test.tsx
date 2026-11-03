@@ -163,6 +163,32 @@ describe('TurnBlockView', () => {
         expect(screen.getByText('全部整理完毕。')).toBeInTheDocument()
     })
 
+    it('keeps the last tool error visible and the turn header dot red when followed only by text', () => {
+        const partition = partitionTurn([
+            { type: 'reasoning', text: '尝试执行迁移' },
+            {
+                type: 'tool-call',
+                toolName: 'Bash',
+                artifact: tool('bash-fail', 'Bash', {
+                    state: 'error',
+                    description: 'Run database migration',
+                    input: { command: 'bun run migrate' },
+                }),
+            },
+            { type: 'text', text: '没能跑迁移。' },
+        ], null)
+
+        renderBlock(
+            <TurnBlockView partition={partition} streaming={false} durationMs={12_000} initiallyOpen={false} />
+        )
+
+        const header = screen.getByRole('button', { name: /尝试执行迁移/ })
+        const headerDot = header.querySelector('span.rounded-full')
+        expect(headerDot?.className).toContain('bg-[var(--app-badge-error-text)]')
+        expect(screen.getByText('Run database migration').closest('[data-hapi-turn-quiet]')).toBeNull()
+        expect(screen.getByText('没能跑迁移。')).toBeInTheDocument()
+    })
+
     it('renders the answer when reasoning is blank or the only tool is Codex reasoning', () => {
         const blank = partitionTurn([
             { type: 'reasoning', text: '   ' },

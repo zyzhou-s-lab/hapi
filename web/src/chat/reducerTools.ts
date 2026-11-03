@@ -105,7 +105,6 @@ export function ensureToolBlock(
                 ? {
                     ...(typeof existing.tool.input.i === 'string' ? { i: existing.tool.input.i } : {}),
                     ...(typeof existing.tool.input.intent === 'string' ? { intent: existing.tool.input.intent } : {}),
-                    ...(typeof existing.tool.input.description === 'string' ? { description: existing.tool.input.description } : {}),
                     ...seed.input
                 }
                 : seed.input

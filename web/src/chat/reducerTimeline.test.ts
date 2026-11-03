@@ -504,7 +504,7 @@ describe('reduceTimeline', () => {
         expect(toolBlock.invokedAt).toBe(1_700_000_000_500)
     })
 
-    it('preserves tool-call intent fields when a subsequent tool_execution_start update omits them', () => {
+    it('preserves tool-call i/intent fields on subsequent input updates without re-injecting stale description', () => {
         const initialToolUse: TracedMessage = {
             id: 'msg-tool-use',
             localId: null,
@@ -514,7 +514,11 @@ describe('reduceTimeline', () => {
                 type: 'tool-call',
                 id: 'tc-intent',
                 name: 'read',
-                input: { path: 'session://01a1a178/timeline:-40', i: 'Reading timeline of PAGING session 01a1a178' },
+                input: {
+                    path: 'session://01a1a178/timeline:-40',
+                    i: 'Reading timeline of PAGING session 01a1a178',
+                    description: 'stale description parameter'
+                },
                 description: null,
                 uuid: 'u-1',
                 parentUUID: null
