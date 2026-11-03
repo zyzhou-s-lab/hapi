@@ -14,6 +14,9 @@ import { shouldRecordSessionActivity } from '../../../sync/sessionActivity'
 import type { CliSocketWithData } from '../../socketTypes'
 import type { SessionEndReason } from '@hapi/protocol'
 import type { AccessErrorReason, AccessResult } from './types'
+import { writeStoredGeneratedImage } from '../../../generatedImages/storage'
+import { getHapiHomeDir } from '../../../scratchlistAttachments/storage'
+import { MAX_GENERATED_IMAGE_BYTES } from '../../socketLimits'
 
 type SessionAlivePayload = {
     sid: string
@@ -55,6 +58,14 @@ const messageSchema = z.object({
     // entry's own `timestamp`. Only honored for agent messages (no localId);
     // see addMessage in messages.ts.
     createdAt: z.number().optional()
+})
+
+const generatedImageUploadSchema = z.object({
+    sid: z.string().min(1),
+    imageId: z.string().regex(/^[a-zA-Z0-9_-]{1,128}$/),
+    fileName: z.string().min(1).max(255),
+    mimeType: z.string().min(1).max(128),
+    content: z.string().max(Math.ceil(MAX_GENERATED_IMAGE_BYTES * 4 / 3) + 4)
 })
 
 const updateMetadataSchema = z.object({
@@ -238,6 +249,32 @@ export function registerSessionHandlers(socket: CliSocketWithData, deps: Session
                 invokedAt: msg.invokedAt
             }
         })
+    })
+
+    socket.on('generated-image:upload', async (data: unknown) => {
+        const parsed = generatedImageUploadSchema.safeParse(data)
+        if (!parsed.success) {
+            return
+        }
+
+        const { sid, imageId, fileName, mimeType, content } = parsed.data
+        const sessionAccess = resolveSessionAccess(sid)
+        if (!sessionAccess.ok) {
+            emitAccessError('session', sid, sessionAccess.reason)
+            return
+        }
+
+        const bytes = Buffer.from(content, 'base64')
+        if (bytes.byteLength === 0 || bytes.byteLength > MAX_GENERATED_IMAGE_BYTES) {
+            return
+        }
+
+        await writeStoredGeneratedImage(
+            getHapiHomeDir(),
+            sessionAccess.value.namespace,
+            imageId,
+            { fileName, mimeType, bytes }
+        ).catch(() => {})
     })
 
     const handleUpdateMetadata: UpdateMetadataHandler = (data, cb) => {

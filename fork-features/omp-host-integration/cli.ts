@@ -655,15 +655,8 @@ export class OmpHostToolBridge {
                 await this.discardExecution(pending);
                 return;
             }
-            if (execution.publish) {
-                execution.publish();
-            } else {
-                this.options.sendAgentMessage({
-                    type: 'omp-session-event',
-                    eventType: 'host_tool_call',
-                    frame: { ...pending.request, result: execution.result }
-                });
-            }
+            // The tool row itself comes from OMP's tool_execution_* frames; only side effects publish here.
+            execution.publish?.();
         } catch (error) {
             this.removePending(pending);
             await this.discardExecution(pending);
@@ -680,13 +673,7 @@ export class OmpHostToolBridge {
                 result: textResult(errorText(error)),
                 isError: true
             });
-            if (this.completePending(pending)) {
-                this.options.sendAgentMessage({
-                    type: 'omp-session-event',
-                    eventType: 'host_tool_call',
-                    frame: { ...pending.request, error: errorText(error) }
-                });
-            }
+            this.completePending(pending);
         } catch (writeError) {
             this.removePending(pending);
             throw writeError;

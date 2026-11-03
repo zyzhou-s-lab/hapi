@@ -81,6 +81,25 @@ function decryptedMessage(id: string, content: unknown, createdAt: number): Decr
 }
 
 describe('reduceChatBlocks', () => {
+    it.each([
+        ['host tool', 'change_title', { title: 'Fix image cache', intent: 'Renaming' }],
+        ['device write', 'write', { path: 'xd://change_title', content: '{"title":"Fix image cache"}' }]
+    ])('renders an OMP %s title change as one title event without a tool row or summary echo', (_label, name, input) => {
+        const agent = (id: string, content: NormalizedMessage['content'], createdAt: number): NormalizedMessage => ({
+            id, localId: null, createdAt, role: 'agent', isSidechain: false, content
+        } as NormalizedMessage)
+        const reduced = reduceChatBlocks([
+            userMessage('u1', 'fix it', 1),
+            agent('call', [{ type: 'tool-call', id: 't1', name, input, description: null, uuid: 'c', parentUUID: null }], 2),
+            agent('result', [{ type: 'tool-result', tool_use_id: 't1', content: 'ok', is_error: false, uuid: 'r', parentUUID: null }], 3),
+            agent('text', [{ type: 'text', text: 'working', uuid: 'x', parentUUID: null }], 4),
+            agent('summary', [{ type: 'summary', summary: 'Fix image cache' }], 5)
+        ], null)
+
+        expect(reduced.blocks.map((block) => block.kind)).toEqual(['user-text', 'agent-event', 'agent-text'])
+        expect(reduced.blocks[1]).toMatchObject({ event: { type: 'title-changed', title: 'Fix image cache' } })
+    })
+
     it('renders Codex proposed plan tool messages as a completed plan card', () => {
         const plan = '# Plan\n\n1. Inspect\n2. Implement'
         const messages = [

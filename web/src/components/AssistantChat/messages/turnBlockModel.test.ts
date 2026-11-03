@@ -259,6 +259,24 @@ describe('partitionTurn', () => {
         expect(partition.title).toBe('MysteryTool')
     })
 
+    it('prefers tool intent over a generic opening thought', () => {
+        const partition = partitionTurn([
+            { type: 'reasoning', text: "I'm thinking through how to approach this." },
+            call(tool('agent', 'Task', { input: { description: 'Explore recent work across repos' } })),
+        ], null)
+        expect(partition.title).toBe('Explore recent work across repos')
+    })
+
+    it('caps a reasoning-only title to one short line', () => {
+        const long = '**Plan** ' + 'word '.repeat(60)
+        const partition = partitionTurn([
+            { type: 'reasoning', text: long },
+            call(tool('custom', 'MysteryTool')),
+        ], null)
+        expect(partition.title.startsWith('Plan word')).toBe(true)
+        expect(partition.title.length).toBeLessThanOrEqual(80)
+    })
+
     it('keeps generated images and files, and leaves text beside them', () => {
         const image = {
             kind: 'generated-image' as const,

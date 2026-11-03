@@ -311,6 +311,13 @@ export interface ClientToServerEvents {
     // only honored by the hub for agent messages (no localId) — see
     // messages.ts addMessage. Absent -> hub falls back to Date.now().
     message: (data: { sid: string; message: unknown; localId?: string; createdAt?: number }) => void
+    'generated-image:upload': (data: {
+        sid: string
+        imageId: string
+        fileName: string
+        mimeType: string
+        content: string
+    }) => void
     'session-alive': (data: {
         sid: string
         time: number

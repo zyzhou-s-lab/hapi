@@ -150,6 +150,7 @@ function verbFor(tool: ChatToolCall, fallbackTitle: string): string {
 
 
 const SUBAGENT_INTENT_LIMIT = 80
+const TITLE_LIMIT = 80
 
 function stripMarkdownLine(line: string): string {
     return line
@@ -372,12 +373,15 @@ export function partitionTurn(
     })
     const tools = rows.filter((row): row is TurnToolRow => row.kind === 'tool')
     const running = tools.find((row) => row.block.tool.state === 'running' || row.block.tool.state === 'pending')
-    const reasoning = rows.find((row): row is TurnReasoningRow => row.kind === 'reasoning')
+    const reasoning = rows.findLast((row): row is TurnReasoningRow => row.kind === 'reasoning')
+    const lastIntent = tools.findLast((row) => shownTitle(row.intent) !== null)
+    // Reasoning prose is a fallback: an opening thought ("I'm thinking through…") says
+    // less than the tool intent, and a long paragraph would overflow the header.
     const title = shownTitle(titles[0])
-        ?? shownTitle(reasoning ? firstLine(reasoning.text) : null)
         ?? shownTitle(running?.intent)
+        ?? shownTitle(lastIntent?.intent)
+        ?? shownTitle(reasoning ? truncate(stripMarkdownLine(firstLine(reasoning.text)), TITLE_LIMIT) : null)
         ?? shownTitle(running?.verb)
-        ?? shownTitle(tools[tools.length - 1]?.intent)
         ?? shownTitle(tools[tools.length - 1]?.verb)
         ?? ''
 

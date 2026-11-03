@@ -2,7 +2,7 @@ import type { AgentEventBlock, AgentReasoningBlock, AgentTextBlock, ChatBlock, C
 import type { TracedMessage } from '@/chat/tracer'
 import { createCliOutputBlock, isCliOutputText, mergeCliOutputBlocks } from '@/chat/reducerCliOutput'
 import { parseMessageAsEvent } from '@/chat/reducerEvents'
-import { collectTitleChanges, ensureToolBlock, extractTitleFromChangeTitleInput, isChangeTitleToolName, type PermissionEntry } from '@/chat/reducerTools'
+import { collectTitleChanges, ensureToolBlock, titleFromChangeTitleCall, type PermissionEntry } from '@/chat/reducerTools'
 import { isSubagentToolName } from '@/chat/subagentTool'
 import { asString, isObject } from '@hapi/protocol'
 
@@ -310,6 +310,7 @@ export function reduceTimeline(
     const agentRunTraceMessagesByCardId = new Map<string, TracedMessage[]>()
     const pendingAgentRunCardByFingerprint = new Map<string, string>()
     const textBlocksByStreamId = new Map<string, AgentTextBlock>()
+    const titleChangeTitles = new Set(context.titleChangesByToolUseId.values())
     const reasoningBlocksByStreamId = new Map<string, AgentReasoningBlock>()
     let hasReadyEvent = false
 
@@ -911,6 +912,9 @@ export function reduceTimeline(
                 }
 
                 if (c.type === 'summary') {
+                    // The CLI echoes a change-title call as a session summary; the
+                    // title-changed event already renders it, possibly turns earlier.
+                    if (titleChangeTitles.has(c.summary.trim())) continue
                     blocks.push({
                         kind: 'agent-event',
                         id: `${msg.id}:${idx}`,
@@ -924,9 +928,9 @@ export function reduceTimeline(
                 }
 
                 if (c.type === 'tool-call') {
-                    if (isChangeTitleToolName(c.name)) {
-                        const title = context.titleChangesByToolUseId.get(c.id) ?? extractTitleFromChangeTitleInput(c.input)
-                        if (title && !context.emittedTitleChangeToolUseIds.has(c.id)) {
+                    const title = context.titleChangesByToolUseId.get(c.id) ?? titleFromChangeTitleCall(c.name, c.input)
+                    if (title) {
+                        if (!context.emittedTitleChangeToolUseIds.has(c.id)) {
                             context.emittedTitleChangeToolUseIds.add(c.id)
                             blocks.push({
                                 kind: 'agent-event',

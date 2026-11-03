@@ -6,7 +6,9 @@ export function isEventVisibleForFlavor(
     flavor: string | null | undefined
 ): boolean {
     if (flavor !== 'omp') return true
-    return event.type !== 'limit-warning' && event.type !== 'limit-reached'
+    if (event.type === 'limit-warning' || event.type === 'limit-reached') return false
+    // Older CLIs duplicated each host tool as a session event; the tool row already shows it.
+    return !(event.type === 'omp-session-event' && 'eventType' in event && event.eventType === 'host_tool_call')
 }
 
 export function filterVisibleBlocksForFlavor(

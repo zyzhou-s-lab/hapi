@@ -4049,7 +4049,35 @@ export class SyncEngine {
     }
 
     async readGeneratedImage(sessionId: string, imageId: string): Promise<RpcGeneratedImageResponse> {
-        return await this.rpcGateway.readGeneratedImage(sessionId, imageId)
+        const namespace = this.getSession(sessionId)?.namespace ?? 'default'
+        const [{ readStoredGeneratedImage, writeStoredGeneratedImage }, { getHapiHomeDir }, { MAX_GENERATED_IMAGE_BYTES }] = await Promise.all([
+            import('../generatedImages/storage'),
+            import('../scratchlistAttachments/storage'),
+            import('../socket/socketLimits')
+        ])
+        const hapiHome = getHapiHomeDir()
+        const stored = await readStoredGeneratedImage(hapiHome, namespace, imageId)
+        if (stored) {
+            return {
+                success: true,
+                content: stored.bytes.toString('base64'),
+                mimeType: stored.mimeType,
+                fileName: stored.fileName
+            }
+        }
+
+        const result = await this.rpcGateway.readGeneratedImage(sessionId, imageId)
+        if (result.success && result.content) {
+            const bytes = Buffer.from(result.content, 'base64')
+            if (bytes.byteLength > 0 && bytes.byteLength <= MAX_GENERATED_IMAGE_BYTES) {
+                await writeStoredGeneratedImage(hapiHome, namespace, imageId, {
+                    fileName: result.fileName ?? 'generated-media',
+                    mimeType: result.mimeType ?? 'application/octet-stream',
+                    bytes
+                }).catch(() => {})
+            }
+        }
+        return result
     }
 
     async readGeneratedFile(sessionId: string, fileId: string): Promise<RpcGeneratedFileResponse> {

@@ -277,10 +277,8 @@ export function TurnBlockView(props: {
                 >
                     <Chevron open={open} />
                     <span className={cn('inline-block h-1.5 w-1.5 shrink-0 rounded-full', failed ? 'bg-[var(--app-badge-error-text)]' : 'bg-current', props.streaming && 'animate-pulse')} />
-                    <span className="min-w-0 flex-1">
-                        {t(props.partition.title)}
-                        {durationMs != null && durationMs > 0 ? <span className="ml-1 font-normal tabular-nums">{formatDuration(durationMs)}</span> : null}
-                    </span>
+                    <span className="min-w-0 flex-1 truncate">{t(props.partition.title)}</span>
+                    {durationMs != null && durationMs > 0 ? <span className="shrink-0 font-normal tabular-nums">{formatDuration(durationMs)}</span> : null}
                 </button>
                 {steps}
             </div>

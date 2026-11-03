@@ -8,6 +8,7 @@ import {
     findLatestCompletedBoundaryId,
     getBlockPresentationTimestamp,
     getResponseGroupTimestamps,
+    hoistMidTurnTitleEvents,
     useHappyRuntime
 } from './assistant-runtime'
 import type { AgentEventBlock, AgentTextBlock, CliOutputBlock, ToolCallBlock, UserTextBlock } from '@/chat/types'
@@ -236,6 +237,28 @@ describe('useHappyRuntime event visibility', () => {
         })
         view.rerender({ blocks: blocksFor('row-empty-final', [], false) })
         expect(assistantUiMocks.useExternalMessageConverter.mock.calls.at(-1)![0].messages).toEqual([])
+    })
+})
+
+describe('hoistMidTurnTitleEvents', () => {
+    it('moves a mid-turn title change before its assistant run so the turn stays one card', () => {
+        const title = agentEvent('title', { type: 'title-changed', title: 'Fix cache' })
+        const blocks = [userText('u1'), agentText('a1'), toolCall('t1'), title, agentText('a2'), userText('u2')]
+
+        expect(hoistMidTurnTitleEvents(blocks).map((block) => block.id)).toEqual(['u1', 'title', 'a1', 't1', 'a2', 'u2'])
+    })
+
+    it('leaves other system events in place as turn boundaries', () => {
+        const blocks = [userText('u1'), agentText('a1'), agentEvent('e', { type: 'message', message: 'Compacted' }), agentText('a2')]
+
+        expect(hoistMidTurnTitleEvents(blocks)).toBe(blocks)
+        const withTitleBetween = [
+            agentText('a1'),
+            agentEvent('e', { type: 'message', message: 'Compacted' }),
+            agentEvent('title', { type: 'title-changed', title: 'T' }),
+            agentText('a2')
+        ]
+        expect(hoistMidTurnTitleEvents(withTitleBetween).map((block) => block.id)).toEqual(['a1', 'e', 'title', 'a2'])
     })
 })
 

@@ -10,6 +10,7 @@ import { AsyncLock } from '@/utils/lock'
 import type { RawJSONLines } from '@/claude/types'
 import { configuration } from '@/configuration'
 import { clearSessionPromptLive } from '@/modules/common/sessionPrompts'
+import { getGeneratedImage } from '@/modules/common/generatedImages'
 import { extractUserRequest } from '@/agy/utils/agyMessageText'
 import { AGENT_MESSAGE_PAYLOAD_TYPE } from "@hapi/protocol"
 import type { SessionEndReason } from '@hapi/protocol'
@@ -1102,6 +1103,27 @@ export class ApiSessionClient extends EventEmitter {
             },
             meta: {
                 sentFrom: 'cli'
+            }
+        }
+        if (
+            typeof body === 'object'
+            && body !== null
+            && 'type' in body
+            && body.type === 'generated-image'
+            && 'imageId' in body
+            && typeof body.imageId === 'string'
+        ) {
+            const image = getGeneratedImage(body.imageId)
+            if (image) {
+                this.emitOrQueue(() => {
+                    this.socket.emit('generated-image:upload', {
+                        sid: this.sessionId,
+                        imageId: image.id,
+                        fileName: image.fileName,
+                        mimeType: image.mimeType,
+                        content: image.content.toString('base64')
+                    })
+                })
             }
         }
         this.emitOrQueue(() => {
