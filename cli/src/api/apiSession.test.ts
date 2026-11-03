@@ -95,6 +95,7 @@ vi.mock('axios', () => ({
 }))
 
 import { ApiSessionClient, isExternalUserMessage, IncomingMessageFilter } from './apiSession'
+import { clearGeneratedImages, registerGeneratedImage } from '@/modules/common/generatedImages'
 
 function createSession(overrides: Partial<Session> = {}): Session {
     return {
@@ -788,5 +789,39 @@ describe('agent stream snapshot dedupe', () => {
         client.sendAgentMessage(live)
         expect(messageCount(socket)).toBe(3)
         client.close()
+    })
+
+    it('uploads generated image bytes before emitting the generated-image message', () => {
+        const { client, socket } = activeClient()
+        const pngBytes = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
+        const media = registerGeneratedImage({
+            id: 'img-upload-1',
+            path: '/tmp/curve.png',
+            fileName: 'curve.png',
+            mimeType: 'image/png',
+            bytes: pngBytes
+        })
+        try {
+            client.sendAgentMessage({
+                type: 'generated-image',
+                imageId: media.id,
+                fileName: media.fileName,
+                mimeType: media.mimeType
+            })
+            const events = socket.emitted.filter(
+                (entry) => entry.event === 'generated-image:upload' || entry.event === 'message'
+            )
+            expect(events.map((entry) => entry.event)).toEqual(['generated-image:upload', 'message'])
+            expect(events[0]?.args[0]).toEqual({
+                sid: '11111111-1111-4111-8111-111111111111',
+                imageId: 'img-upload-1',
+                fileName: 'curve.png',
+                mimeType: 'image/png',
+                content: pngBytes.toString('base64')
+            })
+        } finally {
+            clearGeneratedImages()
+            client.close()
+        }
     })
 })
