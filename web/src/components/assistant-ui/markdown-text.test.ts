@@ -38,7 +38,7 @@ function render(markdown: string, plugins: PluggableList = MARKDOWN_PLUGINS): st
         .use(plugins)
         .use(remarkRehype)
         .use(MARKDOWN_REHYPE_PLUGINS)
-    const tree = processor.runSync(processor.parse(markdown))
+    const tree = processor.runSync(processor.parse(markdown), markdown)
     return toHtml(tree as never)
 }
 
@@ -95,5 +95,22 @@ describe('MARKDOWN_PLUGINS — currency prose vs KaTeX', () => {
         const md = "Before\n\n$$\nE = mc^2\n$$\n\nAfter"
         const html = render(md)
         expect(html).toContain('class="katex"')
+    })
+
+    it('renders single-line inline $...$ TeX as KaTeX', () => {
+        const html = render('得分 $\\text{w}R^2(\\Delta\\text{ctrl})$ 提升到 0.82')
+        expect(html).toContain('class="katex"')
+        expect(html).not.toContain('$\\text')
+    })
+
+    it('keeps currency literal when inline math shares the paragraph', () => {
+        const html = render('Costs $5 and $10, while $x^2$ grows.')
+        expect(html).toContain('$5 and $10')
+        expect((html.match(/class="katex"/g) ?? []).length).toBe(1)
+    })
+
+    it('does not open inline math across a line break', () => {
+        const html = render('price $a\nnext b$ end')
+        expect(html).not.toContain('class="katex"')
     })
 })
