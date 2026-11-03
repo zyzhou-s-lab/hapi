@@ -308,13 +308,12 @@ export function partitionTurn(
     }
 
     const hasPendingTool = rows.some((row) => row.kind === 'tool' && row.block.tool.state === 'pending')
-    const hasTrailingText = rows.some((row) => row.kind === 'text' && row.trailing)
     rows.forEach((row, index) => {
         if (row.kind !== 'tool' || !row.error || hasPendingTool) return
-        const hasLaterActiveOrCompletedTool = rows
+        const recovered = rows
             .slice(index + 1)
             .some((later) => later.kind === 'tool' && (later.block.tool.state === 'completed' || later.block.tool.state === 'running'))
-        if (hasLaterActiveOrCompletedTool || hasTrailingText) {
+        if (recovered) {
             row.pinned = isPinned(row.block.tool, true)
         }
     })

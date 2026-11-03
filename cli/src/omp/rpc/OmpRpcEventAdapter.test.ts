@@ -236,7 +236,7 @@ describe('OmpRpcEventAdapter', () => {
         });
     });
 
-    it('preserves top-level tool_execution_start intent in tool_call input when stripped from args', () => {
+    it('preserves top-level intent across tool_execution_start, tool_execution_update, and subagent tool updates', () => {
         const harness = createHarness();
         harness.adapter.handle(rpcEvent({
             type: 'tool_execution_start',
@@ -245,14 +245,218 @@ describe('OmpRpcEventAdapter', () => {
             args: { path: 'session://01a1a178/timeline:-40' },
             intent: 'Reading timeline of PAGING session 01a1a178'
         }));
-        const call = harness.agentMessages.find((message) => message.type === 'tool_call');
-        expect(call).toMatchObject({
+        harness.adapter.handle(rpcEvent({
+            type: 'tool_execution_start',
+            toolCallId: 'late-intent',
+            toolName: 'bash',
+            args: { command: 'tern capture 95988224098306 --surfaces' }
+        }));
+        harness.adapter.handle(rpcEvent({
+            type: 'tool_execution_update',
+            toolCallId: 'late-intent',
+            toolName: 'bash',
+            args: { command: 'mutated command' },
+            partialResult: { content: 'partial' },
+            intent: 'Capturing surface text of HAPI blocks in Tern'
+        }));
+        harness.adapter.handle(rpcEvent({
+            type: 'tool_execution_update',
+            toolCallId: 'update-only-intent',
+            toolName: 'read',
+            args: { path: 'session://01a19c9a/timeline:-40' },
+            partialResult: { content: 'partial' },
+            intent: 'Reading timeline of PAGING session 01a19c9a'
+        }));
+
+        harness.adapter.handle(rpcEvent({
+            type: 'subagent_lifecycle',
+            payload: {
+                id: 'alpha',
+                agent: 'task',
+                agentSource: 'bundled',
+                status: 'started',
+                parentToolCallId: 'task-parent',
+                index: 0
+            }
+        }));
+        harness.adapter.handle(rpcEvent({
+            type: 'subagent_event',
+            payload: {
+                id: 'alpha',
+                event: {
+                    type: 'tool_execution_start',
+                    toolCallId: 'sub-late-intent',
+                    toolName: 'read',
+                    args: { path: 'src/index.ts' }
+                }
+            }
+        }));
+        harness.adapter.handle(rpcEvent({
+            type: 'subagent_event',
+            payload: {
+                id: 'alpha',
+                event: {
+                    type: 'tool_execution_update',
+                    toolCallId: 'sub-late-intent',
+                    toolName: 'read',
+                    args: { path: 'mutated.ts' },
+                    partialResult: { content: 'partial' },
+                    intent: 'Reading entry module'
+                }
+            }
+        }));
+
+        const calls = harness.agentMessages.filter((message) => message.type === 'tool_call');
+        expect(calls).toEqual([
+            {
+                type: 'tool_call',
+                id: 'read-intent',
+                name: 'read',
+                input: {
+                    path: 'session://01a1a178/timeline:-40',
+                    i: 'Reading timeline of PAGING session 01a1a178'
+                },
+                status: 'in_progress'
+            },
+            {
+                type: 'tool_call',
+                id: 'late-intent',
+                name: 'bash',
+                input: {
+                    command: 'tern capture 95988224098306 --surfaces'
+                },
+                status: 'in_progress'
+            },
+            {
+                type: 'tool_call',
+                id: 'late-intent',
+                name: 'bash',
+                input: {
+                    command: 'tern capture 95988224098306 --surfaces',
+                    i: 'Capturing surface text of HAPI blocks in Tern'
+                },
+                status: 'in_progress'
+            },
+            {
+                type: 'tool_call',
+                id: 'update-only-intent',
+                name: 'read',
+                input: {
+                    path: 'session://01a19c9a/timeline:-40',
+                    i: 'Reading timeline of PAGING session 01a19c9a'
+                },
+                status: 'in_progress'
+            }
+        ]);
+
+        const subagentCalls = harness.traces
+            .map((trace) => trace.message)
+            .filter((message) => message.type === 'tool_call');
+        expect(subagentCalls).toEqual([
+            {
+                type: 'tool_call',
+                id: 'sub-late-intent',
+                name: 'read',
+                input: { path: 'src/index.ts' },
+                status: 'in_progress'
+            },
+            {
+                type: 'tool_call',
+                id: 'sub-late-intent',
+                name: 'read',
+                input: {
+                    path: 'src/index.ts',
+                    i: 'Reading entry module'
+                },
+                status: 'in_progress'
+            }
+        ]);
+    });
+
+    it('injects toolCall block intent into canonical assistant tool_use and subagent tool_call traces', () => {
+        const harness = createHarness();
+        const messageWithToolCall: JsonObject = {
+            ...assistantMessage('calling tool', 'provider-tool-msg'),
+            stopReason: 'toolUse',
+            content: [
+                {
+                    type: 'toolCall',
+                    id: 'assistant-tool-1',
+                    name: 'read',
+                    arguments: { path: 'session://01a1a178/timeline:-40' },
+                    intent: 'Reading timeline from assistant toolCall'
+                }
+            ]
+        };
+        harness.adapter.handle(rpcEvent({ type: 'message_start', message: messageWithToolCall }));
+        harness.adapter.handle(rpcEvent({
+            type: 'message_update',
+            message: messageWithToolCall,
+            assistantMessageEvent: { type: 'toolcall_delta' }
+        }));
+        harness.adapter.handle(rpcEvent({ type: 'message_end', message: messageWithToolCall }));
+
+        expect(harness.canonicalMessages).toHaveLength(1);
+        const committed = harness.canonicalMessages[0];
+        if (committed.type !== 'assistant') throw new Error(`Expected assistant, received ${committed.type}`);
+        expect(committed.message).toMatchObject({
+            content: [
+                {
+                    type: 'tool_use',
+                    id: 'assistant-tool-1',
+                    name: 'read',
+                    input: {
+                        path: 'session://01a1a178/timeline:-40',
+                        i: 'Reading timeline from assistant toolCall'
+                    }
+                }
+            ]
+        });
+
+        harness.adapter.handle(rpcEvent({
+            type: 'subagent_lifecycle',
+            payload: {
+                id: 'alpha',
+                agent: 'task',
+                agentSource: 'bundled',
+                status: 'started',
+                parentToolCallId: 'task-parent',
+                index: 0
+            }
+        }));
+        harness.adapter.handle(rpcEvent({
+            type: 'subagent_event',
+            payload: {
+                id: 'alpha',
+                event: {
+                    type: 'message_end',
+                    message: {
+                        ...assistantMessage('subagent tool', 'sub-provider-tool-msg'),
+                        stopReason: 'toolUse',
+                        content: [
+                            {
+                                type: 'toolCall',
+                                id: 'sub-msg-tool-1',
+                                name: 'bash',
+                                arguments: { command: 'ls -la' },
+                                intent: 'Listing workspace files in subagent'
+                            }
+                        ]
+                    }
+                }
+            }
+        }));
+
+        const subagentToolTrace = harness.traces
+            .map((trace) => trace.message)
+            .find((message) => message.type === 'tool_call' && message.id === 'sub-msg-tool-1');
+        expect(subagentToolTrace).toMatchObject({
             type: 'tool_call',
-            id: 'read-intent',
-            name: 'read',
+            id: 'sub-msg-tool-1',
+            name: 'bash',
             input: {
-                path: 'session://01a1a178/timeline:-40',
-                i: 'Reading timeline of PAGING session 01a1a178'
+                command: 'ls -la',
+                i: 'Listing workspace files in subagent'
             },
             status: 'in_progress'
         });

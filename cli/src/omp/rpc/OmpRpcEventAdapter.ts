@@ -954,7 +954,7 @@ export class OmpRpcEventAdapter {
         const tool: ToolLifecycle = {
             id: parsed.data.toolCallId,
             name: existing?.name ?? parsed.data.toolName,
-            args: existing?.args ?? withToolIntent(parsed.data.args, parsed.data.intent),
+            args: withToolIntent(existing?.args ?? parsed.data.args, parsed.data.intent),
             partialResult: parsed.data.partialResult,
             executionResult: existing?.executionResult,
             executionFailed: existing?.executionFailed
@@ -1304,7 +1304,7 @@ export class OmpRpcEventAdapter {
         const tool: ToolLifecycle = {
             id: event.toolCallId,
             name: existing?.name ?? event.toolName,
-            args: existing?.args ?? withToolIntent(event.args ?? {}, event.intent),
+            args: withToolIntent(existing?.args ?? (event.args ?? {}), event.intent),
             partialResult: event.partialResult ?? existing?.partialResult,
             executionResult: event.result ?? existing?.executionResult,
             executionFailed: event.isError === true || existing?.executionFailed
