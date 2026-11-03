@@ -313,6 +313,10 @@ describe('HappyThread older-history pagination lifecycle', () => {
 
         const toolResultScroller = document.createElement('div')
         toolResultScroller.className = 'mt-3 flex max-h-[75vh] flex-col gap-4 overflow-auto'
+        Object.defineProperties(toolResultScroller, {
+            clientHeight: { configurable: true, value: 200 },
+            scrollHeight: { configurable: true, value: 600 }
+        })
         const codeBlock = document.createElement('pre')
         codeBlock.textContent = 'longlog.ts contents'
         toolResultScroller.append(codeBlock)
@@ -325,5 +329,55 @@ describe('HappyThread older-history pagination lifecycle', () => {
         fireEvent.keyDown(viewport, { key: 'Home' })
 
         expect(onRequest).not.toHaveBeenCalled()
+    })
+
+    it('loads older messages on upward wheel over a wide overflow-x-auto code block and on PageUp/Home after clicking it', async () => {
+        const onRequest = vi.fn()
+        render(<PaginationHarness onRequest={onRequest} />)
+
+        const viewport = document.querySelector<HTMLElement>('.app-scroll-y')!
+        const anchor = screen.getByTestId('stable-visible-message')
+        const pageCountOutput = screen.getByTestId('page')
+        Object.defineProperty(viewport, 'clientHeight', { configurable: true, value: 400 })
+        Object.defineProperty(viewport, 'scrollHeight', { configurable: true, get: () => 1_200 })
+        viewport.getBoundingClientRect = () => DOMRect.fromRect({ y: 0, height: 400, width: 800 })
+        anchor.getBoundingClientRect = () => DOMRect.fromRect({ y: 60, height: 20, width: 100 })
+        viewport.scrollTop = 0
+
+        const wideCodeBlock = document.createElement('div')
+        wideCodeBlock.className = 'overflow-x-auto'
+        Object.defineProperties(wideCodeBlock, {
+            clientWidth: { configurable: true, value: 400 },
+            scrollWidth: { configurable: true, value: 1_200 },
+            clientHeight: { configurable: true, value: 80 },
+            scrollHeight: { configurable: true, value: 80 }
+        })
+        const codeToken = document.createElement('code')
+        codeToken.textContent = 'const horizontalOnly = true'
+        wideCodeBlock.append(codeToken)
+
+        const shortDiff = document.createElement('div')
+        shortDiff.className = 'mt-3 max-h-[75vh] overflow-auto'
+        Object.defineProperties(shortDiff, {
+            clientHeight: { configurable: true, value: 80 },
+            scrollHeight: { configurable: true, value: 80 }
+        })
+        anchor.append(wideCodeBlock, shortDiff)
+
+        fireEvent.wheel(codeToken, { deltaY: -120 })
+        await waitFor(() => expect(onRequest).toHaveBeenCalledTimes(1))
+        await waitFor(() => expect(pageCountOutput.textContent).toBe('1'))
+
+        viewport.scrollTop = 0
+        fireEvent.pointerDown(codeToken, { button: 0 })
+        fireEvent.keyDown(viewport, { key: 'PageUp' })
+        await waitFor(() => expect(onRequest).toHaveBeenCalledTimes(2))
+        await waitFor(() => expect(pageCountOutput.textContent).toBe('2'))
+
+        viewport.scrollTop = 0
+        fireEvent.pointerDown(shortDiff, { button: 0 })
+        fireEvent.keyDown(viewport, { key: 'Home' })
+        await waitFor(() => expect(onRequest).toHaveBeenCalledTimes(3))
+        await waitFor(() => expect(pageCountOutput.textContent).toBe('3'))
     })
 })

@@ -78,30 +78,80 @@ describe('nested scroll event ownership', () => {
         nested.remove()
     })
 
-    it('recognizes an unmarked scrollable ancestor between the target and the thread viewport', () => {
+    it('recognizes an unmarked vertically scrollable ancestor only when it can scroll vertically', () => {
+        const computedStyleSpy = vi.spyOn(window, 'getComputedStyle')
         const viewport = document.createElement('div')
         viewport.className = 'app-scroll-y chat-scroll-y'
         const toolResult = document.createElement('div')
         toolResult.className = 'mt-3 flex max-h-[75vh] flex-col gap-4 overflow-auto'
+        Object.defineProperties(toolResult, {
+            clientHeight: { configurable: true, value: 200 },
+            scrollHeight: { configurable: true, value: 600 },
+            scrollTop: { configurable: true, writable: true, value: 0 }
+        })
         const codeLine = document.createElement('span')
         codeLine.textContent = 'longlog.ts line 1'
+        toolResult.append(codeLine)
+
+        const wideCodeBlock = document.createElement('div')
+        wideCodeBlock.className = 'overflow-x-auto'
+        Object.defineProperties(wideCodeBlock, {
+            clientWidth: { configurable: true, value: 300 },
+            scrollWidth: { configurable: true, value: 900 },
+            clientHeight: { configurable: true, value: 80 },
+            scrollHeight: { configurable: true, value: 80 }
+        })
+        const wideToken = document.createElement('span')
+        wideToken.textContent = 'wide line'
+        wideCodeBlock.append(wideToken)
+
+        const shortDiff = document.createElement('div')
+        shortDiff.className = 'mt-3 max-h-[75vh] overflow-auto'
+        Object.defineProperties(shortDiff, {
+            clientHeight: { configurable: true, value: 80 },
+            scrollHeight: { configurable: true, value: 80 }
+        })
+
         const plainRow = document.createElement('div')
         plainRow.textContent = 'ordinary row'
-        toolResult.append(codeLine)
-        viewport.append(toolResult, plainRow)
+        viewport.append(toolResult, wideCodeBlock, shortDiff, plainRow)
         document.body.append(viewport)
 
         const pageUpInToolResult = new KeyboardEvent('keydown', { key: 'PageUp' })
         Object.defineProperty(pageUpInToolResult, 'target', { value: codeLine })
+        const wheelUpAtTop = new WheelEvent('wheel', { deltaY: -40 })
+        Object.defineProperty(wheelUpAtTop, 'target', { value: codeLine })
+        const wheelDownFromTop = new WheelEvent('wheel', { deltaY: 40 })
+        Object.defineProperty(wheelDownFromTop, 'target', { value: codeLine })
+
+        expect(isNestedScrollEvent(pageUpInToolResult, viewport)).toBe(true)
+        expect(isNestedScrollEvent(wheelUpAtTop, viewport)).toBe(false)
+        expect(isNestedScrollEvent(wheelDownFromTop, viewport)).toBe(true)
+
+        toolResult.scrollTop = 120
+        expect(isNestedScrollEvent(wheelUpAtTop, viewport)).toBe(true)
+        toolResult.scrollTop = 400
+        expect(isNestedScrollEvent(wheelDownFromTop, viewport)).toBe(false)
+
+        const wheelOnWideCode = new WheelEvent('wheel', { deltaY: -40 })
+        Object.defineProperty(wheelOnWideCode, 'target', { value: wideToken })
+        const keyOnWideCode = new KeyboardEvent('keydown', { key: 'PageUp' })
+        Object.defineProperty(keyOnWideCode, 'target', { value: wideToken })
+        const keyOnShortDiff = new KeyboardEvent('keydown', { key: 'PageUp' })
+        Object.defineProperty(keyOnShortDiff, 'target', { value: shortDiff })
         const homeInPlainRow = new KeyboardEvent('keydown', { key: 'Home' })
         Object.defineProperty(homeInPlainRow, 'target', { value: plainRow })
         const viewportKey = new KeyboardEvent('keydown', { key: 'PageUp' })
         Object.defineProperty(viewportKey, 'target', { value: viewport })
 
-        expect(isNestedScrollEvent(pageUpInToolResult, viewport)).toBe(true)
+        expect(isNestedScrollEvent(wheelOnWideCode, viewport)).toBe(false)
+        expect(isNestedScrollEvent(keyOnWideCode, viewport)).toBe(false)
+        expect(isNestedScrollEvent(keyOnShortDiff, viewport)).toBe(false)
         expect(isNestedScrollEvent(homeInPlainRow, viewport)).toBe(false)
         expect(isNestedScrollEvent(viewportKey, viewport)).toBe(false)
+        expect(computedStyleSpy).not.toHaveBeenCalled()
 
+        computedStyleSpy.mockRestore()
         viewport.remove()
     })
 })
