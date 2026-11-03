@@ -163,16 +163,28 @@ function getEventVerticalScrollDelta(event: Event, deltaY?: number): number {
     return 0
 }
 
+function hasScrollableNestedDescendant(element: HTMLElement): boolean {
+    const candidates = element.querySelectorAll<HTMLElement>(
+        '[data-hapi-code-body="true"], .overflow-auto, .overflow-y-auto, .overflow-scroll, .overflow-y-scroll'
+    )
+    for (const child of candidates) {
+        if (child.scrollHeight > child.clientHeight && hasVerticalOverflowStyle(child)) {
+            return true
+        }
+    }
+    return false
+}
+
 function isNestedScrollableElement(element: HTMLElement, deltaY = 0): boolean {
     if (element.classList.contains('chat-scroll-y') || element.classList.contains('happy-message')) {
         return false
     }
     const isExplicitNestedScroll = element.getAttribute('data-hapi-nested-scroll') === 'true'
-    if (isExplicitNestedScroll && (deltaY === 0 || (element.clientHeight === 0 && element.scrollHeight === 0))) {
+    if (isExplicitNestedScroll && element.clientHeight === 0 && element.scrollHeight === 0) {
         return true
     }
     if (element.scrollHeight <= element.clientHeight) {
-        return false
+        return isExplicitNestedScroll && deltaY === 0 && hasScrollableNestedDescendant(element)
     }
     if (!isExplicitNestedScroll && !hasVerticalOverflowStyle(element)) {
         return false
@@ -432,21 +444,35 @@ export function shouldCancelInitialScrollSettling(
         && intent.distanceFromBottom > MANUAL_SCROLL_EPSILON_PX
 }
 
-const capturedAnchorHeights = new WeakMap<ScrollAnchor, number>()
+type CapturedAnchorState = {
+    height: number
+    wasFirstMessage: boolean
+    topOffset: number
+    consumedPrepend: boolean
+}
+
+const capturedAnchorState = new WeakMap<ScrollAnchor, CapturedAnchorState>()
 
 export function captureScrollAnchor(viewport: HTMLElement): ScrollAnchor | null {
     const viewportRect = viewport.getBoundingClientRect()
     const messages = Array.from(viewport.querySelectorAll<HTMLElement>(MESSAGE_ANCHOR_SELECTOR))
-    for (const message of messages) {
+    for (let index = 0; index < messages.length; index += 1) {
+        const message = messages[index]!
         const rect = message.getBoundingClientRect()
         if (rect.bottom > viewportRect.top && rect.top < viewportRect.bottom) {
+            const topOffset = rect.top - viewportRect.top
             const anchor: ScrollAnchor = {
                 id: message.id,
-                topOffset: rect.top - viewportRect.top
+                topOffset
             }
             const height = rect.bottom - rect.top
             if (height > 0) {
-                capturedAnchorHeights.set(anchor, height)
+                capturedAnchorState.set(anchor, {
+                    height,
+                    wasFirstMessage: index === 0,
+                    topOffset,
+                    consumedPrepend: false
+                })
             }
             return anchor
         }
@@ -461,16 +487,17 @@ export function restoreScrollAnchor(viewport: HTMLElement, anchor: ScrollAnchor)
     }
     const viewportRect = viewport.getBoundingClientRect()
     const targetRect = target.getBoundingClientRect()
-    const previousHeight = capturedAnchorHeights.get(anchor)
-    const currentHeight = targetRect.bottom - targetRect.top
-    const prependedInsideTarget =
-        previousHeight !== undefined && previousHeight > 0 && currentHeight > previousHeight
-            ? currentHeight - previousHeight
-            : 0
-    viewport.scrollTop += targetRect.top - viewportRect.top - anchor.topOffset + prependedInsideTarget
-    if (prependedInsideTarget > 0) {
-        capturedAnchorHeights.set(anchor, currentHeight)
+    const state = capturedAnchorState.get(anchor)
+    let effectiveTopOffset = state?.topOffset ?? anchor.topOffset
+    if (state && !state.consumedPrepend) {
+        state.consumedPrepend = true
+        const currentHeight = targetRect.bottom - targetRect.top
+        if (state.wasFirstMessage && state.height > 0 && currentHeight > state.height) {
+            effectiveTopOffset -= currentHeight - state.height
+            state.topOffset = effectiveTopOffset
+        }
     }
+    viewport.scrollTop += targetRect.top - viewportRect.top - effectiveTopOffset
     return true
 }
 
@@ -1264,6 +1291,13 @@ export function HappyThread(props: {
             if (target instanceof Node && viewport.contains(target)) {
                 return
             }
+            if (
+                target !== document.body
+                && target !== document.documentElement
+                && target !== window
+            ) {
+                return
+            }
             clearPinnedAnchor()
             outerWheelActive = false
             handleNestedKeyScroll(event, focusedNestedScroller)
@@ -1311,9 +1345,9 @@ export function HappyThread(props: {
                 focusedNestedScroller = nestedContainer
                 return
             }
+            nestedScrollFocused = false
+            focusedNestedScroller = null
             if (event.button === 0 && isInsideViewport(event.clientX, event.clientY)) {
-                nestedScrollFocused = false
-                focusedNestedScroller = null
                 clearPinnedAnchor()
                 armPointerIntent()
             }
@@ -1327,9 +1361,9 @@ export function HappyThread(props: {
                 focusedNestedScroller = nestedContainer
                 return
             }
+            nestedScrollFocused = false
+            focusedNestedScroller = null
             if (event.button === 0 && isInsideViewport(event.clientX, event.clientY)) {
-                nestedScrollFocused = false
-                focusedNestedScroller = null
                 clearPinnedAnchor()
                 armPointerIntent()
             }

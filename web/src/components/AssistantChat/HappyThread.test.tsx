@@ -545,6 +545,12 @@ describe('scroll anchor helpers', () => {
         expect(restoreScrollAnchor(viewport, anchor!)).toBe(true)
         expect(viewport.scrollTop).toBe(800)
 
+        // Subsequent pinned-anchor restores (from scroll or ResizeObserver events)
+        // must preserve the 800px position rather than snapping back or re-adding bottom growth.
+        currentHeight = 1_150
+        expect(restoreScrollAnchor(viewport, anchor!)).toBe(true)
+        expect(viewport.scrollTop).toBe(800)
+
         viewport.remove()
     })
     it('does not recapture the anchor once the older page is applied', () => {

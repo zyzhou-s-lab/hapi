@@ -347,6 +347,15 @@ describe('HappyThread older-history pagination lifecycle', () => {
         expect(homeOnBody.defaultPrevented).toBe(true)
         expect(viewport.scrollTop).toBe(500)
 
+        // Clicking outside the viewport clears nestedScrollFocused so window keys are no longer intercepted.
+        const outsideButton = document.createElement('button')
+        document.body.append(outsideButton)
+        fireEvent.pointerDown(outsideButton, { button: 0, clientX: 950, clientY: 50 })
+        const spaceAfterOutsideClick = new KeyboardEvent('keydown', { key: ' ', bubbles: true, cancelable: true })
+        document.body.dispatchEvent(spaceAfterOutsideClick)
+        expect(spaceAfterOutsideClick.defaultPrevented).toBe(false)
+        outsideButton.remove()
+
         expect(onRequest).not.toHaveBeenCalled()
     })
 
@@ -376,6 +385,7 @@ describe('HappyThread older-history pagination lifecycle', () => {
         wideCodeBlock.append(codeToken)
 
         const shortDiff = document.createElement('div')
+        shortDiff.dataset.hapiNestedScroll = 'true'
         shortDiff.className = 'mt-3 max-h-[75vh] overflow-auto'
         Object.defineProperties(shortDiff, {
             clientHeight: { configurable: true, value: 80 },
