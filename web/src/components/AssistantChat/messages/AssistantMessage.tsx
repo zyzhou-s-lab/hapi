@@ -1,6 +1,7 @@
 import { MessagePrimitive, useAuiState, type TextMessagePart } from '@assistant-ui/react'
 import { Reasoning, ReasoningGroup } from '@/components/assistant-ui/reasoning'
 import { HappyToolMessage } from '@/components/AssistantChat/messages/ToolMessage'
+import { messageHasTurnActivity, TurnBlock } from '@/components/AssistantChat/messages/TurnBlock'
 import { CliOutputBlock } from '@/components/CliOutputBlock'
 import type { HappyChatMessageMetadata } from '@/lib/assistant-runtime'
 import { getAssistantCopyText } from '@/components/AssistantChat/messages/assistantCopyText'
@@ -46,6 +47,7 @@ export function HappyAssistantMessage() {
         const parts = s.message.content
         return parts.length > 0 && parts.every((part) => part.type === 'tool-call')
     })
+    const turnActivity = useAuiState((s) => s.message.role === 'assistant' && messageHasTurnActivity(s.message.content))
     const copyText = useAuiState((s) => {
         if (s.message.role !== 'assistant') return ''
         return getAssistantCopyText(s.message.content, {
@@ -83,7 +85,9 @@ export function HappyAssistantMessage() {
                 ? <CliOutputBlock text={cliText} />
                 : codexReview
                     ? <CodexReviewCard review={codexReview} />
-                    : <MessagePrimitive.Content components={MESSAGE_PART_COMPONENTS} />}
+                    : turnActivity
+                        ? <TurnBlock />
+                        : <MessagePrimitive.Content components={MESSAGE_PART_COMPONENTS} />}
 <div className="flex items-center gap-1">
                 <MessageActions
                     align="start"

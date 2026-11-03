@@ -34,6 +34,9 @@ function nextFrame(): Promise<void> {
 }
 
 function stripCaptureOnlyControls(root: HTMLElement): void {
+    for (const row of Array.from(root.querySelectorAll<HTMLElement>('[data-hapi-turn-quiet]'))) {
+        row.classList.remove('hidden')
+    }
     for (const element of Array.from(root.querySelectorAll(SHARE_HIDDEN_CONTENT_SELECTOR))) {
         if (!(element instanceof HTMLElement) || !root.contains(element)) continue
 
