@@ -922,17 +922,6 @@ html[data-theme="oled"] .shiki span:not([data-line-number]) {
     }
 }
 
-@keyframes turn-timeline-enter {
-    0% {
-        opacity: 0.85;
-        transform: translateY(2px);
-    }
-    100% {
-        opacity: 1;
-        transform: translateY(0);
-    }
-}
-
 @keyframes turn-sparkle-breathe {
     0%, 100% {
         transform: scale(1) rotate(0deg);
@@ -961,16 +950,6 @@ html[data-theme="oled"] .shiki span:not([data-line-number]) {
     -webkit-text-fill-color: transparent;
     color: transparent;
     animation: turn-shimmer-sweep 1.8s linear infinite;
-}
-
-.turn-timeline-status-enter {
-    animation: turn-timeline-enter 220ms cubic-bezier(0.22, 1, 0.36, 1);
-}
-
-.turn-timeline-status-enter.turn-text-shimmer {
-    animation:
-        turn-timeline-enter 220ms cubic-bezier(0.22, 1, 0.36, 1),
-        turn-shimmer-sweep 1.8s linear infinite;
 }
 
 .turn-sparkle-icon {

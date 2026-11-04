@@ -496,7 +496,7 @@ function RailStepCompletionMorphBadge(props: { isRunning: boolean; forceMorph?: 
         }
         return undefined
     }, [props.isRunning, props.forceMorph])
-    if (!showMorph) return null
+    if (!showMorph && !props.forceMorph) return null
 
     return (
         <span
@@ -627,8 +627,10 @@ function TimelineThoughtRow(props: {
     accentColor?: string
 }) {
     const [open, setOpen] = useState(props.defaultExpanded)
+    const [hasOpened, setHasOpened] = useState(props.defaultExpanded)
     useEffect(() => {
         setOpen(props.defaultExpanded)
+        if (props.defaultExpanded) setHasOpened(true)
     }, [props.defaultExpanded])
 
     const label = props.lang === 'zh-CN'
@@ -640,7 +642,10 @@ function TimelineThoughtRow(props: {
             <button
                 type="button"
                 aria-expanded={open}
-                onClick={() => setOpen((v) => !v)}
+                onClick={() => {
+                    setHasOpened(true)
+                    setOpen((v) => !v)
+                }}
                 className="group flex w-full items-center gap-1.5 rounded-md px-1.5 py-1 text-left text-[13.5px] leading-5 text-[var(--app-hint)] transition-colors hover:bg-[var(--app-subtle-bg)]/60 hover:text-[var(--app-fg)]"
             >
                 <span
@@ -663,9 +668,11 @@ function TimelineThoughtRow(props: {
                 aria-hidden={!open}
             >
                 <div className="turn-collapsible-body">
-                    <div className="ml-2 mt-1 mb-1.5 border-l border-[var(--app-border)]/70 pl-3 text-[13px] leading-relaxed text-[var(--app-hint)] whitespace-pre-wrap">
-                        {props.row.text}
-                    </div>
+                    {open || hasOpened ? (
+                        <div className="ml-2 mt-1 mb-1.5 border-l border-[var(--app-border)]/70 pl-3 text-[13px] leading-relaxed text-[var(--app-hint)] whitespace-pre-wrap">
+                            {props.row.text}
+                        </div>
+                    ) : null}
                 </div>
             </div>
         </div>
@@ -684,8 +691,10 @@ function TimelineToolStepRow(props: {
 }) {
     const ctx = useOptionalHappyChatContext()
     const [open, setOpen] = useState(props.defaultExpanded)
+    const [hasOpened, setHasOpened] = useState(props.defaultExpanded)
     useEffect(() => {
         setOpen(props.defaultExpanded)
+        if (props.defaultExpanded) setHasOpened(true)
     }, [props.defaultExpanded])
 
     const descriptor = useMemo(
@@ -713,7 +722,10 @@ function TimelineToolStepRow(props: {
             <button
                 type="button"
                 aria-expanded={open}
-                onClick={() => setOpen((v) => !v)}
+                onClick={() => {
+                    setHasOpened(true)
+                    setOpen((v) => !v)
+                }}
                 className="group flex w-full items-center gap-1.5 rounded-md px-1.5 py-1 text-left text-[13.5px] leading-5 transition-colors hover:bg-[var(--app-subtle-bg)]/60"
             >
                 {props.row.error ? (
@@ -783,7 +795,7 @@ function TimelineToolStepRow(props: {
                 aria-hidden={!open}
             >
                 <div className="turn-collapsible-body">
-                    <StepInlinePreviewCard preview={descriptor.preview} />
+                    {open || hasOpened ? <StepInlinePreviewCard preview={descriptor.preview} /> : null}
                 </div>
             </div>
             {props.row.permission && !interactive && ctx ? (
@@ -1243,20 +1255,20 @@ export function TimelineTurnBlockView(props: {
                                         }}
                                         data-rail-row-index={stepRows.length}
                                         data-testid="rail-frontier-row"
-                                        data-hapi-share-exclude="true"
-                                        className="relative py-0.5"
                                     >
-                                        <div className="flex w-full items-center gap-1.5 rounded-md px-1.5 py-1 text-left text-[13.5px] leading-5 text-[var(--app-hint)]">
-                                            <span
-                                                className={cn(
-                                                    'transition-opacity duration-200',
-                                                    holdingForPrevMorph && activeRunningRowIndex === stepRows.length
-                                                        ? 'text-[var(--app-hint)] opacity-45'
-                                                        : 'turn-text-shimmer font-medium'
-                                                )}
-                                            >
-                                                {lang === 'zh-CN' ? '正在思考...' : 'Thinking...'}
-                                            </span>
+                                        <div data-hapi-share-exclude="true" className="relative py-0.5">
+                                            <div className="flex w-full items-center gap-1.5 rounded-md px-1.5 py-1 text-left text-[13.5px] leading-5 text-[var(--app-hint)]">
+                                                <span
+                                                    className={cn(
+                                                        'transition-opacity duration-200',
+                                                        holdingForPrevMorph && activeRunningRowIndex === stepRows.length
+                                                            ? 'text-[var(--app-hint)] opacity-45'
+                                                            : 'turn-text-shimmer font-medium'
+                                                    )}
+                                                >
+                                                    {lang === 'zh-CN' ? '正在思考...' : 'Thinking...'}
+                                                </span>
+                                            </div>
                                         </div>
                                     </div>
                                 ) : null}
