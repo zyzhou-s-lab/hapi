@@ -484,8 +484,9 @@ function Pre(props: ComponentPropsWithoutRef<'pre'>) {
     )
 }
 
-const HEX_COLOR_LITERAL_RE = /^#(?:[0-9a-fA-F]{6}(?:[0-9a-fA-F]{2})?|(\d)\1{2,3}|(?=[0-9a-fA-F]*[a-fA-F])[0-9a-fA-F]{3,4})$/
-const CSS_FN_COLOR_LITERAL_RE = /^(?:rgba?|hsla?|oklch|oklab|lch|lab|hwb|color)\(\s*[^()]+\s*\)$/i
+const HEX_COLOR_LITERAL_RE = /^#(?:[0-9a-fA-F]{6}|(\d)\1{2}|(?=[0-9a-fA-F]*[a-fA-F])[0-9a-fA-F]{3})$/
+const CSS_PROP_NAME_RE = /^--?[a-zA-Z][a-zA-Z0-9-]*$/
+const CSS_FN_COLOR_LITERAL_RE = /^(?:rgba?|hsla?|oklch|oklab|lch|lab|hwb)\(\s*\d[^()]*\)$/i
 
 
 function extractCodeText(children: ReactNode): string {
@@ -504,8 +505,9 @@ export function extractInlineCodeColor(rawText: string): string | null {
     }
     const colonIdx = trimmed.indexOf(':')
     if (colonIdx > 0) {
+        const lhs = trimmed.slice(0, colonIdx).trim()
         const rhs = trimmed.slice(colonIdx + 1).replace(/;+\s*$/, '').trim()
-        if (rhs && (HEX_COLOR_LITERAL_RE.test(rhs) || CSS_FN_COLOR_LITERAL_RE.test(rhs))) {
+        if (CSS_PROP_NAME_RE.test(lhs) && rhs && (HEX_COLOR_LITERAL_RE.test(rhs) || CSS_FN_COLOR_LITERAL_RE.test(rhs))) {
             return rhs
         }
     }
