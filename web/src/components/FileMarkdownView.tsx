@@ -22,7 +22,11 @@ import { cn } from '@/lib/utils'
 // katex CSS is imported once globally in index.css, so math rendered by
 // rehype-katex is styled without an extra import here.
 
-const REMARK_PLUGINS = [remarkGfm, remarkLatexBracketMath, remarkMath]
+const REMARK_PLUGINS: NonNullable<ComponentPropsWithoutRef<typeof ReactMarkdown>['remarkPlugins']> = [
+    remarkGfm,
+    remarkLatexBracketMath,
+    [remarkMath, { singleDollarTextMath: false }],
+]
 const REHYPE_PLUGINS = [rehypeKatex]
 
 // Both MermaidDiagram and SyntaxHighlighter share @assistant-ui's

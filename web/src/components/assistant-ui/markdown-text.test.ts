@@ -113,4 +113,11 @@ describe('MARKDOWN_PLUGINS — currency prose vs KaTeX', () => {
         const html = render('price $a\nnext b$ end')
         expect(html).not.toContain('class="katex"')
     })
+
+    it('keeps currency literal when followed by parenthesized or bold inline math', () => {
+        const html = render('Costs $5 ($x_i^2$) and $10 **$y_j^2$** today.')
+        expect(html).toContain('Costs $5 (')
+        expect(html).toContain('and $10 <strong>')
+        expect((html.match(/class="katex"/g) ?? []).length).toBe(2)
+    })
 })

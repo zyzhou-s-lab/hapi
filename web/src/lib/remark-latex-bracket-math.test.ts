@@ -79,4 +79,42 @@ describe('remarkLatexBracketMath', () => {
     it('uses the production assistant plugin chain', () => {
         expect(renderProduction(String.raw`\[a^2+b^2=c^2\]`)).toContain('katex-display')
     })
+
+    it('renders multiple inline formulas with subscript underscores and preserves surrounding bold text', () => {
+        const markdown = '在 `bulk_lognorm` 下，$\\hat{\\mu}_p$ **只取决于 400 个细胞在每个基因上的整数计数总和 $P_{p,g} = \\sum_{i=1}^{400} Y_{i,g}$**（`delta.py:1078-1088`）。使用 `rng.multinomial` 会让实现出来的列和 $P_{p,g}$ 围绕目标值产生剧烈的泊松随机偏离，导致距离 $\\|\\hat{\\mu}_p - \\mu_{\\text{real},p}\\|^2$ 凭空膨胀约 2 倍。'
+        const html = renderProduction(markdown)
+        expect(html).not.toContain('<em>')
+        expect(html).toContain('<strong>只取决于 400 个细胞在每个基因上的整数计数总和 <span class="katex">')
+        expect(html.match(/class="katex"/g)).toHaveLength(4)
+        expect(html).not.toContain('$\\hat')
+        expect(html).not.toContain('$P_')
+    })
+
+    it('preserves TeX spacing escapes and multiple subscripted terms on the same line', () => {
+        const markdown = '其中 $\\hat{C}_{\\text{pred},p}$ 是修正项，$r = \\min\\left(1,\\; B_{\\text{pred}} / \\sum_q w_q \\min(\\hat{C}_{\\text{pred},q}, \\hat{C}_{\\text{real},q})\\right)$ 是跨扰动方差预算比。'
+        const html = renderProduction(markdown)
+        expect(html).not.toContain('<em>')
+        expect(html.match(/class="katex"/g)).toHaveLength(2)
+        expect(html).not.toContain('$r =')
+    })
+
+    it('hoists single-line $$...$$ and complex fraction equations inside a paragraph into katex-display blocks', () => {
+        const markdown = [
+            '其分子为：',
+            '$$\\text{MSE}_{\\text{unbiased,capped}}(p) = \\frac{\\|\\hat{\\mu}_p - \\mu_{\\text{real},p}\\|_{G_p}^2 - r \\cdot \\min(\\hat{C}_{\\text{pred},p}, 1.0 \\cdot \\hat{C}_{\\text{real},p}) - \\hat{C}_{\\text{real},p}}{|G_p|}$$',
+            '其中 $\\hat{C}_{\\text{pred},p}$ 是预测组的方差修正项。',
+        ].join('\n')
+        const html = renderProduction(markdown)
+        expect(html).toContain('katex-display')
+        expect(html).toContain('<p>其分子为：</p>')
+        expect(html).toContain('<p>其中 <span class="katex">')
+    })
+
+    it('promotes dense inline fraction equations inside paragraphs to katex-display for readability', () => {
+        const markdown = '直接优化目标：$\\widehat{\\text{MSE}}_{\\text{unbiased},p} = \\frac{1}{G}\\sum_{g=1}^G [(\\hat{\\delta}_{p,g} - \\delta_{p,g})^2 - \\hat{\\sigma}^2_{\\text{true},p,g} - \\hat{\\sigma}^2_{\\text{pred},p,g}]$，从而降低误差。'
+        const html = renderProduction(markdown)
+        expect(html).toContain('katex-display')
+        expect(html).toContain('<p>直接优化目标：</p>')
+        expect(html).toContain('<p>从而降低误差。</p>')
+    })
 })
