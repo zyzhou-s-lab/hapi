@@ -140,7 +140,7 @@ const WEB_SEARCH_RESULTS = [
     },
 ]
 
-function buildStageData(stage: DemoLifecycleStage): {
+function buildStageData(stage: DemoLifecycleStage, activeToolIdx = 6): {
     parts: TurnContentPart[]
     streaming: boolean
     durationMs: number
@@ -160,7 +160,7 @@ function buildStageData(stage: DemoLifecycleStage): {
     const bash1 = makeToolPart({
         id: 'tool-bash-1',
         name: 'Bash',
-        state: stage === 'working-step-1' ? 'running' : 'completed',
+        state: stage === 'working-step-1' || (stage === 'working-step-3' && activeToolIdx === 0) ? 'running' : 'completed',
         description: 'Inspect local workspace configuration and session directories',
         toolInput: {
             command: 'ls -la "$HOME/.hapi" "web/src/components/AssistantChat/messages"',
@@ -179,7 +179,7 @@ function buildStageData(stage: DemoLifecycleStage): {
     const bash2 = makeToolPart({
         id: 'tool-bash-2',
         name: 'Bash',
-        state: 'completed',
+        state: stage === 'working-step-3' && activeToolIdx === 1 ? 'running' : 'completed',
         description: 'Search frontend styles for timeline status and shimmer utilities',
         toolInput: {
             command: 'rg -n "turn-timeline-status-enter|turn-text-shimmer|collapsible-panel" web/src/index.css',
@@ -197,7 +197,7 @@ function buildStageData(stage: DemoLifecycleStage): {
     const bash3 = makeToolPart({
         id: 'tool-bash-3',
         name: 'Bash',
-        state: 'completed',
+        state: stage === 'working-step-3' && activeToolIdx === 2 ? 'running' : 'completed',
         description: 'Check TurnBlock and turnBlockModel in HAPI web frontend',
         toolInput: {
             command: 'git log -n 3 --oneline -- web/src/components/AssistantChat/messages/TurnBlock.tsx',
@@ -214,7 +214,7 @@ function buildStageData(stage: DemoLifecycleStage): {
     const read1 = makeToolPart({
         id: 'tool-read-1',
         name: 'Read',
-        state: stage === 'working-step-2' ? 'running' : 'completed',
+        state: stage === 'working-step-2' || (stage === 'working-step-3' && activeToolIdx === 3) ? 'running' : 'completed',
         description: 'TurnBlock.tsx',
         toolInput: {
             file_path: 'web/src/components/AssistantChat/messages/TurnBlock.tsx',
@@ -247,7 +247,7 @@ function buildStageData(stage: DemoLifecycleStage): {
     const webFetch1 = makeToolPart({
         id: 'tool-webfetch-1',
         name: 'WebFetch',
-        state: 'completed',
+        state: stage === 'working-step-3' && activeToolIdx === 4 ? 'running' : 'completed',
         description: 'Interactive Turn Timeline & View Modes',
         toolInput: {
             url: 'https://docs.example.com/en/turn-timeline',
@@ -264,7 +264,7 @@ function buildStageData(stage: DemoLifecycleStage): {
     const webSearch1 = makeToolPart({
         id: 'tool-websearch-1',
         name: 'WebSearch',
-        state: 'completed',
+        state: stage === 'working-step-3' && activeToolIdx === 5 ? 'running' : 'completed',
         description: 'Searched the web',
         toolInput: {
             query: 'turn timeline tool cards grouping preview',
@@ -277,7 +277,7 @@ function buildStageData(stage: DemoLifecycleStage): {
     const edit1 = makeToolPart({
         id: 'tool-edit-1',
         name: 'Edit',
-        state: stage === 'working-step-3' ? 'running' : 'completed',
+        state: stage === 'working-step-3' && activeToolIdx === 6 ? 'running' : 'completed',
         description: 'Update TurnBlockView to support timeline layout',
         toolInput: {
             file_path: 'web/src/components/AssistantChat/messages/TurnBlock.tsx',
@@ -521,6 +521,16 @@ export function TurnTimelineDemo() {
     const [showSpecTable, setShowSpecTable] = useState(true)
     const [indicatorVariant, setIndicatorVariant] = useState<TurnActivityIndicatorVariant>('equalizer-bars')
     const [indicatorColor, setIndicatorColor] = useState<string>('#da7756')
+    const [activeToolIdx, setActiveToolIdx] = useState<number>(6)
+
+    useEffect(() => {
+        if (stage !== 'working-step-3') return
+        const timer = window.setInterval(() => {
+            setActiveToolIdx((prev) => (prev + 1) % 7)
+        }, 1600)
+        return () => window.clearInterval(timer)
+    }, [stage])
+
     useEffect(() => {
         if (!autoPlaying) return
         const order: DemoLifecycleStage[] = [
@@ -556,7 +566,7 @@ export function TurnTimelineDemo() {
         return () => window.removeEventListener('keydown', handler)
     }, [])
 
-    const stageData = useMemo(() => buildStageData(stage), [stage])
+    const stageData = useMemo(() => buildStageData(stage, activeToolIdx), [stage, activeToolIdx])
     const partition = useMemo(() => partitionTurn(stageData.parts, null), [stageData.parts])
     const followUpPartition = useMemo(
         () => (stageData.followUpParts ? partitionTurn(stageData.followUpParts, null) : null),

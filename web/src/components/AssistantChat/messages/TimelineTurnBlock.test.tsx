@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest'
-import { fireEvent, render, screen } from '@testing-library/react'
+import { describe, expect, it, vi } from 'vitest'
+import { act, fireEvent, render, screen } from '@testing-library/react'
 import { I18nProvider } from '@/lib/i18n-context'
 import type { ToolCallBlock } from '@/chat/types'
 import {
@@ -207,5 +207,62 @@ describe('TimelineTurnBlock & summarizeTurnActivity', () => {
         expect(followUpBlock).toBeInTheDocument()
         expect(followUpBlock.querySelector('[data-indicator-variant="equalizer-bars"]')).not.toBeNull()
         expect(screen.getByTestId('demo-stop-running-btn')).toBeInTheDocument()
+    })
+
+    it('shows rail spinner on running step, transitions to checkmark on completion, and disappears as next step runs', () => {
+        vi.useFakeTimers()
+        try {
+            const step1Running = partitionTurn(
+                [
+                    call(tool('b1', 'Bash', { state: 'running', input: { command: 'ls -la', description: 'List files' } })),
+                    call(tool('r1', 'Read', { state: 'completed', input: { file_path: 'src/a.ts' } })),
+                ],
+                null
+            )
+            const { rerender } = render(
+                <I18nProvider>
+                    <TimelineTurnBlockView
+                        partition={step1Running}
+                        streaming={true}
+                        durationMs={1000}
+                        initiallyOpen={true}
+                        activeTodoText="Listing files"
+                    />
+                </I18nProvider>
+            )
+
+            expect(screen.getByTestId('rail-step-spinner')).toBeInTheDocument()
+            expect(screen.queryByTestId('rail-step-checkmark')).toBeNull()
+
+            const step1DoneStep2Running = partitionTurn(
+                [
+                    call(tool('b1', 'Bash', { state: 'completed', input: { command: 'ls -la', description: 'List files' } })),
+                    call(tool('r1', 'Read', { state: 'running', input: { file_path: 'src/a.ts' } })),
+                ],
+                null
+            )
+            rerender(
+                <I18nProvider>
+                    <TimelineTurnBlockView
+                        partition={step1DoneStep2Running}
+                        streaming={true}
+                        durationMs={2000}
+                        initiallyOpen={true}
+                        activeTodoText="Reading file"
+                    />
+                </I18nProvider>
+            )
+
+            expect(screen.getByTestId('rail-step-checkmark')).toBeInTheDocument()
+            expect(screen.getByTestId('rail-step-spinner')).toBeInTheDocument()
+
+            act(() => {
+                vi.advanceTimersByTime(900)
+            })
+            expect(screen.queryByTestId('rail-step-checkmark')).toBeNull()
+            expect(screen.getByTestId('rail-step-spinner')).toBeInTheDocument()
+        } finally {
+            vi.useRealTimers()
+        }
     })
 })

@@ -473,6 +473,46 @@ function StepInlinePreviewCard(props: { preview: TurnStepPreview }) {
     )
 }
 
+function RailStepExecutionBadge(props: { isRunning: boolean }) {
+    const wasRunning = useRef(props.isRunning)
+    const [showCheck, setShowCheck] = useState(false)
+
+    useEffect(() => {
+        if (props.isRunning) {
+            wasRunning.current = true
+            setShowCheck(false)
+            return undefined
+        }
+        if (wasRunning.current && !props.isRunning) {
+            wasRunning.current = false
+            setShowCheck(true)
+            const timer = window.setTimeout(() => {
+                setShowCheck(false)
+            }, 850)
+            return () => window.clearTimeout(timer)
+        }
+        return undefined
+    }, [props.isRunning])
+
+    if (!props.isRunning && !showCheck) return null
+
+    return (
+        <span
+            className="pointer-events-none absolute -left-[21.5px] top-[14px] -translate-y-1/2 flex h-4 w-4 items-center justify-center rounded-full bg-[var(--app-bg)] ring-2 ring-[var(--app-bg)]"
+            data-testid={props.isRunning ? 'rail-step-spinner' : 'rail-step-checkmark'}
+            aria-hidden="true"
+        >
+            {props.isRunning ? (
+                <span className="inline-block h-3.5 w-3.5 animate-spin rounded-full border-[1.8px] border-[#da7756] border-t-transparent" />
+            ) : (
+                <span className="turn-step-check-badge inline-flex h-3.5 w-3.5 items-center justify-center rounded-full bg-emerald-500/20 text-[9.5px] font-bold text-emerald-600 dark:text-emerald-400">
+                    ✓
+                </span>
+            )}
+        </span>
+    )
+}
+
 function TimelineThoughtRow(props: {
     row: TurnReasoningRow
     isActiveStreaming: boolean
@@ -489,7 +529,8 @@ function TimelineThoughtRow(props: {
         : (props.isActiveStreaming ? 'Thinking...' : 'Thought')
 
     return (
-        <div data-hapi-share-exclude="true" className="py-0.5">
+        <div data-hapi-share-exclude="true" className="relative py-0.5">
+            <RailStepExecutionBadge isRunning={props.isActiveStreaming} />
             <button
                 type="button"
                 aria-expanded={open}
@@ -537,7 +578,8 @@ function TimelineToolStepRow(props: {
     const interactive = Boolean((asks || requestsInput) && props.row.permission && ctx)
 
     return (
-        <div data-hapi-share-exclude="true" className="py-0.5">
+        <div data-hapi-share-exclude="true" className="relative py-0.5">
+            <RailStepExecutionBadge isRunning={descriptor.isRunning} />
             <button
                 type="button"
                 aria-expanded={open}
