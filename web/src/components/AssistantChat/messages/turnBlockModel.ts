@@ -809,10 +809,9 @@ function describeCompactionStep(
                 ? (zh ? '已取消上下文压缩' : 'Compaction cancelled')
                 : (zh ? '已压缩上下文' : 'Compacted conversation')
 
-    const intentLabel = isRunning
+    const intentLabel = isRunning || isQueued
         ? [strategy, reason?.replaceAll('-', ' ')].filter(Boolean).join(' · ')
-        : [strategy, archiveLabel].filter(Boolean).join(' · ') || (reason && reason !== 'auto' ? reason.replaceAll('-', ' ') : '')
-
+        : ''
     const tokensBeforeLabel = tokensSaved !== null && tokensSaved > 0
         ? (zh ? `节省 ${formatCompactCount(tokensSaved)} tokens` : `saved ${formatCompactCount(tokensSaved)} tokens`)
         : tokensBefore !== null && tokensBefore > 0
@@ -853,6 +852,8 @@ export function describeTurnToolStep(
         return describeCompactionStep(row, zh, isRunning, isQueued)
     }
 
+    const activeIntent = isRunning || isQueued ? intentSentence(tool) : null
+
     if (isWebFetchTool(rawName, name)) {
         const url = stringField(tool.input, ['url', 'uri']) ?? ''
         const domain = url ? extractDomain(url) : ''
@@ -875,8 +876,8 @@ export function describeTurnToolStep(
             verbLabel: zh
                 ? (isRunning ? '正在抓取' : isQueued ? '待抓取' : '已抓取')
                 : (isRunning ? 'Fetching' : isQueued ? 'Queued fetch' : 'Fetched'),
-            intentLabel: pageTitle,
-            secondaryBadge: !isRunning && !isQueued && domain ? domain : null,
+            intentLabel: isRunning || isQueued ? pageTitle : (domain || url || ''),
+            secondaryBadge: null,
             preview: {
                 kind: 'web-fetch',
                 title: pageTitle,
@@ -890,7 +891,8 @@ export function describeTurnToolStep(
     }
 
     if (isWebSearchTool(rawName, name)) {
-        const query = stringField(tool.input, ['query', 'q']) ?? row.intent ?? ''
+        const query = stringField(tool.input, ['query', 'q']) ?? ''
+        const cleanQuery = query && query !== 'the web' ? query : ''
         const results = extractWebSearchResults(tool.result)
         const count = results.length
         return {
@@ -899,20 +901,20 @@ export function describeTurnToolStep(
             verbLabel: zh
                 ? (isRunning ? '正在搜索网页' : isQueued ? '待搜索网页' : '已搜索网页')
                 : (isRunning ? 'Searching the web' : isQueued ? 'Queued web search' : 'Searched the web'),
-            intentLabel: query && query !== 'the web' ? query : '',
+            intentLabel: isRunning || isQueued ? (activeIntent ?? (cleanQuery || row.intent)) : cleanQuery,
             secondaryBadge: !isRunning && !isQueued && count > 0
                 ? (zh ? `${count} 条结果` : `${count} ${count === 1 ? 'result' : 'results'}`)
                 : null,
             preview: {
                 kind: 'web-search',
-                query: query || '',
+                query: cleanQuery,
                 results,
             },
         }
     }
 
     if (name === 'Bash' || name === 'CodexBash') {
-        const command = stringField(tool.input, ['command', 'cmd']) ?? row.intent ?? ''
+        const command = stringField(tool.input, ['command', 'cmd']) ?? ''
         const description = intentSentence(tool)
         const output = extractResultText(tool.result)
         return {
@@ -921,7 +923,9 @@ export function describeTurnToolStep(
             verbLabel: zh
                 ? (isRunning ? '正在运行' : isQueued ? '待运行' : '已运行')
                 : (isRunning ? 'Running' : isQueued ? 'Queued' : 'Ran'),
-            intentLabel: description ?? (command || row.intent),
+            intentLabel: isRunning || isQueued
+                ? (description ?? (command ? firstLine(command) : row.intent))
+                : (command ? firstLine(command) : ''),
             secondaryBadge: null,
             preview: {
                 kind: 'bash',
@@ -934,7 +938,8 @@ export function describeTurnToolStep(
     }
 
     if (name === 'Read') {
-        const filePath = stringField(tool.input, ['file_path', 'path']) ?? row.intent ?? ''
+        const filePath = stringField(tool.input, ['file_path', 'path']) ?? ''
+        const targetLabel = filePath ? basename(filePath) : ''
         const content = extractResultText(tool.result)
         const lineCount = content ? content.split(/\r?\n/).length : 0
         return {
@@ -943,7 +948,7 @@ export function describeTurnToolStep(
             verbLabel: zh
                 ? (isRunning ? '正在查看' : isQueued ? '待查看' : '已查看')
                 : (isRunning ? 'Viewing' : isQueued ? 'Queued view' : 'Viewed'),
-            intentLabel: filePath ? basename(filePath) : row.intent,
+            intentLabel: isRunning || isQueued ? (activeIntent ?? (targetLabel || row.intent)) : targetLabel,
             secondaryBadge: !isRunning && !isQueued && lineCount > 0 ? (zh ? `${lineCount} 行` : `${lineCount} lines`) : null,
             preview: {
                 kind: 'file-read',
@@ -983,7 +988,9 @@ export function describeTurnToolStep(
                     : isQueued
                         ? (name === 'Write' ? 'Queued create' : 'Queued edit')
                         : (name === 'Write' ? 'Created' : 'Edited')),
-            intentLabel: filePath ? basename(filePath) : row.intent,
+            intentLabel: isRunning || isQueued
+                ? (activeIntent ?? (filePath ? basename(filePath) : row.intent))
+                : (filePath ? basename(filePath) : ''),
             secondaryBadge: badge,
             preview: {
                 kind: 'file-diff',
@@ -998,16 +1005,16 @@ export function describeTurnToolStep(
     if (name === 'Grep' || name === 'Glob') {
         const pattern = stringField(tool.input, ['pattern', 'query']) ?? ''
         const target = stringField(tool.input, ['path', 'include'])
-        const intent = pattern && target
+        const targetSummary = pattern && target
             ? (zh ? `在 ${basename(target)} 中搜索 ${pattern}` : `for ${pattern} in ${basename(target)}`)
-            : (row.intent || pattern)
+            : (pattern || (target ? basename(target) : ''))
         return {
             isRunning,
             isQueued,
             verbLabel: zh
                 ? (isRunning ? '正在搜索' : isQueued ? '待搜索' : '已搜索')
                 : (isRunning ? 'Searching' : isQueued ? 'Queued search' : 'Searched'),
-            intentLabel: intent,
+            intentLabel: isRunning || isQueued ? (activeIntent ?? (targetSummary || row.intent)) : targetSummary,
             secondaryBadge: null,
             preview: {
                 kind: 'default',
@@ -1023,7 +1030,7 @@ export function describeTurnToolStep(
             verbLabel: zh
                 ? (isRunning ? '正在运行代理' : isQueued ? '待运行代理' : '已运行代理')
                 : (isRunning ? 'Running agent' : isQueued ? 'Queued agent' : 'Ran agent'),
-            intentLabel: row.intent,
+            intentLabel: isRunning || isQueued ? row.intent : '',
             secondaryBadge: !isRunning && !isQueued ? (zh ? '完成' : 'Done') : null,
             preview: {
                 kind: 'default',
@@ -1043,7 +1050,7 @@ export function describeTurnToolStep(
             isRunning,
             isQueued,
             verbLabel: translateTurnVerbKey(verbKey, isRunning, isQueued, zh),
-            intentLabel: row.intent,
+            intentLabel: isRunning || isQueued || row.verb === 'turn.verb.addedTask' ? row.intent : '',
             secondaryBadge: null,
             preview: {
                 kind: 'default',
@@ -1057,7 +1064,7 @@ export function describeTurnToolStep(
             isRunning,
             isQueued,
             verbLabel: translateTurnVerbKey('turn.verb.reasoning', isRunning, isQueued, zh),
-            intentLabel: row.intent,
+            intentLabel: isRunning || isQueued ? row.intent : '',
             secondaryBadge: null,
             preview: {
                 kind: 'default',
@@ -1070,7 +1077,7 @@ export function describeTurnToolStep(
         isRunning,
         isQueued,
         verbLabel: translateTurnVerbKey(row.verb, isRunning, isQueued, zh),
-        intentLabel: row.intent,
+        intentLabel: isRunning || isQueued ? row.intent : '',
         secondaryBadge: null,
         preview: {
             kind: 'default',

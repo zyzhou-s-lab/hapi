@@ -372,7 +372,7 @@ export function TurnBlock() {
             initiallyOpen={streaming && !reasoningCollapsed}
             durationMs={turnDurationMs({
                 roundSummary: custom?.roundSummary,
-                invokedAt: custom?.invokedAt,
+                invokedAt: custom?.invokedAt ?? (streaming ? (ctx?.activeTurnStartedAt ?? createdAt) : undefined),
                 createdAt,
                 now,
                 streaming,

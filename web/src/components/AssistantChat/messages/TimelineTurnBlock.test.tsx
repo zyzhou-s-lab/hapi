@@ -111,20 +111,23 @@ describe('TimelineTurnBlock & summarizeTurnActivity', () => {
         const header = screen.getByTestId('turn-level0-header')
         expect(header).toHaveAttribute('aria-expanded', 'true')
         expect(header.textContent).toContain('Researching documentation...')
+        expect(header.textContent).toContain('5.0s')
         expect(screen.queryByTestId('turn-working-sparkle')).toBeNull()
         expect(screen.getByTestId('turn-level1-rail')).toBeInTheDocument()
 
+        expect(screen.queryByText('Check Library folder')).toBeNull()
+        expect(screen.queryByText('Desktop documentation')).toBeNull()
+        expect(screen.getByText('ls -la ~/Library')).toBeInTheDocument()
         expect(screen.getAllByText('docs.example.com').length).toBeGreaterThanOrEqual(1)
         expect(screen.getByText('2 results')).toBeInTheDocument()
 
-        fireEvent.click(screen.getByText('Check Library folder'))
+        fireEvent.click(screen.getByText('ls -la ~/Library'))
         expect(screen.getByTestId('turn-level2-bash')).toBeInTheDocument()
         expect(screen.getByText('total 16', { exact: false })).toBeInTheDocument()
-
-        fireEvent.click(screen.getAllByText('Desktop documentation')[0]!)
+        fireEvent.click(screen.getAllByText('docs.example.com')[0]!)
         expect(screen.getByTestId('turn-level2-webfetch')).toBeInTheDocument()
+        expect(screen.getByText('Desktop documentation')).toBeInTheDocument()
         expect(screen.getByText('10.0 KB · 240 lines')).toBeInTheDocument()
-
         rerender(
             <I18nProvider>
                 <TimelineTurnBlockView
@@ -706,5 +709,123 @@ describe('TimelineTurnBlock & summarizeTurnActivity', () => {
         } finally {
             vi.useRealTimers()
         }
+    })
+
+    it('displays tool intent only while running and hides intent once completed, while showing live elapsed duration on the header', () => {
+        const runningPartition = partitionTurn(
+            [
+                call(tool('r1', 'Read', {
+                    state: 'running',
+                    input: { file_path: '/repo/src/TimelineTurnBlock.tsx', i: 'Reading TimelineTurnBlock header logic' },
+                })),
+                call(tool('e1', 'Edit', {
+                    state: 'running',
+                    input: {
+                        file_path: '/repo/src/turnBlockModel.ts',
+                        old_string: 'const a = 1',
+                        new_string: 'const a = 2\nconst b = 3',
+                        i: 'Updating describeTurnToolStep intent visibility',
+                    },
+                })),
+                call(tool('g1', 'Grep', {
+                    state: 'running',
+                    input: { pattern: 'turn-level0-header', path: '/repo/src', i: 'Searching for header testid' },
+                })),
+                call(tool('td1', 'TodoWrite', {
+                    state: 'running',
+                    input: {
+                        todos: [{ id: '1', content: 'Update timeline intent', status: 'in_progress' }],
+                        i: 'Updating todo progress',
+                    },
+                })),
+                call(tool('ag1', 'Task', {
+                    state: 'running',
+                    description: 'Auditing timeline transitions',
+                    input: { prompt: 'Check timeline transitions' },
+                })),
+            ],
+            null
+        )
+
+        const { rerender } = render(
+            <I18nProvider>
+                <TimelineTurnBlockView
+                    partition={runningPartition}
+                    streaming={true}
+                    durationMs={12000}
+                    initiallyOpen={true}
+                />
+            </I18nProvider>
+        )
+
+        const header = screen.getByTestId('turn-level0-header')
+        expect(header.textContent).toContain('12.0s')
+        expect(screen.getByText('Reading TimelineTurnBlock header logic')).toBeInTheDocument()
+        expect(screen.getByText('Updating describeTurnToolStep intent visibility')).toBeInTheDocument()
+        expect(screen.getByText('Searching for header testid')).toBeInTheDocument()
+        expect(screen.getByText('Updating todo progress')).toBeInTheDocument()
+        expect(screen.getByText('Auditing timeline transitions')).toBeInTheDocument()
+
+        const completedPartition = partitionTurn(
+            [
+                call(tool('r1', 'Read', {
+                    state: 'completed',
+                    input: { file_path: '/repo/src/TimelineTurnBlock.tsx', i: 'Reading TimelineTurnBlock header logic' },
+                    result: 'line 1\nline 2\nline 3',
+                })),
+                call(tool('e1', 'Edit', {
+                    state: 'completed',
+                    input: {
+                        file_path: '/repo/src/turnBlockModel.ts',
+                        old_string: 'const a = 1',
+                        new_string: 'const a = 2\nconst b = 3',
+                        i: 'Updating describeTurnToolStep intent visibility',
+                    },
+                })),
+                call(tool('g1', 'Grep', {
+                    state: 'completed',
+                    input: { pattern: 'turn-level0-header', path: '/repo/src', i: 'Searching for header testid' },
+                    result: 'src/TimelineTurnBlock.tsx:1150',
+                })),
+                call(tool('td1', 'TodoWrite', {
+                    state: 'completed',
+                    input: {
+                        todos: [{ id: '1', content: 'Update timeline intent', status: 'in_progress' }],
+                        i: 'Updating todo progress',
+                    },
+                })),
+                call(tool('ag1', 'Task', {
+                    state: 'completed',
+                    description: 'Auditing timeline transitions',
+                    input: { prompt: 'Check timeline transitions' },
+                    result: 'All clear',
+                })),
+            ],
+            null
+        )
+
+        rerender(
+            <I18nProvider>
+                <TimelineTurnBlockView
+                    partition={completedPartition}
+                    streaming={true}
+                    durationMs={27000}
+                    initiallyOpen={true}
+                />
+            </I18nProvider>
+        )
+
+        expect(header.textContent).toContain('27.0s')
+        expect(screen.queryByText('Reading TimelineTurnBlock header logic')).toBeNull()
+        expect(screen.queryByText('Updating describeTurnToolStep intent visibility')).toBeNull()
+        expect(screen.queryByText('Searching for header testid')).toBeNull()
+        expect(screen.queryByText('Updating todo progress')).toBeNull()
+        expect(screen.queryByText('Auditing timeline transitions')).toBeNull()
+
+        expect(screen.getByText('TimelineTurnBlock.tsx')).toBeInTheDocument()
+        expect(screen.getByText('3 lines')).toBeInTheDocument()
+        expect(screen.getByText('turnBlockModel.ts')).toBeInTheDocument()
+        expect(screen.getByText('for turn-level0-header in src')).toBeInTheDocument()
+        expect(screen.getByText('Done')).toBeInTheDocument()
     })
 })

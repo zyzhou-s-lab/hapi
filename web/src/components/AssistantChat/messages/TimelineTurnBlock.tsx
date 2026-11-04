@@ -1183,7 +1183,7 @@ export function TimelineTurnBlockView(props: {
                             {headerText}
                         </span>
                         <SmallChevron open={open} className="opacity-75 group-hover:opacity-100" />
-                        {!props.streaming && props.durationMs != null && props.durationMs > 0 ? (
+                        {props.durationMs != null && props.durationMs > 0 ? (
                             <span className="ml-1 shrink-0 text-[11.5px] tabular-nums text-[var(--app-hint)]/75">
                                 {formatDuration(props.durationMs)}
                             </span>
