@@ -304,4 +304,67 @@ describe('TurnBlockView', () => {
         expect(screen.queryByRole('button', { name: 'Allow' })).toBeNull()
         expect(screen.queryByRole('button', { name: 'Deny' })).toBeNull()
     })
+
+    it('renders generated media outside the timeline rail instead of sandwiching it between pinned todo steps', () => {
+        const image = {
+            kind: 'generated-image' as const,
+            id: 'img-mid-turn',
+            localId: null,
+            createdAt: 1,
+            imageId: 'image-mid-1',
+            fileName: 'preview.png',
+            mimeType: 'image/png',
+        }
+        const partition = partitionTurn([
+            {
+                type: 'tool-call',
+                toolName: 'TodoWrite',
+                artifact: tool('todo-1', 'TodoWrite', {
+                    description: 'Adding implementation and verification tasks',
+                    input: { todos: [{ id: '1', content: 'Task 1', status: 'in_progress' }] },
+                }),
+            },
+            {
+                type: 'tool-call',
+                toolName: 'Bash',
+                artifact: tool('bash-1', 'Bash', { input: { command: 'bun test' } }),
+            },
+            { type: 'tool-call', toolName: 'GeneratedImage', artifact: image },
+            {
+                type: 'tool-call',
+                toolName: 'TodoWrite',
+                artifact: tool('todo-2', 'TodoWrite', {
+                    description: 'Completing ApplyStyle phase tasks',
+                    input: { todos: [{ id: '1', content: 'Task 1', status: 'completed' }] },
+                }),
+            },
+            { type: 'text', text: 'Final answer after image.' },
+        ], null)
+
+        renderBlock(
+            <TurnBlockView
+                variant="timeline"
+                partition={partition}
+                streaming={false}
+                durationMs={5000}
+                initiallyOpen={false}
+            />
+        )
+
+        const collapsedRail = screen.getByTestId('turn-collapsed-pinned-rail')
+        const deliverables = screen.getByTestId('turn-media-deliverables')
+        const imageNodeBefore = screen.getByText('image preview.png')
+
+        expect(deliverables).toContainElement(imageNodeBefore)
+        expect(collapsedRail).not.toContainElement(imageNodeBefore)
+        expect(screen.getByTestId('turn-level1-rail')).not.toContainElement(imageNodeBefore)
+        expect(
+            collapsedRail.compareDocumentPosition(deliverables) & Node.DOCUMENT_POSITION_FOLLOWING
+        ).toBeTruthy()
+
+        fireEvent.click(screen.getByTestId('turn-level0-header'))
+        const imageNodeAfter = screen.getByText('image preview.png')
+        expect(imageNodeAfter).toBe(imageNodeBefore)
+        expect(screen.getByTestId('turn-level1-rail')).not.toContainElement(imageNodeAfter)
+    })
 })

@@ -137,18 +137,15 @@ export function GeneratedImageCard(props: { block: GeneratedImageBlock }) {
     }, [ctx.api, ctx.sessionId, props.block.imageId, isImage, shouldFetch])
 
     return (
-        <div className="max-w-[92%] rounded-2xl border border-[var(--app-border)] bg-[var(--app-tool-card-bg)] p-3">
-            <div className="mb-2 min-w-0 truncate text-xs font-medium text-[var(--app-hint)]">
-                {mediaHeader}
-            </div>
+        <div className="inline-flex max-w-[92%] flex-col gap-1.5">
             {objectUrl ? (
                 isVideo ? (
-                    <div className="flex min-h-32 min-w-[12rem] items-center justify-center rounded-xl bg-[var(--app-subtle-bg)]">
+                    <div className="inline-flex min-h-32 min-w-[12rem] items-center justify-center overflow-hidden rounded-xl border border-[var(--app-border)] bg-[var(--app-subtle-bg)]/30 shadow-xs">
                         <video
                             src={objectUrl}
                             controls
                             playsInline
-                            className="max-h-[min(28rem,60vh)] max-w-full rounded-xl"
+                            className="max-h-[min(28rem,60vh)] max-w-full"
                         />
                     </div>
                 ) : isAudio ? (
@@ -168,19 +165,19 @@ export function GeneratedImageCard(props: { block: GeneratedImageBlock }) {
                         <span className="min-w-0 truncate">Download {props.block.fileName}</span>
                     </a>
                 ) : (
-                    <div className="flex min-h-32 min-w-[12rem] items-center justify-center rounded-xl bg-[var(--app-subtle-bg)]">
+                    <div className="inline-flex items-center justify-center overflow-hidden rounded-xl border border-[var(--app-border)] bg-[var(--app-subtle-bg)]/30 shadow-xs">
                         <ImagePreview
                             src={objectUrl}
                             fileName={props.block.fileName}
                             label={props.block.fileName}
-                            buttonClassName="block max-h-[min(28rem,60vh)] max-w-full cursor-zoom-in rounded-xl text-left"
-                            imageClassName="max-h-[min(28rem,60vh)] max-w-full rounded-xl object-contain"
+                            buttonClassName="block max-h-[min(28rem,60vh)] max-w-full cursor-zoom-in text-left"
+                            imageClassName="max-h-[min(28rem,60vh)] max-w-full object-contain"
                             imageStyle={imageStyle}
                         />
                     </div>
                 )
             ) : error ? (
-                <div className="text-sm text-[var(--app-hint)]">
+                <div className="rounded-xl border border-[var(--app-border)] bg-[var(--app-subtle-bg)]/40 px-3 py-2 text-sm text-[var(--app-hint)]">
                     {t('media.displayed.unavailable', { label: mediaLabel, error })}
                 </div>
             ) : !isImage && !loadMedia ? (
@@ -192,8 +189,11 @@ export function GeneratedImageCard(props: { block: GeneratedImageBlock }) {
                     {isVideo ? 'Load video' : isAudio ? 'Load audio' : 'Prepare download'}
                 </button>
             ) : (
-                <div className="h-48 w-72 max-w-full animate-pulse rounded-xl bg-[var(--app-subtle-bg)]" />
+                <div className="h-48 w-72 max-w-full animate-pulse rounded-xl border border-[var(--app-border)] bg-[var(--app-subtle-bg)]" />
             )}
+            <div className="min-w-0 truncate px-0.5 text-[11.5px] leading-snug text-[var(--app-hint)]">
+                {mediaHeader}
+            </div>
         </div>
     )
 }
