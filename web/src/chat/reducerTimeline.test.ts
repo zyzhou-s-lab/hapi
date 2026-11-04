@@ -1633,4 +1633,99 @@ describe('reduceTimeline', () => {
             retryFailure
         })
     })
+
+    it('completes tool blocks from terminal tool-call status and reconciles orphaned background tool updates', () => {
+        const messages: TracedMessage[] = [
+            {
+                id: 'wait-in-progress',
+                localId: null,
+                createdAt: 1_700_000_000_000,
+                role: 'agent',
+                content: [{
+                    type: 'tool-call',
+                    id: 'call-wait-1',
+                    name: 'wait',
+                    input: { i: 'Waiting for background job' },
+                    description: null,
+                    status: 'in_progress',
+                    uuid: 'wait-in-progress',
+                    parentUUID: null
+                }],
+                isSidechain: false
+            } as TracedMessage,
+            {
+                id: 'wait-empty-update',
+                localId: null,
+                createdAt: 1_700_000_000_500,
+                role: 'agent',
+                content: [{
+                    type: 'tool-call',
+                    id: 'call-wait-1',
+                    name: 'wait',
+                    input: {},
+                    description: null,
+                    status: 'in_progress',
+                    uuid: 'wait-empty-update',
+                    parentUUID: null
+                }],
+                isSidechain: false
+            } as TracedMessage,
+            {
+                id: 'orphan-bg-bash',
+                localId: null,
+                createdAt: 1_700_000_001_000,
+                role: 'agent',
+                content: [{
+                    type: 'tool-call',
+                    id: 'call-bg-bash',
+                    name: 'bash',
+                    input: { command: 'python run.py' },
+                    description: null,
+                    status: 'in_progress',
+                    uuid: 'orphan-bg-bash',
+                    parentUUID: null
+                }],
+                isSidechain: false
+            } as TracedMessage,
+            {
+                id: 'wait-completed-only',
+                localId: null,
+                createdAt: 1_700_000_002_000,
+                role: 'agent',
+                content: [{
+                    type: 'tool-call',
+                    id: 'call-wait-1',
+                    name: 'wait',
+                    input: {},
+                    description: null,
+                    status: 'completed',
+                    uuid: 'wait-completed-only',
+                    parentUUID: null
+                }],
+                isSidechain: false
+            } as TracedMessage,
+            {
+                id: 'agent-followup-reasoning',
+                localId: null,
+                createdAt: 1_700_000_003_000,
+                role: 'agent',
+                content: [{
+                    type: 'reasoning',
+                    text: 'Background python finished; proceeding to next step.',
+                    uuid: 'agent-followup-reasoning',
+                    parentUUID: null
+                }],
+                isSidechain: false
+            } as TracedMessage
+        ]
+
+        const { blocks, toolBlocksById } = reduceTimeline(messages, makeContext())
+        const waitBlock = toolBlocksById.get('call-wait-1')
+        const bashBlock = toolBlocksById.get('call-bg-bash')
+
+        expect(waitBlock?.tool.state).toBe('completed')
+        expect(waitBlock?.tool.input).toEqual({ i: 'Waiting for background job' })
+        expect(bashBlock?.tool.state).toBe('completed')
+        expect(blocks).toHaveLength(3)
+    })
 })

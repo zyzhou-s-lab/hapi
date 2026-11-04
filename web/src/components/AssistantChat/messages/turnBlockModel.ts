@@ -372,7 +372,8 @@ export function partitionTurn(
         return true
     })
     const tools = rows.filter((row): row is TurnToolRow => row.kind === 'tool')
-    const running = tools.find((row) => row.block.tool.state === 'running' || row.block.tool.state === 'pending')
+    const running = tools.find((row) => row.block.tool.state === 'pending')
+        ?? tools.findLast((row) => row.block.tool.state === 'running')
     const reasoning = rows.findLast((row): row is TurnReasoningRow => row.kind === 'reasoning')
     const lastIntent = tools.findLast((row) => shownTitle(row.intent) !== null)
     // Reasoning prose is a fallback: an opening thought ("I'm thinking through…") says

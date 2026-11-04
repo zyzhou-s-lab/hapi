@@ -72,6 +72,16 @@ export type ToolResultPermission = {
     decision?: 'approved' | 'approved_for_session' | 'denied' | 'abort'
 }
 
+export type ToolUseStatus =
+    | 'in_progress'
+    | 'completed'
+    | 'failed'
+    | 'cancelled'
+    | 'canceled'
+    | 'pending'
+    | 'running'
+    | 'error'
+
 export type ToolUse = {
     type: 'tool-call'
     id: string
@@ -81,6 +91,7 @@ export type ToolUse = {
     nativeTitle?: string | null
     nativeKind?: string | null
     progress?: unknown
+    status?: ToolUseStatus
     uuid: string
     parentUUID: string | null
 }

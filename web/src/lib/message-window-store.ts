@@ -58,6 +58,7 @@ type InternalState = MessageWindowState & {
     newestPositionSeq: number | null
     requiresLatestReset: boolean
     preferLatestOnActivation: boolean
+    hasExpandedHistory: boolean
     syncGeneration: number
     olderGeneration: number
 }
@@ -249,6 +250,7 @@ function createState(sessionId: string): InternalState {
         newestPositionSeq: null,
         requiresLatestReset: false,
         preferLatestOnActivation: false,
+        hasExpandedHistory: false,
         syncGeneration: 0,
         olderGeneration: 0
     }
@@ -426,6 +428,7 @@ function buildState(
         | 'newestPositionSeq'
         | 'requiresLatestReset'
         | 'preferLatestOnActivation'
+        | 'hasExpandedHistory'
         | 'syncGeneration'
         | 'olderGeneration'
         | 'historyVersion'
@@ -650,7 +653,8 @@ function mergeIntoWindow(
     }
     const mode = options.mode ?? (previous.viewMode === 'history' ? 'prepend' : 'append')
     const merged = mergeMessages(previous.messages, retainedIncoming)
-    const retainHistory = previous.viewMode === 'history' && options.regularLimit === undefined
+    const retainHistory = (previous.viewMode === 'history' || previous.hasExpandedHistory)
+        && options.regularLimit === undefined
     const historyFloor = Math.min(
         OLDER_LOAD_WINDOW_SIZE,
         Math.max(HISTORY_WINDOW_SIZE, merged.length)
@@ -665,7 +669,7 @@ function mergeIntoWindow(
         regularLimit,
         mode,
         previous.finalizedStreamIds,
-        mode === 'append' ? TURN_PAGE_SIZE : HISTORY_TURN_LIMIT,
+        retainHistory ? HISTORY_TURN_LIMIT : TURN_PAGE_SIZE,
         {
             agentRunLimit: options.agentRunLimit ?? (retainHistory ? historyLimit : undefined),
             reserveQueuedBudget: options.reserveQueuedBudget ?? !retainHistory,
@@ -752,6 +756,7 @@ function applyLatestResponse(
         newestPositionSeq: newest?.seq ?? null,
         tailRevision: previous.tailRevision + 1,
         requiresLatestReset: false,
+        hasExpandedHistory: options.replaceServerRows ? false : previous.hasExpandedHistory,
         isLoadingMore: options.replaceServerRows ? false : previous.isLoadingMore,
         olderGeneration: options.replaceServerRows
             ? previous.olderGeneration + 1
@@ -963,6 +968,7 @@ function enterTailMode(previous: InternalState): InternalState {
         messages: kept,
         hasMore: previous.hasMore || dropped.length > 0,
         viewMode: 'tail',
+        hasExpandedHistory: false,
         epoch: forceLatest ? null : previous.epoch,
         oldestPositionAt: oldest?.at ?? null,
         oldestPositionSeq: oldest?.seq ?? null,
@@ -1169,6 +1175,7 @@ export async function fetchOlderMessages(
                 oldestPositionSeq: oldestSeq,
                 isLoadingMore: false,
                 historyVersion,
+                hasExpandedHistory: true,
                 warning: null
             })
         }, true)
