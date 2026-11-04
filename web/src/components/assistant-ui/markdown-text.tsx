@@ -539,7 +539,7 @@ function Code(props: ComponentPropsWithoutRef<'code'>) {
                 <span
                     data-testid="inline-color-swatch"
                     aria-hidden="true"
-                    className="ml-1.5 inline-block h-[0.78em] w-[0.78em] shrink-0 rounded-[3px] border border-[color-mix(in_srgb,var(--app-fg)_22%,transparent)] align-[-0.06em]"
+                    className="ml-1.5 inline-block h-[1.15em] w-[1.15em] shrink-0 rounded-[4px] border border-[color-mix(in_srgb,var(--app-fg)_24%,transparent)] align-[-0.2em] shadow-2xs"
                     style={{ backgroundColor: swatchColor }}
                 />
             ) : null}
