@@ -29,6 +29,7 @@ export function registerSessionConfigHandlers(
         const parsed = z.object({
             fresh: z.boolean().optional(),
             check: z.string().min(1).max(200).optional(),
+            probe: z.boolean().optional(),
         }).safeParse(params ?? {})
         const request = parsed.success ? parsed.data : {}
         try {
@@ -43,6 +44,7 @@ export function registerSessionConfigHandlers(
                 promptLive: context.promptLive,
                 fresh: request.fresh,
                 check: request.check,
+                probe: request.probe,
             })
             return { success: true, ...config }
         } catch (error) {

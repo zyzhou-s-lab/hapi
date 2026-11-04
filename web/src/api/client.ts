@@ -486,10 +486,11 @@ export class ApiClient {
         return await this.request<GitCommandResponse>(`/api/sessions/${encodeURIComponent(sessionId)}/git-status`)
     }
 
-    async getSessionConfig(sessionId: string, options?: { fresh?: boolean; check?: string }): Promise<SessionConfigResponse> {
+    async getSessionConfig(sessionId: string, options?: { fresh?: boolean; check?: string; probe?: boolean }): Promise<SessionConfigResponse> {
         const params = new URLSearchParams()
         if (options?.fresh) params.set('fresh', '1')
         if (options?.check) params.set('check', options.check)
+        if (options?.probe === false) params.set('probe', '0')
         const query = params.toString()
         return await this.request<SessionConfigResponse>(`/api/sessions/${encodeURIComponent(sessionId)}/config${query ? `?${query}` : ''}`)
     }

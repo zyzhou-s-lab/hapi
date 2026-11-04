@@ -4116,7 +4116,7 @@ export class SyncEngine {
         return await this.rpcGateway.listSkills(sessionId, flavor)
     }
 
-    async listSessionConfig(sessionId: string, options?: { fresh?: boolean; check?: string }): Promise<{
+    async listSessionConfig(sessionId: string, options?: { fresh?: boolean; check?: string; probe?: boolean }): Promise<{
         success: boolean
         error?: string
         mcp?: unknown
