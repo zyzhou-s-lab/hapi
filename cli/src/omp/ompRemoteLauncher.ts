@@ -64,6 +64,7 @@ class OmpRemoteLauncher extends RemoteLauncherBase {
     private currentPrompt: PromptLifecycle | null = null;
     private heldInput: OmpQueuedInput | null = null;
     private nativeFollowUpOutstanding = false;
+    private pendingNativeFollowUp: OmpQueuedInput | null = null;
     private isStreaming = false;
     private nativeTurnGeneration = 0;
     private dispatching = false;
@@ -184,7 +185,7 @@ class OmpRemoteLauncher extends RemoteLauncherBase {
             onInkMessage: (message, type) => this.messageBuffer.addMessage(message, type),
             onUserMessageCommitted: (steering) => {
                 if (!steering && this.nativeFollowUpOutstanding) {
-                    this.nativeFollowUpOutstanding = false;
+                    this.completePendingNativeFollowUp();
                     this.signalChange();
                 }
             },
@@ -357,6 +358,7 @@ class OmpRemoteLauncher extends RemoteLauncherBase {
         this.removeQueueChangeListener = null;
         this.session.queue.requeueHeld();
         this.heldInput = null;
+        this.completePendingNativeFollowUp();
         this.clearCurrentPrompt();
         this.signalChange();
         await this.sessionReconciler?.drain();
@@ -478,6 +480,7 @@ class OmpRemoteLauncher extends RemoteLauncherBase {
                     if (wasBusy) {
                         queuedFollowUp = true;
                         this.nativeFollowUpOutstanding = true;
+                        this.pendingNativeFollowUp = input;
                         const response = await client.request({
                             type: 'prompt',
                             message,
@@ -485,7 +488,11 @@ class OmpRemoteLauncher extends RemoteLauncherBase {
                             streamingBehavior: 'followUp'
                         });
                         if (response?.agentInvoked === false) {
-                            this.nativeFollowUpOutstanding = false;
+                            queuedFollowUp = false;
+                            if (this.pendingNativeFollowUp?.id === input.id) {
+                                this.pendingNativeFollowUp = null;
+                                this.nativeFollowUpOutstanding = false;
+                            }
                         }
                     } else {
                         startedPrompt = true;
@@ -512,6 +519,7 @@ class OmpRemoteLauncher extends RemoteLauncherBase {
                     if (wasBusy) {
                         queuedFollowUp = true;
                         this.nativeFollowUpOutstanding = true;
+                        this.pendingNativeFollowUp = input;
                     } else {
                         startedPrompt = true;
                         this.beginPrompt(input.modeHash, 0);
@@ -521,7 +529,7 @@ class OmpRemoteLauncher extends RemoteLauncherBase {
                 case 'abort_and_prompt':
                     this.eventAdapter?.abortMessage();
                     startedPrompt = true;
-                    this.nativeFollowUpOutstanding = false;
+                    this.completePendingNativeFollowUp();
                     this.beginPrompt(input.modeHash, wasBusy ? 1 : 0);
                     await client.request({ type: 'abort_and_prompt', message, images: prepared.images });
                     break;
@@ -530,12 +538,15 @@ class OmpRemoteLauncher extends RemoteLauncherBase {
                     return exhaustive;
                 }
             }
-            this.session.queue.completeInvocation(input);
+            if (!queuedFollowUp) {
+                this.session.queue.completeInvocation(input);
+            }
         } catch (error) {
             if (startedPrompt) {
                 this.clearCurrentPrompt();
             }
-            if (queuedFollowUp) {
+            if (queuedFollowUp && this.pendingNativeFollowUp?.id === input.id) {
+                this.pendingNativeFollowUp = null;
                 this.nativeFollowUpOutstanding = false;
             }
             const detail = error instanceof Error ? error.message : String(error);
@@ -1058,6 +1069,15 @@ class OmpRemoteLauncher extends RemoteLauncherBase {
         this.currentPrompt = null;
         this.session.onThinkingChange(false);
         this.signalChange();
+    }
+
+    private completePendingNativeFollowUp(): void {
+        this.nativeFollowUpOutstanding = false;
+        const pending = this.pendingNativeFollowUp;
+        this.pendingNativeFollowUp = null;
+        if (pending) {
+            this.session.queue.completeInvocation(pending);
+        }
     }
 
     private reportInputFailure(detail: string): void {
