@@ -34,7 +34,7 @@ describe('MarkdownRenderer', () => {
             <I18nProvider>
                 <MarkdownRenderer
                     standalone
-                    content={'Colors: `#c9d0d8`, `#800020`, `rgb(96, 165, 250)`, `--app-md-quote-border: #800020`, issue `#1452`, cmd `npm test`.'}
+                    content={'Colors: `#c9d0d8`, `#800020`, `rgb(96, 165, 250)`, `--app-md-quote-border: #800020`, issue `#1452`, tag `#7371`, entries `#4780eece` `#b5d8598f` `#99a2deb2`, fn `color(node)`, cmd `npm test`.'}
                 />
             </I18nProvider>
         )
