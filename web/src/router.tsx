@@ -89,6 +89,7 @@ import { deleteShareTransfer, parseShareSearch } from '@/lib/shareTransfer'
 import UsersSettingsPage from '@/fork-features/multi-user/UsersSettingsPage'
 import UserSettingsPage from '@/fork-features/multi-user/UserSettingsPage'
 import AccountSettingsPage from '@/fork-features/multi-user/AccountSettingsPage'
+import { ClaudeDesktopAlignmentDemo } from '@/components/AssistantChat/messages/ClaudeDesktopAlignmentDemo'
 
 
 function BackIcon(props: { className?: string }) {
@@ -1378,6 +1379,12 @@ const workRoute = createRoute({
     },
 })
 
+const claudeDesktopDemoRoute = createRoute({
+    getParentRoute: () => rootRoute,
+    path: '/demo/claude-desktop',
+    component: ClaudeDesktopAlignmentDemo,
+})
+
 export const routeTree = rootRoute.addChildren([
     indexRoute,
     sessionsRoute.addChildren([
@@ -1412,6 +1419,7 @@ export const routeTree = rootRoute.addChildren([
     ]),
     shareRoute,
     workRoute,
+    claudeDesktopDemoRoute,
 ])
 
 type RouterHistory = Parameters<typeof createRouter>[0]['history']

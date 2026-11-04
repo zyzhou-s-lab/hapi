@@ -6,6 +6,7 @@ import { useOptionalHappyChatContext } from '@/components/AssistantChat/context'
 import { NotifySummaryText } from '@/components/AssistantChat/messages/NotifySummaryText'
 import { GeneratedFileCard, GeneratedImageCard } from '@/components/AssistantChat/messages/ToolMessage'
 import { partitionTurn, turnDurationMs, type TurnContentPart, type TurnPartition, type TurnRow, type TurnToolRow } from '@/components/AssistantChat/messages/turnBlockModel'
+import { ClaudeDesktopTurnBlockView, type ClaudeTranscriptViewMode } from '@/components/AssistantChat/messages/ClaudeDesktopTurnBlock'
 import { PermissionFooter } from '@/components/ToolCard/PermissionFooter'
 import { AskUserQuestionFooter } from '@/components/ToolCard/AskUserQuestionFooter'
 import { RequestUserInputFooter } from '@/components/ToolCard/RequestUserInputFooter'
@@ -221,6 +222,10 @@ export function TurnBlockView(props: {
     streaming: boolean
     durationMs: number | null
     initiallyOpen: boolean
+    variant?: 'classic' | 'claude'
+    activeTodoText?: string | null
+    viewMode?: ClaudeTranscriptViewMode
+    lang?: 'en' | 'zh-CN'
 }) {
     const { t } = useTranslation()
     const [open, setOpen] = useState(props.initiallyOpen)
@@ -231,6 +236,21 @@ export function TurnBlockView(props: {
         sawStream.current = props.streaming
     }, [props.streaming])
 
+
+    if (props.variant === 'claude') {
+        return (
+            <ClaudeDesktopTurnBlockView
+                partition={props.partition}
+                streaming={props.streaming}
+                durationMs={props.durationMs}
+                initiallyOpen={props.initiallyOpen}
+                activeTodoText={props.activeTodoText}
+                viewMode={props.viewMode}
+                lang={props.lang}
+                renderTrailingText={(text, isStreaming) => <TurnText text={text} streaming={isStreaming} />}
+            />
+        )
+    }
     const trailing = props.partition.rows.filter((row): row is Extract<TurnRow, { kind: 'text' }> => row.kind === 'text' && row.trailing)
     if (!props.partition.hasActivity) {
         if (trailing.length === 0) return null

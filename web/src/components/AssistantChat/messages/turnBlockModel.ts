@@ -411,3 +411,451 @@ export function turnDurationMs(input: {
     const elapsed = end - input.invokedAt
     return elapsed >= 0 ? elapsed : null
 }
+
+export type ClaudeTurnActionCounts = {
+    commands: number
+    reads: number
+    edits: number
+    searches: number
+    webSearches: number
+    webFetches: number
+    agents: number
+    thoughts: number
+}
+
+export type ClaudeWebSearchResultItem = {
+    title: string
+    url: string
+    domain: string
+    faviconUrl?: string
+}
+
+export type ClaudeDiffLine = {
+    type: 'ctx' | 'add' | 'del'
+    text: string
+}
+
+export type ClaudeStepPreview =
+    | {
+        kind: 'bash'
+        command: string
+        description: string | null
+        output: string
+        isError: boolean
+    }
+    | {
+        kind: 'web-fetch'
+        title: string
+        url: string
+        domain: string
+        excerpt: string
+        sizeLabel: string
+        linesCount: number
+    }
+    | {
+        kind: 'web-search'
+        query: string
+        results: ClaudeWebSearchResultItem[]
+    }
+    | {
+        kind: 'file-diff'
+        filePath: string
+        added: number
+        removed: number
+        lines: ClaudeDiffLine[]
+    }
+    | {
+        kind: 'file-read'
+        filePath: string
+        content: string
+        lineCount: number
+    }
+    | {
+        kind: 'default'
+        block: ToolCallBlock
+    }
+
+export type ClaudeToolStepDescriptor = {
+    isRunning: boolean
+    verbLabel: string
+    intentLabel: string
+    secondaryBadge: string | null
+    preview: ClaudeStepPreview
+}
+
+function extractDomain(rawUrl: string): string {
+    try {
+        const parsed = new URL(rawUrl)
+        return parsed.hostname.replace(/^www\./, '')
+    } catch {
+        return rawUrl.replace(/^https?:\/\/(www\.)?/, '').split('/')[0] ?? rawUrl
+    }
+}
+
+function extractResultText(result: unknown): string {
+    if (typeof result === 'string') return result
+    if (!isObject(result)) return ''
+    if (typeof result.stdout === 'string' && result.stdout.trim()) {
+        return typeof result.stderr === 'string' && result.stderr.trim()
+            ? `${result.stdout}\n${result.stderr}`
+            : result.stdout
+    }
+    if (typeof result.output === 'string') return result.output
+    if (typeof result.content === 'string') return result.content
+    if (typeof result.text === 'string') return result.text
+    if (Array.isArray(result.content)) {
+        const parts = result.content
+            .map((item) => (isObject(item) && typeof item.text === 'string' ? item.text : ''))
+            .filter((part) => part.length > 0)
+        if (parts.length > 0) return parts.join('\n')
+    }
+    return ''
+}
+
+function extractWebSearchResults(result: unknown): ClaudeWebSearchResultItem[] {
+    if (!isObject(result)) return []
+    const rawList = Array.isArray(result.results)
+        ? result.results
+        : Array.isArray(result.content)
+            ? result.content
+            : []
+    const items: ClaudeWebSearchResultItem[] = []
+    for (const entry of rawList) {
+        if (!isObject(entry)) continue
+        const url = typeof entry.url === 'string' ? entry.url : ''
+        const title = typeof entry.title === 'string' ? entry.title : url
+        if (!title && !url) continue
+        const domain = typeof entry.domain === 'string' && entry.domain
+            ? entry.domain
+            : url
+                ? extractDomain(url)
+                : ''
+        const faviconUrl = typeof entry.faviconUrl === 'string'
+            ? entry.faviconUrl
+            : typeof entry.favicon_url === 'string'
+                ? entry.favicon_url
+                : undefined
+        items.push({ title, url, domain, faviconUrl })
+    }
+    return items
+}
+
+function isWebFetchTool(rawName: string, resolvedName: string): boolean {
+    const lower = rawName.toLowerCase()
+    return resolvedName === 'WebFetch' || lower === 'webfetch' || lower === 'web_fetch' || lower.endsWith('__web_fetch')
+}
+
+function isWebSearchTool(rawName: string, resolvedName: string): boolean {
+    const lower = rawName.toLowerCase()
+    return resolvedName === 'WebSearch' || lower === 'websearch' || lower === 'web_search' || lower === 'web_search_fast' || lower.endsWith('__web_search')
+}
+
+export function countClaudeTurnActions(rows: readonly TurnRow[]): ClaudeTurnActionCounts {
+    const counts: ClaudeTurnActionCounts = {
+        commands: 0,
+        reads: 0,
+        edits: 0,
+        searches: 0,
+        webSearches: 0,
+        webFetches: 0,
+        agents: 0,
+        thoughts: 0,
+    }
+    for (const row of rows) {
+        if (row.kind === 'reasoning') {
+            counts.thoughts += 1
+            continue
+        }
+        if (row.kind !== 'tool') continue
+        const rawName = row.block.tool.name
+        const name = resolveToolViewName(rawName)
+        if (TODO_TOOL_NAMES[name] || TODO_TOOL_NAMES[rawName] || isAskUserQuestionToolName(rawName) || isRequestUserInputToolName(rawName)) {
+            continue
+        }
+        if (isWebFetchTool(rawName, name)) {
+            counts.webFetches += 1
+        } else if (isWebSearchTool(rawName, name)) {
+            counts.webSearches += 1
+        } else if (name === 'Bash' || name === 'CodexBash') {
+            counts.commands += 1
+        } else if (name === 'Read') {
+            counts.reads += 1
+        } else if (name === 'Edit' || name === 'MultiEdit' || name === 'Write') {
+            counts.edits += 1
+        } else if (name === 'Grep' || name === 'Glob') {
+            counts.searches += 1
+        } else if (isSubagentToolName(rawName)) {
+            counts.agents += 1
+        } else {
+            counts.commands += 1
+        }
+    }
+    return counts
+}
+
+function capitalizeFirst(text: string): string {
+    if (!text) return text
+    return text.charAt(0).toUpperCase() + text.slice(1)
+}
+
+export function formatClaudeAggregatedSummary(
+    counts: ClaudeTurnActionCounts,
+    lang: 'en' | 'zh-CN' = 'en'
+): string {
+    if (lang === 'zh-CN') {
+        const parts: string[] = []
+        if (counts.commands > 0) parts.push(`运行了 ${counts.commands} 个命令`)
+        if (counts.reads > 0) parts.push(`查看了 ${counts.reads} 个文件`)
+        if (counts.edits > 0) parts.push(`编辑了 ${counts.edits} 个文件`)
+        if (counts.searches > 0) parts.push(`搜索了 ${counts.searches} 次文件`)
+        if (counts.webFetches > 0) parts.push(`抓取了 ${counts.webFetches} 个页面`)
+        if (counts.webSearches > 0) parts.push(`搜索了 ${counts.webSearches} 次网页`)
+        if (counts.agents > 0) parts.push(`运行了 ${counts.agents} 个子代理`)
+        if (parts.length === 0) return counts.thoughts > 0 ? '已思考' : '已完成步骤'
+        if (parts.length === 1) return parts[0]!
+        return `${parts.slice(0, -1).join('，')}，并${parts[parts.length - 1]}`
+    }
+
+    const clauses: string[] = []
+    if (counts.commands > 0) {
+        clauses.push(counts.commands === 1 ? 'ran a command' : `ran ${counts.commands} commands`)
+    }
+    if (counts.reads > 0) {
+        clauses.push(counts.reads === 1 ? 'viewed a file' : `viewed ${counts.reads} files`)
+    }
+    if (counts.edits > 0) {
+        clauses.push(counts.edits === 1 ? 'edited a file' : `edited ${counts.edits} files`)
+    }
+    if (counts.searches > 0) {
+        clauses.push(counts.searches === 1 ? 'searched files' : `searched files ${counts.searches} times`)
+    }
+    if (counts.webFetches > 0) {
+        clauses.push(counts.webFetches === 1 ? 'fetched a page' : `fetched ${counts.webFetches} pages`)
+    }
+    if (counts.webSearches > 0) {
+        clauses.push(counts.webSearches === 1 ? 'searched the web' : `searched the web ${counts.webSearches} times`)
+    }
+    if (counts.agents > 0) {
+        clauses.push(counts.agents === 1 ? 'ran an agent' : `ran ${counts.agents} agents`)
+    }
+
+    if (clauses.length === 0) {
+        return counts.thoughts > 0 ? 'Thought' : 'Completed steps'
+    }
+    if (clauses.length === 1) {
+        return capitalizeFirst(clauses[0]!)
+    }
+    if (clauses.length === 2) {
+        return capitalizeFirst(`${clauses[0]} and ${clauses[1]}`)
+    }
+    return capitalizeFirst(`${clauses.slice(0, -1).join(', ')}, and ${clauses[clauses.length - 1]}`)
+}
+
+export function describeClaudeToolStep(
+    row: TurnToolRow,
+    lang: 'en' | 'zh-CN' = 'en'
+): ClaudeToolStepDescriptor {
+    const tool = row.block.tool
+    const rawName = tool.name
+    const name = resolveToolViewName(rawName)
+    const isRunning = tool.state === 'running' || tool.state === 'pending'
+    const zh = lang === 'zh-CN'
+
+    if (isWebFetchTool(rawName, name)) {
+        const url = stringField(tool.input, ['url', 'uri']) ?? ''
+        const domain = url ? extractDomain(url) : ''
+        const pageTitle = intentSentence(tool)
+            ?? (isObject(tool.result) && typeof tool.result.title === 'string' ? tool.result.title : null)
+            ?? (domain || url || 'page')
+        const text = extractResultText(tool.result)
+        const linesCount = isObject(tool.result) && typeof tool.result.lines === 'number'
+            ? tool.result.lines
+            : text
+                ? text.split(/\r?\n/).length
+                : 0
+        const bytes = isObject(tool.result) && typeof tool.result.bytes === 'number'
+            ? tool.result.bytes
+            : text.length
+        const sizeLabel = bytes >= 1024 ? `${(bytes / 1024).toFixed(1)} KB` : `${bytes} B`
+        return {
+            isRunning,
+            verbLabel: zh ? (isRunning ? '正在抓取' : '已抓取') : (isRunning ? 'Fetching' : 'Fetched'),
+            intentLabel: pageTitle,
+            secondaryBadge: !isRunning && domain ? domain : null,
+            preview: {
+                kind: 'web-fetch',
+                title: pageTitle,
+                url: url || 'https://code.claude.com/docs/en/desktop',
+                domain: domain || 'code.claude.com',
+                excerpt: text ? truncate(text, 360) : '',
+                sizeLabel,
+                linesCount,
+            },
+        }
+    }
+
+    if (isWebSearchTool(rawName, name)) {
+        const query = stringField(tool.input, ['query', 'q']) ?? row.intent ?? ''
+        const results = extractWebSearchResults(tool.result)
+        const count = results.length
+        return {
+            isRunning,
+            verbLabel: zh ? (isRunning ? '正在搜索网页' : '已搜索网页') : (isRunning ? 'Searching the web' : 'Searched the web'),
+            intentLabel: query && query !== 'the web' ? query : '',
+            secondaryBadge: !isRunning && count > 0
+                ? (zh ? `${count} 条结果` : `${count} ${count === 1 ? 'result' : 'results'}`)
+                : null,
+            preview: {
+                kind: 'web-search',
+                query: query || 'claude code desktop',
+                results,
+            },
+        }
+    }
+
+    if (name === 'Bash' || name === 'CodexBash') {
+        const command = stringField(tool.input, ['command', 'cmd']) ?? row.intent ?? ''
+        const description = intentSentence(tool)
+        const output = extractResultText(tool.result)
+        return {
+            isRunning,
+            verbLabel: zh ? (isRunning ? '正在运行' : '已运行') : (isRunning ? 'Running' : 'Ran'),
+            intentLabel: description ?? (command || row.intent),
+            secondaryBadge: null,
+            preview: {
+                kind: 'bash',
+                command: command || row.intent,
+                description,
+                output,
+                isError: row.error,
+            },
+        }
+    }
+
+    if (name === 'Read') {
+        const filePath = stringField(tool.input, ['file_path', 'path']) ?? row.intent ?? ''
+        const content = extractResultText(tool.result)
+        const lineCount = content ? content.split(/\r?\n/).length : 0
+        return {
+            isRunning,
+            verbLabel: zh ? (isRunning ? '正在查看' : '已查看') : (isRunning ? 'Viewing' : 'Viewed'),
+            intentLabel: filePath ? basename(filePath) : row.intent,
+            secondaryBadge: !isRunning && lineCount > 0 ? (zh ? `${lineCount} 行` : `${lineCount} lines`) : null,
+            preview: {
+                kind: 'file-read',
+                filePath: filePath || row.intent,
+                content,
+                lineCount,
+            },
+        }
+    }
+
+    if (name === 'Edit' || name === 'MultiEdit' || name === 'Write') {
+        const filePath = stringField(tool.input, ['file_path', 'path']) ?? row.intent ?? ''
+        const oldStr = stringField(tool.input, ['old_string', 'oldText']) ?? ''
+        const newStr = stringField(tool.input, ['new_string', 'newText', 'content']) ?? ''
+        const oldLines = oldStr ? oldStr.split(/\r?\n/) : []
+        const newLines = newStr ? newStr.split(/\r?\n/) : []
+        const lines: ClaudeDiffLine[] = [
+            ...oldLines.slice(0, 8).map((text): ClaudeDiffLine => ({ type: 'del', text })),
+            ...newLines.slice(0, 10).map((text): ClaudeDiffLine => ({ type: 'add', text })),
+        ]
+        const added = newLines.length
+        const removed = oldLines.length
+        const badge = !isRunning && (added > 0 || removed > 0)
+            ? `+${added}${removed > 0 ? ` -${removed}` : ''}`
+            : null
+        return {
+            isRunning,
+            verbLabel: zh
+                ? (isRunning ? (name === 'Write' ? '正在创建' : '正在编辑') : (name === 'Write' ? '已创建' : '已编辑'))
+                : (isRunning ? (name === 'Write' ? 'Creating' : 'Editing') : (name === 'Write' ? 'Created' : 'Edited')),
+            intentLabel: filePath ? basename(filePath) : row.intent,
+            secondaryBadge: badge,
+            preview: {
+                kind: 'file-diff',
+                filePath: filePath || row.intent,
+                added,
+                removed,
+                lines,
+            },
+        }
+    }
+
+    if (name === 'Grep' || name === 'Glob') {
+        const pattern = stringField(tool.input, ['pattern', 'query']) ?? ''
+        const target = stringField(tool.input, ['path', 'include'])
+        const intent = pattern && target
+            ? (zh ? `在 ${basename(target)} 中搜索 ${pattern}` : `for ${pattern} in ${basename(target)}`)
+            : (row.intent || pattern)
+        return {
+            isRunning,
+            verbLabel: zh ? (isRunning ? '正在搜索' : '已搜索') : (isRunning ? 'Searching' : 'Searched'),
+            intentLabel: intent,
+            secondaryBadge: null,
+            preview: {
+                kind: 'default',
+                block: row.block,
+            },
+        }
+    }
+
+    if (isSubagentToolName(rawName)) {
+        return {
+            isRunning,
+            verbLabel: zh ? (isRunning ? '正在运行代理' : '已运行代理') : (isRunning ? 'Running agent' : 'Ran agent'),
+            intentLabel: row.intent,
+            secondaryBadge: !isRunning ? (zh ? '完成' : 'Done') : null,
+            preview: {
+                kind: 'default',
+                block: row.block,
+            },
+        }
+    }
+
+    return {
+        isRunning,
+        verbLabel: isRunning ? `${row.verb}...` : row.verb,
+        intentLabel: row.intent,
+        secondaryBadge: null,
+        preview: {
+            kind: 'default',
+            block: row.block,
+        },
+    }
+}
+
+export function summarizeTurnForClaudeDesktop(
+    partition: TurnPartition,
+    options?: {
+        activeTodoText?: string | null
+        lang?: 'en' | 'zh-CN'
+    }
+): {
+    workingHeader: string
+    completedHeader: string
+    counts: ClaudeTurnActionCounts
+} {
+    const lang = options?.lang ?? 'en'
+    const counts = countClaudeTurnActions(partition.rows)
+    const completedHeader = formatClaudeAggregatedSummary(counts, lang)
+
+    const activeTodo = shownTitle(options?.activeTodoText)
+    const tools = partition.rows.filter((row): row is TurnToolRow => row.kind === 'tool')
+    const runningTool = tools.find((row) => row.block.tool.state === 'running' || row.block.tool.state === 'pending')
+    const runningStep = runningTool ? describeClaudeToolStep(runningTool, lang) : null
+    const runningPhrase = runningStep
+        ? `${runningStep.verbLabel}${runningStep.intentLabel ? ` ${runningStep.intentLabel}` : ''}...`
+        : null
+
+    const workingHeader = activeTodo
+        ? (activeTodo.endsWith('...') ? activeTodo : `${activeTodo}...`)
+        : runningPhrase
+            ?? (partition.title ? `${partition.title}...` : (lang === 'zh-CN' ? '正在思考...' : 'Thinking...'))
+
+    return {
+        workingHeader,
+        completedHeader,
+        counts,
+    }
+}

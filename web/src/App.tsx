@@ -416,6 +416,14 @@ function AppInner() {
     })
 
     // Loading auth source
+    if (pathname === '/demo/claude-desktop') {
+        return (
+            <div className="h-full min-h-0 flex flex-col overflow-y-auto">
+                <Outlet />
+            </div>
+        )
+    }
+
     if (isAuthSourceLoading) {
         return withPwaBanner(
             <div className="h-full flex items-center justify-center p-4">
