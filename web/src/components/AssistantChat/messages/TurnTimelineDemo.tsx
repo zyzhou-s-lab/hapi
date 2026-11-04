@@ -393,46 +393,32 @@ const INDICATOR_CANDIDATES: Array<{
     motionDesc: string
 }> = [
     {
-        id: 'pulse-orb',
-        code: 'A',
-        title: '方案 A · 呼吸光点 (Pulse Orb)',
-        subtitle: '实心圆核 + 同心柔光扩散环',
-        motionDesc: '极简克制，作为左侧垂直导轨向下的自然延伸锚点',
-    },
-    {
         id: 'equalizer-bars',
-        code: 'B',
-        title: '方案 B · 律动声波柱 (Equalizer Bars)',
-        subtitle: '3 根圆角竖向微柱错峰律动',
-        motionDesc: '具象表达持续流式输出与命令执行，节奏感强',
+        code: 'B1',
+        title: '方案 B1 · 4 柱宽舒声波 (4-Bar Wide)',
+        subtitle: '4 根 3px 圆角竖柱 · 3.5px 柱间距（总宽 22.5px）',
+        motionDesc: '比原 3 窄柱版加宽约 80%，4 相位错峰起伏，视觉重心饱满均衡',
     },
     {
-        id: 'orbit-ring',
-        code: 'C',
-        title: '方案 C · 双轨星环 (Orbit Ring)',
-        subtitle: '外圈缺口圆弧旋转 + 内核呼吸点',
-        motionDesc: '现代工程感（Linear 风格），比普通单圈转圈更细腻',
+        id: 'eq-5bars-spectrum',
+        code: 'B2',
+        title: '方案 B2 · 5 柱对称频谱 (5-Bar Spectrum)',
+        subtitle: '5 根 2.8px 圆角竖柱 · 3px 柱间距（总宽 26px）',
+        motionDesc: '由中心向两侧对称相位律动，形成横向展开的声谱带',
     },
     {
-        id: 'morph-diamond',
-        code: 'D',
-        title: '方案 D · 四芒星棱 (Morph Diamond)',
-        subtitle: '内凹四芒棱星旋转缩放呼吸',
-        motionDesc: '具备 AI 智能体辨识度，同时区别于八道杠米字星',
+        id: 'eq-3bars-bold',
+        code: 'B3',
+        title: '方案 B3 · 3 柱加粗宽距 (3-Bar Bold Wide)',
+        subtitle: '3 根 3.5px 加粗胶囊柱 · 4px 柱间距（总宽 18.5px）',
+        motionDesc: '保留 3 柱经典结构，加粗单柱并拉大间距，轮廓更醒目利落',
     },
     {
-        id: 'terminal-cursor',
-        code: 'E',
-        title: '方案 E · 终端流式光标 (Terminal Cursor)',
-        subtitle: '>_ 提示符 + 闪烁实心方块光标',
-        motionDesc: '开发者 CLI 原生风格，契合代码代理工具属性',
-    },
-    {
-        id: 'wave-dots',
-        code: 'F',
-        title: '方案 F · 三点波浪矩阵 (Wave Dots)',
-        subtitle: '3 颗水平微点按相位差依次跃动',
-        motionDesc: '经典对话流与工具流通用等待态，视觉干扰最低',
+        id: 'eq-6bars-ribbon',
+        code: 'B4',
+        title: '方案 B4 · 6 柱宽幅波带 (6-Bar Ribbon)',
+        subtitle: '6 根 2.5px 圆角竖柱 · 3px 柱间距（总宽 30px）',
+        motionDesc: '连续 6 相位行波从左向右推进，适合宽幅流式输出感',
     },
 ]
 
@@ -451,7 +437,7 @@ export function TurnTimelineDemo() {
     const [autoPlaying, setAutoPlaying] = useState(false)
     const [submittedAnswers, setSubmittedAnswers] = useState<Record<string, string> | null>(null)
     const [showSpecTable, setShowSpecTable] = useState(true)
-    const [indicatorVariant, setIndicatorVariant] = useState<TurnActivityIndicatorVariant>('pulse-orb')
+    const [indicatorVariant, setIndicatorVariant] = useState<TurnActivityIndicatorVariant>('equalizer-bars')
     const [indicatorColor, setIndicatorColor] = useState<string>('#da7756')
     useEffect(() => {
         if (!autoPlaying) return
@@ -673,7 +659,7 @@ export function TurnTimelineDemo() {
                         </div>
                     </div>
 
-                    <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2 lg:grid-cols-3">
+                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                         {INDICATOR_CANDIDATES.map((item) => {
                             const selected = indicatorVariant === item.id
                             return (
@@ -720,21 +706,19 @@ export function TurnTimelineDemo() {
 
                                     {/* Mini timeline rail context preview inside each card */}
                                     <div className="mt-3 rounded-lg border border-[var(--app-border)]/70 bg-[var(--app-bg)] px-3 py-2">
-                                        <div className="ml-1.5 border-l border-[var(--app-border)] pl-3 text-[11.5px] text-[var(--app-hint)] space-y-1">
-                                            <div className="flex items-center justify-between">
-                                                <span>已运行 3 条命令，正在修改 TurnBlock.tsx</span>
+                                        <div className="ml-2 border-l border-[var(--app-border)] pl-3.5 text-[11.5px] text-[var(--app-hint)] space-y-1">
+                                            <div>思考过程 &gt;</div>
+                                            <div className="flex items-center justify-between text-[var(--app-fg)]">
+                                                <span>已修改 TurnBlock.tsx</span>
                                                 <span className="font-mono text-[10.5px] text-emerald-600 dark:text-emerald-400">+4 -1</span>
                                             </div>
                                         </div>
-                                        <div className="mt-1.5 flex items-center gap-2 pl-0.5">
+                                        <div className="mt-1.5 flex items-center pl-0.5">
                                             <TurnActivityIndicator
                                                 variant={item.id}
                                                 color={indicatorColor}
                                                 size={16}
                                             />
-                                            <span className="text-[11px] text-[var(--app-hint)]">
-                                                正在执行下一步工具调用…
-                                            </span>
                                         </div>
                                     </div>
                                 </button>

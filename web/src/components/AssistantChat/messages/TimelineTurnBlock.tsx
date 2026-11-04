@@ -17,14 +17,16 @@ import { cn } from '@/lib/utils'
 export type TranscriptViewMode = 'normal' | 'thinking' | 'verbose'
 
 export type TurnActivityIndicatorVariant =
-    | 'pulse-orb'
     | 'equalizer-bars'
+    | 'eq-5bars-spectrum'
+    | 'eq-3bars-bold'
+    | 'eq-6bars-ribbon'
+    | 'pulse-orb'
     | 'orbit-ring'
     | 'morph-diamond'
     | 'terminal-cursor'
     | 'wave-dots'
     | 'sparkle'
-
 export type DockedTodoItem = {
     id: string
     content: string
@@ -93,10 +95,9 @@ export function TurnActivityIndicator(props: {
     size?: number
     className?: string
 }) {
-    const variant = props.variant ?? 'pulse-orb'
+    const variant = props.variant ?? 'equalizer-bars'
     const color = props.color ?? '#da7756'
     const size = props.size ?? 16
-
     if (variant === 'pulse-orb') {
         return (
             <span
@@ -120,14 +121,65 @@ export function TurnActivityIndicator(props: {
     if (variant === 'equalizer-bars') {
         return (
             <span
-                className={cn('inline-flex items-end justify-center gap-[2.5px] shrink-0', props.className)}
-                style={{ width: size, height: size - 2, color }}
+                className={cn('inline-flex items-end justify-center gap-[3.5px] shrink-0', props.className)}
+                style={{ height: size - 1, color }}
                 aria-hidden="true"
                 data-indicator-variant="equalizer-bars"
+            >
+                <span className="turn-eq-bar-1 w-[3px] h-full rounded-full" style={{ backgroundColor: color }} />
+                <span className="turn-eq-bar-2 w-[3px] h-full rounded-full" style={{ backgroundColor: color }} />
+                <span className="turn-eq-bar-3 w-[3px] h-full rounded-full" style={{ backgroundColor: color }} />
+                <span className="turn-eq-bar-4 w-[3px] h-full rounded-full" style={{ backgroundColor: color }} />
+            </span>
+        )
+    }
+
+    if (variant === 'eq-5bars-spectrum') {
+        return (
+            <span
+                className={cn('inline-flex items-end justify-center gap-[3px] shrink-0', props.className)}
+                style={{ height: size - 1, color }}
+                aria-hidden="true"
+                data-indicator-variant="eq-5bars-spectrum"
+            >
+                <span className="turn-eq-bar-3 w-[2.8px] h-full rounded-full" style={{ backgroundColor: color }} />
+                <span className="turn-eq-bar-2 w-[2.8px] h-full rounded-full" style={{ backgroundColor: color }} />
+                <span className="turn-eq-bar-1 w-[2.8px] h-full rounded-full" style={{ backgroundColor: color }} />
+                <span className="turn-eq-bar-2 w-[2.8px] h-full rounded-full" style={{ backgroundColor: color }} />
+                <span className="turn-eq-bar-4 w-[2.8px] h-full rounded-full" style={{ backgroundColor: color }} />
+            </span>
+        )
+    }
+
+    if (variant === 'eq-3bars-bold') {
+        return (
+            <span
+                className={cn('inline-flex items-end justify-center gap-[4px] shrink-0', props.className)}
+                style={{ height: size - 1, color }}
+                aria-hidden="true"
+                data-indicator-variant="eq-3bars-bold"
+            >
+                <span className="turn-eq-bar-1 w-[3.5px] h-full rounded-full" style={{ backgroundColor: color }} />
+                <span className="turn-eq-bar-2 w-[3.5px] h-full rounded-full" style={{ backgroundColor: color }} />
+                <span className="turn-eq-bar-3 w-[3.5px] h-full rounded-full" style={{ backgroundColor: color }} />
+            </span>
+        )
+    }
+
+    if (variant === 'eq-6bars-ribbon') {
+        return (
+            <span
+                className={cn('inline-flex items-end justify-center gap-[3px] shrink-0', props.className)}
+                style={{ height: size - 2, color }}
+                aria-hidden="true"
+                data-indicator-variant="eq-6bars-ribbon"
             >
                 <span className="turn-eq-bar-1 w-[2.5px] h-full rounded-full" style={{ backgroundColor: color }} />
                 <span className="turn-eq-bar-2 w-[2.5px] h-full rounded-full" style={{ backgroundColor: color }} />
                 <span className="turn-eq-bar-3 w-[2.5px] h-full rounded-full" style={{ backgroundColor: color }} />
+                <span className="turn-eq-bar-4 w-[2.5px] h-full rounded-full" style={{ backgroundColor: color }} />
+                <span className="turn-eq-bar-5 w-[2.5px] h-full rounded-full" style={{ backgroundColor: color }} />
+                <span className="turn-eq-bar-6 w-[2.5px] h-full rounded-full" style={{ backgroundColor: color }} />
             </span>
         )
     }
@@ -699,7 +751,7 @@ export function TimelineTurnBlockView(props: {
                     {props.streaming ? (
                         <div className="mt-2 flex items-center gap-2 pl-0.5" data-testid="turn-working-sparkle">
                             <TurnActivityIndicator
-                                variant={props.indicatorVariant ?? 'sparkle'}
+                                variant={props.indicatorVariant ?? 'equalizer-bars'}
                                 color={props.indicatorColor}
                                 size={16}
                             />

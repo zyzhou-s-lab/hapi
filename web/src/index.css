@@ -995,15 +995,27 @@ html[data-theme="oled"] .shiki span:not([data-line-number]) {
 
 .turn-eq-bar-1 {
     transform-origin: center bottom;
-    animation: turn-eq-bar 0.9s ease-in-out infinite;
+    animation: turn-eq-bar 0.88s ease-in-out 0s infinite;
 }
 .turn-eq-bar-2 {
     transform-origin: center bottom;
-    animation: turn-eq-bar 0.9s ease-in-out 0.2s infinite;
+    animation: turn-eq-bar 0.88s ease-in-out 0.16s infinite;
 }
 .turn-eq-bar-3 {
     transform-origin: center bottom;
-    animation: turn-eq-bar 0.9s ease-in-out 0.4s infinite;
+    animation: turn-eq-bar 0.88s ease-in-out 0.32s infinite;
+}
+.turn-eq-bar-4 {
+    transform-origin: center bottom;
+    animation: turn-eq-bar 0.88s ease-in-out 0.48s infinite;
+}
+.turn-eq-bar-5 {
+    transform-origin: center bottom;
+    animation: turn-eq-bar 0.88s ease-in-out 0.64s infinite;
+}
+.turn-eq-bar-6 {
+    transform-origin: center bottom;
+    animation: turn-eq-bar 0.88s ease-in-out 0.80s infinite;
 }
 
 .turn-diamond-icon {
