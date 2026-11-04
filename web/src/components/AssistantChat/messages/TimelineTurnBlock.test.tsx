@@ -307,4 +307,125 @@ describe('TimelineTurnBlock & summarizeTurnActivity', () => {
         expect(trailingContainer.className).not.toContain('whitespace-pre-wrap')
         expect(screen.getByTestId('custom-md')).toBeInTheDocument()
     })
+
+    it('keeps rail spinner active on a frontier Thinking row during post-Ran LLM gaps and fast completed tool arrivals, and translates todo verbs', () => {
+        vi.useFakeTimers()
+        try {
+            const bashRunning = partitionTurn(
+                [
+                    call(tool('b1', 'Bash', { state: 'running', input: { command: 'gh pr merge 28', description: 'Merging PR #28' } })),
+                ],
+                null
+            )
+            const { rerender } = render(
+                <I18nProvider>
+                    <TimelineTurnBlockView
+                        partition={bashRunning}
+                        streaming={true}
+                        durationMs={1000}
+                        initiallyOpen={true}
+                    />
+                </I18nProvider>
+            )
+
+            expect(screen.getByTestId('rail-step-spinner')).toHaveAttribute('data-active-row-index', '0')
+            expect(screen.queryByTestId('rail-frontier-row')).toBeNull()
+
+            // Bash finishes (Ran), LLM is now thinking before the next step arrives
+            const bashCompletedGap = partitionTurn(
+                [
+                    call(tool('b1', 'Bash', { state: 'completed', input: { command: 'gh pr merge 28', description: 'Merging PR #28' } })),
+                ],
+                null
+            )
+            rerender(
+                <I18nProvider>
+                    <TimelineTurnBlockView
+                        partition={bashCompletedGap}
+                        streaming={true}
+                        durationMs={2000}
+                        initiallyOpen={true}
+                    />
+                </I18nProvider>
+            )
+
+            expect(screen.getByTestId('rail-step-checkmark')).toBeInTheDocument()
+            expect(screen.getByTestId('rail-frontier-row')).toBeInTheDocument()
+            expect(screen.getByTestId('rail-step-spinner')).toHaveAttribute('data-active-row-index', '1')
+            expect(screen.getByTestId('rail-step-spinner')).toHaveAttribute('data-handoff-phase', 'completing-prev')
+
+            act(() => {
+                vi.advanceTimersByTime(1000)
+            })
+            expect(screen.queryByTestId('rail-step-checkmark')).toBeNull()
+            // Spinner remains mounted and spinning on the frontier row (index 1) during the post-Ran LLM wait
+            expect(screen.getByTestId('rail-step-spinner')).toHaveAttribute('data-active-row-index', '1')
+            expect(screen.getByTestId('rail-step-spinner')).toHaveAttribute('data-handoff-phase', 'sliding')
+
+            // Now a Thought + fast already-completed TodoWrite arrive in a single batch
+            const fastBatchArrived = partitionTurn(
+                [
+                    call(tool('b1', 'Bash', { state: 'completed', input: { command: 'gh pr merge 28', description: 'Merging PR #28' } })),
+                    { type: 'reasoning', text: 'Recording todo progress.' },
+                    call(tool('t1', 'TodoWrite', {
+                        state: 'completed',
+                        input: { i: 'Committing markdown fix', todos: [{ content: 'Deploy release', status: 'in_progress' }] },
+                    })),
+                ],
+                null
+            )
+            rerender(
+                <I18nProvider>
+                    <TimelineTurnBlockView
+                        partition={fastBatchArrived}
+                        streaming={true}
+                        durationMs={3000}
+                        initiallyOpen={true}
+                    />
+                </I18nProvider>
+            )
+
+            // TodoWrite translates cleanly (never raw 'turn.verb.todo') and plays fast-arrival completion morph
+            expect(screen.queryByText('turn.verb.todo')).toBeNull()
+            expect(screen.getByText('Updated todos')).toBeInTheDocument()
+            expect(screen.getByTestId('rail-step-checkmark')).toBeInTheDocument()
+            expect(screen.getByTestId('rail-step-spinner')).toHaveAttribute('data-active-row-index', '3')
+
+            act(() => {
+                vi.advanceTimersByTime(1000)
+            })
+            expect(screen.getByTestId('rail-step-spinner')).toHaveAttribute('data-active-row-index', '3')
+            expect(screen.getByTestId('rail-step-spinner')).toHaveAttribute('data-handoff-phase', 'sliding')
+
+            // Next running Bash replaces the frontier row at index 3 without a blank 820ms hold
+            const nextBashRunning = partitionTurn(
+                [
+                    call(tool('b1', 'Bash', { state: 'completed', input: { command: 'gh pr merge 28', description: 'Merging PR #28' } })),
+                    { type: 'reasoning', text: 'Recording todo progress.' },
+                    call(tool('t1', 'TodoWrite', {
+                        state: 'completed',
+                        input: { i: 'Committing markdown fix', todos: [{ content: 'Deploy release', status: 'in_progress' }] },
+                    })),
+                    call(tool('b2', 'Bash', { state: 'running', input: { command: 'git fetch origin', description: 'Fetching merged main branch' } })),
+                ],
+                null
+            )
+            rerender(
+                <I18nProvider>
+                    <TimelineTurnBlockView
+                        partition={nextBashRunning}
+                        streaming={true}
+                        durationMs={4000}
+                        initiallyOpen={true}
+                    />
+                </I18nProvider>
+            )
+
+            expect(screen.queryByTestId('rail-frontier-row')).toBeNull()
+            expect(screen.getByTestId('rail-step-spinner')).toHaveAttribute('data-active-row-index', '3')
+            expect(screen.getByTestId('rail-step-spinner')).toHaveAttribute('data-handoff-phase', 'sliding')
+        } finally {
+            vi.useRealTimers()
+        }
+    })
 })

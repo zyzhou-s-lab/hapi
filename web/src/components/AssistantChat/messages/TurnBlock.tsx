@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { TextMessagePartProvider, useAuiState } from '@assistant-ui/react'
 import { formatDuration } from '@/chat/presentation'
 import type { ToolCallBlock } from '@/chat/types'
@@ -319,7 +319,10 @@ export function TurnBlock() {
     const streaming = useAuiState((state) => state.message.status?.type === 'running')
     const createdAt = useAuiState((state) => state.message.createdAt.getTime())
     const custom = useAuiState((state) => state.message.metadata.custom as Partial<HappyChatMessageMetadata> | undefined)
-    const partition = partitionTurn(contentParts(content), ctx?.metadata ?? null)
+    const partition = useMemo(
+        () => partitionTurn(contentParts(content), ctx?.metadata ?? null),
+        [content, ctx?.metadata]
+    )
     const [now, setNow] = useState(() => Date.now())
 
     const activeTodoText = streaming

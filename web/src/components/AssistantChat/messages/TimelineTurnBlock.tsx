@@ -473,9 +473,10 @@ function StepInlinePreviewCard(props: { preview: TurnStepPreview }) {
     )
 }
 
-function RailStepCompletionMorphBadge(props: { isRunning: boolean; color?: string }) {
+function RailStepCompletionMorphBadge(props: { isRunning: boolean; forceMorph?: boolean; color?: string }) {
     const color = props.color ?? '#da7756'
     const wasRunning = useRef(props.isRunning)
+    const didForceMorph = useRef(false)
     const [showMorph, setShowMorph] = useState(false)
 
     useEffect(() => {
@@ -484,8 +485,9 @@ function RailStepCompletionMorphBadge(props: { isRunning: boolean; color?: strin
             setShowMorph(false)
             return undefined
         }
-        if (wasRunning.current && !props.isRunning) {
+        if ((wasRunning.current && !props.isRunning) || (props.forceMorph && !didForceMorph.current)) {
             wasRunning.current = false
+            didForceMorph.current = true
             setShowMorph(true)
             const timer = window.setTimeout(() => {
                 setShowMorph(false)
@@ -493,8 +495,7 @@ function RailStepCompletionMorphBadge(props: { isRunning: boolean; color?: strin
             return () => window.clearTimeout(timer)
         }
         return undefined
-    }, [props.isRunning])
-
+    }, [props.isRunning, props.forceMorph])
     if (!showMorph) return null
 
     return (
@@ -604,7 +605,6 @@ function TimelineThoughtRow(props: {
 
     return (
         <div data-hapi-share-exclude="true" className="relative py-0.5">
-            <RailStepCompletionMorphBadge isRunning={props.isActiveStreaming} color={props.accentColor} />
             <button
                 type="button"
                 aria-expanded={open}
@@ -636,6 +636,7 @@ function TimelineToolStepRow(props: {
     defaultExpanded: boolean
     lang: 'en' | 'zh-CN'
     accentColor?: string
+    forceMorph?: boolean
     suppressRunningShimmer?: boolean
 }) {
     const ctx = useOptionalHappyChatContext()
@@ -655,7 +656,11 @@ function TimelineToolStepRow(props: {
 
     return (
         <div data-hapi-share-exclude="true" className="relative py-0.5">
-            <RailStepCompletionMorphBadge isRunning={descriptor.isRunning} color={props.accentColor} />
+            <RailStepCompletionMorphBadge
+                isRunning={descriptor.isRunning}
+                forceMorph={props.forceMorph}
+                color={props.accentColor}
+            />
             <button
                 type="button"
                 aria-expanded={open}
@@ -819,101 +824,201 @@ export function TimelineTurnBlockView(props: {
         [props.partition, props.activeTodoText, lang]
     )
 
-    const trailing = props.partition.rows.filter(
-        (row): row is Extract<TurnRow, { kind: 'text' }> => row.kind === 'text' && row.trailing
+    const trailing = useMemo(
+        () => props.partition.rows.filter(
+            (row): row is Extract<TurnRow, { kind: 'text' }> => row.kind === 'text' && row.trailing
+        ),
+        [props.partition.rows]
     )
-    const stepRows = props.partition.rows.filter(
-        (row) => !(row.kind === 'text' && row.trailing)
+    const stepRows = useMemo(
+        () => props.partition.rows.filter(
+            (row) => !(row.kind === 'text' && row.trailing)
+        ),
+        [props.partition.rows]
     )
     const hasSteps = stepRows.some((row) => row.kind === 'reasoning' || row.kind === 'tool')
     const headerText = props.streaming ? summary.workingHeader : summary.completedHeader
     const accentColor = props.indicatorColor ?? '#da7756'
 
+    const hasRunningOrPendingTool = useMemo(
+        () => stepRows.some(
+            (row) => row.kind === 'tool' && (row.block.tool.state === 'running' || row.block.tool.state === 'pending' || row.permission)
+        ),
+        [stepRows]
+    )
+    const hasTrailingReasoningStep =
+        props.streaming && stepRows.length > 0 && stepRows[stepRows.length - 1]?.kind === 'reasoning'
+    const showFrontierSlot =
+        props.streaming
+        && hasSteps
+        && trailing.length === 0
+        && !hasRunningOrPendingTool
+        && !hasTrailingReasoningStep
+
     const activeRunningRowIndex = useMemo(() => {
         for (let i = 0; i < stepRows.length; i += 1) {
             const row = stepRows[i]!
-            if (row.kind === 'tool' && row.block.tool.state === 'running') {
+            if (row.kind === 'tool' && (row.block.tool.state === 'running' || (row.block.tool.state === 'pending' && row.permission))) {
                 return i
             }
         }
-        if (props.streaming && stepRows.length > 0) {
-            const lastIdx = stepRows.length - 1
-            if (stepRows[lastIdx]?.kind === 'reasoning') {
-                return lastIdx
-            }
+        if (hasTrailingReasoningStep) {
+            return stepRows.length - 1
+        }
+        if (showFrontierSlot) {
+            return stepRows.length
         }
         return -1
-    }, [stepRows, props.streaming])
+    }, [stepRows, hasTrailingReasoningStep, showFrontierSlot])
 
     const railRef = useRef<HTMLDivElement | null>(null)
     const rowElsRef = useRef<Array<HTMLDivElement | null>>([])
-    const prevActiveRowRef = useRef<number>(-1)
-    const prevOffsetYRef = useRef<number>(14)
+    const seenToolStatesRef = useRef<Map<string, boolean> | null>(null)
+    const latestActiveRowIndexRef = useRef<number>(activeRunningRowIndex)
+    latestActiveRowIndexRef.current = activeRunningRowIndex
     const holdingForPrevMorphRef = useRef<boolean>(false)
+    const handoffTimerRef = useRef<number | undefined>(undefined)
+    const fastMorphTimerRef = useRef<number | undefined>(undefined)
+    const [fastMorphRowKey, setFastMorphRowKey] = useState<string | null>(null)
     const [spinnerOffsetY, setSpinnerOffsetY] = useState<number>(14)
     const [targetOffsetY, setTargetOffsetY] = useState<number>(14)
     const [holdingForPrevMorph, setHoldingForPrevMorph] = useState<boolean>(false)
 
+    const measureRowY = (rowIndex: number) => {
+        const el = rowElsRef.current[rowIndex]
+        const measuredTop = el ? el.offsetTop : 0
+        return measuredTop > 0 || rowIndex === 0
+            ? measuredTop + 14
+            : rowIndex * 30 + 14
+    }
+
     useEffect(() => {
+        return () => {
+            if (handoffTimerRef.current !== undefined) window.clearTimeout(handoffTimerRef.current)
+            if (fastMorphTimerRef.current !== undefined) window.clearTimeout(fastMorphTimerRef.current)
+        }
+    }, [])
+
+    useEffect(() => {
+        const currentTools = new Map<string, { isRunning: boolean; isCompleted: boolean; rowIndex: number }>()
+        for (let i = 0; i < stepRows.length; i += 1) {
+            const row = stepRows[i]!
+            if (row.kind !== 'tool') continue
+            const isRunning = row.block.tool.state === 'running' || (row.block.tool.state === 'pending' && row.permission)
+            const isQueued = row.block.tool.state === 'pending' && !row.permission
+            currentTools.set(row.key, {
+                isRunning,
+                isCompleted: !isRunning && !isQueued,
+                rowIndex: i,
+            })
+        }
+
+        let transitionedMorphRowIndex = -1
+        let fastArrivedKey: string | null = null
+        let fastArrivedRowIndex = -1
+
+        if (seenToolStatesRef.current === null) {
+            const initialMap = new Map<string, boolean>()
+            for (const [key, info] of currentTools.entries()) {
+                initialMap.set(key, info.isRunning)
+            }
+            seenToolStatesRef.current = initialMap
+        } else {
+            for (const [key, info] of currentTools.entries()) {
+                const wasRunning = seenToolStatesRef.current.get(key) === true
+                if (wasRunning && !info.isRunning) {
+                    transitionedMorphRowIndex = info.rowIndex
+                }
+            }
+            if (transitionedMorphRowIndex < 0 && props.streaming) {
+                for (const [key, info] of currentTools.entries()) {
+                    if (!seenToolStatesRef.current.has(key) && info.isCompleted) {
+                        fastArrivedKey = key
+                        fastArrivedRowIndex = info.rowIndex
+                    }
+                }
+            }
+            const nextMap = new Map<string, boolean>()
+            for (const [key, info] of currentTools.entries()) {
+                nextMap.set(key, info.isRunning)
+            }
+            seenToolStatesRef.current = nextMap
+        }
+
+        if (fastArrivedKey !== null) {
+            if (fastMorphTimerRef.current !== undefined) window.clearTimeout(fastMorphTimerRef.current)
+            setFastMorphRowKey(fastArrivedKey)
+            fastMorphTimerRef.current = window.setTimeout(() => {
+                setFastMorphRowKey(null)
+                fastMorphTimerRef.current = undefined
+            }, 980)
+        }
+
         if (activeRunningRowIndex < 0) {
-            prevActiveRowRef.current = -1
+            if (handoffTimerRef.current !== undefined) {
+                window.clearTimeout(handoffTimerRef.current)
+                handoffTimerRef.current = undefined
+            }
             holdingForPrevMorphRef.current = false
             setHoldingForPrevMorph(false)
-            return undefined
+            return
         }
-        const measureRowY = (rowIndex: number) => {
-            const el = rowElsRef.current[rowIndex]
-            const measuredTop = el ? el.offsetTop : 0
-            return measuredTop > 0 || rowIndex === 0
-                ? measuredTop + 14
-                : rowIndex * 30 + 14
-        }
+
         const nextTargetY = measureRowY(activeRunningRowIndex)
         setTargetOffsetY(nextTargetY)
 
-        const prevRow = prevActiveRowRef.current
-        prevActiveRowRef.current = activeRunningRowIndex
+        const morphSourceIndex = transitionedMorphRowIndex >= 0
+            ? transitionedMorphRowIndex
+            : fastArrivedRowIndex
 
-        let handoffTimer: number | undefined
-        if (prevRow >= 0 && prevRow !== activeRunningRowIndex) {
-            const startY = measureRowY(prevRow)
+        if (morphSourceIndex >= 0 && morphSourceIndex !== activeRunningRowIndex) {
+            if (handoffTimerRef.current !== undefined) {
+                window.clearTimeout(handoffTimerRef.current)
+            }
+            const startY = measureRowY(morphSourceIndex)
             holdingForPrevMorphRef.current = true
             setSpinnerOffsetY(startY)
             setHoldingForPrevMorph(true)
-            handoffTimer = window.setTimeout(() => {
-                const latestTargetY = measureRowY(activeRunningRowIndex)
+            handoffTimerRef.current = window.setTimeout(() => {
+                handoffTimerRef.current = undefined
+                const currentIdx = latestActiveRowIndexRef.current
+                const latestTargetY = currentIdx >= 0 ? measureRowY(currentIdx) : nextTargetY
                 holdingForPrevMorphRef.current = false
                 setTargetOffsetY(latestTargetY)
                 setHoldingForPrevMorph(false)
                 setSpinnerOffsetY(latestTargetY)
-                prevOffsetYRef.current = latestTargetY
             }, 820)
-        } else {
-            holdingForPrevMorphRef.current = false
+        } else if (!holdingForPrevMorphRef.current) {
             setHoldingForPrevMorph(false)
             setSpinnerOffsetY(nextTargetY)
-            prevOffsetYRef.current = nextTargetY
         }
+    }, [stepRows, activeRunningRowIndex, props.streaming])
 
-        const railEl = railRef.current
-        if (!railEl || typeof ResizeObserver === 'undefined') {
-            return () => {
-                if (handoffTimer !== undefined) window.clearTimeout(handoffTimer)
+    useEffect(() => {
+        const currentIdx = latestActiveRowIndexRef.current
+        if (currentIdx >= 0) {
+            const updatedY = measureRowY(currentIdx)
+            setTargetOffsetY(updatedY)
+            if (!holdingForPrevMorphRef.current) {
+                setSpinnerOffsetY(updatedY)
             }
         }
+        const railEl = railRef.current
+        if (!railEl || typeof ResizeObserver === 'undefined') {
+            return undefined
+        }
         const observer = new ResizeObserver(() => {
-            const updatedY = measureRowY(activeRunningRowIndex)
+            const idx = latestActiveRowIndexRef.current
+            if (idx < 0) return
+            const updatedY = measureRowY(idx)
             setTargetOffsetY(updatedY)
             if (!holdingForPrevMorphRef.current) {
                 setSpinnerOffsetY(updatedY)
             }
         })
         observer.observe(railEl)
-        return () => {
-            if (handoffTimer !== undefined) window.clearTimeout(handoffTimer)
-            observer.disconnect()
-        }
-    }, [activeRunningRowIndex, stepRows.length, open])
+        return () => observer.disconnect()
+    }, [open, stepRows.length, showFrontierSlot])
     if (!props.partition.hasActivity) {
         if (trailing.length === 0) return null
         return (
@@ -1017,6 +1122,7 @@ export function TimelineTurnBlockView(props: {
                                                     defaultExpanded={viewMode === 'verbose'}
                                                     lang={lang}
                                                     accentColor={accentColor}
+                                                    forceMorph={row.key === fastMorphRowKey}
                                                     suppressRunningShimmer={holdingForPrevMorph && activeRunningRowIndex === idx}
                                                 />
                                             </div>
@@ -1066,6 +1172,31 @@ export function TimelineTurnBlockView(props: {
                                     }
                                     return null
                                 })}
+                                {showFrontierSlot ? (
+                                    <div
+                                        key="__turn_frontier__"
+                                        ref={(el) => {
+                                            rowElsRef.current[stepRows.length] = el
+                                        }}
+                                        data-rail-row-index={stepRows.length}
+                                        data-testid="rail-frontier-row"
+                                        data-hapi-share-exclude="true"
+                                        className="relative py-0.5"
+                                    >
+                                        <div className="flex w-full items-center gap-1.5 rounded-md px-1.5 py-1 text-left text-[13.5px] leading-5 text-[var(--app-hint)]">
+                                            <span
+                                                className={cn(
+                                                    'transition-opacity duration-200',
+                                                    holdingForPrevMorph && activeRunningRowIndex === stepRows.length
+                                                        ? 'text-[var(--app-hint)] opacity-45'
+                                                        : 'turn-text-shimmer font-medium'
+                                                )}
+                                            >
+                                                {lang === 'zh-CN' ? '正在思考...' : 'Thinking...'}
+                                            </span>
+                                        </div>
+                                    </div>
+                                ) : null}
                             </div>
                         </div>
                     </div>
