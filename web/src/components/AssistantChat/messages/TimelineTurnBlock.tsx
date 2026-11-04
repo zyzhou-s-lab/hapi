@@ -501,11 +501,17 @@ function TimelineThoughtRow(props: {
                 </span>
                 <SmallChevron open={open} className="opacity-70 group-hover:opacity-100" />
             </button>
-            {open ? (
-                <div className="ml-2 mt-1 mb-1.5 border-l border-[var(--app-border)]/70 pl-3 text-[13px] leading-relaxed text-[var(--app-hint)] whitespace-pre-wrap">
-                    {props.row.text}
+            <div
+                className="turn-collapsible-shell"
+                data-open={open ? 'true' : 'false'}
+                aria-hidden={!open}
+            >
+                <div className="turn-collapsible-body">
+                    <div className="ml-2 mt-1 mb-1.5 border-l border-[var(--app-border)]/70 pl-3 text-[13px] leading-relaxed text-[var(--app-hint)] whitespace-pre-wrap">
+                        {props.row.text}
+                    </div>
                 </div>
-            ) : null}
+            </div>
         </div>
     )
 }
@@ -595,21 +601,25 @@ function TimelineToolStepRow(props: {
                     )}
                 </div>
             ) : null}
-            {(open || (props.row.permission && !interactive)) ? (
-                <div>
-                    {open ? <StepInlinePreviewCard preview={descriptor.preview} /> : null}
-                    {props.row.permission && !interactive && ctx ? (
-                        <div className="mt-1.5 mb-2 pl-2">
-                            <PermissionFooter
-                                api={ctx.api}
-                                sessionId={ctx.sessionId}
-                                metadata={ctx.metadata}
-                                tool={props.row.block.tool}
-                                disabled={ctx.disabled}
-                                onDone={ctx.onRefresh}
-                            />
-                        </div>
-                    ) : null}
+            <div
+                className="turn-collapsible-shell"
+                data-open={open ? 'true' : 'false'}
+                aria-hidden={!open}
+            >
+                <div className="turn-collapsible-body">
+                    <StepInlinePreviewCard preview={descriptor.preview} />
+                </div>
+            </div>
+            {props.row.permission && !interactive && ctx ? (
+                <div className="mt-1.5 mb-2 pl-2">
+                    <PermissionFooter
+                        api={ctx.api}
+                        sessionId={ctx.sessionId}
+                        metadata={ctx.metadata}
+                        tool={props.row.block.tool}
+                        disabled={ctx.disabled}
+                        onDone={ctx.onRefresh}
+                    />
                 </div>
             ) : null}
         </div>
@@ -737,59 +747,68 @@ export function TimelineTurnBlockView(props: {
                     </button>
 
                     {/* Level 1: Left-indented vertical timeline rail */}
-                    {open ? (
-                        <div
-                            className="ml-2 mt-1 border-l border-[var(--app-border)] pl-3.5 space-y-0.5"
-                            data-testid="turn-level1-rail"
-                        >
-                            {stepRows.map((row, idx) => {
-                                const isLastStep = idx === stepRows.length - 1
-                                if (row.kind === 'reasoning') {
-                                    return (
-                                        <TimelineThoughtRow
-                                            key={row.key}
-                                            row={row}
-                                            isActiveStreaming={props.streaming && isLastStep}
-                                            defaultExpanded={viewMode === 'thinking' || viewMode === 'verbose'}
-                                            lang={lang}
-                                        />
-                                    )
-                                }
-                                if (row.kind === 'tool') {
-                                    return (
-                                        <TimelineToolStepRow
-                                            key={row.key}
-                                            row={row}
-                                            defaultExpanded={viewMode === 'verbose'}
-                                            lang={lang}
-                                        />
-                                    )
-                                }
-                                if (row.kind === 'text') {
-                                    return (
-                                        <div key={row.key} className="px-1.5 py-1 text-[13.5px] leading-relaxed text-[var(--app-fg)]">
-                                            {props.renderTrailingText ? props.renderTrailingText(row.text, false) : renderSimpleMarkdownText(row.text)}
-                                        </div>
-                                    )
-                                }
-                                if (row.kind === 'image') {
-                                    return (
-                                        <div key={row.key} className="py-1.5">
-                                            <GeneratedImageCard block={row.block} />
-                                        </div>
-                                    )
-                                }
-                                if (row.kind === 'file') {
-                                    return (
-                                        <div key={row.key} className="py-1.5">
-                                            <GeneratedFileCard block={row.block} />
-                                        </div>
-                                    )
-                                }
-                                return null
-                            })}
+                    <div
+                        className="turn-collapsible-shell"
+                        data-open={open ? 'true' : 'false'}
+                        aria-hidden={!open}
+                        data-testid="turn-level1-shell"
+                    >
+                        <div className="turn-collapsible-body">
+                            <div
+                                className="ml-2 mt-1 border-l border-[var(--app-border)] pl-3.5 space-y-0.5"
+                                data-testid="turn-level1-rail"
+                            >
+                                {stepRows.map((row, idx) => {
+                                    const isLastStep = idx === stepRows.length - 1
+                                    if (row.kind === 'reasoning') {
+                                        return (
+                                            <TimelineThoughtRow
+                                                key={row.key}
+                                                row={row}
+                                                isActiveStreaming={props.streaming && isLastStep}
+                                                defaultExpanded={viewMode === 'thinking' || viewMode === 'verbose'}
+                                                lang={lang}
+                                            />
+                                        )
+                                    }
+                                    if (row.kind === 'tool') {
+                                        return (
+                                            <TimelineToolStepRow
+                                                key={row.key}
+                                                row={row}
+                                                defaultExpanded={viewMode === 'verbose'}
+                                                lang={lang}
+                                            />
+                                        )
+                                    }
+                                    if (row.kind === 'text') {
+                                        return (
+                                            <div key={row.key} className="px-1.5 py-1 text-[13.5px] leading-relaxed text-[var(--app-fg)]">
+                                                {props.renderTrailingText ? props.renderTrailingText(row.text, false) : renderSimpleMarkdownText(row.text)}
+                                            </div>
+                                        )
+                                    }
+                                    if (row.kind === 'image') {
+                                        return (
+                                            <div key={row.key} className="py-1.5">
+                                                <GeneratedImageCard block={row.block} />
+                                            </div>
+                                        )
+                                    }
+                                    if (row.kind === 'file') {
+                                        return (
+                                            <div key={row.key} className="py-1.5">
+                                                <GeneratedFileCard block={row.block} />
+                                            </div>
+                                        )
+                                    }
+                                    return null
+                                })}
+                            </div>
                         </div>
-                    ) : (
+                    </div>
+
+                    {!open ? (
                         <>
                             {viewMode === 'thinking' ? (
                                 <div className="ml-2 mt-1 border-l border-[var(--app-border)] pl-3.5 space-y-1">
@@ -851,7 +870,7 @@ export function TimelineTurnBlockView(props: {
                                 return null
                             })}
                         </>
-                    )}
+                    ) : null}
 
                     {/* Active working indicator */}
                     {props.streaming ? (
@@ -953,45 +972,51 @@ export function DockedTodoProgressBar(props: {
                 <SmallChevron open={expanded} direction="up" className="text-[var(--app-hint)]" />
             </button>
 
-            {expanded ? (
-                <div className="border-t border-[var(--app-border)]/70 px-3.5 py-2.5 space-y-2">
-                    {props.todos.map((item, idx) => {
-                        const isDone = item.status === 'completed'
-                        const isRunning = item.status === 'in_progress'
-                        return (
-                            <div
-                                key={item.id}
-                                className="flex items-start gap-2.5 text-[13px] leading-5"
-                            >
-                                <span className="mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center">
-                                    {isDone ? (
-                                        <span className="inline-flex h-4 w-4 items-center justify-center rounded-full bg-emerald-500/20 text-[10px] font-bold text-emerald-600 dark:text-emerald-400">
-                                            ✓
-                                        </span>
-                                    ) : isRunning ? (
-                                        <span className="inline-block h-3.5 w-3.5 animate-spin rounded-full border-2 border-[#da7756] border-t-transparent" />
-                                    ) : (
-                                        <span className="inline-block h-3.5 w-3.5 rounded-full border border-[var(--app-hint)]/50" />
-                                    )}
-                                </span>
-                                <span className="shrink-0 tabular-nums text-[12px] text-[var(--app-hint)]">
-                                    {idx + 1}.
-                                </span>
-                                <span
-                                    className={cn(
-                                        'min-w-0 flex-1',
-                                        isDone && 'text-[var(--app-hint)] line-through decoration-[var(--app-hint)]/50',
-                                        isRunning && 'font-medium text-[var(--app-fg)]',
-                                        !isDone && !isRunning && 'text-[var(--app-hint)]'
-                                    )}
+            <div
+                className="turn-collapsible-shell"
+                data-open={expanded ? 'true' : 'false'}
+                aria-hidden={!expanded}
+            >
+                <div className="turn-collapsible-body">
+                    <div className="border-t border-[var(--app-border)]/70 px-3.5 py-2.5 space-y-2">
+                        {props.todos.map((item, idx) => {
+                            const isDone = item.status === 'completed'
+                            const isRunning = item.status === 'in_progress'
+                            return (
+                                <div
+                                    key={item.id}
+                                    className="flex items-start gap-2.5 text-[13px] leading-5"
                                 >
-                                    {isRunning && item.activeForm ? item.activeForm : item.content}
-                                </span>
-                            </div>
-                        )
-                    })}
+                                    <span className="mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center">
+                                        {isDone ? (
+                                            <span className="inline-flex h-4 w-4 items-center justify-center rounded-full bg-emerald-500/20 text-[10px] font-bold text-emerald-600 dark:text-emerald-400">
+                                                ✓
+                                            </span>
+                                        ) : isRunning ? (
+                                            <span className="inline-block h-3.5 w-3.5 animate-spin rounded-full border-2 border-[#da7756] border-t-transparent" />
+                                        ) : (
+                                            <span className="inline-block h-3.5 w-3.5 rounded-full border border-[var(--app-hint)]/50" />
+                                        )}
+                                    </span>
+                                    <span className="shrink-0 tabular-nums text-[12px] text-[var(--app-hint)]">
+                                        {idx + 1}.
+                                    </span>
+                                    <span
+                                        className={cn(
+                                            'min-w-0 flex-1',
+                                            isDone && 'text-[var(--app-hint)] line-through decoration-[var(--app-hint)]/50',
+                                            isRunning && 'font-medium text-[var(--app-fg)]',
+                                            !isDone && !isRunning && 'text-[var(--app-hint)]'
+                                        )}
+                                    >
+                                        {isRunning && item.activeForm ? item.activeForm : item.content}
+                                    </span>
+                                </div>
+                            )
+                        })}
+                    </div>
                 </div>
-            ) : null}
+            </div>
         </div>
     )
 }

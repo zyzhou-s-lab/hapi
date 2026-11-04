@@ -114,14 +114,14 @@ describe('TimelineTurnBlock & summarizeTurnActivity', () => {
         expect(screen.getByTestId('turn-working-sparkle')).toBeInTheDocument()
         expect(screen.getByTestId('turn-level1-rail')).toBeInTheDocument()
 
-        expect(screen.getByText('docs.example.com')).toBeInTheDocument()
+        expect(screen.getAllByText('docs.example.com').length).toBeGreaterThanOrEqual(1)
         expect(screen.getByText('2 results')).toBeInTheDocument()
 
         fireEvent.click(screen.getByText('Check Library folder'))
         expect(screen.getByTestId('turn-level2-bash')).toBeInTheDocument()
         expect(screen.getByText('total 16', { exact: false })).toBeInTheDocument()
 
-        fireEvent.click(screen.getByText('Desktop documentation'))
+        fireEvent.click(screen.getAllByText('Desktop documentation')[0]!)
         expect(screen.getByTestId('turn-level2-webfetch')).toBeInTheDocument()
         expect(screen.getByText('10.0 KB · 240 lines')).toBeInTheDocument()
 
@@ -139,7 +139,7 @@ describe('TimelineTurnBlock & summarizeTurnActivity', () => {
 
         expect(header).toHaveAttribute('aria-expanded', 'false')
         expect(header.textContent).toContain('Ran a command, fetched a page, and searched the web')
-        expect(screen.queryByTestId('turn-level1-rail')).toBeNull()
+        expect(screen.getByTestId('turn-level1-shell')).toHaveAttribute('data-open', 'false')
         expect(screen.getByTestId('turn-trailing-answer').textContent).toContain('Final alignment summary.')
     })
 
@@ -154,7 +154,7 @@ describe('TimelineTurnBlock & summarizeTurnActivity', () => {
         )
 
         expect(screen.getByText('1 of 2')).toBeInTheDocument()
-        expect(screen.getByText('Inspecting bundle')).toBeInTheDocument()
+        expect(screen.getAllByText('Inspecting bundle').length).toBeGreaterThanOrEqual(1)
 
         rerender(
             <DockedTodoProgressBar

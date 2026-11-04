@@ -1036,3 +1036,27 @@ html[data-theme="oled"] .shiki span:not([data-line-number]) {
     animation: turn-caret-blink 1s steps(1) infinite;
 }
 
+.turn-collapsible-shell {
+    display: grid;
+    grid-template-rows: 0fr;
+    opacity: 0;
+    transform: translateY(-3px);
+    pointer-events: none;
+    transition:
+        grid-template-rows 280ms cubic-bezier(0.22, 1, 0.36, 1),
+        opacity 220ms cubic-bezier(0.22, 1, 0.36, 1),
+        transform 260ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.turn-collapsible-shell[data-open="true"] {
+    grid-template-rows: 1fr;
+    opacity: 1;
+    transform: translateY(0);
+    pointer-events: auto;
+}
+
+.turn-collapsible-body {
+    min-height: 0;
+    overflow: hidden;
+}
+
