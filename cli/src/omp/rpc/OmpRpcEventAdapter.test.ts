@@ -1173,27 +1173,48 @@ describe('OmpRpcEventAdapter', () => {
             expect(harness.agentMessages.filter((message) => message.type === 'usage')).toHaveLength(1);
         });
 
-        it('tags fast final-only messages and preserves ordered blocks without exposing incomplete tools', () => {
+        it('tags fast final-only messages and streams toolCall blocks progressively without exposing nameless or idless placeholders', () => {
             const harness = createHarness(new Set(['message_end']));
-            const content: JsonObject[] = [
+            const liveContent: JsonObject[] = [
                 { type: 'text', text: 'before' },
                 { type: 'thinking', thinking: 'middle thought' },
-                { type: 'toolCall', id: 'tool-1', name: 'read', arguments: { path: 'file.ts' } },
+                { type: 'toolCall', id: 'tool-1', name: 'read', arguments: { i: 'Reading file' } },
+                { type: 'toolCall', id: '', name: 'read', arguments: {} },
                 { type: 'text', text: 'after' },
                 { type: 'thinking', thinking: 'last thought' }
             ];
-            const message = { ...assistantMessage(''), content };
-            harness.adapter.handle(rpcEvent({ type: 'message_start', message }));
-            update(harness.adapter, message);
+            const finalContent: JsonObject[] = [
+                liveContent[0],
+                liveContent[1],
+                { type: 'toolCall', id: 'tool-1', name: 'read', arguments: { i: 'Reading file', path: 'file.ts' } },
+                liveContent[4],
+                liveContent[5]
+            ];
+            const liveMessage = { ...assistantMessage(''), content: liveContent };
+            const finalMessage = { ...assistantMessage(''), content: finalContent };
+            harness.adapter.handle(rpcEvent({ type: 'message_start', message: liveMessage }));
+            update(harness.adapter, liveMessage);
             vi.advanceTimersByTime(75);
             expect(harness.canonicalMessages[0]).toMatchObject({
-                message: { content: [content[0], content[1], content[3], content[4]] }
+                live: true,
+                message: { content: [
+                    liveContent[0],
+                    liveContent[1],
+                    { type: 'tool_use', id: 'tool-1', name: 'read', input: { i: 'Reading file' } },
+                    liveContent[4],
+                    liveContent[5]
+                ] }
             });
-            harness.adapter.handle(rpcEvent({ type: 'message_end', message }));
+            expect(harness.diagnostics).toEqual([]);
+            harness.adapter.handle(rpcEvent({ type: 'message_end', message: finalMessage }));
             expect(harness.canonicalMessages[1]).toMatchObject({
-                message: { content: [content[0], content[1],
-                    { type: 'tool_use', id: 'tool-1', name: 'read', input: { path: 'file.ts' } },
-                    content[3], content[4]] }
+                message: { content: [
+                    liveContent[0],
+                    liveContent[1],
+                    { type: 'tool_use', id: 'tool-1', name: 'read', input: { i: 'Reading file', path: 'file.ts' } },
+                    liveContent[4],
+                    liveContent[5]
+                ] }
             });
             harness.adapter.handle(rpcEvent({ type: 'message_start', message: assistantMessage('second') }));
             update(harness.adapter, assistantMessage('second'));
