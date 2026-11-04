@@ -1071,26 +1071,95 @@ html[data-theme="oled"] .shiki span:not([data-line-number]) {
     overflow: hidden;
 }
 
-@keyframes turn-step-check-lifecycle {
-    0% {
-        transform: scale(0.65);
-        opacity: 0;
+@keyframes turn-step-ring-spin {
+    from {
+        transform: rotate(0deg);
     }
-    22% {
-        transform: scale(1.08);
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+@keyframes turn-step-ring-close-shrink {
+    0% {
+        stroke-dasharray: 24 38;
+        transform: rotate(0deg) scale(1);
         opacity: 1;
     }
-    72% {
-        transform: scale(1);
+    52% {
+        stroke-dasharray: 37 38;
+        transform: rotate(155deg) scale(1.04);
         opacity: 1;
     }
     100% {
-        transform: scale(0.75);
+        stroke-dasharray: 37 38;
+        transform: rotate(215deg) scale(0.15);
         opacity: 0;
     }
 }
 
+@keyframes turn-step-check-pop-hold {
+    0%,
+    16% {
+        transform: scale(0.2);
+        opacity: 0;
+    }
+    34% {
+        transform: scale(1.16);
+        opacity: 1;
+    }
+    45%,
+    100% {
+        transform: scale(1);
+        opacity: 1;
+    }
+}
+
+@keyframes turn-step-check-stroke-draw {
+    0%,
+    20% {
+        stroke-dashoffset: 12;
+    }
+    42%,
+    100% {
+        stroke-dashoffset: 0;
+    }
+}
+
+@keyframes turn-step-morph-overall-hide {
+    0%,
+    76% {
+        transform: scale(1);
+        opacity: 1;
+    }
+    100% {
+        transform: scale(0.5);
+        opacity: 0;
+    }
+}
+
+.turn-step-spinner-svg {
+    animation: turn-step-ring-spin 0.85s linear infinite;
+    transform-origin: center;
+}
+
+.turn-step-morph-container {
+    animation: turn-step-morph-overall-hide 1150ms cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+
+.turn-step-ring-closing {
+    animation: turn-step-ring-close-shrink 360ms cubic-bezier(0.22, 1, 0.36, 1) forwards;
+    transform-origin: center;
+}
+
 .turn-step-check-badge {
-    animation: turn-step-check-lifecycle 850ms cubic-bezier(0.22, 1, 0.36, 1) forwards;
+    animation: turn-step-check-pop-hold 1150ms cubic-bezier(0.22, 1, 0.36, 1) forwards;
+    transform-origin: center;
+}
+
+.turn-step-check-path {
+    stroke-dasharray: 12;
+    stroke-dashoffset: 12;
+    animation: turn-step-check-stroke-draw 1150ms cubic-bezier(0.22, 1, 0.36, 1) forwards;
 }
 

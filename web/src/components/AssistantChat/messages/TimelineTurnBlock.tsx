@@ -473,42 +473,109 @@ function StepInlinePreviewCard(props: { preview: TurnStepPreview }) {
     )
 }
 
-function RailStepExecutionBadge(props: { isRunning: boolean }) {
+function RailStepCompletionMorphBadge(props: { isRunning: boolean; color?: string }) {
+    const color = props.color ?? '#da7756'
     const wasRunning = useRef(props.isRunning)
-    const [showCheck, setShowCheck] = useState(false)
+    const [showMorph, setShowMorph] = useState(false)
 
     useEffect(() => {
         if (props.isRunning) {
             wasRunning.current = true
-            setShowCheck(false)
+            setShowMorph(false)
             return undefined
         }
         if (wasRunning.current && !props.isRunning) {
             wasRunning.current = false
-            setShowCheck(true)
+            setShowMorph(true)
             const timer = window.setTimeout(() => {
-                setShowCheck(false)
-            }, 850)
+                setShowMorph(false)
+            }, 1150)
             return () => window.clearTimeout(timer)
         }
         return undefined
     }, [props.isRunning])
 
-    if (!props.isRunning && !showCheck) return null
+    if (!showMorph) return null
 
     return (
         <span
-            className="pointer-events-none absolute -left-[21.5px] top-[14px] -translate-y-1/2 flex h-4 w-4 items-center justify-center rounded-full bg-[var(--app-bg)] ring-2 ring-[var(--app-bg)]"
-            data-testid={props.isRunning ? 'rail-step-spinner' : 'rail-step-checkmark'}
+            className="turn-step-morph-container pointer-events-none absolute -left-[22.5px] top-[14px] z-20 -translate-y-1/2 flex h-4 w-4 items-center justify-center rounded-full bg-[var(--app-bg)] ring-2 ring-[var(--app-bg)]"
+            data-testid="rail-step-checkmark"
+            data-indicator-color={color}
             aria-hidden="true"
+            style={{ color }}
         >
-            {props.isRunning ? (
-                <span className="inline-block h-3.5 w-3.5 animate-spin rounded-full border-[1.8px] border-[#da7756] border-t-transparent" />
-            ) : (
-                <span className="turn-step-check-badge inline-flex h-3.5 w-3.5 items-center justify-center rounded-full bg-emerald-500/20 text-[9.5px] font-bold text-emerald-600 dark:text-emerald-400">
-                    ✓
-                </span>
-            )}
+            {/* 1. Spinning ring closes its 360° loop and shrinks to center */}
+            <svg
+                viewBox="0 0 16 16"
+                className="turn-step-ring-closing absolute inset-0 h-4 w-4"
+                data-testid="rail-step-closing-ring"
+            >
+                <circle
+                    cx="8"
+                    cy="8"
+                    r="5.75"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="1.8"
+                    strokeLinecap="round"
+                />
+            </svg>
+            {/* 2. Same-colored checkmark badge pops out, holds, then disappears with container */}
+            <span
+                className="turn-step-check-badge relative inline-flex h-4 w-4 items-center justify-center rounded-full"
+                data-testid="rail-step-check-pop"
+                style={{
+                    backgroundColor: `color-mix(in srgb, ${color} 18%, transparent)`,
+                    boxShadow: `inset 0 0 0 1.25px color-mix(in srgb, ${color} 48%, transparent)`,
+                }}
+            >
+                <svg viewBox="0 0 16 16" className="h-3.5 w-3.5" fill="none">
+                    <path
+                        d="M4.6 8.2L7.0 10.5L11.4 5.7"
+                        stroke="currentColor"
+                        strokeWidth="1.85"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        className="turn-step-check-path"
+                    />
+                </svg>
+            </span>
+        </span>
+    )
+}
+
+function RailSlidingActiveSpinner(props: {
+    activeRowIndex: number
+    offsetY: number
+    color?: string
+}) {
+    const color = props.color ?? '#da7756'
+    return (
+        <span
+            className="pointer-events-none absolute -left-[8.5px] top-0 z-10 flex h-4 w-4 items-center justify-center rounded-full bg-[var(--app-bg)] ring-2 ring-[var(--app-bg)]"
+            data-testid="rail-step-spinner"
+            data-active-row-index={props.activeRowIndex}
+            data-indicator-color={color}
+            aria-hidden="true"
+            style={{
+                color,
+                transform: `translate3d(0, ${props.offsetY}px, 0) translateY(-50%)`,
+                transition: 'transform 380ms cubic-bezier(0.22, 1, 0.36, 1), opacity 200ms ease',
+            }}
+        >
+            <svg viewBox="0 0 16 16" className="turn-step-spinner-svg h-4 w-4">
+                <circle
+                    cx="8"
+                    cy="8"
+                    r="5.75"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="1.8"
+                    strokeDasharray="24 38"
+                    strokeLinecap="round"
+                />
+            </svg>
         </span>
     )
 }
@@ -518,6 +585,7 @@ function TimelineThoughtRow(props: {
     isActiveStreaming: boolean
     defaultExpanded: boolean
     lang: 'en' | 'zh-CN'
+    accentColor?: string
 }) {
     const [open, setOpen] = useState(props.defaultExpanded)
     useEffect(() => {
@@ -530,7 +598,7 @@ function TimelineThoughtRow(props: {
 
     return (
         <div data-hapi-share-exclude="true" className="relative py-0.5">
-            <RailStepExecutionBadge isRunning={props.isActiveStreaming} />
+            <RailStepCompletionMorphBadge isRunning={props.isActiveStreaming} color={props.accentColor} />
             <button
                 type="button"
                 aria-expanded={open}
@@ -561,6 +629,7 @@ function TimelineToolStepRow(props: {
     row: TurnToolRow
     defaultExpanded: boolean
     lang: 'en' | 'zh-CN'
+    accentColor?: string
 }) {
     const ctx = useOptionalHappyChatContext()
     const [open, setOpen] = useState(props.defaultExpanded)
@@ -579,7 +648,7 @@ function TimelineToolStepRow(props: {
 
     return (
         <div data-hapi-share-exclude="true" className="relative py-0.5">
-            <RailStepExecutionBadge isRunning={descriptor.isRunning} />
+            <RailStepCompletionMorphBadge isRunning={descriptor.isRunning} color={props.accentColor} />
             <button
                 type="button"
                 aria-expanded={open}
@@ -741,7 +810,47 @@ export function TimelineTurnBlockView(props: {
     )
     const hasSteps = stepRows.some((row) => row.kind === 'reasoning' || row.kind === 'tool')
     const headerText = props.streaming ? summary.workingHeader : summary.completedHeader
+    const accentColor = props.indicatorColor ?? '#da7756'
 
+    const activeRunningRowIndex = useMemo(() => {
+        for (let i = 0; i < stepRows.length; i += 1) {
+            const row = stepRows[i]!
+            if (row.kind === 'tool' && row.block.tool.state === 'running') {
+                return i
+            }
+        }
+        if (props.streaming && stepRows.length > 0) {
+            const lastIdx = stepRows.length - 1
+            if (stepRows[lastIdx]?.kind === 'reasoning') {
+                return lastIdx
+            }
+        }
+        return -1
+    }, [stepRows, props.streaming])
+
+    const railRef = useRef<HTMLDivElement | null>(null)
+    const rowElsRef = useRef<Array<HTMLDivElement | null>>([])
+    const [spinnerOffsetY, setSpinnerOffsetY] = useState<number>(14)
+
+    useEffect(() => {
+        if (activeRunningRowIndex < 0) return undefined
+        const updatePosition = () => {
+            const el = rowElsRef.current[activeRunningRowIndex]
+            const measuredTop = el ? el.offsetTop : 0
+            const nextOffsetY = measuredTop > 0 || activeRunningRowIndex === 0
+                ? measuredTop + 14
+                : activeRunningRowIndex * 30 + 14
+            setSpinnerOffsetY(nextOffsetY)
+        }
+        updatePosition()
+        const railEl = railRef.current
+        if (!railEl || typeof ResizeObserver === 'undefined') return undefined
+        const observer = new ResizeObserver(() => {
+            updatePosition()
+        })
+        observer.observe(railEl)
+        return () => observer.disconnect()
+    }, [activeRunningRowIndex, stepRows.length, open])
     if (!props.partition.hasActivity) {
         if (trailing.length === 0) return null
         return (
@@ -797,49 +906,94 @@ export function TimelineTurnBlockView(props: {
                     >
                         <div className="turn-collapsible-body">
                             <div
-                                className="ml-2 mt-1 border-l border-[var(--app-border)] pl-3.5 space-y-0.5"
+                                ref={railRef}
+                                className="relative ml-2.5 mt-1 border-l border-[var(--app-border)] pl-3.5 space-y-0.5"
                                 data-testid="turn-level1-rail"
                             >
+                                {activeRunningRowIndex >= 0 ? (
+                                    <RailSlidingActiveSpinner
+                                        activeRowIndex={activeRunningRowIndex}
+                                        offsetY={spinnerOffsetY}
+                                        color={accentColor}
+                                    />
+                                ) : null}
                                 {stepRows.map((row, idx) => {
                                     const isLastStep = idx === stepRows.length - 1
                                     if (row.kind === 'reasoning') {
                                         return (
-                                            <TimelineThoughtRow
+                                            <div
                                                 key={row.key}
-                                                row={row}
-                                                isActiveStreaming={props.streaming && isLastStep}
-                                                defaultExpanded={viewMode === 'thinking' || viewMode === 'verbose'}
-                                                lang={lang}
-                                            />
+                                                ref={(el) => {
+                                                    rowElsRef.current[idx] = el
+                                                }}
+                                                data-rail-row-index={idx}
+                                            >
+                                                <TimelineThoughtRow
+                                                    row={row}
+                                                    isActiveStreaming={props.streaming && isLastStep && activeRunningRowIndex === idx}
+                                                    defaultExpanded={viewMode === 'thinking' || viewMode === 'verbose'}
+                                                    lang={lang}
+                                                    accentColor={accentColor}
+                                                />
+                                            </div>
                                         )
                                     }
                                     if (row.kind === 'tool') {
                                         return (
-                                            <TimelineToolStepRow
+                                            <div
                                                 key={row.key}
-                                                row={row}
-                                                defaultExpanded={viewMode === 'verbose'}
-                                                lang={lang}
-                                            />
+                                                ref={(el) => {
+                                                    rowElsRef.current[idx] = el
+                                                }}
+                                                data-rail-row-index={idx}
+                                            >
+                                                <TimelineToolStepRow
+                                                    row={row}
+                                                    defaultExpanded={viewMode === 'verbose'}
+                                                    lang={lang}
+                                                    accentColor={accentColor}
+                                                />
+                                            </div>
                                         )
                                     }
                                     if (row.kind === 'text') {
                                         return (
-                                            <div key={row.key} className="px-1.5 py-1 text-[13.5px] leading-relaxed text-[var(--app-fg)]">
+                                            <div
+                                                key={row.key}
+                                                ref={(el) => {
+                                                    rowElsRef.current[idx] = el
+                                                }}
+                                                data-rail-row-index={idx}
+                                                className="px-1.5 py-1 text-[13.5px] leading-relaxed text-[var(--app-fg)]"
+                                            >
                                                 {props.renderTrailingText ? props.renderTrailingText(row.text, false) : renderSimpleMarkdownText(row.text)}
                                             </div>
                                         )
                                     }
                                     if (row.kind === 'image') {
                                         return (
-                                            <div key={row.key} className="py-1.5">
+                                            <div
+                                                key={row.key}
+                                                ref={(el) => {
+                                                    rowElsRef.current[idx] = el
+                                                }}
+                                                data-rail-row-index={idx}
+                                                className="py-1.5"
+                                            >
                                                 <GeneratedImageCard block={row.block} />
                                             </div>
                                         )
                                     }
                                     if (row.kind === 'file') {
                                         return (
-                                            <div key={row.key} className="py-1.5">
+                                            <div
+                                                key={row.key}
+                                                ref={(el) => {
+                                                    rowElsRef.current[idx] = el
+                                                }}
+                                                data-rail-row-index={idx}
+                                                className="py-1.5"
+                                            >
                                                 <GeneratedFileCard block={row.block} />
                                             </div>
                                         )

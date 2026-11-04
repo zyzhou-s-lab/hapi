@@ -231,7 +231,10 @@ describe('TimelineTurnBlock & summarizeTurnActivity', () => {
                 </I18nProvider>
             )
 
-            expect(screen.getByTestId('rail-step-spinner')).toBeInTheDocument()
+            const initialSpinner = screen.getByTestId('rail-step-spinner')
+            expect(initialSpinner).toHaveAttribute('data-active-row-index', '0')
+            expect(initialSpinner).toHaveAttribute('data-indicator-color', '#da7756')
+            expect(initialSpinner.getAttribute('style')).toContain('translate3d(0, 14px, 0)')
             expect(screen.queryByTestId('rail-step-checkmark')).toBeNull()
 
             const step1DoneStep2Running = partitionTurn(
@@ -253,11 +256,19 @@ describe('TimelineTurnBlock & summarizeTurnActivity', () => {
                 </I18nProvider>
             )
 
-            expect(screen.getByTestId('rail-step-checkmark')).toBeInTheDocument()
-            expect(screen.getByTestId('rail-step-spinner')).toBeInTheDocument()
+            const checkmarkMorph = screen.getByTestId('rail-step-checkmark')
+            expect(checkmarkMorph).toBeInTheDocument()
+            expect(checkmarkMorph).toHaveAttribute('data-indicator-color', '#da7756')
+            expect(screen.getByTestId('rail-step-closing-ring')).toBeInTheDocument()
+            expect(screen.getByTestId('rail-step-check-pop')).toBeInTheDocument()
+
+            const movedSpinner = screen.getByTestId('rail-step-spinner')
+            expect(movedSpinner).toHaveAttribute('data-active-row-index', '1')
+            expect(movedSpinner).toHaveAttribute('data-indicator-color', '#da7756')
+            expect(movedSpinner.getAttribute('style')).toContain('translate3d(0, 44px, 0)')
 
             act(() => {
-                vi.advanceTimersByTime(900)
+                vi.advanceTimersByTime(1200)
             })
             expect(screen.queryByTestId('rail-step-checkmark')).toBeNull()
             expect(screen.getByTestId('rail-step-spinner')).toBeInTheDocument()

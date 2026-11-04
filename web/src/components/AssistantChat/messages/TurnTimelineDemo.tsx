@@ -521,13 +521,13 @@ export function TurnTimelineDemo() {
     const [showSpecTable, setShowSpecTable] = useState(true)
     const [indicatorVariant, setIndicatorVariant] = useState<TurnActivityIndicatorVariant>('equalizer-bars')
     const [indicatorColor, setIndicatorColor] = useState<string>('#da7756')
-    const [activeToolIdx, setActiveToolIdx] = useState<number>(6)
+    const [activeToolIdx, setActiveToolIdx] = useState<number>(0)
 
     useEffect(() => {
         if (stage !== 'working-step-3') return
         const timer = window.setInterval(() => {
-            setActiveToolIdx((prev) => (prev + 1) % 7)
-        }, 1600)
+            setActiveToolIdx((prev) => (prev + 1) % 8)
+        }, 1800)
         return () => window.clearInterval(timer)
     }, [stage])
 
