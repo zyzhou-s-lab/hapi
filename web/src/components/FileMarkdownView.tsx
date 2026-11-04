@@ -6,7 +6,7 @@ import remarkLatexBracketMath from '@/lib/remark-latex-bracket-math'
 import rehypeKatex from 'rehype-katex'
 import { MermaidDiagram } from '@/components/assistant-ui/mermaid-diagram'
 import { SyntaxHighlighter } from '@/components/assistant-ui/shiki-highlighter'
-import { denyOnlyTransform } from '@/components/assistant-ui/markdown-text'
+import { denyOnlyTransform, extractInlineCodeColor } from '@/components/assistant-ui/markdown-text'
 import { cn } from '@/lib/utils'
 
 // Standalone markdown renderer for the file viewer (issue #3).
@@ -59,9 +59,19 @@ function CodeBlock(props: ComponentPropsWithoutRef<'code'>) {
         return <SyntaxHighlighter code={text} language={language ?? 'text'} components={HIGHLIGHTER_COMPONENTS} />
     }
 
+    const swatchColor = extractInlineCodeColor(text)
+
     return (
         <code className="aui-md-code break-words rounded-md border border-[var(--app-inline-code-border)] bg-[var(--app-inline-code-bg)] px-[0.38em] py-[0.14em] font-mono text-[var(--app-inline-code-fg)]">
             {children}
+            {swatchColor ? (
+                <span
+                    data-testid="inline-color-swatch"
+                    aria-hidden="true"
+                    className="ml-1.5 inline-block h-[0.78em] w-[0.78em] shrink-0 rounded-[3px] border border-[color-mix(in_srgb,var(--app-fg)_22%,transparent)] align-[-0.06em]"
+                    style={{ backgroundColor: swatchColor }}
+                />
+            ) : null}
         </code>
     )
 }

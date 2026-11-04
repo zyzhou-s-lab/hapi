@@ -484,6 +484,34 @@ function Pre(props: ComponentPropsWithoutRef<'pre'>) {
     )
 }
 
+const HEX_COLOR_LITERAL_RE = /^#(?:[0-9a-fA-F]{6}(?:[0-9a-fA-F]{2})?|(\d)\1{2,3}|(?=[0-9a-fA-F]*[a-fA-F])[0-9a-fA-F]{3,4})$/
+const CSS_FN_COLOR_LITERAL_RE = /^(?:rgba?|hsla?|oklch|oklab|lch|lab|hwb|color)\(\s*[^()]+\s*\)$/i
+
+
+function extractCodeText(children: ReactNode): string {
+    if (children == null || typeof children === 'boolean') return ''
+    if (typeof children === 'string') return children
+    if (typeof children === 'number') return String(children)
+    if (Array.isArray(children)) return children.map(extractCodeText).join('')
+    return ''
+}
+
+export function extractInlineCodeColor(rawText: string): string | null {
+    const trimmed = rawText.trim()
+    if (!trimmed || trimmed.includes('\n')) return null
+    if (HEX_COLOR_LITERAL_RE.test(trimmed) || CSS_FN_COLOR_LITERAL_RE.test(trimmed)) {
+        return trimmed
+    }
+    const colonIdx = trimmed.indexOf(':')
+    if (colonIdx > 0) {
+        const rhs = trimmed.slice(colonIdx + 1).replace(/;+\s*$/, '').trim()
+        if (rhs && (HEX_COLOR_LITERAL_RE.test(rhs) || CSS_FN_COLOR_LITERAL_RE.test(rhs))) {
+            return rhs
+        }
+    }
+    return null
+}
+
 function Code(props: ComponentPropsWithoutRef<'code'>) {
     const isCodeBlock = useIsMarkdownCodeBlock()
 
@@ -496,6 +524,8 @@ function Code(props: ComponentPropsWithoutRef<'code'>) {
         )
     }
 
+    const swatchColor = extractInlineCodeColor(extractCodeText(props.children))
+
     return (
         <code
             {...props}
@@ -503,7 +533,17 @@ function Code(props: ComponentPropsWithoutRef<'code'>) {
                 'aui-md-code break-words rounded-md border border-[var(--app-inline-code-border)] bg-[var(--app-inline-code-bg)] px-[0.38em] py-[0.14em] font-mono text-[var(--app-inline-code-fg)]',
                 props.className
             )}
-        />
+        >
+            {props.children}
+            {swatchColor ? (
+                <span
+                    data-testid="inline-color-swatch"
+                    aria-hidden="true"
+                    className="ml-1.5 inline-block h-[0.78em] w-[0.78em] shrink-0 rounded-[3px] border border-[color-mix(in_srgb,var(--app-fg)_22%,transparent)] align-[-0.06em]"
+                    style={{ backgroundColor: swatchColor }}
+                />
+            ) : null}
+        </code>
     )
 }
 
