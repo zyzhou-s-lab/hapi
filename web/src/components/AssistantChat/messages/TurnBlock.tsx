@@ -6,6 +6,7 @@ import { useOptionalHappyChatContext } from '@/components/AssistantChat/context'
 import { NotifySummaryText } from '@/components/AssistantChat/messages/NotifySummaryText'
 import { GeneratedFileCard, GeneratedImageCard } from '@/components/AssistantChat/messages/ToolMessage'
 import { partitionTurn, turnDurationMs, type TurnContentPart, type TurnPartition, type TurnRow, type TurnToolRow } from '@/components/AssistantChat/messages/turnBlockModel'
+import { TimelineTurnBlockView, type TranscriptViewMode } from '@/components/AssistantChat/messages/TimelineTurnBlock'
 import { PermissionFooter } from '@/components/ToolCard/PermissionFooter'
 import { AskUserQuestionFooter } from '@/components/ToolCard/AskUserQuestionFooter'
 import { RequestUserInputFooter } from '@/components/ToolCard/RequestUserInputFooter'
@@ -221,6 +222,10 @@ export function TurnBlockView(props: {
     streaming: boolean
     durationMs: number | null
     initiallyOpen: boolean
+    variant?: 'classic' | 'timeline'
+    activeTodoText?: string | null
+    viewMode?: TranscriptViewMode
+    lang?: 'en' | 'zh-CN'
 }) {
     const { t } = useTranslation()
     const [open, setOpen] = useState(props.initiallyOpen)
@@ -231,6 +236,21 @@ export function TurnBlockView(props: {
         sawStream.current = props.streaming
     }, [props.streaming])
 
+
+    if (props.variant === 'timeline') {
+        return (
+            <TimelineTurnBlockView
+                partition={props.partition}
+                streaming={props.streaming}
+                durationMs={props.durationMs}
+                initiallyOpen={props.initiallyOpen}
+                activeTodoText={props.activeTodoText}
+                viewMode={props.viewMode}
+                lang={props.lang}
+                renderTrailingText={(text, isStreaming) => <TurnText text={text} streaming={isStreaming} />}
+            />
+        )
+    }
     const trailing = props.partition.rows.filter((row): row is Extract<TurnRow, { kind: 'text' }> => row.kind === 'text' && row.trailing)
     if (!props.partition.hasActivity) {
         if (trailing.length === 0) return null
@@ -293,6 +313,7 @@ export function TurnBlockView(props: {
 
 export function TurnBlock() {
     const ctx = useOptionalHappyChatContext()
+    const { locale } = useTranslation()
     const { reasoningCollapsed } = useReasoningCollapse()
     const content = useAuiState((state) => state.message.role === 'assistant' ? state.message.content : [])
     const streaming = useAuiState((state) => state.message.status?.type === 'running')
@@ -300,6 +321,10 @@ export function TurnBlock() {
     const custom = useAuiState((state) => state.message.metadata.custom as Partial<HappyChatMessageMetadata> | undefined)
     const partition = partitionTurn(contentParts(content), ctx?.metadata ?? null)
     const [now, setNow] = useState(() => Date.now())
+
+    const activeTodoText = streaming
+        ? (ctx?.todos?.find((item) => item.status === 'in_progress')?.content ?? null)
+        : null
 
     useEffect(() => {
         if (!streaming) return
@@ -309,6 +334,9 @@ export function TurnBlock() {
 
     return (
         <TurnBlockView
+            variant="timeline"
+            activeTodoText={activeTodoText}
+            lang={locale === 'zh-CN' ? 'zh-CN' : 'en'}
             partition={partition}
             streaming={streaming}
             initiallyOpen={streaming && !reasoningCollapsed}

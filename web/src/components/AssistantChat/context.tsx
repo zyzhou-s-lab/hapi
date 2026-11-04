@@ -3,6 +3,7 @@ import { createContext, useContext } from 'react'
 import type { ApiClient } from '@/api/client'
 import type { TerminalToolDisplayMode } from '@/hooks/useTerminalToolDisplayMode'
 import type { SessionMetadataSummary } from '@/types/api'
+import type { TodoItem } from '@hapi/protocol/types'
 
 export type OlderHistoryLoadResult = 'loaded' | 'transient-stop' | 'terminal-stop'
 
@@ -10,6 +11,7 @@ export type HappyChatContextValue = {
     api: ApiClient
     sessionId: string
     metadata: SessionMetadataSummary | null
+    todos?: TodoItem[]
     terminalToolDisplayMode: TerminalToolDisplayMode
     /** Hub-wide AGENT_NOTIFY_SUMMARY chat display; polled once at chat shell. */
     showSessionSummaryInChat: boolean

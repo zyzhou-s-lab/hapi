@@ -2221,6 +2221,7 @@ export function HappyThread(props: {
             api: props.api,
             sessionId: props.sessionId,
             metadata: props.metadata,
+            todos: props.session?.todos,
             terminalToolDisplayMode,
             showSessionSummaryInChat,
             disabled: props.disabled,
