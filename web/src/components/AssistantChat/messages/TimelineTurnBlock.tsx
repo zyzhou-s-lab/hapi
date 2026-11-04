@@ -752,22 +752,26 @@ function TimelineToolStepRow(props: {
 
 function renderSimpleMarkdownText(text: string): React.ReactNode {
     const tokens = text.split(/(\*\*[^*]+\*\*|`[^`]+`)/g)
-    return tokens.map((token, idx) => {
-        if (token.startsWith('**') && token.endsWith('**') && token.length > 4) {
-            return <strong key={idx} className="font-semibold text-[var(--app-fg)]">{token.slice(2, -2)}</strong>
-        }
-        if (token.startsWith('`') && token.endsWith('`') && token.length > 2) {
-            return (
-                <code
-                    key={idx}
-                    className="rounded bg-[var(--app-subtle-bg)] px-1.5 py-0.5 font-mono text-[13px] text-[var(--app-fg)]"
-                >
-                    {token.slice(1, -1)}
-                </code>
-            )
-        }
-        return token
-    })
+    return (
+        <div className="whitespace-pre-wrap">
+            {tokens.map((token, idx) => {
+                if (token.startsWith('**') && token.endsWith('**') && token.length > 4) {
+                    return <strong key={idx} className="font-semibold text-[var(--app-fg)]">{token.slice(2, -2)}</strong>
+                }
+                if (token.startsWith('`') && token.endsWith('`') && token.length > 2) {
+                    return (
+                        <code
+                            key={idx}
+                            className="rounded bg-[var(--app-subtle-bg)] px-1.5 py-0.5 font-mono text-[13px] text-[var(--app-fg)]"
+                        >
+                            {token.slice(1, -1)}
+                        </code>
+                    )
+                }
+                return token
+            })}
+        </div>
+    )
 }
 
 export function TimelineTurnBlockView(props: {
@@ -1118,7 +1122,7 @@ export function TimelineTurnBlockView(props: {
                                     return (
                                         <div
                                             key={row.key}
-                                            className={cn(!keepVisible && 'hidden', 'py-1.5 text-[15px] leading-relaxed text-[var(--app-fg)] whitespace-pre-wrap')}
+                                            className={cn(!keepVisible && 'hidden', 'py-1.5 text-[15px] leading-relaxed text-[var(--app-fg)]')}
                                             data-hapi-turn-quiet={!keepVisible ? 'true' : undefined}
                                         >
                                             {props.renderTrailingText ? props.renderTrailingText(row.text, false) : renderSimpleMarkdownText(row.text)}
@@ -1142,7 +1146,7 @@ export function TimelineTurnBlockView(props: {
                         }
                         if (row.kind === 'text') {
                             return (
-                                <div key={row.key} className="text-[15px] leading-relaxed text-[var(--app-fg)] whitespace-pre-wrap">
+                                <div key={row.key} className="text-[15px] leading-relaxed text-[var(--app-fg)]">
                                     {props.renderTrailingText ? props.renderTrailingText(row.text, false) : renderSimpleMarkdownText(row.text)}
                                 </div>
                             )
@@ -1156,7 +1160,7 @@ export function TimelineTurnBlockView(props: {
             {trailing.map((row) => (
                 <div
                     key={row.key}
-                    className="mt-3 text-[15px] leading-relaxed text-[var(--app-fg)] whitespace-pre-wrap"
+                    className="mt-3 text-[15px] leading-relaxed text-[var(--app-fg)]"
                     data-testid="turn-trailing-answer"
                 >
                     {props.renderTrailingText ? props.renderTrailingText(row.text, props.streaming) : renderSimpleMarkdownText(row.text)}

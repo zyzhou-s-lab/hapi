@@ -283,4 +283,28 @@ describe('TimelineTurnBlock & summarizeTurnActivity', () => {
             vi.useRealTimers()
         }
     })
+
+    it('does not apply inherited whitespace-pre-wrap on the trailing markdown container when renderTrailingText is provided', () => {
+        const partition = partitionTurn(
+            [
+                call(tool('b1', 'Bash', { state: 'completed', input: { command: 'ls' } })),
+                { type: 'text', text: '### Title\n\nParagraph 1\n\n- Item A\n- Item B' },
+            ],
+            null
+        )
+        render(
+            <I18nProvider>
+                <TimelineTurnBlockView
+                    partition={partition}
+                    streaming={false}
+                    durationMs={1000}
+                    initiallyOpen={false}
+                    renderTrailingText={(txt) => <div data-testid="custom-md">{txt}</div>}
+                />
+            </I18nProvider>
+        )
+        const trailingContainer = screen.getByTestId('turn-trailing-answer')
+        expect(trailingContainer.className).not.toContain('whitespace-pre-wrap')
+        expect(screen.getByTestId('custom-md')).toBeInTheDocument()
+    })
 })
