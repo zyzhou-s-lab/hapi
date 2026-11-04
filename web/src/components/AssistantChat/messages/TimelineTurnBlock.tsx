@@ -923,13 +923,31 @@ export function TimelineTurnBlockView(props: {
         ),
         [props.partition.rows]
     )
-    const stepRows = useMemo(
+    const nonTrailingRows = useMemo(
         () => props.partition.rows.filter(
             (row) => !(row.kind === 'text' && row.trailing)
         ),
         [props.partition.rows]
     )
-    const isInitialStreamingWait = props.streaming && stepRows.length === 0 && trailing.length === 0
+    const stepRows = useMemo(
+        () => nonTrailingRows.filter(
+            (row) => row.kind !== 'image' && row.kind !== 'file'
+        ),
+        [nonTrailingRows]
+    )
+    const mediaRows = useMemo(
+        () => nonTrailingRows.filter(
+            (row): row is Extract<TurnRow, { kind: 'image' | 'file' }> => row.kind === 'image' || row.kind === 'file'
+        ),
+        [nonTrailingRows]
+    )
+    const pinnedToolRows = useMemo(
+        () => stepRows.filter(
+            (row): row is TurnToolRow => row.kind === 'tool' && row.pinned
+        ),
+        [stepRows]
+    )
+    const isInitialStreamingWait = props.streaming && stepRows.length === 0 && mediaRows.length === 0 && trailing.length === 0
     const hasSteps = stepRows.some((row) => row.kind === 'reasoning' || row.kind === 'tool') || isInitialStreamingWait
     const headerText = props.streaming ? summary.workingHeader : summary.completedHeader
     const accentColor = props.indicatorColor ?? '#da7756'
@@ -1252,34 +1270,6 @@ export function TimelineTurnBlockView(props: {
                                             </div>
                                         )
                                     }
-                                    if (row.kind === 'image') {
-                                        return (
-                                            <div
-                                                key={row.key}
-                                                ref={(el) => {
-                                                    rowElsRef.current[idx] = el
-                                                }}
-                                                data-rail-row-index={idx}
-                                                className="py-1.5"
-                                            >
-                                                <GeneratedImageCard block={row.block} />
-                                            </div>
-                                        )
-                                    }
-                                    if (row.kind === 'file') {
-                                        return (
-                                            <div
-                                                key={row.key}
-                                                ref={(el) => {
-                                                    rowElsRef.current[idx] = el
-                                                }}
-                                                data-rail-row-index={idx}
-                                                className="py-1.5"
-                                            >
-                                                <GeneratedFileCard block={row.block} />
-                                            </div>
-                                        )
-                                    }
                                     return null
                                 })}
                                 {showFrontierSlot ? (
@@ -1328,83 +1318,82 @@ export function TimelineTurnBlockView(props: {
                                         ))}
                                 </div>
                             ) : null}
-                            {stepRows.map((row, idx) => {
-                                const laterRows = stepRows.slice(idx + 1)
-                                const keepVisible =
-                                    row.kind === 'text'
-                                    && (
-                                        laterRows.some((later) => later.kind === 'image' || later.kind === 'file')
-                                        || (
-                                            trailing.length === 0
-                                            && laterRows.length > 0
-                                            && laterRows.every((later) => later.kind === 'tool' && later.block.tool.name === 'ContextCompaction')
-                                        )
-                                    )
-                                if (row.kind === 'tool' && row.pinned) {
-                                    return (
-                                        <div key={row.key} className="relative ml-2 mt-1 border-l border-[var(--app-border)] pl-3.5">
-                                            <TimelineToolStepRow
-                                                row={row}
-                                                rowIndex={idx}
-                                                defaultExpanded={false}
-                                                lang={lang}
-                                                accentColor={accentColor}
-                                                showInlineRailSpinner={true}
-                                            />
-                                        </div>
-                                    )
-                                }
-                                if (row.kind === 'image') {
-                                    return (
-                                        <div key={row.key} className="py-1.5">
-                                            <GeneratedImageCard block={row.block} />
-                                        </div>
-                                    )
-                                }
-                                if (row.kind === 'file') {
-                                    return (
-                                        <div key={row.key} className="py-1.5">
-                                            <GeneratedFileCard block={row.block} />
-                                        </div>
-                                    )
-                                }
-                                if (row.kind === 'text') {
-                                    return (
-                                        <div
+                            {pinnedToolRows.length > 0 ? (
+                                <div
+                                    className="relative ml-2.5 mt-1 border-l border-[var(--app-border)] pl-3.5 space-y-0.5"
+                                    data-testid="turn-collapsed-pinned-rail"
+                                >
+                                    {pinnedToolRows.map((row, idx) => (
+                                        <TimelineToolStepRow
                                             key={row.key}
-                                            className={cn(!keepVisible && 'hidden', 'py-1.5 text-[15px] leading-relaxed text-[var(--app-fg)]')}
-                                            data-hapi-turn-quiet={!keepVisible ? 'true' : undefined}
-                                        >
-                                            {props.renderTrailingText ? props.renderTrailingText(row.text, false) : renderSimpleMarkdownText(row.text)}
-                                        </div>
+                                            row={row}
+                                            rowIndex={idx}
+                                            defaultExpanded={false}
+                                            lang={lang}
+                                            accentColor={accentColor}
+                                            showInlineRailSpinner={true}
+                                        />
+                                    ))}
+                                </div>
+                            ) : null}
+                            {nonTrailingRows.map((row, idx) => {
+                                if (row.kind !== 'text') return null
+                                const laterRows = nonTrailingRows.slice(idx + 1)
+                                const keepVisible =
+                                    laterRows.some((later) => later.kind === 'image' || later.kind === 'file')
+                                    || (
+                                        trailing.length === 0
+                                        && laterRows.length > 0
+                                        && laterRows.every((later) => later.kind === 'tool' && later.block.tool.name === 'ContextCompaction')
                                     )
-                                }
-                                return null
+                                return (
+                                    <div
+                                        key={row.key}
+                                        className={cn(!keepVisible && 'hidden', 'py-1.5 text-[15px] leading-relaxed text-[var(--app-fg)]')}
+                                        data-hapi-turn-quiet={!keepVisible ? 'true' : undefined}
+                                    >
+                                        {props.renderTrailingText ? props.renderTrailingText(row.text, false) : renderSimpleMarkdownText(row.text)}
+                                    </div>
+                                )
                             })}
                         </>
                     ) : null}
 
                 </div>
             ) : (
-                <div className="space-y-2">
-                    {stepRows.map((row) => {
+                stepRows.some((row) => row.kind === 'text') ? (
+                    <div className="space-y-2">
+                        {stepRows.map((row) => {
+                            if (row.kind === 'text') {
+                                return (
+                                    <div key={row.key} className="text-[15px] leading-relaxed text-[var(--app-fg)]">
+                                        {props.renderTrailingText ? props.renderTrailingText(row.text, false) : renderSimpleMarkdownText(row.text)}
+                                    </div>
+                                )
+                            }
+                            return null
+                        })}
+                    </div>
+                ) : null
+            )}
+
+            {/* Media & file deliverables: rendered outside and below the timeline rail */}
+            {mediaRows.length > 0 ? (
+                <div
+                    className={cn(hasSteps ? 'mt-2.5' : '', 'space-y-2.5')}
+                    data-testid="turn-media-deliverables"
+                >
+                    {mediaRows.map((row) => {
                         if (row.kind === 'image') {
                             return <GeneratedImageCard key={row.key} block={row.block} />
                         }
                         if (row.kind === 'file') {
                             return <GeneratedFileCard key={row.key} block={row.block} />
                         }
-                        if (row.kind === 'text') {
-                            return (
-                                <div key={row.key} className="text-[15px] leading-relaxed text-[var(--app-fg)]">
-                                    {props.renderTrailingText ? props.renderTrailingText(row.text, false) : renderSimpleMarkdownText(row.text)}
-                                </div>
-                            )
-                        }
                         return null
                     })}
                 </div>
-            )}
+            ) : null}
 
             {/* Trailing final assistant response */}
             {trailing.map((row) => (
