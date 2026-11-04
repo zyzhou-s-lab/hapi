@@ -861,7 +861,7 @@ export function TurnTimelineDemo() {
                                         submittedAnswers ?? {
                                             'header-style': DEMO_QUESTIONS[0]!.options[0]!.label,
                                             'level2-cards': DEMO_QUESTIONS[1]!.options[0]!.label,
-                                            'docked-widgets': DEMO_QUESTIONS[2]!.options[0]!.label,
+                                            'todo-dock': DEMO_QUESTIONS[2]!.options[0]!.label,
                                         }
                                     }
                                 />

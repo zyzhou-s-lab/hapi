@@ -655,12 +655,19 @@ export function TimelineTurnBlockView(props: {
     )
     const sawStream = useRef(props.streaming)
 
+    const hasPendingInteractive = props.partition.rows.some(
+        (row) => row.kind === 'tool' && (row.permission || row.block.tool.state === 'pending')
+    )
+    const failed = props.partition.rows.some(
+        (row) => row.kind === 'tool' && row.error && row.pinned
+    )
+
     useEffect(() => {
-        if (sawStream.current && !props.streaming && viewMode !== 'verbose') {
+        if (sawStream.current && !props.streaming && viewMode !== 'verbose' && !hasPendingInteractive) {
             setOpen(false)
         }
         sawStream.current = props.streaming
-    }, [props.streaming, viewMode])
+    }, [props.streaming, viewMode, hasPendingInteractive])
 
     useEffect(() => {
         if (viewMode === 'verbose') setOpen(true)
@@ -709,6 +716,9 @@ export function TimelineTurnBlockView(props: {
                         data-hapi-share-exclude="true"
                         className="group inline-flex max-w-full items-center gap-1.5 rounded-md py-1 pr-2 text-left text-[13.5px] leading-5 text-[var(--app-hint)] transition-colors hover:text-[var(--app-fg)]"
                     >
+                        {failed ? (
+                            <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-[var(--app-badge-error-text)]" />
+                        ) : null}
                         <span
                             key={headerText}
                             className={cn(
@@ -758,7 +768,7 @@ export function TimelineTurnBlockView(props: {
                                 if (row.kind === 'text') {
                                     return (
                                         <div key={row.key} className="px-1.5 py-1 text-[13.5px] leading-relaxed text-[var(--app-fg)]">
-                                            {row.text}
+                                            {props.renderTrailingText ? props.renderTrailingText(row.text, false) : renderSimpleMarkdownText(row.text)}
                                         </div>
                                     )
                                 }
