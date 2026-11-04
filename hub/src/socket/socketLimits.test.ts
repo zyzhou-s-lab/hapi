@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'bun:test'
 import { MAX_GENERATED_IMAGE_BYTES, SOCKET_MAX_HTTP_BUFFER_SIZE } from './socketLimits'
+import { isSameOriginRequest } from './server'
 import { MAX_SOCKET_RPC_BINARY_BYTES, SOCKET_RPC_FRAMING_HEADROOM_BYTES } from '@hapi/protocol/socketLimits'
 
 describe('socket limits', () => {
@@ -16,5 +17,13 @@ describe('socket limits', () => {
     it('derived raw RPC limit fits after base64 expansion and framing', () => {
         const base64Bytes = Math.ceil(MAX_SOCKET_RPC_BINARY_BYTES / 3) * 4
         expect(base64Bytes + SOCKET_RPC_FRAMING_HEADROOM_BYTES).toBeLessThanOrEqual(SOCKET_MAX_HTTP_BUFFER_SIZE)
+    })
+
+    it('allows same-origin socket requests across port forwarding while rejecting mismatched hosts', () => {
+        expect(isSameOriginRequest('http://127.0.0.1:3006', '127.0.0.1:3006')).toBe(true)
+        expect(isSameOriginRequest('http://localhost:3006', 'localhost:3006')).toBe(true)
+        expect(isSameOriginRequest('http://127.0.0.1:5174', '127.0.0.1:3006')).toBe(false)
+        expect(isSameOriginRequest('https://evil.example', '127.0.0.1:3006')).toBe(false)
+        expect(isSameOriginRequest(null, '127.0.0.1:3006')).toBe(false)
     })
 })

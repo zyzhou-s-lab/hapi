@@ -146,6 +146,24 @@ describe('work line routes', () => {
             body: JSON.stringify({ revision: 1, regions: { stats: [{ cardId: 'a.b-' }], body: [] } }),
         })
         expect(hyphen.status).toBe(400)
+
+        core.workLines.putLayout(account.id, 'workbench', {
+            revision: 1,
+            regions: {
+                rail: [{ cardId: 'workbench.line-list' }],
+                main: [
+                    { cardId: 'workbench.line-summary' },
+                    { cardId: 'example.training-curves', args: { lineId: createdLines[0], instanceId: 'placeholder-slot-1' } },
+                ],
+                side: [{ cardId: 'workbench.references' }, { cardId: 'workbench.sessions' }, { cardId: 'workbench.continue' }],
+            },
+        })
+        const replacedPlaceholder = core.workLines.bindTrainingLine(account.id, { lineId: createdLines[0], run: 'exp-1' })
+        expect(replacedPlaceholder.instanceId).toBe('placeholder-slot-1')
+        const curvesAfterPlaceholder = replacedPlaceholder.layout.regions.main.filter((slot) => slot.cardId === 'example.training-curves')
+        expect(curvesAfterPlaceholder).toEqual([
+            { cardId: 'example.training-curves', args: { lineId: createdLines[0], instanceId: 'placeholder-slot-1', run: 'exp-1' } },
+        ])
     })
 
     it('binds selected metrics and pushes the card to open pages', async () => {

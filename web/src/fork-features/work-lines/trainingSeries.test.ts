@@ -17,12 +17,17 @@ describe('training series', () => {
         expect(updated[0]?.points).toEqual([{ step: 1, value: 0.4 }, { step: 2, value: 0.5 }])
     })
 
-    it('keeps every series when the card metrics field is empty', () => {
+    it('keeps non-bookkeeping series when the card metrics field is empty', () => {
         expect(trainingMetricsFromArgs(undefined)).toBeNull()
         expect(trainingMetricsFromArgs({ metrics: '[]' })).toBeNull()
         expect(trainingMetricsFromArgs({ metrics: '["loss"]' })).toEqual(['loss'])
         expect(filterTrainingSeries([loss, { id: 'acc', name: 'acc', points: [] }], ['loss']).map((row) => row.id)).toEqual(['loss'])
         expect(filterTrainingSeries([loss], null)).toEqual([loss])
+        const stepSeries: TrainingSeries = { id: 'trainer/global_step', name: 'trainer/global_step', points: [{ step: 1, value: 1000 }] }
+        const epochSeries: TrainingSeries = { id: 'epoch', name: 'epoch', points: [{ step: 1, value: 1 }] }
+        expect(filterTrainingSeries([loss, stepSeries, epochSeries], null)).toEqual([loss])
+        expect(filterTrainingSeries([stepSeries, epochSeries], null)).toEqual([stepSeries, epochSeries])
+        expect(filterTrainingSeries([loss, epochSeries], ['epoch'])).toEqual([epochSeries])
     })
 
     it('keeps the curve across a disconnect and appends the next history', () => {

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { EXPLORE_DELETE_CONFIRM_HEADER } from '@hapi/protocol'
-import { callExploreTool, type ExploreTool } from './exploreMcp'
+import { NOT_ON_EXPLORATION_ERROR, callExploreTool, exploreToolSchemas, type ExploreTool } from './exploreMcp'
 import type { WorkHub } from './trainingMcp'
 
 function hub(routes: Record<string, { status: number; body: unknown }>): {
@@ -51,7 +51,9 @@ describe('callExploreTool', () => {
             '/cli/work/session-line': { status: 200, body: { lineId: null } },
         })
         const result = await callExploreTool(client, 'get_hypothesis', {}, { sessionId: 's1' })
-        expect(result).toEqual({ text: 'this session is not on an exploration', isError: true })
+        expect(result).toEqual({ text: NOT_ON_EXPLORATION_ERROR, isError: true })
+        expect(exploreToolSchemas.link_session.safeParse({}).success).toBe(false)
+        expect(exploreToolSchemas.link_session.safeParse({ lineId: 'line-1' }).success).toBe(true)
     })
 
     it('sends the delete confirmation header', async () => {

@@ -511,6 +511,7 @@ describe('ompRemoteLauncher RPC lifecycle', () => {
                     'send_file',
                     'register_training_run',
                     'query_training_run',
+                    'list_training_runs',
                     ...EXPLORE_TOOLS,
                     'skill_lookup'
                 ]
@@ -521,7 +522,7 @@ describe('ompRemoteLauncher RPC lifecycle', () => {
 
         expect(capabilityUpdates).toContainEqual({ tools: ['read'] });
         expect(capabilityUpdates).toContainEqual({
-            tools: ['read', 'change_title', 'display_image', 'display_video', 'send_file', 'register_training_run', 'query_training_run', ...EXPLORE_TOOLS, 'skill_lookup'],
+            tools: ['read', 'change_title', 'display_image', 'display_video', 'send_file', 'register_training_run', 'query_training_run', 'list_training_runs', ...EXPLORE_TOOLS, 'skill_lookup'],
             slashCommands: ['review']
         });
         expect(capabilityUpdates).toContainEqual({ slashCommands: ['inspect'] });

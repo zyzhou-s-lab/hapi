@@ -137,7 +137,7 @@ function WorkRegion(props: {
                 if (!card) return null
                 return (
                     <CardSlot
-                        key={slot.args?.lineId ? `${slot.cardId}:${slot.args.lineId}` : slot.cardId}
+                        key={[slot.cardId, slot.args?.lineId, slot.args?.instanceId, slot.args?.run].filter(Boolean).join(':')}
                         card={card}
                         slot={slot}
                         surface={props.surface}

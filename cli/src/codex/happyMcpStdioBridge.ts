@@ -360,12 +360,14 @@ export async function runHappyMcpStdioBridge(argv: string[]): Promise<void> {
         }
       });
     };
-    forward('register_training_run', 'Register a local W&B run with HAPI.', z.object({
+    forward('register_training_run', 'Register a local W&B run directory with HAPI. Call add_verification_card afterward to display it on an exploration workbench.', z.object({
       run: z.string(),
       runDir: z.string(),
       machineId: z.string().optional(),
     }));
     forward('query_training_run', 'Query metric names for a registered W&B run.', z.object({ run: z.string() }));
+    forward('list_training_runs', 'List all W&B training runs registered with HAPI for this account.', z.object({}));
+
     for (const name of EXPLORE_TOOLS) {
       forward(name, exploreToolDescription(name), exploreToolSchemas[name]);
     }

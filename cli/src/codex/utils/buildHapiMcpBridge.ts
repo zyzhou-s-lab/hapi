@@ -113,6 +113,7 @@ export async function buildHapiMcpBridge(
         approval_mode: 'approve'
     };
     tools.query_training_run = { approval_mode: 'approve' };
+    tools.list_training_runs = { approval_mode: 'approve' };
     // Own-account writes only: the hub maps this CLI token to one account.
     tools.register_training_run = { approval_mode: 'approve' };
     for (const name of EXPLORE_TOOLS) {

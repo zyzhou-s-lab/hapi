@@ -5,6 +5,9 @@ import { formatWorkResult, type WorkHub } from './trainingMcp'
 type Result = { status: number; body: unknown }
 
 const lineId = z.string().optional().describe('Exploration id. Omit to use the exploration this session belongs to.')
+const requiredLineId = z.string().min(1).describe('Exploration id from list_explorations to attach the session to.')
+
+export const NOT_ON_EXPLORATION_ERROR = 'this session is not on an exploration. Call list_explorations and link_session (with lineId) to attach to an existing exploration, or call create_exploration to create one.'
 
 export const EXPLORE_TOOLS = [
     'get_hypothesis',
@@ -39,15 +42,15 @@ export const exploreToolSchemas: Record<ExploreTool, z.ZodTypeAny> = {
     }),
     delete_exploration: z.object({ lineId }),
     list_linked_sessions: z.object({ lineId }),
-    link_session: z.object({ lineId, sessionId: z.string().optional().describe('Session id to attach. Omit to use this session.') }),
+    link_session: z.object({ lineId: requiredLineId, sessionId: z.string().optional().describe('Session id to attach. Omit to use this session.') }),
     unlink_session: z.object({ lineId, sessionId: z.string().optional().describe('Session id to detach. Omit to use this session.') }),
     list_verification_cards: z.object({ lineId }),
     add_verification_card: z.object({
         lineId,
         run: z.string().describe('Registered run name'),
-        metrics: z.array(z.string()).optional().describe('Metric names to draw. Omit to draw every metric.'),
-        xAxis: z.string().optional().describe('Metric used as the x axis'),
-        cardId: z.string().optional().describe('Verification card id to update. Omit to append a card.'),
+        metrics: z.array(z.string()).optional().describe('Metric names to draw on the y axis (use query_training_run to inspect metric names). Omit to draw all non-step metrics.'),
+        xAxis: z.string().optional().describe('Metric used as the x axis (for example "epoch"). Defaults to step.'),
+        cardId: z.string().optional().describe('Verification card id to update. Omit to bind the line placeholder or append a card.'),
     }),
     remove_verification_card: z.object({ lineId, cardId: z.string().describe('Verification card id') }),
     list_references: z.object({ lineId }),
@@ -80,7 +83,7 @@ const titles: Record<ExploreTool, string> = {
 const descriptions: Record<ExploreTool, string> = {
     get_hypothesis: 'read the single hypothesis of an exploration.',
     set_hypothesis: 'replace the single hypothesis of an exploration. one exploration serves one hypothesis.',
-    list_explorations: 'list this account explorations with id, name and hypothesis.',
+    list_explorations: 'list this account explorations with id, name, hypothesis and bound directories.',
     get_exploration: 'read one exploration: hypothesis, linked sessions, verification cards and references.',
     create_exploration: 'create an exploration for one directory and one hypothesis.',
     delete_exploration: 'delete an exploration and its references and verification cards.',
@@ -88,7 +91,7 @@ const descriptions: Record<ExploreTool, string> = {
     link_session: 'link a session this account can see to an exploration.',
     unlink_session: 'unlink a session from an exploration.',
     list_verification_cards: 'list the training cards bound to an exploration.',
-    add_verification_card: 'bind another registered run to an exploration as its own training card.',
+    add_verification_card: 'bind a registered training run to an exploration workbench to display its training curves card.',
     remove_verification_card: 'remove one training card from an exploration.',
     list_references: 'list the formatted references of an exploration.',
     add_reference: 'add one already formatted citation, tagged apa7 or vancouver.',
@@ -118,7 +121,7 @@ export async function callExploreTool(
         const found = await resolveLine(hub, context)
         if ('status' in found) return formatWorkResult(found.status, found.body)
         resolved = found.lineId
-        if (!resolved) return { text: 'this session is not on an exploration', isError: true }
+        if (!resolved) return { text: NOT_ON_EXPLORATION_ERROR, isError: true }
     }
     const response = await dispatch(hub, name, args, resolved, context)
     return formatWorkResult(response.status, response.body)

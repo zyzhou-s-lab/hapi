@@ -49,23 +49,25 @@ export function trainingBrowserStore(): TrainingPrefStore | null {
     }
 }
 
-export function readTrainingXAxis(prefId: string, store: TrainingPrefStore | null): string {
-    if (!store || prefId.length === 0) return TRAINING_X_STEP
+export function readTrainingXAxis(prefId: string, store: TrainingPrefStore | null, defaultXAxis = TRAINING_X_STEP): string {
+    const fallback = defaultXAxis.length > 0 ? defaultXAxis : TRAINING_X_STEP
+    if (!store || prefId.length === 0) return fallback
     try {
         const value = store.getItem(trainingXAxisStorageKey(prefId))
-        return value && value.length > 0 ? value : TRAINING_X_STEP
+        return value && value.length > 0 ? value : fallback
     } catch {
-        return TRAINING_X_STEP
+        return fallback
     }
 }
 
-export function writeTrainingXAxis(prefId: string, value: string, store: TrainingPrefStore | null, now = Date.now()): void {
+export function writeTrainingXAxis(prefId: string, value: string, store: TrainingPrefStore | null, now = Date.now(), defaultXAxis = TRAINING_X_STEP): void {
     if (!store || prefId.length === 0) return
     try {
-        const next = value.length > 0 ? value : TRAINING_X_STEP
-        if (readTrainingXAxis(prefId, store) === next) return
+        const fallback = defaultXAxis.length > 0 ? defaultXAxis : TRAINING_X_STEP
+        const next = value.length > 0 ? value : fallback
+        if (readTrainingXAxis(prefId, store, fallback) === next) return
         const key = trainingXAxisStorageKey(prefId)
-        if (next === TRAINING_X_STEP) store.removeItem(key)
+        if (next === fallback) store.removeItem(key)
         else store.setItem(key, next)
         touchTrainingPref(store, prefId, now)
     } catch {
@@ -107,7 +109,7 @@ function sameHidden(left: ReadonlySet<string>, right: ReadonlySet<string>): bool
 
 function prefStillStored(store: TrainingPrefStore, prefId: string): boolean {
     const axis = store.getItem(trainingXAxisStorageKey(prefId))
-    if (axis && axis !== TRAINING_X_STEP) return true
+    if (axis && axis.length > 0) return true
     const hidden = store.getItem(trainingHiddenStorageKey(prefId))
     return hidden != null && hidden !== '[]'
 }

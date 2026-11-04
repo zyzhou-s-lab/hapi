@@ -34,8 +34,9 @@ export function Workbench(props: { search: WorkSearch }): ReactNode {
         : { kind: 'line' as const, lineId: props.search.line }
     return (
         <div className="flex h-full min-h-0 flex-col bg-[var(--app-bg)]">
-            <header className="flex items-center justify-between px-4 py-3">
+            <header className="flex items-center justify-between border-b border-[var(--app-divider)] px-4 py-3">
                 <h2 className="text-base font-semibold text-[var(--app-fg)]">{t('work.workbenchTitle')}</h2>
+                <button type="button" className="text-sm text-[var(--app-link)]" onClick={() => navigate({ to: '/sessions' })}>{t('work.overviewTitle')}</button>
             </header>
             {missing ? (
                 <>
@@ -47,7 +48,7 @@ export function Workbench(props: { search: WorkSearch }): ReactNode {
                     </p>
                 </>
             ) : null}
-            <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-4">
+            <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-4 pt-4">
                 <WorkCardHost surface="workbench" view={view} sessions={sessions} api={api} />
             </div>
         </div>

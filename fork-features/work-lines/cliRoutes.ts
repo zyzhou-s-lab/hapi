@@ -3,7 +3,7 @@ import { z } from 'zod'
 import type { WebAppEnv } from '../../hub/src/web/middleware/auth'
 import type { SyncEngine } from '../../hub/src/sync/syncEngine'
 import type { SSEManager } from '../../hub/src/sse/sseManager'
-import { WorkMapError, type WorkLayout, type WorkLine } from '../../hub/src/store/workLines'
+import { WorkMapError, type WorkDirectory, type WorkLayout, type WorkLine } from '../../hub/src/store/workLines'
 import { pushTrainingCard } from '../../hub/src/socket/trainingCardPush'
 import { getConfiguration } from '../../hub/src/configuration'
 import { parseAccessToken } from '../../hub/src/utils/accessToken'
@@ -77,6 +77,12 @@ export function mountCliWorkRoutes(app: Hono<WebAppEnv>, deps: {
         })
     }
 
+    routes.get('/training-runs', (c) => {
+        const ready = open(c)
+        if (ready instanceof Response) return ready
+        return c.json({ runs: ready.engine.getWorkLines().listTrainingRuns(ready.account.id) })
+    })
+
     routes.post('/training-runs', async (c) => {
         const ready = open(c)
         if (ready instanceof Response) return ready
@@ -85,7 +91,10 @@ export function mountCliWorkRoutes(app: Hono<WebAppEnv>, deps: {
         if (!canSeeMachine(ready.account.id, parsed.data.machineId)) return c.json({ error: 'Not found' }, 404)
         try {
             const run = ready.engine.getWorkLines().registerTrainingRun(ready.account.id, parsed.data)
-            return c.json({ run })
+            return c.json({
+                run,
+                nextStep: 'Call add_verification_card with this run to bind and display its training curves on an exploration workbench.',
+            })
         } catch (error) {
             return mapError(c, error)
         }
@@ -109,12 +118,14 @@ export function mountCliWorkRoutes(app: Hono<WebAppEnv>, deps: {
     routes.get('/explorations', (c) => {
         const ready = open(c)
         if (ready instanceof Response) return ready
-        const explorations = ready.engine.getWorkLines().getMap(ready.account.id).lines.map((line) => ({
+        const map = ready.engine.getWorkLines().getMap(ready.account.id)
+        const explorations = map.lines.map((line) => ({
             id: line.id,
             name: line.name,
             hypothesis: line.hypothesis,
             primaryMachineId: line.primaryMachineId,
             primaryPath: line.primaryPath,
+            directories: directoriesOf(map.directories, line.id, line.primaryPath),
             createdAt: line.createdAt,
             updatedAt: line.updatedAt,
         }))
@@ -126,12 +137,13 @@ export function mountCliWorkRoutes(app: Hono<WebAppEnv>, deps: {
         if (ready instanceof Response) return ready
         const lines = ready.engine.getWorkLines()
         try {
-            const line = lines.getMap(ready.account.id).lines.find((item) => item.id === c.req.param('id'))
+            const map = lines.getMap(ready.account.id)
+            const line = map.lines.find((item) => item.id === c.req.param('id'))
             if (!line) return c.json({ error: 'Not found' }, 404)
             const sessions = lines.listLinkedSessions(ready.account.id, line.id)
                 .filter((session) => canSeeSession(ready.account.id, session.sessionId))
             return c.json({
-                exploration: explorationOf(line),
+                exploration: explorationOf(line, map.directories),
                 linkedSessions: sessions,
                 verificationCards: lines.listVerificationCards(ready.account.id, line.id),
                 references: lines.listReferences(ready.account.id, line.id),
@@ -159,7 +171,7 @@ export function mountCliWorkRoutes(app: Hono<WebAppEnv>, deps: {
                 ready.engine.getWorkLines().putSession(ready.account.id, { sessionId, state: 'line', lineId: line.id })
             }
             touch(ready.account)
-            return c.json({ exploration: explorationOf(line) })
+            return c.json({ exploration: explorationOf(line, ready.engine.getWorkLines().getMap(ready.account.id).directories) })
         } catch (error) {
             return mapError(c, error)
         }
@@ -388,7 +400,17 @@ function storedTrainingMetrics(layout: WorkLayout, instanceId: string): string[]
     }
 }
 
-function explorationOf(line: WorkLine) {
+function directoriesOf(directories: WorkDirectory[], lineId: string, primaryPath: string): string[] {
+    const paths = directories
+        .filter((dir) => dir.mode === 'line' && dir.lineId === lineId)
+        .map((dir) => {
+            const sep = dir.directoryKey.indexOf('::')
+            return sep >= 0 ? dir.directoryKey.slice(sep + 2) : dir.directoryKey
+        })
+    return paths.length > 0 ? [...new Set([primaryPath, ...paths])] : [primaryPath]
+}
+
+function explorationOf(line: WorkLine, directories: WorkDirectory[] = []) {
     return {
         id: line.id,
         name: line.name,
@@ -396,6 +418,7 @@ function explorationOf(line: WorkLine) {
         hypothesis: line.hypothesis,
         primaryMachineId: line.primaryMachineId,
         primaryPath: line.primaryPath,
+        directories: directoriesOf(directories, line.id, line.primaryPath),
         createdAt: line.createdAt,
         updatedAt: line.updatedAt,
     }

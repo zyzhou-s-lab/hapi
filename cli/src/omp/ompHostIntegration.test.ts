@@ -397,6 +397,7 @@ describe('OMP host tool bridge', () => {
             tools: expect.arrayContaining([
                 expect.objectContaining({ name: 'register_training_run', loadMode: 'discoverable' }),
                 expect.objectContaining({ name: 'query_training_run', loadMode: 'discoverable' }),
+                expect.objectContaining({ name: 'list_training_runs', loadMode: 'discoverable' }),
                 expect.objectContaining({ name: 'add_verification_card', loadMode: 'discoverable' })
             ])
         });

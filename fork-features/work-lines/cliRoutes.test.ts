@@ -65,11 +65,14 @@ describe('cli work routes', () => {
         expect(core.workLines.getTrainingRun(owner.id, 'exp-1')?.runDir).toBe('/data/wandb/offline-run-1')
         expect(core.workLines.getTrainingRun(other.id, 'exp-1')).toBeNull()
 
+        const listed = await app.request('/cli/work/training-runs', { headers: ownerAuth })
+        expect(listed.status).toBe(200)
+        expect(await listed.json()).toEqual({ runs: [{ run: 'exp-1' }] })
+
         const summary = await app.request('/cli/work/training-runs/exp-1', { headers: ownerAuth })
         expect(summary.status).toBe(200)
         expect(await summary.json()).toEqual({ metrics: ['loss'], partial: true })
         expect(rpcCalls).toEqual([{ machineId: 'gpu', run: 'exp-1', runDir: '/data/wandb/offline-run-1' }])
-
         const hidden = await app.request('/cli/work/training-runs/exp-1', {
             headers: { authorization: `Bearer ${otherToken.plaintext}` },
         })
@@ -88,6 +91,11 @@ describe('cli work routes', () => {
         const slot = layout?.regions.main.find((item) => item.args?.run === 'exp-1')
         expect(slot?.args?.lineId).toBe(line.id)
         expect(slot?.args?.instanceId).toBe(body.card.cardId)
+        core.workLines.putDirectory(owner.id, { directoryKey: 'gpu::/data/hapi-extra', mode: 'line', lineId: line.id })
+        const explorationsRes = await app.request('/cli/work/explorations', { headers: ownerAuth })
+        expect(explorationsRes.status).toBe(200)
+        const explorationsBody = await explorationsRes.json() as { explorations: Array<{ id: string; directories: string[] }> }
+        expect(explorationsBody.explorations.find((item) => item.id === line.id)?.directories).toEqual(['/data/hapi', '/data/hapi-extra'])
     })
 
     it('rejects a web JWT on the CLI training route', async () => {

@@ -427,12 +427,12 @@ export class WorkLinesStore {
             const main = [...(current.regions.main ?? [])]
             const index = requestedId.length > 0
                 ? main.findIndex((item) => item.cardId === 'example.training-curves' && item.args?.instanceId === requestedId)
-                : -1
+                : main.findIndex((item) => item.cardId === 'example.training-curves' && item.args?.lineId === cleanLine && !item.args?.run)
             if (requestedId.length > 0 && (index < 0 || main[index]?.args?.lineId !== cleanLine)) {
                 throw new WorkMapError('卡片不存在', 404)
             }
-            const id = requestedId.length > 0 ? requestedId : randomUUID()
             const previous = index >= 0 ? main[index]?.args ?? {} : {}
+            const id = requestedId.length > 0 ? requestedId : (previous.instanceId?.trim() || randomUUID())
             const args: Record<string, string> = { ...previous, run: cleanRun, lineId: cleanLine, instanceId: id }
             if (cleanMetrics.length > 0) args.metrics = JSON.stringify(cleanMetrics)
             else delete args.metrics

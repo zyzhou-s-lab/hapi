@@ -43,6 +43,7 @@ export type WorkSessionView = {
     lineId: string | null
     ignored: boolean
     inbox: boolean
+    followsDirectory?: boolean
 }
 
 export type WorkModel = {
@@ -104,6 +105,7 @@ function classify(
     const key = canonicalDirectoryKey(sessionDirectoryGroupKey(session), canon)
     const assignment = sessionById.get(session.id)
     const directory = directoryForSession(session, directoryByKey, canon)
+    const followsDirectory = Boolean(directory?.mode === 'line' && directory.lineId && lineIds.has(directory.lineId))
     let lineId: string | null = null
     let ignored = false
     let inbox = false
@@ -111,7 +113,7 @@ function classify(
         lineId = assignment.lineId
     } else if (assignment && assignment.lineId == null) {
         ignored = true
-    } else if (directory?.mode === 'line' && directory.lineId && lineIds.has(directory.lineId)) {
+    } else if (followsDirectory && directory?.lineId) {
         lineId = directory.lineId
     } else if (directory?.mode === 'ignored') {
         ignored = true
@@ -130,6 +132,7 @@ function classify(
         lineId,
         ignored,
         inbox,
+        followsDirectory,
     }
 }
 
@@ -138,6 +141,7 @@ export type WorkDirectoryView = {
     machineId: string
     path: string
     sessionCount: number
+    isPrimary?: boolean
 }
 
 export type WorkbenchModel = {
@@ -189,11 +193,12 @@ export function deriveWorkbench(sessions: readonly SessionSummary[], map: WorkMa
         lineDirectories: (lineId) => {
             const line = data.lines.find((item) => item.id === lineId)
             if (!line) return []
-            const keys = new Set<string>([canonicalDirectoryKey(`${line.primaryMachineId}::${line.primaryPath}`, canon)])
+            const primaryKey = canonicalDirectoryKey(`${line.primaryMachineId}::${line.primaryPath}`, canon)
+            const keys = new Set<string>([primaryKey])
             for (const directory of data.directories) {
                 if (directory.mode === 'line' && directory.lineId === lineId) keys.add(canonicalDirectoryKey(directory.directoryKey, canon))
             }
-            return [...keys].map(directoryView)
+            return [...keys].map((key) => ({ ...directoryView(key), isPrimary: key === primaryKey }))
         },
         lineSessions: (lineId) => views.filter((view) => view.lineId === lineId).sort((a, b) => b.updatedAt - a.updatedAt),
         focus: (lineId) => {

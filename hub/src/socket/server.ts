@@ -54,6 +54,17 @@ export type SocketServerDeps = {
     canAccessMachine?: (accountId: number, machineId: string) => string | null
 }
 
+export function isSameOriginRequest(origin: string | null | undefined, hostHeader: string | null | undefined): boolean {
+    if (!origin || !hostHeader) return false
+    const host = hostHeader.split(',')[0]?.trim().toLowerCase()
+    if (!host) return false
+    try {
+        return new URL(origin).host.toLowerCase() === host
+    } catch {
+        return false
+    }
+}
+
 export function createSocketServer(deps: SocketServerDeps): {
     io: SocketServer
     engine: Engine
@@ -80,7 +91,8 @@ export function createSocketServer(deps: SocketServerDeps): {
         maxHttpBufferSize: SOCKET_MAX_HTTP_BUFFER_SIZE,
         allowRequest: async (req) => {
             const origin = req.headers.get('origin')
-            if (!origin || allowAllOrigins || corsOrigins.includes(origin)) {
+            const host = req.headers.get('host')
+            if (!origin || allowAllOrigins || corsOrigins.includes(origin) || isSameOriginRequest(origin, host)) {
                 return
             }
             throw 'Origin not allowed'

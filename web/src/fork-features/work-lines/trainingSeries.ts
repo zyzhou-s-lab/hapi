@@ -38,8 +38,30 @@ export function trainingMetricsFromArgs(args: Record<string, string> | undefined
     }
 }
 
+const DEFAULT_EXCLUDED_SERIES: Record<string, true> = {
+    epoch: true,
+    step: true,
+    global_step: true,
+    'trainer/global_step': true,
+    _step: true,
+    _runtime: true,
+    _timestamp: true,
+}
+
+function isDefaultExcludedSeries(id: string): boolean {
+    const normalized = id.trim()
+    return normalized.startsWith('_')
+        || DEFAULT_EXCLUDED_SERIES[normalized] === true
+        || normalized.endsWith('/global_step')
+        || normalized.endsWith('/step')
+        || normalized.endsWith('/epoch')
+}
+
 export function filterTrainingSeries(series: readonly TrainingSeries[], metrics: string[] | null): TrainingSeries[] {
-    if (!metrics) return [...series]
+    if (!metrics) {
+        const filtered = series.filter((row) => !isDefaultExcludedSeries(row.id))
+        return filtered.length > 0 ? filtered : [...series]
+    }
     const allowed = new Set(metrics)
     return series.filter((row) => allowed.has(row.id))
 }

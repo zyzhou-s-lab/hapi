@@ -150,4 +150,35 @@ describe('TrainingChart', () => {
         fireEvent.change(screen.getByRole('combobox'), { target: { value: 'lr' } })
         expect(screen.getByRole('combobox').getAttribute('title')).toBe('A non-monotonic custom axis is plotted in sorted order.')
     })
+
+    it('honors defaultXAxis from card args without writing storage on mount', () => {
+        const setSpy = vi.spyOn(Storage.prototype, 'setItem')
+        const removeSpy = vi.spyOn(Storage.prototype, 'removeItem')
+        try {
+            render(
+                <I18nProvider>
+                    <TrainingChart
+                        run="exp-epoch"
+                        lineId="line-1"
+                        defaultXAxis="epoch"
+                        series={[loss, evalLoss]}
+                        xSource={[
+                            loss,
+                            evalLoss,
+                            { id: 'epoch', name: 'epoch', points: [{ step: 1, value: 0 }, { step: 2, value: 1 }, { step: 3, value: 2 }] },
+                        ]}
+                    />
+                </I18nProvider>,
+            )
+            const axis = screen.getByRole('combobox') as HTMLSelectElement
+            expect(axis).toHaveValue('epoch')
+            expect(setSpy).not.toHaveBeenCalled()
+            expect(removeSpy).not.toHaveBeenCalled()
+            fireEvent.change(axis, { target: { value: '_step' } })
+            expect(localStorage.getItem(trainingXAxisStorageKey(trainingPrefId('line-1', 'exp-epoch')))).toBe('_step')
+        } finally {
+            setSpy.mockRestore()
+            removeSpy.mockRestore()
+        }
+    })
 })

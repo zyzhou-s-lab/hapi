@@ -101,5 +101,55 @@ describe('workbench create line', () => {
         expect(await screen.findByRole('alert')).toHaveProperty('textContent', 'This line does not exist.')
         expect(screen.queryByText('Show on this line')).toBeNull()
         expect(screen.getByRole('button', { name: 'Back to the first line' })).toBeTruthy()
+        expect(screen.getByRole('button', { name: 'Overview' })).toBeTruthy()
+    })
+
+    it('unassigns non-primary directories and sessions from a line', async () => {
+        const putWorkDirectory = vi.fn().mockResolvedValue({ ok: true })
+        const putWorkSession = vi.fn().mockResolvedValue({ ok: true })
+        const api = {
+            getWorkMap: async () => ({
+                lines: [{ id: 'line-1', name: 'Main', goal: null, sort: 0, primaryMachineId: 'gpu', primaryPath: '/repo' }],
+                directories: [
+                    { directoryKey: 'gpu::/repo', mode: 'line', lineId: 'line-1' },
+                    { directoryKey: 'gpu::/extra', mode: 'line', lineId: 'line-1' },
+                ],
+                sessions: [{ sessionId: 's1', lineId: 'line-1' }],
+                dismissed: [],
+            }),
+            getWorkLayout: async () => ({ source: 'default', layout: null }),
+            putWorkDirectory,
+            putWorkSession,
+        } as unknown as ApiClient
+        const sessions = [{ id: 's1', active: false, updatedAt: 10, pendingRequestsCount: 0, metadata: { name: 'Fix crash', path: '/other', machineId: 'gpu' } }]
+        render(
+            <AppContextProvider value={{ api, token: 't', baseUrl: 'http://hub', user: { id: 7 } }}>
+                <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+                    <I18nProvider>
+                        <WorkCardHost
+                            surface="workbench"
+                            view={{ kind: 'line', lineId: 'line-1' }}
+                            sessions={sessions as never}
+                            api={api}
+                            layoutFor={() => ({
+                                revision: 1,
+                                regions: {
+                                    main: [{ cardId: 'workbench.directories' }],
+                                    side: [{ cardId: 'workbench.sessions' }],
+                                },
+                            })}
+                        />
+                    </I18nProvider>
+                </QueryClientProvider>
+            </AppContextProvider>,
+        )
+        const removes = await screen.findAllByRole('button', { name: 'Remove' })
+        expect(removes).toHaveLength(2)
+        fireEvent.click(removes[0]!)
+        fireEvent.click(removes[1]!)
+        await vi.waitFor(() => {
+            expect(putWorkDirectory).toHaveBeenCalledWith({ directoryKey: 'gpu::/extra', mode: null })
+            expect(putWorkSession).toHaveBeenCalledWith({ sessionId: 's1', state: 'follow' })
+        })
     })
 })

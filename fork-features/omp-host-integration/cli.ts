@@ -13,8 +13,8 @@ import {
 } from '../../cli/src/modules/common/generatedImages';
 import { resolveSkill } from '../../cli/src/modules/common/skills';
 import { readSettings } from '../../cli/src/persistence';
-import { formatWorkResult, queryTrainingRun, registerTrainingRun } from '../../cli/src/modules/training/trainingMcp';
-import { EXPLORE_TOOLS, callExploreTool, exploreToolDescription, exploreToolSchemas, exploreToolTitle, type ExploreTool } from '../../cli/src/modules/training/exploreMcp';
+import { formatWorkResult, listTrainingRuns, queryTrainingRun, registerTrainingRun } from '../../cli/src/modules/training/trainingMcp';
+import { EXPLORE_TOOLS, NOT_ON_EXPLORATION_ERROR, callExploreTool, exploreToolDescription, exploreToolSchemas, exploreToolTitle, type ExploreTool } from '../../cli/src/modules/training/exploreMcp';
 import type { OmpRpcClient } from '../../cli/src/omp/rpc/OmpRpcClient';
 import { defaultOmpEventAllowlist } from '../../cli/src/omp/rpc/eventAllowlist';
 import type {
@@ -216,7 +216,7 @@ const HOST_TOOL_DEFINITIONS: OmpHostToolDefinition[] = [
     {
         name: 'register_training_run',
         label: 'Register Training Run',
-        description: 'Register a local W&B run with HAPI so it can be shown on a work-line training card. Call this after the run directory exists. machineId defaults to this machine.',
+        description: 'Register a local W&B run directory with HAPI. Registering does not display a card by itself: call add_verification_card afterward to bind and show the run on an exploration workbench. machineId defaults to this machine.',
         parameters: {
             type: 'object',
             properties: {
@@ -239,6 +239,17 @@ const HOST_TOOL_DEFINITIONS: OmpHostToolDefinition[] = [
                 run: { type: 'string', description: 'Registered run name' }
             },
             required: ['run'],
+            additionalProperties: false
+        },
+        loadMode: 'discoverable'
+    },
+    {
+        name: 'list_training_runs',
+        label: 'List Training Runs',
+        description: 'List all W&B training runs registered with HAPI for this account.',
+        parameters: {
+            type: 'object',
+            properties: {},
             additionalProperties: false
         },
         loadMode: 'discoverable'
@@ -542,6 +553,11 @@ export class OmpHostToolBridge {
                 const response = await queryTrainingRun(this.workHub(), args.run);
                 return this.trainingResult(request.toolName, signal, response.status, response.body);
             }
+            case 'list_training_runs': {
+                throwIfAborted(signal, request.toolName);
+                const response = await listTrainingRuns(this.workHub());
+                return this.trainingResult(request.toolName, signal, response.status, response.body);
+            }
             default: {
                 if ((EXPLORE_TOOLS as readonly string[]).includes(request.toolName)) {
                     const name = request.toolName as ExploreTool;
@@ -592,7 +608,7 @@ export class OmpHostToolBridge {
         const lineId = found.status >= 200 && found.status < 300 && found.body && typeof found.body === 'object' && 'lineId' in found.body && typeof found.body.lineId === 'string'
             ? found.body.lineId
             : '';
-        if (!lineId) throw new Error('this session is not on an exploration');
+        if (!lineId) throw new Error(NOT_ON_EXPLORATION_ERROR);
         return lineId;
     }
 

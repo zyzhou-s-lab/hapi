@@ -65,20 +65,30 @@ function LineList(props: { ctx: WorkCardContext }): ReactNode {
         },
     })
     const selected = lineIdOf(props.ctx)
+    const isInbox = props.ctx.view.kind === 'inbox'
+    const inboxTotal = Math.max(bench.inboxDirectoryCount, bench.inboxSessions.length)
     const listed = machines.filter((machine) => machine != null)
     return (
         <CardFrame title={t('work.lines')}>
             <ul className="flex flex-col gap-1">
                 {bench.lines.map((line) => (
                     <li key={line.id}>
-                        <button type="button" className="w-full truncate text-left text-sm text-[var(--app-fg)]" onClick={() => navigate({ to: '/work', search: { line: line.id } })}>
+                        <button
+                            type="button"
+                            className={`w-full truncate rounded px-2 py-1 text-left text-sm text-[var(--app-fg)] ${line.id === selected ? 'bg-[var(--app-subtle-bg)] font-semibold' : ''}`}
+                            onClick={() => navigate({ to: '/work', search: { line: line.id } })}
+                        >
                             {line.name}{line.id === selected ? ' ·' : ''} <span className="text-[var(--app-hint)]">{line.sessionCount}</span>
                         </button>
                     </li>
                 ))}
             </ul>
-            <button type="button" className="mt-3 text-sm text-[var(--app-link)]" onClick={() => navigate({ to: '/work', search: { inbox: true } })}>
-                {t('work.inbox')} ({bench.inboxDirectoryCount})
+            <button
+                type="button"
+                className={`mt-3 rounded px-2 py-1 text-sm text-[var(--app-link)] ${isInbox ? 'bg-[var(--app-subtle-bg)] font-semibold' : ''}`}
+                onClick={() => navigate({ to: '/work', search: { inbox: true } })}
+            >
+                {t('work.inbox')} ({inboxTotal})
             </button>
             {listed.length === 0 ? <p className="mt-3 text-xs text-[var(--app-hint)]">{t('work.noMachines')}</p> : (
                 <form className="mt-3 flex flex-col gap-2" onSubmit={(event) => { event.preventDefault(); setCreateFailed(false); create.mutate() }}>
@@ -147,7 +157,12 @@ const focus: WorkCardDefinition = {
         return (
             <CardFrame title={t('work.focus')}>
                 {row ? (
-                    <button type="button" className="text-left text-sm text-[var(--app-fg)]" onClick={() => navigate(getSessionListSelectionNavigation(row.id))}>{row.title}</button>
+                    <div className="flex flex-col gap-1">
+                        <button type="button" className="text-left text-sm font-medium text-[var(--app-fg)]" onClick={() => navigate(getSessionListSelectionNavigation(row.id))}>{row.title}</button>
+                        <p className="text-xs text-[var(--app-hint)]">
+                            {[row.machineLabel, row.directory, row.pendingRequestsCount > 0 ? t('work.pendingCount', { count: row.pendingRequestsCount }) : null, row.active ? t('work.runningCount') : null].filter(Boolean).join(' · ')}
+                        </p>
+                    </div>
                 ) : <p className="text-sm text-[var(--app-hint)]">{t('work.focusEmpty')}</p>}
             </CardFrame>
         )
@@ -161,14 +176,28 @@ const directories: WorkCardDefinition = {
     source: { kind: 'work-model' },
     visible: onLine,
     Component: ({ ctx }) => {
+        const { api } = useAppContext()
         const { t } = useTranslation()
         const bench = useBench(ctx)
+        const refresh = useMapRefresh()
+        const unassign = useMutation({
+            mutationFn: async (directoryKey: string) => {
+                if (!api) throw new Error('API unavailable')
+                await api.putWorkDirectory({ directoryKey, mode: null })
+            },
+            onSuccess: refresh,
+        })
         const rows = bench.lineDirectories(lineIdOf(ctx))
         return (
             <CardFrame title={t('work.directories')}>
-                <ul>
+                <ul className="flex flex-col gap-1">
                     {rows.map((row) => (
-                        <li key={row.directoryKey} className="truncate text-sm text-[var(--app-fg)]">{row.path} <span className="text-[var(--app-hint)]">{row.sessionCount}</span></li>
+                        <li key={row.directoryKey} className="flex items-center justify-between gap-2 text-sm text-[var(--app-fg)]">
+                            <span className="truncate">{row.path} <span className="text-[var(--app-hint)]">{row.sessionCount}</span></span>
+                            {!row.isPrimary ? (
+                                <button type="button" className="shrink-0 text-xs text-[var(--app-hint)]" disabled={unassign.isPending} onClick={() => unassign.mutate(row.directoryKey)}>{t('work.removeReference')}</button>
+                            ) : null}
+                        </li>
                     ))}
                 </ul>
             </CardFrame>
@@ -246,17 +275,30 @@ const sessionsCard: WorkCardDefinition = {
     source: { kind: 'work-model' },
     visible: onLine,
     Component: ({ ctx }) => {
+        const { api } = useAppContext()
         const { t } = useTranslation()
         const navigate = useNavigate()
         const bench = useBench(ctx)
+        const refresh = useMapRefresh()
+        const unassign = useMutation({
+            mutationFn: async (row: { id: string; followsDirectory?: boolean }) => {
+                if (!api) throw new Error('API unavailable')
+                await api.putWorkSession({ sessionId: row.id, state: row.followsDirectory ? 'ignored' : 'follow' })
+            },
+            onSuccess: refresh,
+        })
         const rows = bench.lineSessions(lineIdOf(ctx))
         return (
             <CardFrame title={t('work.sessions')}>
                 {rows.length === 0 ? <p className="text-sm text-[var(--app-hint)]">{t('work.sessionsEmpty')}</p> : (
-                    <ul>
+                    <ul className="flex flex-col gap-1">
                         {rows.map((row) => (
-                            <li key={row.id}>
-                                <button type="button" className="truncate text-left text-sm text-[var(--app-fg)]" onClick={() => navigate(getSessionListSelectionNavigation(row.id))}>{row.title}</button>
+                            <li key={row.id} className="flex items-center justify-between gap-2">
+                                <button type="button" className="truncate text-left text-sm text-[var(--app-fg)]" onClick={() => navigate(getSessionListSelectionNavigation(row.id))}>
+                                    {row.title}
+                                    {row.pendingRequestsCount > 0 ? <span className="ml-1 text-xs text-[var(--app-hint)]">({t('work.pendingCount', { count: row.pendingRequestsCount })})</span> : null}
+                                </button>
+                                <button type="button" className="shrink-0 text-xs text-[var(--app-hint)]" disabled={unassign.isPending} onClick={() => unassign.mutate(row)}>{t('work.removeReference')}</button>
                             </li>
                         ))}
                     </ul>

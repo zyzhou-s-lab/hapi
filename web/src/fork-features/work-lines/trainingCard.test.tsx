@@ -110,4 +110,37 @@ describe('training curve card', () => {
         expect(screen.queryByText('uplot-chart')).toBeNull()
         expect(screen.queryByRole('combobox')).toBeNull()
     })
+
+    it('renders multiple bound training cards on the same line with distinct run titles', () => {
+        const api = {
+            getWorkMap: async () => ({ lines: [], directories: [], sessions: [], dismissed: [] }),
+            getWorkLayout: async () => ({ source: 'default', layout: null }),
+        } as unknown as ApiClient
+        render(
+            <AppContextProvider value={{ api, token: 't', baseUrl: 'http://hub', user: { id: 7 } }}>
+                <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+                    <I18nProvider>
+                        <WorkCardHost
+                            surface="workbench"
+                            view={{ kind: 'line', lineId: 'line-1' }}
+                            sessions={[]}
+                            api={api}
+                            layoutFor={() => ({
+                                revision: 2,
+                                regions: {
+                                    main: [
+                                        { cardId: 'example.training-curves', args: { lineId: 'line-1', instanceId: 'c1', run: 'exp-1', xAxis: 'epoch' } },
+                                        { cardId: 'example.training-curves', args: { lineId: 'line-1', instanceId: 'c2', run: 'exp-2', xAxis: 'epoch' } },
+                                    ],
+                                },
+                            })}
+                        />
+                    </I18nProvider>
+                </QueryClientProvider>
+            </AppContextProvider>,
+        )
+        expect(screen.getByText('Training · exp-1')).toBeTruthy()
+        expect(screen.getByText('Training · exp-2')).toBeTruthy()
+        expect(screen.getAllByText('No points yet.')).toHaveLength(2)
+    })
 })

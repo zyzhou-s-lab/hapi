@@ -14,18 +14,20 @@ function span(min: number, max: number, log: boolean): { min: number; max: numbe
     return log ? { min: min / 2, max: min * 2 } : { min: min - 1, max: max + 1 }
 }
 
-export function TrainingChart(props: { series: TrainingSeries[], xSource?: readonly TrainingSeries[], run?: string, lineId?: string }): ReactNode {
+export function TrainingChart(props: { series: TrainingSeries[], xSource?: readonly TrainingSeries[], run?: string, lineId?: string, defaultXAxis?: string }): ReactNode {
     const { t } = useTranslation()
     const prefId = trainingPrefId(props.lineId ?? '', props.run ?? '')
-    const [prefsId, setPrefsId] = useState(prefId)
+    const defaultX = props.defaultXAxis && props.defaultXAxis.length > 0 ? props.defaultXAxis : TRAINING_X_STEP
+    const nextPrefsKey = `${prefId}|${defaultX}`
+    const [prefsKey, setPrefsKey] = useState(nextPrefsKey)
     const [hidden, setHidden] = useState<ReadonlySet<string>>(() => readTrainingHidden(prefId, trainingBrowserStore()))
     const [smooth, setSmooth] = useState(false)
     const [log, setLog] = useState(false)
-    const [xAxis, setXAxis] = useState(() => readTrainingXAxis(prefId, trainingBrowserStore()))
-    if (prefsId !== prefId) {
-        setPrefsId(prefId)
+    const [xAxis, setXAxis] = useState(() => readTrainingXAxis(prefId, trainingBrowserStore(), defaultX))
+    if (prefsKey !== nextPrefsKey) {
+        setPrefsKey(nextPrefsKey)
         setHidden(readTrainingHidden(prefId, trainingBrowserStore()))
-        setXAxis(readTrainingXAxis(prefId, trainingBrowserStore()))
+        setXAxis(readTrainingXAxis(prefId, trainingBrowserStore(), defaultX))
     }
     const host = useRef<HTMLDivElement>(null)
     const metricsRef = useRef<HTMLDivElement>(null)
@@ -147,7 +149,7 @@ export function TrainingChart(props: { series: TrainingSeries[], xSource?: reado
                         onChange={(event) => {
                             const value = event.target.value
                             setXAxis(value)
-                            writeTrainingXAxis(prefId, value, trainingBrowserStore())
+                            writeTrainingXAxis(prefId, value, trainingBrowserStore(), Date.now(), defaultX)
                         }}
                     >
                         <option value={TRAINING_X_STEP}>{t('work.trainingXStep')}</option>

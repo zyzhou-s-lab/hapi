@@ -29,7 +29,7 @@ import {
 } from '@hapi/protocol/sessionCitation'
 import { PingPeerError, formatInspectPeerReport, formatPeerSessionsList, inspectPeer, listPeerSessions, peerListFetchLimit, pingPeer } from "@/modules/pingPeer/pingPeer";
 import { readSettings } from '@/persistence';
-import { formatWorkResult, queryTrainingRun, registerTrainingRun } from '@/modules/training/trainingMcp';
+import { formatWorkResult, listTrainingRuns, queryTrainingRun, registerTrainingRun } from '@/modules/training/trainingMcp';
 import { EXPLORE_TOOLS, callExploreTool, exploreToolDescription, exploreToolSchemas, exploreToolTitle } from '@/modules/training/exploreMcp';
 type StartHappyServerOptions = {
     emitTitleSummary?: boolean;
@@ -518,7 +518,7 @@ function createHapiMcpServer(
         request: (path: string, init?: { method?: string; body?: unknown; headers?: Record<string, string> }) => client.workApi(path, init),
     };
     mcp.registerTool<any, any>('register_training_run', {
-        description: 'Register a local W&B run with HAPI so it can be shown on a work-line training card. Call this after the run directory exists. machineId defaults to this machine.',
+        description: 'Register a local W&B run directory with HAPI. Registering does not display a card by itself: call add_verification_card afterward to bind and show the run on an exploration workbench. machineId defaults to this machine.',
         title: 'Register Training Run',
         inputSchema: z.object({
             run: z.string().describe('Run name'),
@@ -537,6 +537,14 @@ function createHapiMcpServer(
         inputSchema: z.object({ run: z.string().describe('Registered run name') }),
     }, async (args: { run: string }) => {
         const response = await queryTrainingRun(hub, args.run);
+        return trainingResult(response.status, response.body);
+    });
+    mcp.registerTool<any, any>('list_training_runs', {
+        description: 'List all W&B training runs registered with HAPI for this account.',
+        title: 'List Training Runs',
+        inputSchema: z.object({}),
+    }, async () => {
+        const response = await listTrainingRuns(hub);
         return trainingResult(response.status, response.body);
     });
     for (const name of EXPLORE_TOOLS) {
@@ -634,8 +642,8 @@ export async function startHappyServer(client: ApiSessionClient, options: StartH
     }));
 
     const toolNames = enableChangeTitle
-        ? ['change_title', 'display_image', 'display_video', 'display_media', 'list_peers', 'ping_peer', 'inspect_peer', 'send_file', 'register_training_run', 'query_training_run', ...EXPLORE_TOOLS]
-        : ['display_image', 'display_video', 'display_media', 'list_peers', 'ping_peer', 'inspect_peer', 'send_file', 'register_training_run', 'query_training_run', ...EXPLORE_TOOLS];
+        ? ['change_title', 'display_image', 'display_video', 'display_media', 'list_peers', 'ping_peer', 'inspect_peer', 'send_file', 'register_training_run', 'query_training_run', 'list_training_runs', ...EXPLORE_TOOLS]
+        : ['display_image', 'display_video', 'display_media', 'list_peers', 'ping_peer', 'inspect_peer', 'send_file', 'register_training_run', 'query_training_run', 'list_training_runs', ...EXPLORE_TOOLS];
     if (options.skillLookup) {
         toolNames.push('skill_lookup');
     }

@@ -139,7 +139,16 @@ export default defineConfig({
             },
             '/socket.io': {
                 target: hubTarget,
-                ws: true
+                ws: true,
+                changeOrigin: true,
+                configure: (proxy) => {
+                    proxy.on('proxyReq', (proxyReq) => {
+                        proxyReq.removeHeader('origin')
+                    })
+                    proxy.on('proxyReqWs', (proxyReq) => {
+                        proxyReq.removeHeader('origin')
+                    })
+                }
             }
         }
     },
