@@ -835,29 +835,30 @@ export class OmpRpcEventAdapter {
     ): void {
         const modelLabel = `${assistant.provider}/${assistant.model}`;
         const content = assistant.content.flatMap((block): JsonObject[] => {
-            // Tool arguments are incomplete while streaming. Only the final
-            // canonical message may introduce executable tool-use blocks.
-            if (live && block.type === 'toolCall') return [];
             if (block.type === 'text' && typeof block.text === 'string' && block.text.length > 0) {
                 return [{ type: 'text', text: block.text }];
             }
             if (block.type === 'thinking' && typeof block.thinking === 'string' && block.thinking.length > 0) {
                 return [{ type: 'thinking', thinking: block.thinking }];
             }
-            if (
-                block.type === 'toolCall'
-                && typeof block.id === 'string'
-                && typeof block.name === 'string'
-                && block.arguments !== null
-                && typeof block.arguments === 'object'
-                && !Array.isArray(block.arguments)
-            ) {
-                return [{
-                    type: 'tool_use',
-                    id: block.id,
-                    name: block.name,
-                    input: withToolIntent(block.arguments, block.intent)
-                }];
+            if (block.type === 'toolCall') {
+                if (
+                    typeof block.id === 'string'
+                    && block.id.length > 0
+                    && typeof block.name === 'string'
+                    && block.name.length > 0
+                    && block.arguments !== null
+                    && typeof block.arguments === 'object'
+                    && !Array.isArray(block.arguments)
+                ) {
+                    return [{
+                        type: 'tool_use',
+                        id: block.id,
+                        name: block.name,
+                        input: withToolIntent(block.arguments, block.intent)
+                    }];
+                }
+                return [];
             }
             if (!['image', 'redactedThinking', 'fallback'].includes(String(block.type))) {
                 this.callbacks.onDiagnostic(`Unknown OMP assistant content block: ${String(block.type)}`);
