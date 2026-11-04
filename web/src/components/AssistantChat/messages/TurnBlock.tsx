@@ -269,7 +269,17 @@ export function TurnBlockView(props: {
     const hasSteps = props.partition.rows.some((row) => row.kind === 'reasoning' || row.kind === 'tool')
     const durationMs = props.durationMs
     const steps = props.partition.rows.map((row, index) => {
-        const keepVisible = row.kind === 'text' && props.partition.rows.slice(index + 1).some((later) => later.kind === 'image' || later.kind === 'file')
+        const laterRows = props.partition.rows.slice(index + 1)
+        const keepVisible =
+            row.kind === 'text'
+            && (
+                laterRows.some((later) => later.kind === 'image' || later.kind === 'file')
+                || (
+                    trailing.length === 0
+                    && laterRows.length > 0
+                    && laterRows.every((later) => later.kind === 'tool' && later.block.tool.name === 'ContextCompaction')
+                )
+            )
         return <Step key={row.key} row={row} folded={hasSteps && !open} keepVisible={keepVisible} />
     })
 

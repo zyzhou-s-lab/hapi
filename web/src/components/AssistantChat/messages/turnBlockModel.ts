@@ -145,7 +145,29 @@ function verbFor(tool: ChatToolCall, fallbackTitle: string): string {
     if (isSubagentToolName(tool.name)) return 'turn.verb.ranAgent'
     if (TODO_TOOL_NAMES[name] || TODO_TOOL_NAMES[tool.name]) return 'turn.verb.todo'
     if (name === 'CodexReasoning') return 'turn.verb.reasoning'
+    if (tool.name === 'ContextCompaction') return 'turn.verb.compaction'
     return fallbackTitle
+}
+
+function formatCompactCount(value: number): string {
+    if (value >= 1000) return `${Math.round(value / 1000)}k`
+    return String(value)
+}
+
+function extractCompactionIntent(input: unknown): string {
+    if (!isObject(input)) return ''
+    const frame = isObject(input.frame) ? input.frame : null
+    const strategy = stringField(input, ['action', 'strategy']) ?? stringField(frame, ['action', 'strategy'])
+    const reason = stringField(input, ['reason', 'trigger']) ?? stringField(frame, ['reason', 'trigger'])
+    const phase = typeof input.phase === 'string'
+        ? input.phase
+        : frame?.type === 'auto_compaction_start'
+            ? 'started'
+            : null
+    if (phase === 'started') {
+        return [strategy, reason?.replaceAll('-', ' ')].filter(Boolean).join(' · ')
+    }
+    return strategy ?? (reason && reason !== 'auto' ? reason.replaceAll('-', ' ') : '')
 }
 
 
@@ -194,6 +216,9 @@ function subagentIntent(tool: ChatToolCall): string | null {
 
 function intentFor(tool: ChatToolCall, verb: string, fallbackTitle: string): string {
     const name = resolveToolViewName(tool.name)
+    if (tool.name === 'ContextCompaction') {
+        return extractCompactionIntent(tool.input)
+    }
     if (isSubagentToolName(tool.name)) {
         return subagentIntent(tool) ?? (fallbackTitle === verb ? '' : fallbackTitle)
     }
@@ -421,6 +446,7 @@ export type TurnActionCounts = {
     webFetches: number
     agents: number
     thoughts: number
+    compactions?: number
 }
 
 export type TurnWebSearchResultItem = {
@@ -469,6 +495,16 @@ export type TurnStepPreview =
         filePath: string
         content: string
         lineCount: number
+    }
+    | {
+        kind: 'compaction'
+        strategy: string | null
+        trigger: string | null
+        tokensBeforeLabel: string | null
+        archiveLabel: string | null
+        summary: string | null
+        errorMessage: string | null
+        isRunning: boolean
     }
     | {
         kind: 'default'
@@ -561,6 +597,7 @@ export function countTurnActions(rows: readonly TurnRow[]): TurnActionCounts {
         webFetches: 0,
         agents: 0,
         thoughts: 0,
+        compactions: 0,
     }
     for (const row of rows) {
         if (row.kind === 'reasoning') {
@@ -571,6 +608,10 @@ export function countTurnActions(rows: readonly TurnRow[]): TurnActionCounts {
         const rawName = row.block.tool.name
         const name = resolveToolViewName(rawName)
         if (TODO_TOOL_NAMES[name] || TODO_TOOL_NAMES[rawName] || isAskUserQuestionToolName(rawName) || isRequestUserInputToolName(rawName)) {
+            continue
+        }
+        if (rawName === 'ContextCompaction') {
+            counts.compactions = (counts.compactions ?? 0) + 1
             continue
         }
         if (isWebFetchTool(rawName, name)) {
@@ -612,6 +653,9 @@ export function formatTurnAggregatedSummary(
         if (counts.webFetches > 0) parts.push(`抓取了 ${counts.webFetches} 个页面`)
         if (counts.webSearches > 0) parts.push(`搜索了 ${counts.webSearches} 次网页`)
         if (counts.agents > 0) parts.push(`运行了 ${counts.agents} 个子代理`)
+        if ((counts.compactions ?? 0) > 0) {
+            parts.push(counts.compactions === 1 ? '压缩了上下文' : `压缩了 ${counts.compactions} 次上下文`)
+        }
         if (parts.length === 0) return counts.thoughts > 0 ? '已思考' : '已完成步骤'
         if (parts.length === 1) return parts[0]!
         return `${parts.slice(0, -1).join('，')}，并${parts[parts.length - 1]}`
@@ -638,6 +682,9 @@ export function formatTurnAggregatedSummary(
     }
     if (counts.agents > 0) {
         clauses.push(counts.agents === 1 ? 'ran an agent' : `ran ${counts.agents} agents`)
+    }
+    if ((counts.compactions ?? 0) > 0) {
+        clauses.push(counts.compactions === 1 ? 'compacted conversation' : `compacted conversation ${counts.compactions} times`)
     }
 
     if (clauses.length === 0) {
@@ -696,12 +743,98 @@ function translateTurnVerbKey(
             return zh
                 ? (isRunning ? '正在运行代理' : isQueued ? '待运行代理' : '已运行代理')
                 : (isRunning ? 'Running agent' : isQueued ? 'Queued agent' : 'Ran agent')
+        case 'turn.verb.compaction':
+            return zh
+                ? (isRunning ? '正在压缩上下文' : isQueued ? '待压缩上下文' : '已压缩上下文')
+                : (isRunning ? 'Compacting conversation' : isQueued ? 'Queued compaction' : 'Compacted conversation')
         default:
             if (verb.startsWith('turn.verb.')) {
                 const suffix = verb.slice('turn.verb.'.length)
                 return capitalizeFirst(suffix)
             }
             return isRunning && !verb.endsWith('...') ? `${verb}...` : verb
+    }
+}
+function describeCompactionStep(
+    row: TurnToolRow,
+    zh: boolean,
+    isRunning: boolean,
+    isQueued: boolean
+): TurnToolStepDescriptor {
+    const input = row.block.tool.input
+    const record = isObject(input) ? input : {}
+    const frame = isObject(record.frame) ? record.frame : null
+    const strategy = stringField(record, ['action', 'strategy']) ?? stringField(frame, ['action', 'strategy'])
+    const reason = stringField(record, ['reason', 'trigger']) ?? stringField(frame, ['reason', 'trigger'])
+    const outcome = typeof record.outcome === 'string'
+        ? record.outcome
+        : frame?.aborted === true
+            ? 'aborted'
+            : null
+    const result = isObject(record.result) ? record.result : isObject(frame?.result) ? frame.result : null
+    const tokensBefore = typeof result?.tokensBefore === 'number'
+        ? result.tokensBefore
+        : typeof record.tokensBefore === 'number'
+            ? record.tokensBefore
+            : typeof record.preTokens === 'number'
+                ? record.preTokens
+                : null
+    const tokensSaved = typeof record.tokensSaved === 'number' ? record.tokensSaved : null
+    const shortSummary = typeof result?.shortSummary === 'string' && result.shortSummary.trim()
+        ? result.shortSummary.trim()
+        : null
+    const errorMessage = stringField(record, ['errorMessage', 'message']) ?? stringField(frame, ['errorMessage'])
+
+    const directArchive = isObject(result?.archive) ? result.archive : null
+    const preserveData = isObject(result?.preserveData) ? result.preserveData : null
+    const legacyArchive = isObject(preserveData?.snapcompact) ? preserveData.snapcompact : null
+    const arch = directArchive ?? legacyArchive
+    const totalChars = typeof arch?.totalChars === 'number' ? arch.totalChars : null
+    const frameCount = typeof arch?.frameCount === 'number'
+        ? arch.frameCount
+        : Array.isArray(arch?.frames)
+            ? arch.frames.length
+            : null
+    const archiveLabel = totalChars !== null && frameCount !== null
+        ? (zh
+            ? `已归档 ${formatCompactCount(totalChars)} 字符 · ${frameCount} 帧`
+            : `${formatCompactCount(totalChars)} chars archived · ${frameCount} ${frameCount === 1 ? 'frame' : 'frames'}`)
+        : null
+
+    const verbLabel = isRunning
+        ? (zh ? '正在压缩上下文' : 'Compacting conversation')
+        : row.error
+            ? (zh ? '上下文压缩失败' : 'Compaction failed')
+            : outcome === 'aborted'
+                ? (zh ? '已取消上下文压缩' : 'Compaction cancelled')
+                : (zh ? '已压缩上下文' : 'Compacted conversation')
+
+    const intentLabel = isRunning
+        ? [strategy, reason?.replaceAll('-', ' ')].filter(Boolean).join(' · ')
+        : [strategy, archiveLabel].filter(Boolean).join(' · ') || (reason && reason !== 'auto' ? reason.replaceAll('-', ' ') : '')
+
+    const tokensBeforeLabel = tokensSaved !== null && tokensSaved > 0
+        ? (zh ? `节省 ${formatCompactCount(tokensSaved)} tokens` : `saved ${formatCompactCount(tokensSaved)} tokens`)
+        : tokensBefore !== null && tokensBefore > 0
+            ? `${formatCompactCount(tokensBefore)} tokens`
+            : null
+
+    return {
+        isRunning,
+        isQueued,
+        verbLabel,
+        intentLabel,
+        secondaryBadge: !isRunning && !isQueued ? tokensBeforeLabel : null,
+        preview: {
+            kind: 'compaction',
+            strategy,
+            trigger: reason ? reason.replaceAll('-', ' ') : null,
+            tokensBeforeLabel,
+            archiveLabel,
+            summary: shortSummary,
+            errorMessage: row.error ? errorMessage : null,
+            isRunning,
+        },
     }
 }
 
@@ -715,6 +848,10 @@ export function describeTurnToolStep(
     const isQueued = tool.state === 'pending' && !row.permission
     const isRunning = tool.state === 'running' || (tool.state === 'pending' && row.permission)
     const zh = lang === 'zh-CN'
+
+    if (rawName === 'ContextCompaction' || row.verb === 'turn.verb.compaction') {
+        return describeCompactionStep(row, zh, isRunning, isQueued)
+    }
 
     if (isWebFetchTool(rawName, name)) {
         const url = stringField(tool.input, ['url', 'uri']) ?? ''
@@ -960,20 +1097,25 @@ export function summarizeTurnActivity(
     const activeTodo = shownTitle(options?.activeTodoText)
     const tools = partition.rows.filter((row): row is TurnToolRow => row.kind === 'tool')
     const runningTool = tools.find((row) => row.block.tool.state === 'running' || row.block.tool.state === 'pending')
+    const isCompacting = runningTool?.block.tool.name === 'ContextCompaction'
     const runningStep = runningTool ? describeTurnToolStep(runningTool, lang) : null
     const runningPhrase = runningStep
-        ? `${runningStep.verbLabel}${runningStep.intentLabel ? ` ${runningStep.intentLabel}` : ''}...`
+        ? (isCompacting
+            ? `${runningStep.verbLabel}...`
+            : `${runningStep.verbLabel}${runningStep.intentLabel ? ` ${runningStep.intentLabel}` : ''}...`)
         : null
 
     const fallbackTitle = partition.title
         ? translateTurnVerbKey(partition.title, true, false, lang === 'zh-CN')
         : ''
-    const workingHeader = activeTodo
-        ? (activeTodo.endsWith('...') ? activeTodo : `${activeTodo}...`)
-        : runningPhrase
-            ?? (fallbackTitle
-                ? (fallbackTitle.endsWith('...') ? fallbackTitle : `${fallbackTitle}...`)
-                : (lang === 'zh-CN' ? '正在思考...' : 'Thinking...'))
+    const workingHeader = isCompacting && runningPhrase
+        ? runningPhrase
+        : activeTodo
+            ? (activeTodo.endsWith('...') ? activeTodo : `${activeTodo}...`)
+            : runningPhrase
+                ?? (fallbackTitle
+                    ? (fallbackTitle.endsWith('...') ? fallbackTitle : `${fallbackTitle}...`)
+                    : (lang === 'zh-CN' ? '正在思考...' : 'Thinking...'))
     return {
         workingHeader,
         completedHeader,

@@ -151,6 +151,25 @@ export function isLegacyCompactionEndEvent(event: AgentEvent): boolean {
         && /^(?:Conversation|Context) compacted\.?$/i.test(event.message.trim())
 }
 
+export function isSkippedOmpCompactionEvent(event: AgentEvent): boolean {
+    if (event.type !== 'omp-compaction') return false
+    const record = event as Record<string, unknown>
+    if (record.outcome === 'skipped') return true
+    const frame = typeof record.frame === 'object' && record.frame !== null
+        ? (record.frame as Record<string, unknown>)
+        : null
+    return frame?.skipped === true
+}
+
+export function isInlineCompactionEvent(event: AgentEvent): boolean {
+    if (isSkippedOmpCompactionEvent(event)) return false
+    return event.type === 'omp-compaction'
+        || event.type === 'compact'
+        || event.type === 'microcompact'
+        || isLegacyCompactionStartEvent(event)
+        || isLegacyCompactionEndEvent(event)
+}
+
 /**
  * Fold paired compaction lifecycle events (`started` -> `finished`, or
  * `"Compacting conversation..."` -> `"Conversation compacted"`) in place so
@@ -171,8 +190,17 @@ export function foldCompactionEvents<T extends { kind: string; id: string; event
         }
         const event = block.event
         if (event.type === 'omp-compaction') {
-            const phase = 'phase' in event ? event.phase : undefined
-            const outcome = 'outcome' in event ? event.outcome : undefined
+            const record = event as Record<string, unknown>
+            const frame = typeof record.frame === 'object' && record.frame !== null
+                ? (record.frame as Record<string, unknown>)
+                : null
+            const phase = typeof record.phase === 'string'
+                ? record.phase
+                : frame?.type === 'auto_compaction_start'
+                    ? 'started'
+                    : frame?.type === 'auto_compaction_end'
+                        ? 'finished'
+                        : undefined
             if (phase === 'started') {
                 if (openOmpCompactionIndex >= 0) {
                     const prev = result[openOmpCompactionIndex]!
@@ -184,7 +212,7 @@ export function foldCompactionEvents<T extends { kind: string; id: string; event
                 continue
             }
             if (phase === 'finished') {
-                if (outcome === 'skipped') {
+                if (isSkippedOmpCompactionEvent(event)) {
                     if (openOmpCompactionIndex >= 0) {
                         result.splice(openOmpCompactionIndex, 1)
                         if (openLegacyCompactionIndex > openOmpCompactionIndex) {

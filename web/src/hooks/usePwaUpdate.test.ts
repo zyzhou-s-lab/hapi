@@ -93,6 +93,25 @@ describe('setupRegistrationUpdateChecks', () => {
 
         expect(removeEventListenerSpy).toHaveBeenCalledWith('visibilitychange', expect.any(Function))
         expect(clearIntervalSpy).toHaveBeenCalled()
+
+        window.dispatchEvent(new Event('focus'))
+        expect(registration.update).not.toHaveBeenCalled()
+    })
+
+    it('checks for updates when the window gains focus or comes online', () => {
+        const registration = {
+            update: vi.fn().mockResolvedValue(undefined),
+        } as unknown as ServiceWorkerRegistration
+
+        const cleanup = setupRegistrationUpdateChecks(registration)
+
+        window.dispatchEvent(new Event('focus'))
+        expect(registration.update).toHaveBeenCalledTimes(1)
+
+        window.dispatchEvent(new Event('online'))
+        expect(registration.update).toHaveBeenCalledTimes(2)
+
+        cleanup()
     })
 })
 

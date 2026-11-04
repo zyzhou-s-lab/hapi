@@ -9,7 +9,7 @@ import {
     type ComposerSendIntent,
 } from '@/lib/messageDelivery'
 import { safeStringify } from '@hapi/protocol'
-import { isLegacyCompactionEndEvent, isLegacyCompactionStartEvent } from '@/chat/reducerEvents'
+import { isInlineCompactionEvent, isLegacyCompactionStartEvent } from '@/chat/reducerEvents'
 import { renderEventLabel } from '@/chat/presentation'
 import { filterVisibleBlocksForFlavor } from '@/fork-features/omp-product/eventVisibility'
 import type { ChatBlock, CliOutputBlock, CodexReview, RoundSummary, UsageData } from '@/chat/types'
@@ -146,12 +146,57 @@ export function getResponseGroupTimestamps(
 }
 
 function isMidTurnHoistableEventBlock(block: VisibleChatBlock): boolean {
-    if (block.kind !== 'agent-event') return false
+    return block.kind === 'agent-event' && block.event.type === 'title-changed'
+}
+
+function toCompactionToolCallBlock(
+    block: Extract<VisibleChatBlock, { kind: 'agent-event' }>
+): ToolCallBlock {
     const event = block.event
-    return event.type === 'title-changed'
-        || event.type === 'omp-compaction'
+    const record = event as Record<string, unknown>
+    const frame = typeof record.frame === 'object' && record.frame !== null
+        ? (record.frame as Record<string, unknown>)
+        : null
+    const isStarted = (event.type === 'omp-compaction' && (record.phase === 'started' || frame?.type === 'auto_compaction_start'))
         || isLegacyCompactionStartEvent(event)
-        || isLegacyCompactionEndEvent(event)
+    const isFailed = event.type === 'omp-compaction'
+        && !isStarted
+        && (
+            record.outcome === 'failed'
+            || (
+                record.outcome === undefined
+                && frame?.aborted !== true
+                && frame?.skipped !== true
+                && typeof (record.errorMessage ?? frame?.errorMessage) === 'string'
+            )
+        )
+    const state: ToolCallBlock['tool']['state'] = isStarted
+        ? 'running'
+        : isFailed
+            ? 'error'
+            : 'completed'
+    return {
+        kind: 'tool-call',
+        id: block.id,
+        localId: null,
+        createdAt: block.createdAt,
+        invokedAt: block.invokedAt,
+        model: block.model,
+        children: [],
+        tool: {
+            id: block.id,
+            name: 'ContextCompaction',
+            state,
+            input: event,
+            createdAt: block.createdAt,
+            startedAt: block.createdAt,
+            completedAt: isStarted ? null : block.createdAt,
+            execStartedAt: block.createdAt,
+            execCompletedAt: isStarted ? null : block.createdAt,
+            description: renderEventLabel(event),
+            result: isStarted ? undefined : event,
+        },
+    }
 }
 
 /**
@@ -721,6 +766,32 @@ function toThreadMessageLike(
     }
 
     if (block.kind === 'agent-event') {
+        if (isInlineCompactionEvent(block.event)) {
+            const compactionTool = toCompactionToolCallBlock(block)
+            const running = compactionTool.tool.state === 'running'
+            return {
+                role: 'assistant',
+                id: threadMessageId,
+                createdAt: new Date(timestamp),
+                content: [{
+                    type: 'tool-call',
+                    toolCallId: block.id,
+                    toolName: 'ContextCompaction',
+                    argsText: '',
+                    result: running ? undefined : block.event,
+                    isError: compactionTool.tool.state === 'error',
+                    artifact: compactionTool
+                }],
+                metadata: {
+                    custom: {
+                        kind: 'event',
+                        event: block.event,
+                        invokedAt: block.invokedAt,
+                        model: block.model
+                    } satisfies HappyChatMessageMetadata
+                }
+            }
+        }
         // Pi compaction summaries carry a real payload; surface them as a
         // dedicated system message so the chat can render an independent
         // block instead of a small status line.

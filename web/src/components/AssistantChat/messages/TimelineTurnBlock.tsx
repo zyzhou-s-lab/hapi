@@ -465,6 +465,40 @@ function StepInlinePreviewCard(props: { preview: TurnStepPreview }) {
             </div>
         )
     }
+    if (preview.kind === 'compaction') {
+        const metaItems = [
+            preview.strategy,
+            preview.trigger,
+            preview.archiveLabel,
+            preview.tokensBeforeLabel,
+        ].filter((item): item is string => Boolean(item))
+        return (
+            <div
+                className="mt-1.5 mb-2 overflow-hidden rounded-lg border border-[var(--app-border)] bg-[var(--app-subtle-bg)]/45 px-3 py-2 text-xs"
+                data-testid="turn-level2-compaction"
+            >
+                {metaItems.length > 0 ? (
+                    <div className="flex flex-wrap items-center gap-1.5 text-[11.5px] font-mono text-[var(--app-hint)]">
+                        {metaItems.join(' · ')}
+                    </div>
+                ) : null}
+                {preview.errorMessage ? (
+                    <div className="mt-1.5 text-[12px] leading-relaxed text-[var(--app-badge-error-text)] whitespace-pre-wrap">
+                        {preview.errorMessage}
+                    </div>
+                ) : null}
+                {preview.summary ? (
+                    <div className="mt-1.5 text-[12.5px] leading-relaxed text-[var(--app-fg)]/90 whitespace-pre-wrap">
+                        {preview.summary}
+                    </div>
+                ) : !metaItems.length && !preview.errorMessage ? (
+                    <div className="text-[12px] text-[var(--app-hint)]">
+                        {preview.isRunning ? 'Compacting conversation context...' : 'Conversation context compacted.'}
+                    </div>
+                ) : null}
+            </div>
+        )
+    }
 
     return (
         <div className="mt-1.5 mb-2 rounded-lg border border-[var(--app-border)] bg-[var(--app-subtle-bg)]/45 p-2.5">
@@ -895,7 +929,8 @@ export function TimelineTurnBlockView(props: {
         ),
         [props.partition.rows]
     )
-    const hasSteps = stepRows.some((row) => row.kind === 'reasoning' || row.kind === 'tool')
+    const isInitialStreamingWait = props.streaming && stepRows.length === 0 && trailing.length === 0
+    const hasSteps = stepRows.some((row) => row.kind === 'reasoning' || row.kind === 'tool') || isInitialStreamingWait
     const headerText = props.streaming ? summary.workingHeader : summary.completedHeader
     const accentColor = props.indicatorColor ?? '#da7756'
 
@@ -1092,7 +1127,7 @@ export function TimelineTurnBlockView(props: {
         observer.observe(railEl)
         return () => observer.disconnect()
     }, [open, stepRows.length, showFrontierSlot])
-    if (!props.partition.hasActivity) {
+    if (!props.partition.hasActivity && !isInitialStreamingWait) {
         if (trailing.length === 0) return null
         return (
             <div className="my-2 space-y-3">
@@ -1294,11 +1329,17 @@ export function TimelineTurnBlockView(props: {
                                 </div>
                             ) : null}
                             {stepRows.map((row, idx) => {
+                                const laterRows = stepRows.slice(idx + 1)
                                 const keepVisible =
                                     row.kind === 'text'
-                                    && stepRows
-                                        .slice(idx + 1)
-                                        .some((later) => later.kind === 'image' || later.kind === 'file')
+                                    && (
+                                        laterRows.some((later) => later.kind === 'image' || later.kind === 'file')
+                                        || (
+                                            trailing.length === 0
+                                            && laterRows.length > 0
+                                            && laterRows.every((later) => later.kind === 'tool' && later.block.tool.name === 'ContextCompaction')
+                                        )
+                                    )
                                 if (row.kind === 'tool' && row.pinned) {
                                     return (
                                         <div key={row.key} className="relative ml-2 mt-1 border-l border-[var(--app-border)] pl-3.5">

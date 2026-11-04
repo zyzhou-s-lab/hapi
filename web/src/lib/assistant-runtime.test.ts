@@ -261,7 +261,7 @@ describe('hoistMidTurnTitleEvents', () => {
         expect(hoistMidTurnTitleEvents(withTitleBetween).map((block) => block.id)).toEqual(['a1', 'e', 'title', 'a2'])
     })
 
-    it('hoists mid-turn compaction events before the active assistant run so the turn stays one streaming card', () => {
+    it('keeps mid-turn compaction events in chronological order inside the joined assistant run without splitting the turn', () => {
         const compacting = agentEvent('c-start', {
             type: 'omp-compaction',
             phase: 'started',
@@ -283,11 +283,21 @@ describe('hoistMidTurnTitleEvents', () => {
 
         expect(hoistMidTurnTitleEvents(blocks).map((block) => block.id)).toEqual([
             'u1',
-            'c-start',
-            'c-legacy',
             'a1',
             't1',
+            'c-start',
+            'c-legacy',
             'a2'
+        ])
+
+        const assigned = assignThreadMessageIds(blocks)
+        expect(assigned.map((entry) => entry.threadMessageId)).toEqual([
+            'user-text:u1',
+            'agent-text:a1',
+            'tool-call:t1',
+            'agent-event:c-start',
+            'agent-event:c-legacy',
+            'agent-text:a2'
         ])
     })
 })

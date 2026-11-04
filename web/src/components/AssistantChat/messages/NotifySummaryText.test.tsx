@@ -189,4 +189,10 @@ describe('NotifySummaryText', () => {
 
         expect(screen.getByTestId('raw-markdown')).toHaveAttribute('data-smooth', 'false')
     })
+
+    it('returns null for an empty running text part even when session summary display is enabled', () => {
+        mockUseSessionSummaryInChat.mockReturnValue(true)
+        const { container } = renderText('', 'running')
+        expect(container.firstChild).toBeNull()
+    })
 })

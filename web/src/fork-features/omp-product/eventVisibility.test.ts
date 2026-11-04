@@ -96,5 +96,27 @@ describe('OMP event visibility', () => {
             agentText('step-2')
         ]
         expect(filterVisibleBlocksForFlavor(skippedBlocks, 'omp').map((block) => block.id)).toEqual(['step-2'])
+
+        const legacySkippedBlocks: VisibleChatBlock[] = [
+            agentEvent('compact-start-3', {
+                type: 'omp-compaction',
+                phase: 'started',
+                action: 'shake',
+                reason: 'threshold'
+            }),
+            agentEvent('compact-skip-3', {
+                type: 'omp-compaction',
+                phase: 'finished',
+                frame: {
+                    type: 'auto_compaction_end',
+                    action: 'shake',
+                    aborted: false,
+                    skipped: true,
+                    errorMessage: 'Auto-shake found nothing eligible to drop; falling back to context-full compaction.'
+                }
+            }),
+            agentText('step-3')
+        ]
+        expect(filterVisibleBlocksForFlavor(legacySkippedBlocks, 'omp').map((block) => block.id)).toEqual(['step-3'])
     })
 })
