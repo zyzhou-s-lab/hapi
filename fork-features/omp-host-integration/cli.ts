@@ -159,7 +159,7 @@ const HOST_TOOL_DEFINITIONS: OmpHostToolDefinition[] = [
     {
         name: 'change_title',
         label: 'Change Chat Title',
-        description: 'Change the title of the current HAPI chat session. Use a concise title when the primary objective becomes clear.',
+        description: 'Change the title of the current HAPI chat session. Call when the initial objective becomes clear and whenever the user switches to a new task or primary objective in later turns.',
         parameters: {
             type: 'object',
             properties: { title: { type: 'string', description: 'Concise chat title' } },
@@ -486,6 +486,8 @@ export class OmpHostToolBridge {
         switch (request.toolName) {
             case 'change_title': {
                 const args = ChangeTitleArgsSchema.parse(request.arguments);
+                throwIfAborted(signal, request.toolName);
+                await this.options.client.request({ type: 'set_session_name', name: args.title });
                 throwIfAborted(signal, request.toolName);
                 return {
                     result: textResult(`Changed HAPI chat title to: ${args.title}`),
@@ -1366,13 +1368,27 @@ export class OmpHostIntegration {
                     summary: title,
                     leafUuid: randomUUID()
                 } satisfies RawJSONLines);
-            } else {
-                // Changing the session title is a tool side effect, not a timeline projection.
-                options.sessionClient.updateMetadata((metadata) => ({
-                    ...metadata,
-                    summary: { text: title, updatedAt: Date.now() }
-                }));
             }
+            // Changing the session title is a tool side effect: keep both
+            // metadata.summary and OMP's native title projection aligned so a
+            // prior turn's nativeSession.name does not shadow the updated title.
+            options.sessionClient.updateMetadata((metadata) => {
+                const previousNativeName = metadata.ompSession?.name;
+                const hasCustomName = typeof metadata.name === 'string'
+                    && metadata.name.length > 0
+                    && metadata.name !== previousNativeName;
+                return {
+                    ...metadata,
+                    ...(!hasCustomName ? { name: title } : {}),
+                    ...(metadata.ompSession ? {
+                        ompSession: {
+                            ...metadata.ompSession,
+                            name: title
+                        }
+                    } : {}),
+                    summary: { text: title, updatedAt: Date.now() }
+                };
+            });
         };
         const deleteApprovals = new DeleteExplorationApprovals((handler) => options.sessionClient.updateAgentState(handler));
         this.hostTools = new OmpHostToolBridge({

@@ -56,6 +56,8 @@ function createFakeClient(options?: {
                 return { schemes: command.schemes.map((scheme) => scheme.scheme.toLowerCase()) };
             case 'get_login_providers':
                 return { providers: [] };
+            case 'set_session_name':
+                return undefined;
             default:
                 throw new Error(`Unexpected fake OMP command: ${command.type}`);
         }
@@ -139,6 +141,8 @@ describe('OMP host presentation policy', () => {
             }));
         });
         expect(fake.frames).toContainEqual({ type: 'extension_ui_response', id: 'input', value: 'accepted' });
+        expect(fake.requests).toContainEqual({ type: 'set_session_name', name: 'Hidden title' });
+        expect(metadata.name).toBe('Hidden title');
         expect(metadata.summary?.text).toBe('Hidden title');
         integration.handle({ type: 'extension_ui_request', raw: {
             type: 'extension_ui_request', id: 'native-title', method: 'setTitle', title: 'Native hidden title'

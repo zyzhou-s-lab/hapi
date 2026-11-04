@@ -105,6 +105,41 @@ describe('OmpSession native snapshot metadata', () => {
         }
     });
 
+    it('preserves a custom session name when reconciling an unchanged native session snapshot', () => {
+        const { session, updateMetadata } = createSession();
+        try {
+            session.applyNativeSessionSnapshot({
+                id: 'same-session-id',
+                file: '/sessions/same-session-id.jsonl',
+                name: 'Auto-generated turn 1 title'
+            });
+            const update = updateMetadata.mock.calls[0]?.[0] as (
+                metadata: Record<string, unknown>
+            ) => Record<string, unknown>;
+            expect(update({
+                path: '/work',
+                host: 'host',
+                name: 'Manual or updated title',
+                ompSession: {
+                    id: 'same-session-id',
+                    file: '/sessions/same-session-id.jsonl',
+                    name: 'Auto-generated turn 1 title'
+                }
+            })).toEqual({
+                path: '/work',
+                host: 'host',
+                name: 'Manual or updated title',
+                ompSession: {
+                    id: 'same-session-id',
+                    file: '/sessions/same-session-id.jsonl',
+                    name: 'Auto-generated turn 1 title'
+                }
+            });
+        } finally {
+            session.stopKeepAlive();
+        }
+    });
+
     it('persists effective, configured, and resolved OMP thinking independently', () => {
         const { session, updateMetadata } = createSession();
         try {

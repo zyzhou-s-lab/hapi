@@ -179,7 +179,7 @@ function createHapiMcpServer(
     }
     if (enableChangeTitle) {
         mcp.registerTool<any, any>('change_title', {
-            description: 'Change the title of the current HAPI chat session. Call once when the user\'s primary objective is clear; use a concise task title.',
+            description: 'Change the title of the current HAPI chat session. Call when the user\'s initial objective is clear and whenever the user switches to a new task or primary objective in later turns; use a concise task title.',
             title: 'Change Chat Title',
             inputSchema: changeTitleInputSchema,
         }, async (args: { title: string }) => {

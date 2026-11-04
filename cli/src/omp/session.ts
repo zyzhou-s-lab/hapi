@@ -64,14 +64,23 @@ export class OmpSession extends AgentSessionBase<OmpMode, OmpInputQueue> {
                 if (!nativeSession || nativeSession.id !== sessionId) {
                     throw new Error('OMP native session snapshot must accompany its session ID');
                 }
+                const previousNative = metadata.ompSession;
+                const sameNativeSession = previousNative?.id === nativeSession.id;
+                const nativeNameChanged = !sameNativeSession || previousNative?.name !== nativeSession.name;
+                const hasCustomName = sameNativeSession
+                    && typeof metadata.name === 'string'
+                    && metadata.name.length > 0
+                    && metadata.name !== previousNative?.name;
                 const next = {
                     ...metadata,
                     ompSession: nativeSession
                 };
-                if (nativeSession.name) {
-                    next.name = nativeSession.name;
-                } else {
-                    delete next.name;
+                if (nativeNameChanged || !hasCustomName) {
+                    if (nativeSession.name) {
+                        next.name = nativeSession.name;
+                    } else {
+                        delete next.name;
+                    }
                 }
                 return next;
             },

@@ -16,11 +16,10 @@ import { withSessionSummaryInstruction } from '@/modules/common/sessionSummaryIn
  * so the tool is called as `functions.hapi__change_title`.
  */
 export const TITLE_INSTRUCTION = trimIdent(`
-    Use the title tool sparingly. For a new chat, call it once after the user's initial request is clear, and set a concise task title.
+    Keep the chat title aligned with the current task. For a new chat, call the title tool once the user's initial request is clear, and call it again in later turns whenever the user switches to a new task, topic, or stage of work so the title reflects the current work.
     Prefer calling functions.hapi__change_title.
     If that exact tool name is unavailable, call an equivalent alias such as hapi__change_title, mcp__hapi__change_title, or hapi_change_title.
-    Do not rename the chat for routine progress, substeps, implementation details, or a slightly better wording.
-    Rename only when the user's primary objective changes substantially and the existing title would be misleading.
+    Do not rename the chat for minor substeps within the same task or a slightly better wording.
     ${DISPLAY_IMAGE_PROMPT_CODEX}
     ${DISPLAY_VIDEO_PROMPT_CODEX}
     ${DISPLAY_MEDIA_PROMPT_CODEX}
