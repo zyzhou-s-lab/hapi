@@ -12,6 +12,7 @@ import {
     DockedTodoProgressBar,
     TimelineTurnBlockView,
 } from '@/components/AssistantChat/messages/TimelineTurnBlock'
+import { TurnTimelineDemo } from '@/components/AssistantChat/messages/TurnTimelineDemo'
 
 function tool(id: string, name: string, extra: Partial<ToolCallBlock['tool']> = {}): ToolCallBlock {
     return {
@@ -185,5 +186,26 @@ describe('TimelineTurnBlock & summarizeTurnActivity', () => {
         expect(screen.getByText('2 of 2')).toBeInTheDocument()
         fireEvent.click(screen.getByText('Opt C'))
         expect(submitted).toEqual({ q1: 'Opt A', q2: 'Opt C' })
+    })
+
+    it('transitions from asking-user to resumed-working (Turn 2 active with B1 equalizer-bars) before completed', () => {
+        render(
+            <I18nProvider>
+                <TurnTimelineDemo />
+            </I18nProvider>
+        )
+
+        fireEvent.click(screen.getByTestId('stage-btn-asking-user'))
+        expect(screen.getByTestId('docked-question-wizard')).toBeInTheDocument()
+
+        fireEvent.click(screen.getByTestId('question-option-1'))
+        fireEvent.click(screen.getByTestId('question-option-1'))
+        fireEvent.click(screen.getByTestId('question-option-1'))
+
+        expect(screen.getByTestId('submitted-qa-bubble')).toBeInTheDocument()
+        const followUpBlock = screen.getByTestId('turn-followup-block')
+        expect(followUpBlock).toBeInTheDocument()
+        expect(followUpBlock.querySelector('[data-indicator-variant="equalizer-bars"]')).not.toBeNull()
+        expect(screen.getByTestId('demo-stop-running-btn')).toBeInTheDocument()
     })
 })

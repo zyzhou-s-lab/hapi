@@ -313,6 +313,7 @@ export function TurnBlockView(props: {
 
 export function TurnBlock() {
     const ctx = useOptionalHappyChatContext()
+    const { locale } = useTranslation()
     const { reasoningCollapsed } = useReasoningCollapse()
     const content = useAuiState((state) => state.message.role === 'assistant' ? state.message.content : [])
     const streaming = useAuiState((state) => state.message.status?.type === 'running')
@@ -320,6 +321,10 @@ export function TurnBlock() {
     const custom = useAuiState((state) => state.message.metadata.custom as Partial<HappyChatMessageMetadata> | undefined)
     const partition = partitionTurn(contentParts(content), ctx?.metadata ?? null)
     const [now, setNow] = useState(() => Date.now())
+
+    const activeTodoText = streaming
+        ? (ctx?.todos?.find((item) => item.status === 'in_progress')?.content ?? null)
+        : null
 
     useEffect(() => {
         if (!streaming) return
@@ -329,6 +334,9 @@ export function TurnBlock() {
 
     return (
         <TurnBlockView
+            variant="timeline"
+            activeTodoText={activeTodoText}
+            lang={locale === 'zh-CN' ? 'zh-CN' : 'en'}
             partition={partition}
             streaming={streaming}
             initiallyOpen={streaming && !reasoningCollapsed}

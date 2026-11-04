@@ -11,6 +11,11 @@ import {
 } from '@/components/AssistantChat/messages/turnBlockModel'
 import { GeneratedFileCard, GeneratedImageCard } from '@/components/AssistantChat/messages/ToolMessage'
 import { ToolDetailDialogContent } from '@/components/ToolCard/ToolCard'
+import { AskUserQuestionFooter } from '@/components/ToolCard/AskUserQuestionFooter'
+import { RequestUserInputFooter } from '@/components/ToolCard/RequestUserInputFooter'
+import { isAskUserQuestionToolName } from '@/components/ToolCard/askUserQuestion'
+import { isRequestUserInputToolName } from '@/components/ToolCard/requestUserInput'
+import { PermissionFooter } from '@/components/ToolCard/PermissionFooter'
 import { useOptionalHappyChatContext } from '@/components/AssistantChat/context'
 import { cn } from '@/lib/utils'
 
@@ -510,6 +515,7 @@ function TimelineToolStepRow(props: {
     defaultExpanded: boolean
     lang: 'en' | 'zh-CN'
 }) {
+    const ctx = useOptionalHappyChatContext()
     const [open, setOpen] = useState(props.defaultExpanded)
     useEffect(() => {
         setOpen(props.defaultExpanded)
@@ -519,6 +525,10 @@ function TimelineToolStepRow(props: {
         () => describeTurnToolStep(props.row, props.lang),
         [props.row, props.lang]
     )
+
+    const asks = isAskUserQuestionToolName(props.row.block.tool.name)
+    const requestsInput = isRequestUserInputToolName(props.row.block.tool.name)
+    const interactive = Boolean((asks || requestsInput) && props.row.permission && ctx)
 
     return (
         <div data-hapi-share-exclude="true" className="py-0.5">
@@ -564,7 +574,44 @@ function TimelineToolStepRow(props: {
                 ) : null}
                 <SmallChevron open={open} className="text-[var(--app-hint)] opacity-75 group-hover:opacity-100" />
             </button>
-            {open ? <StepInlinePreviewCard preview={descriptor.preview} /> : null}
+            {interactive && ctx ? (
+                <div className="mt-1.5 mb-2 pl-2">
+                    {asks ? (
+                        <AskUserQuestionFooter
+                            api={ctx.api}
+                            sessionId={ctx.sessionId}
+                            tool={props.row.block.tool}
+                            disabled={ctx.disabled}
+                            onDone={ctx.onRefresh}
+                        />
+                    ) : (
+                        <RequestUserInputFooter
+                            api={ctx.api}
+                            sessionId={ctx.sessionId}
+                            tool={props.row.block.tool}
+                            disabled={ctx.disabled}
+                            onDone={ctx.onRefresh}
+                        />
+                    )}
+                </div>
+            ) : null}
+            {(open || (props.row.permission && !interactive)) ? (
+                <div>
+                    {open ? <StepInlinePreviewCard preview={descriptor.preview} /> : null}
+                    {props.row.permission && !interactive && ctx ? (
+                        <div className="mt-1.5 mb-2 pl-2">
+                            <PermissionFooter
+                                api={ctx.api}
+                                sessionId={ctx.sessionId}
+                                metadata={ctx.metadata}
+                                tool={props.row.block.tool}
+                                disabled={ctx.disabled}
+                                onDone={ctx.onRefresh}
+                            />
+                        </div>
+                    ) : null}
+                </div>
+            ) : null}
         </div>
     )
 }
@@ -659,6 +706,7 @@ export function TimelineTurnBlockView(props: {
                         aria-expanded={open}
                         onClick={() => setOpen((v) => !v)}
                         data-testid="turn-level0-header"
+                        data-hapi-share-exclude="true"
                         className="group inline-flex max-w-full items-center gap-1.5 rounded-md py-1 pr-2 text-left text-[13.5px] leading-5 text-[var(--app-hint)] transition-colors hover:text-[var(--app-fg)]"
                     >
                         <span
@@ -731,25 +779,77 @@ export function TimelineTurnBlockView(props: {
                                 return null
                             })}
                         </div>
-                    ) : viewMode === 'thinking' ? (
-                        <div className="ml-2 mt-1 border-l border-[var(--app-border)] pl-3.5 space-y-1">
-                            {stepRows
-                                .filter((row): row is TurnReasoningRow => row.kind === 'reasoning')
-                                .map((row) => (
-                                    <TimelineThoughtRow
-                                        key={row.key}
-                                        row={row}
-                                        isActiveStreaming={false}
-                                        defaultExpanded={true}
-                                        lang={lang}
-                                    />
-                                ))}
-                        </div>
-                    ) : null}
+                    ) : (
+                        <>
+                            {viewMode === 'thinking' ? (
+                                <div className="ml-2 mt-1 border-l border-[var(--app-border)] pl-3.5 space-y-1">
+                                    {stepRows
+                                        .filter((row): row is TurnReasoningRow => row.kind === 'reasoning')
+                                        .map((row) => (
+                                            <TimelineThoughtRow
+                                                key={row.key}
+                                                row={row}
+                                                isActiveStreaming={false}
+                                                defaultExpanded={true}
+                                                lang={lang}
+                                            />
+                                        ))}
+                                </div>
+                            ) : null}
+                            {stepRows.map((row, idx) => {
+                                const keepVisible =
+                                    row.kind === 'text'
+                                    && stepRows
+                                        .slice(idx + 1)
+                                        .some((later) => later.kind === 'image' || later.kind === 'file')
+                                if (row.kind === 'tool' && row.pinned) {
+                                    return (
+                                        <div key={row.key} className="ml-2 mt-1 border-l border-[var(--app-border)] pl-3.5">
+                                            <TimelineToolStepRow
+                                                row={row}
+                                                defaultExpanded={false}
+                                                lang={lang}
+                                            />
+                                        </div>
+                                    )
+                                }
+                                if (row.kind === 'image') {
+                                    return (
+                                        <div key={row.key} className="py-1.5">
+                                            <GeneratedImageCard block={row.block} />
+                                        </div>
+                                    )
+                                }
+                                if (row.kind === 'file') {
+                                    return (
+                                        <div key={row.key} className="py-1.5">
+                                            <GeneratedFileCard block={row.block} />
+                                        </div>
+                                    )
+                                }
+                                if (row.kind === 'text') {
+                                    return (
+                                        <div
+                                            key={row.key}
+                                            className={cn(!keepVisible && 'hidden', 'py-1.5 text-[15px] leading-relaxed text-[var(--app-fg)] whitespace-pre-wrap')}
+                                            data-hapi-turn-quiet={!keepVisible ? 'true' : undefined}
+                                        >
+                                            {props.renderTrailingText ? props.renderTrailingText(row.text, false) : renderSimpleMarkdownText(row.text)}
+                                        </div>
+                                    )
+                                }
+                                return null
+                            })}
+                        </>
+                    )}
 
                     {/* Active working indicator */}
                     {props.streaming ? (
-                        <div className="mt-2 flex items-center gap-2 pl-0.5" data-testid="turn-working-sparkle">
+                        <div
+                            className="mt-2 flex items-center gap-2 pl-0.5"
+                            data-testid="turn-working-sparkle"
+                            data-hapi-share-exclude="true"
+                        >
                             <TurnActivityIndicator
                                 variant={props.indicatorVariant ?? 'equalizer-bars'}
                                 color={props.indicatorColor}
@@ -758,7 +858,26 @@ export function TimelineTurnBlockView(props: {
                         </div>
                     ) : null}
                 </div>
-            ) : null}
+            ) : (
+                <div className="space-y-2">
+                    {stepRows.map((row) => {
+                        if (row.kind === 'image') {
+                            return <GeneratedImageCard key={row.key} block={row.block} />
+                        }
+                        if (row.kind === 'file') {
+                            return <GeneratedFileCard key={row.key} block={row.block} />
+                        }
+                        if (row.kind === 'text') {
+                            return (
+                                <div key={row.key} className="text-[15px] leading-relaxed text-[var(--app-fg)] whitespace-pre-wrap">
+                                    {props.renderTrailingText ? props.renderTrailingText(row.text, false) : renderSimpleMarkdownText(row.text)}
+                                </div>
+                            )
+                        }
+                        return null
+                    })}
+                </div>
+            )}
 
             {/* Trailing final assistant response */}
             {trailing.map((row) => (
@@ -934,6 +1053,7 @@ export function DockedQuestionWizard(props: {
                         <button
                             key={opt.label}
                             type="button"
+                            data-testid={`question-option-${idx + 1}`}
                             onClick={() => selectOption(opt.label)}
                             className={cn(
                                 'flex w-full items-center gap-2.5 rounded-lg border px-3 py-2 text-left text-[13px] transition-colors',

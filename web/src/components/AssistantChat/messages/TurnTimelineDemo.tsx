@@ -24,8 +24,8 @@ export type DemoLifecycleStage =
     | 'working-step-2'
     | 'working-step-3'
     | 'asking-user'
+    | 'resumed-working'
     | 'completed'
-
 function makeToolPart(input: {
     id: string
     name: string
@@ -146,6 +146,10 @@ function buildStageData(stage: DemoLifecycleStage): {
     durationMs: number
     todos: DockedTodoItem[]
     activeTodoText: string | null
+    followUpParts: TurnContentPart[] | null
+    followUpStreaming: boolean
+    followUpDurationMs: number | null
+    followUpActiveTodoText: string | null
 } {
     const thought1: TurnContentPart = {
         type: 'reasoning',
@@ -308,6 +312,10 @@ function buildStageData(stage: DemoLifecycleStage): {
             durationMs: 4200,
             todos,
             activeTodoText: todos[0]?.activeForm ?? null,
+            followUpParts: null,
+            followUpStreaming: false,
+            followUpDurationMs: null,
+            followUpActiveTodoText: null,
         }
     }
 
@@ -324,6 +332,10 @@ function buildStageData(stage: DemoLifecycleStage): {
             durationMs: 11800,
             todos,
             activeTodoText: todos[1]?.activeForm ?? null,
+            followUpParts: null,
+            followUpStreaming: false,
+            followUpDurationMs: null,
+            followUpActiveTodoText: null,
         }
     }
 
@@ -331,15 +343,76 @@ function buildStageData(stage: DemoLifecycleStage): {
         const todos: DockedTodoItem[] = [
             { id: '1', content: 'Inspect local workspace configuration and session directories', status: 'completed' },
             { id: '2', content: 'Search frontend bundle for timeline group and step cards', status: 'completed' },
-            { id: '3', content: 'Fetch reference documentation and compare with classic TurnBlock', activeForm: 'Fetching reference documentation and comparing with classic TurnBlock', status: 'in_progress' },
-            { id: '4', content: 'Verify 3-level expansion, auto-collapse, and docked composer widgets', status: 'pending' },
+            { id: '3', content: 'Fetch reference documentation and compare with classic TurnBlock', activeForm: 'Fetching reference documentation and comparing with classic TurnBlock', status: stage === 'asking-user' ? 'completed' : 'in_progress' },
+            { id: '4', content: 'Verify 3-level expansion, auto-collapse, and docked composer widgets', activeForm: 'Verifying 3-level expansion, auto-collapse, and docked composer widgets', status: stage === 'asking-user' ? 'in_progress' : 'pending' },
         ]
         return {
             parts: [thought1, bash1, bash2, bash3, read1, thought2, webFetch1, webSearch1, edit1],
-            streaming: true,
+            streaming: stage === 'working-step-3',
             durationMs: 19400,
             todos,
-            activeTodoText: todos[2]?.activeForm ?? null,
+            activeTodoText: stage === 'working-step-3' ? (todos[2]?.activeForm ?? null) : null,
+            followUpParts: null,
+            followUpStreaming: false,
+            followUpDurationMs: null,
+            followUpActiveTodoText: null,
+        }
+    }
+
+    const followUpThought: TurnContentPart = {
+        type: 'reasoning',
+        text: 'User confirmed the Timeline header sync, compact inline preview cards, and docked Todo/Question widgets. Now wiring session.todos into TurnBlock and running verification tests.',
+        status: { type: 'complete' },
+    }
+
+    const followUpEdit = makeToolPart({
+        id: 'tool-edit-followup-1',
+        name: 'Edit',
+        state: 'completed',
+        description: 'Wire session.todos and timeline variant into TurnBlock.tsx',
+        toolInput: {
+            file_path: 'web/src/components/AssistantChat/messages/TurnBlock.tsx',
+            old_string: 'return <TurnBlockView partition={partition} streaming={streaming} />',
+            new_string: 'return <TurnBlockView variant="timeline" activeTodoText={activeTodoText} partition={partition} streaming={streaming} />',
+        },
+        result: { ok: true },
+    })
+
+    const followUpBash = makeToolPart({
+        id: 'tool-bash-followup-2',
+        name: 'Bash',
+        state: stage === 'resumed-working' ? 'running' : 'completed',
+        description: 'Run unit tests and typecheck for TurnBlock timeline view',
+        toolInput: {
+            command: 'bun typecheck && bunx vitest run src/components/AssistantChat/messages/TimelineTurnBlock.test.tsx',
+            description: 'Run unit tests and typecheck for TurnBlock timeline view',
+        },
+        result: {
+            stdout: [
+                '$ tsc --noEmit',
+                ' ✓ src/components/AssistantChat/messages/TimelineTurnBlock.test.tsx (3 tests) 41ms',
+                ' Test Files  1 passed (1)',
+            ].join('\n'),
+        },
+    })
+
+    if (stage === 'resumed-working') {
+        const todos: DockedTodoItem[] = [
+            { id: '1', content: 'Inspect local workspace configuration and session directories', status: 'completed' },
+            { id: '2', content: 'Search frontend bundle for timeline group and step cards', status: 'completed' },
+            { id: '3', content: 'Fetch reference documentation and compare with classic TurnBlock', status: 'completed' },
+            { id: '4', content: 'Verify 3-level expansion, auto-collapse, and docked composer widgets', activeForm: 'Verifying 3-level expansion, auto-collapse, and docked composer widgets', status: 'in_progress' },
+        ]
+        return {
+            parts: [thought1, bash1, bash2, bash3, read1, thought2, webFetch1, webSearch1, edit1],
+            streaming: false,
+            durationMs: 19400,
+            todos,
+            activeTodoText: null,
+            followUpParts: [followUpThought, followUpEdit, followUpBash],
+            followUpStreaming: true,
+            followUpDurationMs: 6800,
+            followUpActiveTodoText: todos[3]?.activeForm ?? null,
         }
     }
 
@@ -350,11 +423,15 @@ function buildStageData(stage: DemoLifecycleStage): {
         { id: '4', content: 'Verify 3-level expansion, auto-collapse, and docked composer widgets', status: 'completed' },
     ]
     return {
-        parts: [thought1, bash1, bash2, bash3, read1, thought2, webFetch1, webSearch1, edit1, trailingAnswer],
+        parts: [thought1, bash1, bash2, bash3, read1, thought2, webFetch1, webSearch1, edit1],
         streaming: false,
-        durationMs: 24600,
+        durationMs: 19400,
         todos,
         activeTodoText: null,
+        followUpParts: [followUpThought, followUpEdit, followUpBash, trailingAnswer],
+        followUpStreaming: false,
+        followUpDurationMs: 11200,
+        followUpActiveTodoText: null,
     }
 }
 
@@ -362,7 +439,7 @@ const STAGES: Array<{ id: DemoLifecycleStage; stepLabel: string; subtitle: strin
     {
         id: 'working-step-1',
         stepLabel: '1. Working (Todo 1/4)',
-        subtitle: 'Shimmering header synced with Todo #1 + live running Bash step + activity sparkle',
+        subtitle: 'Shimmering header synced with Todo #1 + live running Bash step + B1 indicator',
     },
     {
         id: 'working-step-2',
@@ -377,12 +454,17 @@ const STAGES: Array<{ id: DemoLifecycleStage; stepLabel: string; subtitle: strin
     {
         id: 'asking-user',
         stepLabel: '4. Question Wizard',
-        subtitle: 'Multi-step < 1 of 3 > wizard docked above composer + Q&A summary bubble',
+        subtitle: 'Multi-step < 1 of 3 > wizard docked above composer; submitting starts Stage 5',
+    },
+    {
+        id: 'resumed-working',
+        stepLabel: '5. Resumed Working (Todo 4/4)',
+        subtitle: 'Turn 1 collapsed + Q&A bubble + Turn 2 actively running + composer queue/stop state',
     },
     {
         id: 'completed',
-        stepLabel: '5. Completed (Auto-Collapse)',
-        subtitle: 'Header switches to aggregated past-tense summary & auto-collapses; Todo bar -> 4 of 4 Done',
+        stepLabel: '6. Completed (Auto-Collapse)',
+        subtitle: 'Turn 2 auto-collapses to past-tense summary & outputs answer; Todo -> 4 of 4 Done',
     },
 ]
 const INDICATOR_CANDIDATES: Array<{
@@ -445,6 +527,7 @@ export function TurnTimelineDemo() {
             'working-step-1',
             'working-step-2',
             'working-step-3',
+            'resumed-working',
             'completed',
         ]
         const timer = window.setInterval(() => {
@@ -475,7 +558,10 @@ export function TurnTimelineDemo() {
 
     const stageData = useMemo(() => buildStageData(stage), [stage])
     const partition = useMemo(() => partitionTurn(stageData.parts, null), [stageData.parts])
-
+    const followUpPartition = useMemo(
+        () => (stageData.followUpParts ? partitionTurn(stageData.followUpParts, null) : null),
+        [stageData.followUpParts]
+    )
     return (
         <div
             className="min-h-screen bg-[var(--app-bg)] text-[var(--app-fg)] flex flex-col"
@@ -768,11 +854,33 @@ export function TurnTimelineDemo() {
                                 indicatorColor={indicatorColor}
                             />
 
-                            {submittedAnswers ? (
+                            {submittedAnswers || stage === 'resumed-working' || stage === 'completed' ? (
                                 <SubmittedQuestionSummaryBubble
                                     questions={DEMO_QUESTIONS}
-                                    answers={submittedAnswers}
+                                    answers={
+                                        submittedAnswers ?? {
+                                            'header-style': DEMO_QUESTIONS[0]!.options[0]!.label,
+                                            'level2-cards': DEMO_QUESTIONS[1]!.options[0]!.label,
+                                            'docked-widgets': DEMO_QUESTIONS[2]!.options[0]!.label,
+                                        }
+                                    }
                                 />
+                            ) : null}
+
+                            {followUpPartition ? (
+                                <div className="mt-2" data-testid="turn-followup-block">
+                                    <TimelineTurnBlockView
+                                        partition={followUpPartition}
+                                        streaming={stageData.followUpStreaming}
+                                        durationMs={stageData.followUpDurationMs}
+                                        initiallyOpen={stageData.followUpStreaming}
+                                        activeTodoText={stageData.followUpActiveTodoText}
+                                        viewMode={viewMode}
+                                        lang={lang}
+                                        indicatorVariant={indicatorVariant}
+                                        indicatorColor={indicatorColor}
+                                    />
+                                </div>
                             ) : null}
                         </div>
 
@@ -784,9 +892,9 @@ export function TurnTimelineDemo() {
                                         questions={DEMO_QUESTIONS}
                                         onSubmit={(ans) => {
                                             setSubmittedAnswers(ans)
-                                            setStage('completed')
+                                            setStage('resumed-working')
                                         }}
-                                        onSkip={() => setStage('completed')}
+                                        onSkip={() => setStage('resumed-working')}
                                     />
                                 </div>
                             ) : null}
@@ -799,10 +907,31 @@ export function TurnTimelineDemo() {
 
                             <div className="rounded-b-xl border border-[var(--app-border)] bg-[var(--app-subtle-bg)]/35 px-3.5 py-2.5">
                                 <div className="flex items-center justify-between text-[13px] text-[var(--app-hint)]">
-                                    <span>Write a message... (Enter to send, Shift+Enter for newline)</span>
-                                    <span className="rounded border border-[var(--app-border)] px-1.5 py-0.5 text-[11px] font-mono">
-                                        Ctrl+O: {viewMode}
+                                    <span>
+                                        {stageData.streaming || stageData.followUpStreaming
+                                            ? (lang === 'zh-CN'
+                                                ? '↵ 发送，⌘↵ 排队等待稍后执行…'
+                                                : '↵ to send, ⌘↵ to queue for later...')
+                                            : (lang === 'zh-CN'
+                                                ? '输入消息…（Enter 发送，Shift+Enter 换行）'
+                                                : 'Write a message... (Enter to send, Shift+Enter for newline)')}
                                     </span>
+                                    <div className="flex items-center gap-2">
+                                        <span className="rounded border border-[var(--app-border)] px-1.5 py-0.5 text-[11px] font-mono">
+                                            Ctrl+O: {viewMode}
+                                        </span>
+                                        {stageData.streaming || stageData.followUpStreaming ? (
+                                            <button
+                                                type="button"
+                                                data-testid="demo-stop-running-btn"
+                                                onClick={() => setStage('completed')}
+                                                title={lang === 'zh-CN' ? '停止当前运行 (Esc)' : 'Stop (Esc)'}
+                                                className="inline-flex h-6 w-6 items-center justify-center rounded-full border border-[var(--app-fg)]/40 bg-[var(--app-fg)]/10 text-[var(--app-fg)] hover:bg-[var(--app-fg)]/20"
+                                            >
+                                                <span className="h-2 w-2 rounded-[1.5px] bg-current" />
+                                            </button>
+                                        ) : null}
+                                    </div>
                                 </div>
                             </div>
                         </div>
