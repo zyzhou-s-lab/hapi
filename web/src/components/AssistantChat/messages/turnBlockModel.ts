@@ -652,6 +652,59 @@ export function formatTurnAggregatedSummary(
     return capitalizeFirst(`${clauses.slice(0, -1).join(', ')}, and ${clauses[clauses.length - 1]}`)
 }
 
+function translateTurnVerbKey(
+    verb: string,
+    isRunning: boolean,
+    isQueued: boolean,
+    zh: boolean
+): string {
+    switch (verb) {
+        case 'turn.verb.todo':
+            return zh
+                ? (isRunning ? '正在更新待办' : isQueued ? '待更新待办' : '已更新待办')
+                : (isRunning ? 'Updating todos' : isQueued ? 'Queued todos' : 'Updated todos')
+        case 'turn.verb.addedTask':
+            return zh
+                ? (isRunning ? '正在添加待办' : isQueued ? '待添加待办' : '已添加待办')
+                : (isRunning ? 'Adding todo' : isQueued ? 'Queued todo' : 'Added todo')
+        case 'turn.verb.reasoning':
+            return zh
+                ? (isRunning ? '正在思考' : '思考过程')
+                : (isRunning ? 'Thinking' : 'Thought')
+        case 'turn.verb.read':
+            return zh
+                ? (isRunning ? '正在查看' : isQueued ? '待查看' : '已查看')
+                : (isRunning ? 'Viewing' : isQueued ? 'Queued view' : 'Viewed')
+        case 'turn.verb.grep':
+        case 'turn.verb.glob':
+            return zh
+                ? (isRunning ? '正在搜索' : isQueued ? '待搜索' : '已搜索')
+                : (isRunning ? 'Searching' : isQueued ? 'Queued search' : 'Searched')
+        case 'turn.verb.ran':
+            return zh
+                ? (isRunning ? '正在运行' : isQueued ? '待运行' : '已运行')
+                : (isRunning ? 'Running' : isQueued ? 'Queued' : 'Ran')
+        case 'turn.verb.wrote':
+            return zh
+                ? (isRunning ? '正在创建' : isQueued ? '待创建' : '已创建')
+                : (isRunning ? 'Creating' : isQueued ? 'Queued create' : 'Created')
+        case 'turn.verb.edit':
+            return zh
+                ? (isRunning ? '正在编辑' : isQueued ? '待编辑' : '已编辑')
+                : (isRunning ? 'Editing' : isQueued ? 'Queued edit' : 'Edited')
+        case 'turn.verb.ranAgent':
+            return zh
+                ? (isRunning ? '正在运行代理' : isQueued ? '待运行代理' : '已运行代理')
+                : (isRunning ? 'Running agent' : isQueued ? 'Queued agent' : 'Ran agent')
+        default:
+            if (verb.startsWith('turn.verb.')) {
+                const suffix = verb.slice('turn.verb.'.length)
+                return capitalizeFirst(suffix)
+            }
+            return isRunning && !verb.endsWith('...') ? `${verb}...` : verb
+    }
+}
+
 export function describeTurnToolStep(
     row: TurnToolRow,
     lang: 'en' | 'zh-CN' = 'en'
@@ -842,10 +895,44 @@ export function describeTurnToolStep(
         }
     }
 
+    if (
+        TODO_TOOL_NAMES[name]
+        || TODO_TOOL_NAMES[rawName]
+        || row.verb === 'turn.verb.todo'
+        || row.verb === 'turn.verb.addedTask'
+    ) {
+        const verbKey = row.verb === 'turn.verb.addedTask' ? 'turn.verb.addedTask' : 'turn.verb.todo'
+        return {
+            isRunning,
+            isQueued,
+            verbLabel: translateTurnVerbKey(verbKey, isRunning, isQueued, zh),
+            intentLabel: row.intent,
+            secondaryBadge: null,
+            preview: {
+                kind: 'default',
+                block: row.block,
+            },
+        }
+    }
+
+    if (name === 'CodexReasoning' || row.verb === 'turn.verb.reasoning') {
+        return {
+            isRunning,
+            isQueued,
+            verbLabel: translateTurnVerbKey('turn.verb.reasoning', isRunning, isQueued, zh),
+            intentLabel: row.intent,
+            secondaryBadge: null,
+            preview: {
+                kind: 'default',
+                block: row.block,
+            },
+        }
+    }
+
     return {
         isRunning,
         isQueued,
-        verbLabel: isRunning ? `${row.verb}...` : row.verb,
+        verbLabel: translateTurnVerbKey(row.verb, isRunning, isQueued, zh),
         intentLabel: row.intent,
         secondaryBadge: null,
         preview: {
@@ -878,11 +965,15 @@ export function summarizeTurnActivity(
         ? `${runningStep.verbLabel}${runningStep.intentLabel ? ` ${runningStep.intentLabel}` : ''}...`
         : null
 
+    const fallbackTitle = partition.title
+        ? translateTurnVerbKey(partition.title, true, false, lang === 'zh-CN')
+        : ''
     const workingHeader = activeTodo
         ? (activeTodo.endsWith('...') ? activeTodo : `${activeTodo}...`)
         : runningPhrase
-            ?? (partition.title ? `${partition.title}...` : (lang === 'zh-CN' ? '正在思考...' : 'Thinking...'))
-
+            ?? (fallbackTitle
+                ? (fallbackTitle.endsWith('...') ? fallbackTitle : `${fallbackTitle}...`)
+                : (lang === 'zh-CN' ? '正在思考...' : 'Thinking...'))
     return {
         workingHeader,
         completedHeader,
