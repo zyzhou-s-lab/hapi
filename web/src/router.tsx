@@ -89,7 +89,6 @@ import { deleteShareTransfer, parseShareSearch } from '@/lib/shareTransfer'
 import UsersSettingsPage from '@/fork-features/multi-user/UsersSettingsPage'
 import UserSettingsPage from '@/fork-features/multi-user/UserSettingsPage'
 import AccountSettingsPage from '@/fork-features/multi-user/AccountSettingsPage'
-import { TurnTimelineDemo } from '@/components/AssistantChat/messages/TurnTimelineDemo'
 
 
 function BackIcon(props: { className?: string }) {
@@ -1379,12 +1378,6 @@ const workRoute = createRoute({
     },
 })
 
-const turnTimelineDemoRoute = createRoute({
-    getParentRoute: () => rootRoute,
-    path: '/demo/turn-timeline',
-    component: TurnTimelineDemo,
-})
-
 export const routeTree = rootRoute.addChildren([
     indexRoute,
     sessionsRoute.addChildren([
@@ -1419,7 +1412,6 @@ export const routeTree = rootRoute.addChildren([
     ]),
     shareRoute,
     workRoute,
-    turnTimelineDemoRoute,
 ])
 
 type RouterHistory = Parameters<typeof createRouter>[0]['history']
