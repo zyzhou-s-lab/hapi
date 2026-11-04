@@ -156,12 +156,20 @@ function buildStageData(stage: DemoLifecycleStage, activeToolIdx = 6): {
         text: 'The user wants to inspect how working tool cards group, expand across 3 levels, and auto-collapse upon completion. Let me inspect the local workspace configuration and TurnBlock implementation first.',
         status: { type: 'complete' },
     }
+    const step3ToolState = (idx: number): 'running' | 'completed' | 'pending' => {
+        if (activeToolIdx === idx) return 'running'
+        if (activeToolIdx > idx) return 'completed'
+        return 'pending'
+    }
 
     const bash1 = makeToolPart({
         id: 'tool-bash-1',
         name: 'Bash',
-        state: stage === 'working-step-1' || (stage === 'working-step-3' && activeToolIdx === 0) ? 'running' : 'completed',
-        description: 'Inspect local workspace configuration and session directories',
+        state: stage === 'working-step-1'
+            ? 'running'
+            : stage === 'working-step-3'
+                ? step3ToolState(0)
+                : 'completed',
         toolInput: {
             command: 'ls -la "$HOME/.hapi" "web/src/components/AssistantChat/messages"',
             description: 'Inspect local workspace configuration and session directories',
@@ -179,7 +187,7 @@ function buildStageData(stage: DemoLifecycleStage, activeToolIdx = 6): {
     const bash2 = makeToolPart({
         id: 'tool-bash-2',
         name: 'Bash',
-        state: stage === 'working-step-3' && activeToolIdx === 1 ? 'running' : 'completed',
+        state: stage === 'working-step-3' ? step3ToolState(1) : 'completed',
         description: 'Search frontend styles for timeline status and shimmer utilities',
         toolInput: {
             command: 'rg -n "turn-timeline-status-enter|turn-text-shimmer|collapsible-panel" web/src/index.css',
@@ -197,7 +205,7 @@ function buildStageData(stage: DemoLifecycleStage, activeToolIdx = 6): {
     const bash3 = makeToolPart({
         id: 'tool-bash-3',
         name: 'Bash',
-        state: stage === 'working-step-3' && activeToolIdx === 2 ? 'running' : 'completed',
+        state: stage === 'working-step-3' ? step3ToolState(2) : 'completed',
         description: 'Check TurnBlock and turnBlockModel in HAPI web frontend',
         toolInput: {
             command: 'git log -n 3 --oneline -- web/src/components/AssistantChat/messages/TurnBlock.tsx',
@@ -214,7 +222,11 @@ function buildStageData(stage: DemoLifecycleStage, activeToolIdx = 6): {
     const read1 = makeToolPart({
         id: 'tool-read-1',
         name: 'Read',
-        state: stage === 'working-step-2' || (stage === 'working-step-3' && activeToolIdx === 3) ? 'running' : 'completed',
+        state: stage === 'working-step-2'
+            ? 'running'
+            : stage === 'working-step-3'
+                ? step3ToolState(3)
+                : 'completed',
         description: 'TurnBlock.tsx',
         toolInput: {
             file_path: 'web/src/components/AssistantChat/messages/TurnBlock.tsx',
@@ -247,7 +259,7 @@ function buildStageData(stage: DemoLifecycleStage, activeToolIdx = 6): {
     const webFetch1 = makeToolPart({
         id: 'tool-webfetch-1',
         name: 'WebFetch',
-        state: stage === 'working-step-3' && activeToolIdx === 4 ? 'running' : 'completed',
+        state: stage === 'working-step-3' ? step3ToolState(4) : 'completed',
         description: 'Interactive Turn Timeline & View Modes',
         toolInput: {
             url: 'https://docs.example.com/en/turn-timeline',
@@ -264,7 +276,7 @@ function buildStageData(stage: DemoLifecycleStage, activeToolIdx = 6): {
     const webSearch1 = makeToolPart({
         id: 'tool-websearch-1',
         name: 'WebSearch',
-        state: stage === 'working-step-3' && activeToolIdx === 5 ? 'running' : 'completed',
+        state: stage === 'working-step-3' ? step3ToolState(5) : 'completed',
         description: 'Searched the web',
         toolInput: {
             query: 'turn timeline tool cards grouping preview',
@@ -277,7 +289,7 @@ function buildStageData(stage: DemoLifecycleStage, activeToolIdx = 6): {
     const edit1 = makeToolPart({
         id: 'tool-edit-1',
         name: 'Edit',
-        state: stage === 'working-step-3' && activeToolIdx === 6 ? 'running' : 'completed',
+        state: stage === 'working-step-3' ? step3ToolState(6) : 'completed',
         description: 'Update TurnBlockView to support timeline layout',
         toolInput: {
             file_path: 'web/src/components/AssistantChat/messages/TurnBlock.tsx',
@@ -527,7 +539,7 @@ export function TurnTimelineDemo() {
         if (stage !== 'working-step-3') return
         const timer = window.setInterval(() => {
             setActiveToolIdx((prev) => (prev + 1) % 8)
-        }, 1800)
+        }, 2500)
         return () => window.clearInterval(timer)
     }, [stage])
 

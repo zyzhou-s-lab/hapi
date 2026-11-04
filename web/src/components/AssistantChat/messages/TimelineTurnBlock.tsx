@@ -489,7 +489,7 @@ function RailStepCompletionMorphBadge(props: { isRunning: boolean; color?: strin
             setShowMorph(true)
             const timer = window.setTimeout(() => {
                 setShowMorph(false)
-            }, 1150)
+            }, 980)
             return () => window.clearTimeout(timer)
         }
         return undefined
@@ -521,20 +521,19 @@ function RailStepCompletionMorphBadge(props: { isRunning: boolean; color?: strin
                     strokeLinecap="round"
                 />
             </svg>
-            {/* 2. Same-colored checkmark badge pops out, holds, then disappears with container */}
+            {/* 2. Solid unified-color checkmark badge pops out, holds, then disappears with container */}
             <span
-                className="turn-step-check-badge relative inline-flex h-4 w-4 items-center justify-center rounded-full"
+                className="turn-step-check-badge relative inline-flex h-3.5 w-3.5 items-center justify-center rounded-full shadow-xs"
                 data-testid="rail-step-check-pop"
                 style={{
-                    backgroundColor: `color-mix(in srgb, ${color} 18%, transparent)`,
-                    boxShadow: `inset 0 0 0 1.25px color-mix(in srgb, ${color} 48%, transparent)`,
+                    backgroundColor: color,
                 }}
             >
                 <svg viewBox="0 0 16 16" className="h-3.5 w-3.5" fill="none">
                     <path
-                        d="M4.6 8.2L7.0 10.5L11.4 5.7"
-                        stroke="currentColor"
-                        strokeWidth="1.85"
+                        d="M4.5 8.2L7.0 10.6L11.5 5.6"
+                        stroke="#ffffff"
+                        strokeWidth="1.95"
                         strokeLinecap="round"
                         strokeLinejoin="round"
                         className="turn-step-check-path"
@@ -548,6 +547,8 @@ function RailStepCompletionMorphBadge(props: { isRunning: boolean; color?: strin
 function RailSlidingActiveSpinner(props: {
     activeRowIndex: number
     offsetY: number
+    targetOffsetY: number
+    holdingForPrevMorph: boolean
     color?: string
 }) {
     const color = props.color ?? '#da7756'
@@ -556,12 +557,17 @@ function RailSlidingActiveSpinner(props: {
             className="pointer-events-none absolute -left-[8.5px] top-0 z-10 flex h-4 w-4 items-center justify-center rounded-full bg-[var(--app-bg)] ring-2 ring-[var(--app-bg)]"
             data-testid="rail-step-spinner"
             data-active-row-index={props.activeRowIndex}
+            data-target-offset-y={props.targetOffsetY}
+            data-handoff-phase={props.holdingForPrevMorph ? 'completing-prev' : 'sliding'}
             data-indicator-color={color}
             aria-hidden="true"
             style={{
                 color,
-                transform: `translate3d(0, ${props.offsetY}px, 0) translateY(-50%)`,
-                transition: 'transform 380ms cubic-bezier(0.22, 1, 0.36, 1), opacity 200ms ease',
+                opacity: props.holdingForPrevMorph ? 0 : 1,
+                transform: props.holdingForPrevMorph
+                    ? `translate3d(0, ${props.offsetY}px, 0) translateY(-50%) scale(0.75)`
+                    : `translate3d(0, ${props.offsetY}px, 0) translateY(-50%) scale(1)`,
+                transition: 'transform 420ms cubic-bezier(0.22, 1, 0.36, 1), opacity 140ms ease',
             }}
         >
             <svg viewBox="0 0 16 16" className="turn-step-spinner-svg h-4 w-4">
@@ -572,7 +578,7 @@ function RailSlidingActiveSpinner(props: {
                     fill="none"
                     stroke="currentColor"
                     strokeWidth="1.8"
-                    strokeDasharray="24 38"
+                    strokeDasharray="16 38"
                     strokeLinecap="round"
                 />
             </svg>
@@ -630,6 +636,7 @@ function TimelineToolStepRow(props: {
     defaultExpanded: boolean
     lang: 'en' | 'zh-CN'
     accentColor?: string
+    suppressRunningShimmer?: boolean
 }) {
     const ctx = useOptionalHappyChatContext()
     const [open, setOpen] = useState(props.defaultExpanded)
@@ -660,23 +667,29 @@ function TimelineToolStepRow(props: {
                 ) : null}
                 <span
                     className={cn(
-                        'shrink-0',
+                        'shrink-0 transition-opacity duration-200',
                         props.row.error
                             ? 'text-[var(--app-badge-error-text)]'
-                            : descriptor.isRunning
+                            : descriptor.isRunning && !props.suppressRunningShimmer
                                 ? 'turn-text-shimmer font-medium'
-                                : 'text-[var(--app-hint)] group-hover:text-[var(--app-fg)]'
+                                : descriptor.isQueued || (descriptor.isRunning && props.suppressRunningShimmer)
+                                    ? 'text-[var(--app-hint)] opacity-45'
+                                    : 'text-[var(--app-hint)] group-hover:text-[var(--app-fg)]'
                     )}
                 >
-                    {descriptor.verbLabel}
+                    {descriptor.isRunning && props.suppressRunningShimmer
+                        ? (props.lang === 'zh-CN' ? '待运行' : 'Queued')
+                        : descriptor.verbLabel}
                 </span>
                 {descriptor.intentLabel ? (
                     <span
                         className={cn(
-                            'min-w-0 flex-1 truncate',
-                            descriptor.isRunning
+                            'min-w-0 flex-1 truncate transition-opacity duration-200',
+                            descriptor.isRunning && !props.suppressRunningShimmer
                                 ? 'turn-text-shimmer font-medium'
-                                : 'text-[var(--app-hint)] group-hover:text-[var(--app-fg)]'
+                                : descriptor.isQueued || (descriptor.isRunning && props.suppressRunningShimmer)
+                                    ? 'text-[var(--app-hint)] opacity-45'
+                                    : 'text-[var(--app-hint)] group-hover:text-[var(--app-fg)]'
                         )}
                     >
                         {descriptor.intentLabel}
@@ -830,26 +843,72 @@ export function TimelineTurnBlockView(props: {
 
     const railRef = useRef<HTMLDivElement | null>(null)
     const rowElsRef = useRef<Array<HTMLDivElement | null>>([])
+    const prevActiveRowRef = useRef<number>(-1)
+    const prevOffsetYRef = useRef<number>(14)
+    const holdingForPrevMorphRef = useRef<boolean>(false)
     const [spinnerOffsetY, setSpinnerOffsetY] = useState<number>(14)
+    const [targetOffsetY, setTargetOffsetY] = useState<number>(14)
+    const [holdingForPrevMorph, setHoldingForPrevMorph] = useState<boolean>(false)
 
     useEffect(() => {
-        if (activeRunningRowIndex < 0) return undefined
-        const updatePosition = () => {
-            const el = rowElsRef.current[activeRunningRowIndex]
-            const measuredTop = el ? el.offsetTop : 0
-            const nextOffsetY = measuredTop > 0 || activeRunningRowIndex === 0
-                ? measuredTop + 14
-                : activeRunningRowIndex * 30 + 14
-            setSpinnerOffsetY(nextOffsetY)
+        if (activeRunningRowIndex < 0) {
+            prevActiveRowRef.current = -1
+            holdingForPrevMorphRef.current = false
+            setHoldingForPrevMorph(false)
+            return undefined
         }
-        updatePosition()
+        const measureRowY = (rowIndex: number) => {
+            const el = rowElsRef.current[rowIndex]
+            const measuredTop = el ? el.offsetTop : 0
+            return measuredTop > 0 || rowIndex === 0
+                ? measuredTop + 14
+                : rowIndex * 30 + 14
+        }
+        const nextTargetY = measureRowY(activeRunningRowIndex)
+        setTargetOffsetY(nextTargetY)
+
+        const prevRow = prevActiveRowRef.current
+        prevActiveRowRef.current = activeRunningRowIndex
+
+        let handoffTimer: number | undefined
+        if (prevRow >= 0 && prevRow !== activeRunningRowIndex) {
+            const startY = measureRowY(prevRow)
+            holdingForPrevMorphRef.current = true
+            setSpinnerOffsetY(startY)
+            setHoldingForPrevMorph(true)
+            handoffTimer = window.setTimeout(() => {
+                const latestTargetY = measureRowY(activeRunningRowIndex)
+                holdingForPrevMorphRef.current = false
+                setTargetOffsetY(latestTargetY)
+                setHoldingForPrevMorph(false)
+                setSpinnerOffsetY(latestTargetY)
+                prevOffsetYRef.current = latestTargetY
+            }, 820)
+        } else {
+            holdingForPrevMorphRef.current = false
+            setHoldingForPrevMorph(false)
+            setSpinnerOffsetY(nextTargetY)
+            prevOffsetYRef.current = nextTargetY
+        }
+
         const railEl = railRef.current
-        if (!railEl || typeof ResizeObserver === 'undefined') return undefined
+        if (!railEl || typeof ResizeObserver === 'undefined') {
+            return () => {
+                if (handoffTimer !== undefined) window.clearTimeout(handoffTimer)
+            }
+        }
         const observer = new ResizeObserver(() => {
-            updatePosition()
+            const updatedY = measureRowY(activeRunningRowIndex)
+            setTargetOffsetY(updatedY)
+            if (!holdingForPrevMorphRef.current) {
+                setSpinnerOffsetY(updatedY)
+            }
         })
         observer.observe(railEl)
-        return () => observer.disconnect()
+        return () => {
+            if (handoffTimer !== undefined) window.clearTimeout(handoffTimer)
+            observer.disconnect()
+        }
     }, [activeRunningRowIndex, stepRows.length, open])
     if (!props.partition.hasActivity) {
         if (trailing.length === 0) return null
@@ -914,6 +973,8 @@ export function TimelineTurnBlockView(props: {
                                     <RailSlidingActiveSpinner
                                         activeRowIndex={activeRunningRowIndex}
                                         offsetY={spinnerOffsetY}
+                                        targetOffsetY={targetOffsetY}
+                                        holdingForPrevMorph={holdingForPrevMorph}
                                         color={accentColor}
                                     />
                                 ) : null}
@@ -952,6 +1013,7 @@ export function TimelineTurnBlockView(props: {
                                                     defaultExpanded={viewMode === 'verbose'}
                                                     lang={lang}
                                                     accentColor={accentColor}
+                                                    suppressRunningShimmer={holdingForPrevMorph && activeRunningRowIndex === idx}
                                                 />
                                             </div>
                                         )

@@ -477,6 +477,7 @@ export type TurnStepPreview =
 
 export type TurnToolStepDescriptor = {
     isRunning: boolean
+    isQueued?: boolean
     verbLabel: string
     intentLabel: string
     secondaryBadge: string | null
@@ -658,7 +659,8 @@ export function describeTurnToolStep(
     const tool = row.block.tool
     const rawName = tool.name
     const name = resolveToolViewName(rawName)
-    const isRunning = tool.state === 'running' || tool.state === 'pending'
+    const isQueued = tool.state === 'pending' && !row.permission
+    const isRunning = tool.state === 'running' || (tool.state === 'pending' && row.permission)
     const zh = lang === 'zh-CN'
 
     if (isWebFetchTool(rawName, name)) {
@@ -679,9 +681,12 @@ export function describeTurnToolStep(
         const sizeLabel = bytes >= 1024 ? `${(bytes / 1024).toFixed(1)} KB` : `${bytes} B`
         return {
             isRunning,
-            verbLabel: zh ? (isRunning ? '正在抓取' : '已抓取') : (isRunning ? 'Fetching' : 'Fetched'),
+            isQueued,
+            verbLabel: zh
+                ? (isRunning ? '正在抓取' : isQueued ? '待抓取' : '已抓取')
+                : (isRunning ? 'Fetching' : isQueued ? 'Queued fetch' : 'Fetched'),
             intentLabel: pageTitle,
-            secondaryBadge: !isRunning && domain ? domain : null,
+            secondaryBadge: !isRunning && !isQueued && domain ? domain : null,
             preview: {
                 kind: 'web-fetch',
                 title: pageTitle,
@@ -700,9 +705,12 @@ export function describeTurnToolStep(
         const count = results.length
         return {
             isRunning,
-            verbLabel: zh ? (isRunning ? '正在搜索网页' : '已搜索网页') : (isRunning ? 'Searching the web' : 'Searched the web'),
+            isQueued,
+            verbLabel: zh
+                ? (isRunning ? '正在搜索网页' : isQueued ? '待搜索网页' : '已搜索网页')
+                : (isRunning ? 'Searching the web' : isQueued ? 'Queued web search' : 'Searched the web'),
             intentLabel: query && query !== 'the web' ? query : '',
-            secondaryBadge: !isRunning && count > 0
+            secondaryBadge: !isRunning && !isQueued && count > 0
                 ? (zh ? `${count} 条结果` : `${count} ${count === 1 ? 'result' : 'results'}`)
                 : null,
             preview: {
@@ -719,7 +727,10 @@ export function describeTurnToolStep(
         const output = extractResultText(tool.result)
         return {
             isRunning,
-            verbLabel: zh ? (isRunning ? '正在运行' : '已运行') : (isRunning ? 'Running' : 'Ran'),
+            isQueued,
+            verbLabel: zh
+                ? (isRunning ? '正在运行' : isQueued ? '待运行' : '已运行')
+                : (isRunning ? 'Running' : isQueued ? 'Queued' : 'Ran'),
             intentLabel: description ?? (command || row.intent),
             secondaryBadge: null,
             preview: {
@@ -738,9 +749,12 @@ export function describeTurnToolStep(
         const lineCount = content ? content.split(/\r?\n/).length : 0
         return {
             isRunning,
-            verbLabel: zh ? (isRunning ? '正在查看' : '已查看') : (isRunning ? 'Viewing' : 'Viewed'),
+            isQueued,
+            verbLabel: zh
+                ? (isRunning ? '正在查看' : isQueued ? '待查看' : '已查看')
+                : (isRunning ? 'Viewing' : isQueued ? 'Queued view' : 'Viewed'),
             intentLabel: filePath ? basename(filePath) : row.intent,
-            secondaryBadge: !isRunning && lineCount > 0 ? (zh ? `${lineCount} 行` : `${lineCount} lines`) : null,
+            secondaryBadge: !isRunning && !isQueued && lineCount > 0 ? (zh ? `${lineCount} 行` : `${lineCount} lines`) : null,
             preview: {
                 kind: 'file-read',
                 filePath: filePath || row.intent,
@@ -762,14 +776,23 @@ export function describeTurnToolStep(
         ]
         const added = newLines.length
         const removed = oldLines.length
-        const badge = !isRunning && (added > 0 || removed > 0)
+        const badge = !isRunning && !isQueued && (added > 0 || removed > 0)
             ? `+${added}${removed > 0 ? ` -${removed}` : ''}`
             : null
         return {
             isRunning,
+            isQueued,
             verbLabel: zh
-                ? (isRunning ? (name === 'Write' ? '正在创建' : '正在编辑') : (name === 'Write' ? '已创建' : '已编辑'))
-                : (isRunning ? (name === 'Write' ? 'Creating' : 'Editing') : (name === 'Write' ? 'Created' : 'Edited')),
+                ? (isRunning
+                    ? (name === 'Write' ? '正在创建' : '正在编辑')
+                    : isQueued
+                        ? (name === 'Write' ? '待创建' : '待编辑')
+                        : (name === 'Write' ? '已创建' : '已编辑'))
+                : (isRunning
+                    ? (name === 'Write' ? 'Creating' : 'Editing')
+                    : isQueued
+                        ? (name === 'Write' ? 'Queued create' : 'Queued edit')
+                        : (name === 'Write' ? 'Created' : 'Edited')),
             intentLabel: filePath ? basename(filePath) : row.intent,
             secondaryBadge: badge,
             preview: {
@@ -790,7 +813,10 @@ export function describeTurnToolStep(
             : (row.intent || pattern)
         return {
             isRunning,
-            verbLabel: zh ? (isRunning ? '正在搜索' : '已搜索') : (isRunning ? 'Searching' : 'Searched'),
+            isQueued,
+            verbLabel: zh
+                ? (isRunning ? '正在搜索' : isQueued ? '待搜索' : '已搜索')
+                : (isRunning ? 'Searching' : isQueued ? 'Queued search' : 'Searched'),
             intentLabel: intent,
             secondaryBadge: null,
             preview: {
@@ -803,9 +829,12 @@ export function describeTurnToolStep(
     if (isSubagentToolName(rawName)) {
         return {
             isRunning,
-            verbLabel: zh ? (isRunning ? '正在运行代理' : '已运行代理') : (isRunning ? 'Running agent' : 'Ran agent'),
+            isQueued,
+            verbLabel: zh
+                ? (isRunning ? '正在运行代理' : isQueued ? '待运行代理' : '已运行代理')
+                : (isRunning ? 'Running agent' : isQueued ? 'Queued agent' : 'Ran agent'),
             intentLabel: row.intent,
-            secondaryBadge: !isRunning ? (zh ? '完成' : 'Done') : null,
+            secondaryBadge: !isRunning && !isQueued ? (zh ? '完成' : 'Done') : null,
             preview: {
                 kind: 'default',
                 block: row.block,
@@ -815,6 +844,7 @@ export function describeTurnToolStep(
 
     return {
         isRunning,
+        isQueued,
         verbLabel: isRunning ? `${row.verb}...` : row.verb,
         intentLabel: row.intent,
         secondaryBadge: null,

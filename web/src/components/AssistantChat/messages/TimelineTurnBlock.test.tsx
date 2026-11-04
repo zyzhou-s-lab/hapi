@@ -264,11 +264,18 @@ describe('TimelineTurnBlock & summarizeTurnActivity', () => {
 
             const movedSpinner = screen.getByTestId('rail-step-spinner')
             expect(movedSpinner).toHaveAttribute('data-active-row-index', '1')
+            expect(movedSpinner).toHaveAttribute('data-target-offset-y', '44')
+            expect(movedSpinner).toHaveAttribute('data-handoff-phase', 'completing-prev')
             expect(movedSpinner).toHaveAttribute('data-indicator-color', '#da7756')
-            expect(movedSpinner.getAttribute('style')).toContain('translate3d(0, 44px, 0)')
 
             act(() => {
-                vi.advanceTimersByTime(1200)
+                vi.advanceTimersByTime(850)
+            })
+            expect(screen.getByTestId('rail-step-spinner')).toHaveAttribute('data-handoff-phase', 'sliding')
+            expect(screen.getByTestId('rail-step-spinner').getAttribute('style')).toContain('translate3d(0, 44px, 0)')
+
+            act(() => {
+                vi.advanceTimersByTime(200)
             })
             expect(screen.queryByTestId('rail-step-checkmark')).toBeNull()
             expect(screen.getByTestId('rail-step-spinner')).toBeInTheDocument()
