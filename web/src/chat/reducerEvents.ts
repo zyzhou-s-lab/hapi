@@ -138,3 +138,97 @@ export function foldApiErrorEvents(blocks: ChatBlock[]): ChatBlock[] {
 
     return result
 }
+
+export function isLegacyCompactionStartEvent(event: AgentEvent): boolean {
+    return event.type === 'message'
+        && typeof event.message === 'string'
+        && /^Compacting (?:conversation|context)\.{0,3}$/i.test(event.message.trim())
+}
+
+export function isLegacyCompactionEndEvent(event: AgentEvent): boolean {
+    return event.type === 'message'
+        && typeof event.message === 'string'
+        && /^(?:Conversation|Context) compacted\.?$/i.test(event.message.trim())
+}
+
+/**
+ * Fold paired compaction lifecycle events (`started` -> `finished`, or
+ * `"Compacting conversation..."` -> `"Conversation compacted"`) in place so
+ * the in-progress compaction status row transitions into its final state
+ * instead of leaving two stacked compaction pills.
+ */
+export function foldCompactionEvents<T extends { kind: string; id: string; event?: AgentEvent }>(
+    blocks: readonly T[]
+): T[] {
+    const result: T[] = []
+    let openOmpCompactionIndex = -1
+    let openLegacyCompactionIndex = -1
+
+    for (const block of blocks) {
+        if (block.kind !== 'agent-event' || !block.event) {
+            result.push(block)
+            continue
+        }
+        const event = block.event
+        if (event.type === 'omp-compaction') {
+            const phase = 'phase' in event ? event.phase : undefined
+            const outcome = 'outcome' in event ? event.outcome : undefined
+            if (phase === 'started') {
+                if (openOmpCompactionIndex >= 0) {
+                    const prev = result[openOmpCompactionIndex]!
+                    result[openOmpCompactionIndex] = { ...block, id: prev.id }
+                } else {
+                    openOmpCompactionIndex = result.length
+                    result.push(block)
+                }
+                continue
+            }
+            if (phase === 'finished') {
+                if (outcome === 'skipped') {
+                    if (openOmpCompactionIndex >= 0) {
+                        result.splice(openOmpCompactionIndex, 1)
+                        if (openLegacyCompactionIndex > openOmpCompactionIndex) {
+                            openLegacyCompactionIndex -= 1
+                        }
+                        openOmpCompactionIndex = -1
+                    }
+                    continue
+                }
+                if (openOmpCompactionIndex >= 0) {
+                    const prev = result[openOmpCompactionIndex]!
+                    result[openOmpCompactionIndex] = { ...block, id: prev.id }
+                    openOmpCompactionIndex = -1
+                } else {
+                    result.push(block)
+                }
+                continue
+            }
+        }
+
+        if (isLegacyCompactionStartEvent(event)) {
+            if (openLegacyCompactionIndex >= 0) {
+                const prev = result[openLegacyCompactionIndex]!
+                result[openLegacyCompactionIndex] = { ...block, id: prev.id }
+            } else {
+                openLegacyCompactionIndex = result.length
+                result.push(block)
+            }
+            continue
+        }
+
+        if (isLegacyCompactionEndEvent(event)) {
+            if (openLegacyCompactionIndex >= 0) {
+                const prev = result[openLegacyCompactionIndex]!
+                result[openLegacyCompactionIndex] = { ...block, id: prev.id }
+                openLegacyCompactionIndex = -1
+            } else {
+                result.push(block)
+            }
+            continue
+        }
+
+        result.push(block)
+    }
+
+    return result
+}

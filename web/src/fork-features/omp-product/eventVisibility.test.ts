@@ -46,4 +46,55 @@ describe('OMP event visibility', () => {
         ])
         expect(filterVisibleBlocksForFlavor(blocks, 'claude')).toEqual(blocks)
     })
+
+    it('folds omp-compaction started and finished events in place and drops skipped compactions', () => {
+        const blocks: VisibleChatBlock[] = [
+            agentEvent('compact-start', {
+                type: 'omp-compaction',
+                phase: 'started',
+                strategy: 'context-full',
+                reason: 'threshold'
+            }),
+            agentText('step-1'),
+            agentEvent('compact-end', {
+                type: 'omp-compaction',
+                phase: 'finished',
+                outcome: 'compacted',
+                strategy: 'context-full',
+                reason: 'threshold',
+                tokensBefore: 148528
+            })
+        ]
+
+        const folded = filterVisibleBlocksForFlavor(blocks, 'omp')
+        expect(folded.map((block) => block.id)).toEqual(['compact-start', 'step-1'])
+        expect(folded[0]).toMatchObject({
+            id: 'compact-start',
+            kind: 'agent-event',
+            event: {
+                type: 'omp-compaction',
+                phase: 'finished',
+                outcome: 'compacted',
+                tokensBefore: 148528
+            }
+        })
+
+        const skippedBlocks: VisibleChatBlock[] = [
+            agentEvent('compact-start-2', {
+                type: 'omp-compaction',
+                phase: 'started',
+                strategy: 'snapcompact',
+                reason: 'threshold'
+            }),
+            agentEvent('compact-skip-2', {
+                type: 'omp-compaction',
+                phase: 'finished',
+                outcome: 'skipped',
+                strategy: 'snapcompact',
+                reason: 'threshold'
+            }),
+            agentText('step-2')
+        ]
+        expect(filterVisibleBlocksForFlavor(skippedBlocks, 'omp').map((block) => block.id)).toEqual(['step-2'])
+    })
 })

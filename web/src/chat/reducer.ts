@@ -2,7 +2,7 @@ import type { AgentState } from '@/types/api'
 import type { AgentEvent, ChatBlock, NormalizedMessage, UsageData } from '@/chat/types'
 import type { ThreadGoal } from '@/types/api'
 import { traceMessages, type TracedMessage } from '@/chat/tracer'
-import { dedupeAgentEvents, foldApiErrorEvents } from '@/chat/reducerEvents'
+import { dedupeAgentEvents, foldApiErrorEvents, foldCompactionEvents } from '@/chat/reducerEvents'
 import { collectTitleChanges, ensureToolBlock, getPermissions } from '@/chat/reducerTools'
 import { reduceTimeline } from '@/chat/reducerTimeline'
 import { isRedundantGoalStatusMessageText } from '@hapi/protocol/messages'
@@ -232,7 +232,7 @@ export function reduceChatBlocks(
     }
 
     return {
-        blocks: filterSilentGoalBlocks(dedupeAgentEvents(foldApiErrorEvents(rootResult.blocks))),
+        blocks: filterSilentGoalBlocks(foldCompactionEvents(dedupeAgentEvents(foldApiErrorEvents(rootResult.blocks)))),
         hasReadyEvent,
         latestUsage,
         latestGoal: getLatestThreadGoal(options.goalStateMessages ?? normalized)

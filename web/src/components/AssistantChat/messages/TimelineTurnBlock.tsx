@@ -587,6 +587,37 @@ function RailSlidingActiveSpinner(props: {
     )
 }
 
+function RailInlineActiveSpinner(props: {
+    activeRowIndex?: number
+    color?: string
+}) {
+    const color = props.color ?? '#da7756'
+    return (
+        <span
+            className="pointer-events-none absolute -left-[22.5px] top-[14px] z-10 -translate-y-1/2 flex h-4 w-4 items-center justify-center rounded-full bg-[var(--app-bg)] ring-2 ring-[var(--app-bg)]"
+            data-testid="rail-step-spinner"
+            data-active-row-index={props.activeRowIndex}
+            data-handoff-phase="sliding"
+            data-indicator-color={color}
+            aria-hidden="true"
+            style={{ color }}
+        >
+            <svg viewBox="0 0 16 16" className="turn-step-spinner-svg h-4 w-4">
+                <circle
+                    cx="8"
+                    cy="8"
+                    r="5.75"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="1.8"
+                    strokeDasharray="16 38"
+                    strokeLinecap="round"
+                />
+            </svg>
+        </span>
+    )
+}
+
 function TimelineThoughtRow(props: {
     row: TurnReasoningRow
     isActiveStreaming: boolean
@@ -633,10 +664,12 @@ function TimelineThoughtRow(props: {
 
 function TimelineToolStepRow(props: {
     row: TurnToolRow
+    rowIndex?: number
     defaultExpanded: boolean
     lang: 'en' | 'zh-CN'
     accentColor?: string
     forceMorph?: boolean
+    showInlineRailSpinner?: boolean
     suppressRunningShimmer?: boolean
 }) {
     const ctx = useOptionalHappyChatContext()
@@ -656,6 +689,12 @@ function TimelineToolStepRow(props: {
 
     return (
         <div data-hapi-share-exclude="true" className="relative py-0.5">
+            {props.showInlineRailSpinner && descriptor.isRunning && !props.suppressRunningShimmer ? (
+                <RailInlineActiveSpinner
+                    activeRowIndex={props.rowIndex}
+                    color={props.accentColor}
+                />
+            ) : null}
             <RailStepCompletionMorphBadge
                 isRunning={descriptor.isRunning}
                 forceMorph={props.forceMorph}
@@ -855,21 +894,27 @@ export function TimelineTurnBlockView(props: {
         && !hasRunningOrPendingTool
         && !hasTrailingReasoningStep
 
-    const activeRunningRowIndex = useMemo(() => {
+    const activeRunningRowIndices = useMemo(() => {
+        const indices: number[] = []
         for (let i = 0; i < stepRows.length; i += 1) {
             const row = stepRows[i]!
-            if (row.kind === 'tool' && (row.block.tool.state === 'running' || (row.block.tool.state === 'pending' && row.permission))) {
-                return i
+            if (row.kind === 'tool' && (row.block.tool.state === 'running' || (row.block.tool.state === 'pending' && Boolean(row.permission)))) {
+                indices.push(i)
             }
         }
+        if (indices.length > 0) {
+            return indices
+        }
         if (hasTrailingReasoningStep) {
-            return stepRows.length - 1
+            return [stepRows.length - 1]
         }
         if (showFrontierSlot) {
-            return stepRows.length
+            return [stepRows.length]
         }
-        return -1
+        return []
     }, [stepRows, hasTrailingReasoningStep, showFrontierSlot])
+
+    const activeRunningRowIndex = activeRunningRowIndices[0] ?? -1
 
     const railRef = useRef<HTMLDivElement | null>(null)
     const rowElsRef = useRef<Array<HTMLDivElement | null>>([])
@@ -916,6 +961,11 @@ export function TimelineTurnBlockView(props: {
         let transitionedMorphRowIndex = -1
         let fastArrivedKey: string | null = null
         let fastArrivedRowIndex = -1
+        const activeRowKey = activeRunningRowIndex >= 0 && activeRunningRowIndex < stepRows.length
+            ? stepRows[activeRunningRowIndex]?.key ?? null
+            : null
+        const targetWasAlreadyRunning = activeRowKey !== null
+            && seenToolStatesRef.current?.get(activeRowKey) === true
 
         if (seenToolStatesRef.current === null) {
             const initialMap = new Map<string, boolean>()
@@ -971,7 +1021,7 @@ export function TimelineTurnBlockView(props: {
             ? transitionedMorphRowIndex
             : fastArrivedRowIndex
 
-        if (morphSourceIndex >= 0 && morphSourceIndex !== activeRunningRowIndex) {
+        if (morphSourceIndex >= 0 && morphSourceIndex !== activeRunningRowIndex && !targetWasAlreadyRunning) {
             if (handoffTimerRef.current !== undefined) {
                 window.clearTimeout(handoffTimerRef.current)
             }
@@ -1119,10 +1169,12 @@ export function TimelineTurnBlockView(props: {
                                             >
                                                 <TimelineToolStepRow
                                                     row={row}
+                                                    rowIndex={idx}
                                                     defaultExpanded={viewMode === 'verbose'}
                                                     lang={lang}
                                                     accentColor={accentColor}
                                                     forceMorph={row.key === fastMorphRowKey}
+                                                    showInlineRailSpinner={idx !== activeRunningRowIndex}
                                                     suppressRunningShimmer={holdingForPrevMorph && activeRunningRowIndex === idx}
                                                 />
                                             </div>
@@ -1226,11 +1278,14 @@ export function TimelineTurnBlockView(props: {
                                         .some((later) => later.kind === 'image' || later.kind === 'file')
                                 if (row.kind === 'tool' && row.pinned) {
                                     return (
-                                        <div key={row.key} className="ml-2 mt-1 border-l border-[var(--app-border)] pl-3.5">
+                                        <div key={row.key} className="relative ml-2 mt-1 border-l border-[var(--app-border)] pl-3.5">
                                             <TimelineToolStepRow
                                                 row={row}
+                                                rowIndex={idx}
                                                 defaultExpanded={false}
                                                 lang={lang}
+                                                accentColor={accentColor}
+                                                showInlineRailSpinner={true}
                                             />
                                         </div>
                                     )
