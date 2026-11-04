@@ -92,6 +92,7 @@ export const MARKDOWN_PLUGINS = [
 export const MARKDOWN_PLUGINS_STANDALONE = [
     REMARK_GFM_PLUGIN,
     remarkRepairTables,
+    remarkLatexBracketMath,
     ...MARKDOWN_PLUGIN_TAIL_STANDALONE,
 ] satisfies NonNullable<MarkdownTextPrimitiveProps['remarkPlugins']>
 
@@ -108,6 +109,7 @@ export const MARKDOWN_PLUGINS_WITH_BREAKS = [
 export const MARKDOWN_PLUGINS_STANDALONE_WITH_BREAKS = [
     REMARK_GFM_PLUGIN,
     remarkRepairTables,
+    remarkLatexBracketMath,
     remarkBreaks,
     ...MARKDOWN_PLUGIN_TAIL_STANDALONE,
 ] satisfies NonNullable<MarkdownTextPrimitiveProps['remarkPlugins']>

@@ -634,11 +634,27 @@ html:has(.chat-scroll-y) #root {
     margin-right: 0.55rem;
 }
 
+.aui-md :where(:not(.katex-display)) > :where(.katex) {
+    margin: 0 0.14em;
+    font-size: 1.04em;
+    white-space: normal;
+}
+
+.aui-md :where(:not(.katex-display)) > :where(.katex) .base {
+    white-space: nowrap;
+}
+
+.aui-md :where(:not(.katex-display)) > :where(.katex) .mfrac :where(.sizing.reset-size6.size3) {
+    font-size: 0.85em;
+}
+
 .aui-md :where(.katex-display) {
-    margin: 0.9rem 0;
+    margin: 0.75rem 0;
+    padding: 0.5rem 0.75rem;
     overflow-x: auto;
     overflow-y: hidden;
-    padding-bottom: 0.15rem;
+    border-radius: 0.5rem;
+    background-color: color-mix(in srgb, var(--app-fg) 3.5%, transparent);
 }
 
 .aui-md :where(pre) {

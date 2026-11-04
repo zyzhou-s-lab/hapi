@@ -152,6 +152,7 @@ export default function remarkRepairTables(this: Processor) {
 
         // Re-parse with the repaired source so remark-gfm produces table nodes
         // processor.parse() runs only the parse phase, not transformers
+        file.value = repaired
         const newTree = processor.parse(repaired) as Root
         Object.assign(tree, newTree)
     }
