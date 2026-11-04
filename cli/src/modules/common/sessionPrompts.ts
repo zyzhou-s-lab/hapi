@@ -954,6 +954,7 @@ function collectOmp(input: CollectInput, live: SessionPromptLive | undefined): C
         if (parent === current) break
         current = parent
     }
+    pushAgents(join(home, 'AGENTS.md'), 'user')
     pushAgents(join(home, '.agent', 'AGENTS.md'), 'user')
     pushAgents(join(home, '.agents', 'AGENTS.md'), 'user')
     const ruleDirs = [join(cwd, '.omp', 'rules'), join(agentDir, 'rules')]
