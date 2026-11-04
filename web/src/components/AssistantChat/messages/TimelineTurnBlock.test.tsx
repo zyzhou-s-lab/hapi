@@ -507,4 +507,105 @@ describe('TimelineTurnBlock & summarizeTurnActivity', () => {
             vi.useRealTimers()
         }
     })
+
+    it('keeps Running verb label during morph hold, settles Thinking row when trailing answer text takes over, and preserves header span DOM identity across header updates', () => {
+        vi.useFakeTimers()
+        try {
+            const step1Running = partitionTurn(
+                [
+                    call(tool('b1', 'Bash', { state: 'running', input: { command: 'ls', description: 'List files' } })),
+                ],
+                null
+            )
+            const { rerender } = render(
+                <I18nProvider>
+                    <TimelineTurnBlockView
+                        partition={step1Running}
+                        streaming={true}
+                        durationMs={1000}
+                        initiallyOpen={true}
+                    />
+                </I18nProvider>
+            )
+
+            const headerSpanBefore = screen.getByTestId('turn-level0-header').querySelector('span')
+            expect(headerSpanBefore).not.toBeNull()
+
+            // Step 1 finishes and Step 2 starts running simultaneously -> during morph hold, Step 2 verb stays 'Running' (not 'Queued')
+            const step2Running = partitionTurn(
+                [
+                    call(tool('b1', 'Bash', { state: 'completed', input: { command: 'ls', description: 'List files' } })),
+                    call(tool('b2', 'Bash', { state: 'running', input: { command: 'pwd', description: 'Print working directory' } })),
+                ],
+                null
+            )
+            rerender(
+                <I18nProvider>
+                    <TimelineTurnBlockView
+                        partition={step2Running}
+                        streaming={true}
+                        durationMs={1500}
+                        initiallyOpen={true}
+                    />
+                </I18nProvider>
+            )
+
+            const headerSpanAfter = screen.getByTestId('turn-level0-header').querySelector('span')
+            expect(headerSpanAfter).toBe(headerSpanBefore)
+            expect(screen.getByTestId('rail-step-spinner')).toHaveAttribute('data-handoff-phase', 'completing-prev')
+            expect(screen.queryByText('Queued')).toBeNull()
+            expect(screen.getByText('Running')).toBeInTheDocument()
+
+            // Step 2 finishes and a trailing reasoning step streams ('Thinking...')
+            const reasoningStreaming = partitionTurn(
+                [
+                    call(tool('b1', 'Bash', { state: 'completed', input: { command: 'ls', description: 'List files' } })),
+                    call(tool('b2', 'Bash', { state: 'completed', input: { command: 'pwd', description: 'Print working directory' } })),
+                    { type: 'reasoning', text: 'Synthesizing final response.' },
+                ],
+                null
+            )
+            rerender(
+                <I18nProvider>
+                    <TimelineTurnBlockView
+                        partition={reasoningStreaming}
+                        streaming={true}
+                        durationMs={2000}
+                        initiallyOpen={true}
+                    />
+                </I18nProvider>
+            )
+
+            expect(screen.getByText('Thinking...')).toBeInTheDocument()
+            expect(screen.getByTestId('rail-step-spinner')).toHaveAttribute('data-active-row-index', '2')
+
+            // Taking-over answer text begins streaming -> reasoning row settles to 'Thought', no frontier row spawns, and rail spinner stops
+            const answerTakingOver = partitionTurn(
+                [
+                    call(tool('b1', 'Bash', { state: 'completed', input: { command: 'ls', description: 'List files' } })),
+                    call(tool('b2', 'Bash', { state: 'completed', input: { command: 'pwd', description: 'Print working directory' } })),
+                    { type: 'reasoning', text: 'Synthesizing final response.' },
+                    { type: 'text', text: 'Here is the final answer taking over.' },
+                ],
+                null
+            )
+            rerender(
+                <I18nProvider>
+                    <TimelineTurnBlockView
+                        partition={answerTakingOver}
+                        streaming={true}
+                        durationMs={2500}
+                        initiallyOpen={true}
+                    />
+                </I18nProvider>
+            )
+
+            expect(screen.getByText('Thought')).toBeInTheDocument()
+            expect(screen.queryByTestId('rail-frontier-row')).toBeNull()
+            expect(screen.queryByTestId('rail-step-spinner')).toBeNull()
+            expect(screen.getByTestId('turn-trailing-answer').textContent).toContain('Here is the final answer taking over.')
+        } finally {
+            vi.useRealTimers()
+        }
+    })
 })

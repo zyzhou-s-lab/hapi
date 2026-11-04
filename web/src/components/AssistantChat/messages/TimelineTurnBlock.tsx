@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { formatDuration } from '@/chat/presentation'
 import {
     describeTurnToolStep,
@@ -479,7 +479,7 @@ function RailStepCompletionMorphBadge(props: { isRunning: boolean; forceMorph?: 
     const didForceMorph = useRef(false)
     const [showMorph, setShowMorph] = useState(false)
 
-    useEffect(() => {
+    useLayoutEffect(() => {
         if (props.isRunning) {
             wasRunning.current = true
             setShowMorph(false)
@@ -621,6 +621,7 @@ function RailInlineActiveSpinner(props: {
 function TimelineThoughtRow(props: {
     row: TurnReasoningRow
     isActiveStreaming: boolean
+    suppressRunningShimmer?: boolean
     defaultExpanded: boolean
     lang: 'en' | 'zh-CN'
     accentColor?: string
@@ -642,7 +643,16 @@ function TimelineThoughtRow(props: {
                 onClick={() => setOpen((v) => !v)}
                 className="group flex w-full items-center gap-1.5 rounded-md px-1.5 py-1 text-left text-[13.5px] leading-5 text-[var(--app-hint)] transition-colors hover:bg-[var(--app-subtle-bg)]/60 hover:text-[var(--app-fg)]"
             >
-                <span className={cn(props.isActiveStreaming && 'turn-text-shimmer font-medium')}>
+                <span
+                    className={cn(
+                        'transition-opacity duration-200',
+                        props.isActiveStreaming && props.suppressRunningShimmer
+                            ? 'text-[var(--app-hint)] opacity-45'
+                            : props.isActiveStreaming
+                                ? 'turn-text-shimmer font-medium'
+                                : undefined
+                    )}
+                >
                     {label}
                 </span>
                 <SmallChevron open={open} className="opacity-70 group-hover:opacity-100" />
@@ -721,9 +731,7 @@ function TimelineToolStepRow(props: {
                                     : 'text-[var(--app-hint)] group-hover:text-[var(--app-fg)]'
                     )}
                 >
-                    {descriptor.isRunning && props.suppressRunningShimmer
-                        ? (props.lang === 'zh-CN' ? '待运行' : 'Queued')
-                        : descriptor.verbLabel}
+                    {descriptor.verbLabel}
                 </span>
                 {descriptor.intentLabel ? (
                     <span
@@ -886,7 +894,10 @@ export function TimelineTurnBlockView(props: {
         [stepRows]
     )
     const hasTrailingReasoningStep =
-        props.streaming && stepRows.length > 0 && stepRows[stepRows.length - 1]?.kind === 'reasoning'
+        props.streaming
+        && trailing.length === 0
+        && stepRows.length > 0
+        && stepRows[stepRows.length - 1]?.kind === 'reasoning'
     const showFrontierSlot =
         props.streaming
         && hasSteps
@@ -944,7 +955,7 @@ export function TimelineTurnBlockView(props: {
         }
     }, [])
 
-    useEffect(() => {
+    useLayoutEffect(() => {
         const currentTools = new Map<string, { isRunning: boolean; isCompleted: boolean; rowIndex: number }>()
         for (let i = 0; i < stepRows.length; i += 1) {
             const row = stepRows[i]!
@@ -1044,7 +1055,7 @@ export function TimelineTurnBlockView(props: {
         }
     }, [stepRows, activeRunningRowIndex, props.streaming])
 
-    useEffect(() => {
+    useLayoutEffect(() => {
         const currentIdx = latestActiveRowIndexRef.current
         if (currentIdx >= 0) {
             const updatedY = measureRowY(currentIdx)
@@ -1099,9 +1110,8 @@ export function TimelineTurnBlockView(props: {
                             <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-[var(--app-badge-error-text)]" />
                         ) : null}
                         <span
-                            key={headerText}
                             className={cn(
-                                'turn-timeline-status-enter truncate',
+                                'truncate',
                                 props.streaming ? 'turn-text-shimmer font-medium' : 'font-normal'
                             )}
                         >
@@ -1151,6 +1161,7 @@ export function TimelineTurnBlockView(props: {
                                                 <TimelineThoughtRow
                                                     row={row}
                                                     isActiveStreaming={props.streaming && isLastStep && activeRunningRowIndex === idx}
+                                                    suppressRunningShimmer={holdingForPrevMorph && activeRunningRowIndex === idx}
                                                     defaultExpanded={viewMode === 'thinking' || viewMode === 'verbose'}
                                                     lang={lang}
                                                     accentColor={accentColor}
