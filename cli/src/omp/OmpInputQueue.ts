@@ -133,7 +133,13 @@ export class OmpInputQueue {
     }
 
     heldSize(): number {
-        return this.held.size;
+        let count = 0;
+        for (const input of this.held.values()) {
+            if (input.state === 'held') {
+                count += 1;
+            }
+        }
+        return count;
     }
 
     reset(): void {

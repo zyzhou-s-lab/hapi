@@ -17,9 +17,9 @@ describe('OmpInputQueue', () => {
         expect(second).not.toBeNull();
         expect(queue.cancelByLocalId('two')).toBe(true);
         expect(queue.beginInvocation(first!)).toBe(true);
+        expect(queue.heldSize()).toBe(0);
         expect(queue.cancelByLocalId('one')).toBe(false);
         expect(consumed).not.toHaveBeenCalled();
-
         queue.completeInvocation(first!);
         expect(consumed).toHaveBeenCalledWith(['one']);
         expect(queue.heldSize()).toBe(0);

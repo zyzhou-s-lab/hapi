@@ -1143,8 +1143,9 @@ describe('ompRemoteLauncher RPC lifecycle', () => {
         await waitForRequest('follow_up');
         await vi.waitFor(() => expect(session.queue.heldSize()).toBe(1));
         expect(sessionEvents.some((event) => event.type === 'ready')).toBe(false);
+        expect(session.queue.cancelByLocalId('follow-up-one')).toBe(false);
         expect(session.queue.cancelByLocalId('follow-up-two')).toBe(true);
-
+        expect(consumedLocalIds.flat()).toEqual(['initial', 'steer']);
         session.queue.push({
             text: 'replace the turn',
             mode: createMode(),
@@ -1186,15 +1187,23 @@ describe('ompRemoteLauncher RPC lifecycle', () => {
         expect(sessionEvents.some((event) => event.type === 'ready')).toBe(true);
     });
 
-    it('marks ordinary streaming prompts with an explicit followUp behavior', async () => {
+    it('marks ordinary streaming prompts with an explicit followUp behavior and defers consumption until committed', async () => {
         harness.autoFinishPrompt = false;
-        const { session } = createSessionStub([
-            { message: 'active', mode: createMode() }
+        const { session, consumedLocalIds } = createSessionStub([
+            { message: 'active', mode: createMode(), localId: 'active' }
         ], { closeQueue: false });
         const launch = ompRemoteLauncher(session as never);
         await waitForRequest('prompt');
         emitEvent('agent_start');
-        session.queue.push({ text: 'queued ordinary prompt', mode: createMode(), inputMode: 'prompt' });
+        emitEvent('message_end', {
+            message: { role: 'user', content: [{ type: 'text', text: 'active' }], steering: false }
+        });
+        session.queue.push({
+            text: 'queued ordinary prompt',
+            mode: createMode(),
+            inputMode: 'prompt',
+            localId: 'queued-ordinary-prompt'
+        });
 
         await waitForRequestCount('prompt', 2);
         const prompts = harness.requests.filter((request): request is Extract<OmpCommand, { type: 'prompt' }> => (
@@ -1205,10 +1214,30 @@ describe('ompRemoteLauncher RPC lifecycle', () => {
             message: 'queued ordinary prompt',
             streamingBehavior: 'followUp'
         }));
+        expect(consumedLocalIds.flat()).toEqual(['active']);
         session.queue.close();
         emitEvent('message_end', {
-            message: { role: 'user', content: [{ type: 'text', text: 'queued ordinary prompt' }] }
+            message: {
+                role: 'assistant',
+                content: [{ type: 'text', text: 'first turn answer' }],
+                provider: 'test',
+                model: 'test-model',
+                stopReason: 'stop',
+                usage: {
+                    input: 1,
+                    output: 1,
+                    cacheRead: 0,
+                    cacheWrite: 0,
+                    totalTokens: 2,
+                    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 }
+                }
+            }
         });
+        expect(consumedLocalIds.flat()).toEqual(['active']);
+        emitEvent('message_end', {
+            message: { role: 'user', content: [{ type: 'text', text: 'queued ordinary prompt' }], steering: false }
+        });
+        expect(consumedLocalIds.flat()).toEqual(['active', 'queued-ordinary-prompt']);
         emitEvent('agent_end');
         await launch;
     });
