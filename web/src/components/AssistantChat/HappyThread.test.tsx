@@ -693,4 +693,14 @@ describe('visible older-history loading', () => {
         })).resolves.toBe(false)
         expect(loadOlder).toHaveBeenCalledTimes(1)
     })
+
+    it('caps automatic multi-page loads when a huge single turn does not change the top boundary', async () => {
+        const loadOlder = vi.fn(async () => true)
+        await expect(loadUntilVisibleBoundaryChanges({
+            getVisibleBoundary: () => 'same-turn-wrapper',
+            hasMoreMessages: () => true,
+            loadOlder
+        })).resolves.toBe(true)
+        expect(loadOlder).toHaveBeenCalledTimes(4)
+    })
 })

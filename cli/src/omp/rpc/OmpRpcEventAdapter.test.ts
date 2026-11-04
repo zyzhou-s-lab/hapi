@@ -210,12 +210,21 @@ describe('OmpRpcEventAdapter', () => {
         }));
 
         const lifecycle = harness.agentMessages.filter((message) => message.type === 'tool_call');
-        expect(lifecycle).toHaveLength(3);
-        expect(lifecycle.map((message) => message.id)).toEqual(['tool-1', 'tool-1', 'tool-1']);
-        expect(lifecycle.map((message) => message.input)).toEqual([
-            { command: 'printf start' },
-            { command: 'printf start' },
-            { command: 'printf start' }
+        expect(lifecycle).toEqual([
+            {
+                type: 'tool_call',
+                id: 'tool-1',
+                name: 'bash',
+                input: { command: 'printf start' },
+                status: 'in_progress'
+            },
+            {
+                type: 'tool_call',
+                id: 'tool-1',
+                name: 'bash',
+                input: { command: 'printf start' },
+                status: 'completed'
+            }
         ]);
         expect(harness.agentMessages.some((message) => message.type === 'tool_result')).toBe(false);
         expect(harness.canonicalMessages).toHaveLength(1);
@@ -234,6 +243,66 @@ describe('OmpRpcEventAdapter', () => {
                 }]
             }
         });
+    });
+
+    it('suppresses duplicate in_progress tool updates and ignores late updates after tool completion', () => {
+        const harness = createHarness();
+        harness.adapter.handle(rpcEvent({
+            type: 'tool_execution_start',
+            toolCallId: 'bg-bash-1',
+            toolName: 'bash',
+            args: { command: 'python run.py' },
+            intent: 'Running python job'
+        }));
+        harness.adapter.handle(rpcEvent({
+            type: 'tool_execution_update',
+            toolCallId: 'bg-bash-1',
+            toolName: 'bash',
+            args: {},
+            partialResult: { content: 'tick 1' }
+        }));
+        harness.adapter.handle(rpcEvent({
+            type: 'tool_execution_end',
+            toolCallId: 'bg-bash-1',
+            toolName: 'bash',
+            result: { content: 'backgrounded as bg_24' },
+            isError: false
+        }));
+        harness.adapter.handle(rpcEvent({
+            type: 'message_end',
+            message: {
+                role: 'toolResult',
+                toolCallId: 'bg-bash-1',
+                toolName: 'bash',
+                content: [{ type: 'text', text: 'backgrounded as bg_24' }],
+                isError: false
+            }
+        }));
+        harness.adapter.handle(rpcEvent({
+            type: 'tool_execution_update',
+            toolCallId: 'bg-bash-1',
+            toolName: 'bash',
+            args: { command: 'python run.py' },
+            partialResult: { content: 'Command timed out after 1200 seconds' }
+        }));
+
+        const lifecycle = harness.agentMessages.filter((message) => message.type === 'tool_call');
+        expect(lifecycle).toEqual([
+            {
+                type: 'tool_call',
+                id: 'bg-bash-1',
+                name: 'bash',
+                input: { command: 'python run.py', i: 'Running python job' },
+                status: 'in_progress'
+            },
+            {
+                type: 'tool_call',
+                id: 'bg-bash-1',
+                name: 'bash',
+                input: { command: 'python run.py', i: 'Running python job' },
+                status: 'completed'
+            }
+        ]);
     });
 
     it('preserves top-level intent across tool_execution_start, tool_execution_update, and subagent tool updates', () => {
@@ -614,15 +683,21 @@ describe('OmpRpcEventAdapter', () => {
         const childLifecycle = harness.traces
             .map((trace) => trace.message)
             .filter((message) => message.type === 'tool_call');
-        expect(childLifecycle.map((message) => message.id)).toEqual([
-            'child-tool',
-            'child-tool',
-            'child-tool'
-        ]);
-        expect(childLifecycle.map((message) => message.input)).toEqual([
-            { command: 'printf original' },
-            { command: 'printf original' },
-            { command: 'printf original' }
+        expect(childLifecycle).toEqual([
+            {
+                type: 'tool_call',
+                id: 'child-tool',
+                name: 'bash',
+                input: { command: 'printf original' },
+                status: 'in_progress'
+            },
+            {
+                type: 'tool_call',
+                id: 'child-tool',
+                name: 'bash',
+                input: { command: 'printf original' },
+                status: 'completed'
+            }
         ]);
         expect(harness.traces.map((trace) => trace.message)).toContainEqual({
             type: 'tool_result',

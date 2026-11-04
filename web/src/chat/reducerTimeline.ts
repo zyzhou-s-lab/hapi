@@ -1,8 +1,9 @@
-import type { AgentEventBlock, AgentReasoningBlock, AgentTextBlock, ChatBlock, CliOutputBlock, CodexReviewBlock, RoundSummary, ToolCallBlock, ToolPermission, UserTextBlock } from '@/chat/types'
+import type { AgentEventBlock, AgentReasoningBlock, AgentTextBlock, ChatBlock, CliOutputBlock, CodexReviewBlock, RoundSummary, ToolCallBlock, ToolPermission, ToolUseStatus, UserTextBlock } from '@/chat/types'
 import type { TracedMessage } from '@/chat/tracer'
 import { createCliOutputBlock, isCliOutputText, mergeCliOutputBlocks } from '@/chat/reducerCliOutput'
 import { parseMessageAsEvent } from '@/chat/reducerEvents'
 import { collectTitleChanges, ensureToolBlock, titleFromChangeTitleCall, type PermissionEntry } from '@/chat/reducerTools'
+import { normalizeToolUseStatus } from '@/chat/normalizeAgent'
 import { isSubagentToolName } from '@/chat/subagentTool'
 import { asString, isObject } from '@hapi/protocol'
 
@@ -189,6 +190,7 @@ function prefixAgentTraceId(agentId: string, kind: 'trace' | 'call', id: string)
     return id.startsWith(prefix) ? id : `${prefix}${kind}:${id}`
 }
 
+
 function normalizeTraceMessage(
     agentId: string,
     message: unknown,
@@ -236,6 +238,7 @@ function normalizeTraceMessage(
 
     if (data.type === 'tool-call' && typeof data.callId === 'string') {
         const callId = prefixAgentTraceId(agentId, 'call', data.callId)
+        const status = normalizeToolUseStatus(data.status)
         return [{
             ...base,
             id: traceId,
@@ -246,6 +249,7 @@ function normalizeTraceMessage(
                 name: asString(data.name) ?? 'unknown',
                 input: data.input,
                 description: null,
+                ...(status ? { status } : {}),
                 uuid: traceId,
                 parentUUID: null
             }]
@@ -313,6 +317,48 @@ export function reduceTimeline(
     const titleChangeTitles = new Set(context.titleChangesByToolUseId.values())
     const reasoningBlocksByStreamId = new Map<string, AgentReasoningBlock>()
     let hasReadyEvent = false
+    const toolCreatedByMsgId = new Map<string, string>()
+    const toolsWithCompletedPeer = new Set<string>()
+
+    const isReconcilableRunningTool = (block: ToolCallBlock): boolean => (
+        block.tool.state === 'running'
+        && block.tool.permission?.status !== 'pending'
+        && !agentRunBlocksByCardId.has(block.id)
+        && block.tool.name !== 'CodexAgent'
+        && !isSubagentToolName(block.tool.name)
+    )
+
+    const completeOrphanedRunningTools = (completedAt: number, excludeMsgId?: string): void => {
+        for (const [toolId, block] of toolBlocksById) {
+            if (!isReconcilableRunningTool(block)) continue
+            if (excludeMsgId !== undefined && toolCreatedByMsgId.get(toolId) === excludeMsgId) continue
+            block.tool = {
+                ...block.tool,
+                state: 'completed',
+                completedAt: block.tool.completedAt ?? completedAt
+            }
+            toolsWithCompletedPeer.delete(toolId)
+        }
+    }
+
+    const markRunningPeersOnToolCompletion = (completedToolId: string, completedAt: number): void => {
+        toolsWithCompletedPeer.delete(completedToolId)
+        const completedBlock = toolBlocksById.get(completedToolId)
+        const isWaitCompletion = completedBlock?.tool.name === 'wait'
+        for (const [otherId, otherBlock] of toolBlocksById) {
+            if (otherId === completedToolId || !isReconcilableRunningTool(otherBlock)) continue
+            if (isWaitCompletion) {
+                otherBlock.tool = {
+                    ...otherBlock.tool,
+                    state: 'completed',
+                    completedAt: otherBlock.tool.completedAt ?? completedAt
+                }
+                toolsWithCompletedPeer.delete(otherId)
+            } else if (otherBlock.tool.name === 'bash' || otherBlock.tool.name === 'wait') {
+                toolsWithCompletedPeer.add(otherId)
+            }
+        }
+    }
 
     const ensureAgentRunBlock = (
         cardId: string,
@@ -486,6 +532,7 @@ export function reduceTimeline(
         if (msg.role === 'event') {
             if (msg.content.type === 'ready') {
                 hasReadyEvent = true
+                completeOrphanedRunningTools(msg.createdAt)
                 continue
             }
             if (msg.content.type === 'token-count') {
@@ -717,6 +764,9 @@ export function reduceTimeline(
         }
 
         if (msg.role === 'user') {
+            if (!msg.steered) {
+                completeOrphanedRunningTools(msg.createdAt)
+            }
             if (isCliOutputText(msg.content.text, msg.meta)) {
                 blocks.push(createCliOutputBlock({
                     id: msg.id,
@@ -814,6 +864,7 @@ export function reduceTimeline(
                         }
                     }
 
+                    completeOrphanedRunningTools(msg.createdAt, msg.id)
                     const block: AgentTextBlock = {
                         kind: 'agent-text',
                         id: `${msg.streamSnapshot?.id ?? msg.id}:${idx}`,
@@ -878,6 +929,7 @@ export function reduceTimeline(
                         }
                     }
 
+                    completeOrphanedRunningTools(msg.createdAt, msg.id)
                     const block: AgentReasoningBlock = {
                         kind: 'agent-reasoning',
                         id: `${msg.streamSnapshot?.id ?? msg.id}:${idx}`,
@@ -945,6 +997,31 @@ export function reduceTimeline(
                         continue
                     }
 
+                    const isNewTool = !toolBlocksById.has(c.id)
+                    if (isNewTool) {
+                        toolCreatedByMsgId.set(c.id, msg.id)
+                        for (const peerId of Array.from(toolsWithCompletedPeer)) {
+                            const peerBlock = toolBlocksById.get(peerId)
+                            if (peerBlock && isReconcilableRunningTool(peerBlock) && toolCreatedByMsgId.get(peerId) !== msg.id) {
+                                peerBlock.tool = {
+                                    ...peerBlock.tool,
+                                    state: 'completed',
+                                    completedAt: peerBlock.tool.completedAt ?? msg.createdAt
+                                }
+                            }
+                            toolsWithCompletedPeer.delete(peerId)
+                        }
+                    }
+                    const hasActiveWaitInEarlierMsg = isNewTool
+                        && c.status === 'in_progress'
+                        && c.name !== 'wait'
+                        && Array.from(toolBlocksById.values()).some(
+                            (b) => b.tool.name === 'wait' && b.tool.state === 'running' && toolCreatedByMsgId.get(b.id) !== msg.id
+                        )
+                    const effectiveStatus: ToolUseStatus | undefined = hasActiveWaitInEarlierMsg
+                        ? 'completed'
+                        : c.status
+
                     const permission = context.permissionsById.get(c.id)?.permission
 
                     const block = ensureToolBlock(blocks, toolBlocksById, c.id, {
@@ -960,12 +1037,16 @@ export function reduceTimeline(
                         nativeTitle: c.nativeTitle,
                         nativeKind: c.nativeKind,
                         progress: c.progress,
+                        status: effectiveStatus,
                         permission,
                         agentTimestamp: msg.agentTimestamp
                     })
 
-                    if (block.tool.state === 'pending') {
+                    if (block.tool.state === 'pending' && effectiveStatus !== 'pending') {
                         block.tool = { ...block.tool, state: 'running' }
+                    }
+                    if (block.tool.state === 'completed' || block.tool.state === 'error') {
+                        markRunningPeersOnToolCompletion(c.id, msg.createdAt)
                     }
                     // Backfill both the hub-clock start and the Claude exec start
                     // regardless of state (not just the pending→running
@@ -1060,6 +1141,7 @@ export function reduceTimeline(
                         execCompletedAt: msg.agentTimestamp ?? null,
                         state: c.is_error ? 'error' : 'completed'
                     }
+                    markRunningPeersOnToolCompletion(c.tool_use_id, msg.createdAt)
                     continue
                 }
 

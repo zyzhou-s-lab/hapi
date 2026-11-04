@@ -1,4 +1,4 @@
-import type { AgentEvent, CodexReview, CodexReviewFinding, NormalizedAgentContent, NormalizedMessage, RoundModelUsage, RoundSummary, ToolResultPermission, UsageData } from '@/chat/types'
+import type { AgentEvent, CodexReview, CodexReviewFinding, NormalizedAgentContent, NormalizedMessage, RoundModelUsage, RoundSummary, ToolResultPermission, ToolUseStatus, UsageData } from '@/chat/types'
 import { inlineMediaSourceFromWire } from '@/chat/inlineMediaSource'
 import { AGENT_MESSAGE_PAYLOAD_TYPE, asNumber, asString, isObject } from '@hapi/protocol'
 import { isClaudeChatVisibleMessage } from '@hapi/protocol/messages'
@@ -27,6 +27,22 @@ function normalizeToolResultPermissions(value: unknown): ToolResultPermission | 
         allowedTools,
         decision: normalizedDecision
     }
+}
+
+export function normalizeToolUseStatus(value: unknown): ToolUseStatus | undefined {
+    if (
+        value === 'in_progress'
+        || value === 'completed'
+        || value === 'failed'
+        || value === 'cancelled'
+        || value === 'canceled'
+        || value === 'pending'
+        || value === 'running'
+        || value === 'error'
+    ) {
+        return value
+    }
+    return undefined
 }
 
 function normalizeAgentEvent(value: unknown): AgentEvent | null {
@@ -1264,6 +1280,7 @@ export function normalizeAgentRecord(
 
         if (data.type === 'tool-call' && typeof data.callId === 'string') {
             const uuid = asString(data.id) ?? messageId
+            const status = normalizeToolUseStatus(data.status)
             return {
                 id: messageId,
                 localId,
@@ -1281,6 +1298,7 @@ export function normalizeAgentRecord(
                     nativeTitle: asString(data.nativeTitle ?? data.title),
                     nativeKind: asString(data.nativeKind ?? data.kind),
                     ...('progress' in data ? { progress: data.progress } : {}),
+                    ...(status ? { status } : {}),
                     uuid,
                     parentUUID: null
                 }],

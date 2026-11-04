@@ -1619,6 +1619,44 @@ describe('history view and older pagination', () => {
         expect(kept.at(-1)).toBe('o1499')
     })
 
+    it('preserves older pages loaded in tail mode when live SSE messages arrive', async () => {
+        const id = sessionId('tail-older-preserved-on-sse')
+        const rows = [
+            makeUserMessage({ id: 'prompt', seq: 1, invokedAt: 1, createdAt: 1 }),
+            ...Array.from({ length: 800 }, (_, index) =>
+                makeAgentMessage({ id: `o${index}`, seq: index + 2, at: index + 2 })
+            ),
+        ]
+        const getMessages = vi.fn()
+            .mockResolvedValueOnce(latestResponse(rows, {
+                epoch: 1,
+                hasMore: true,
+                nextBeforeAt: 1,
+                nextBeforeSeq: 1,
+            }))
+            .mockResolvedValueOnce(beforeResponse(rows, {
+                epoch: 1,
+                hasMore: false,
+                nextBeforeAt: 1,
+                nextBeforeSeq: 1,
+            }))
+        const api = createApi(getMessages)
+        await syncTailMessages(api, id)
+        expect(getMessageWindowState(id).viewMode).toBe('tail')
+        expect(getMessageWindowState(id).messages).toHaveLength(VISIBLE_WINDOW_SIZE)
+
+        await fetchOlderMessages(api, id)
+        expect(getMessageWindowState(id).messages).toHaveLength(801)
+
+        ingestIncomingMessages(id, [
+            makeAgentMessage({ id: 'live-tail', seq: 802, at: 802 })
+        ])
+        const afterLive = getMessageWindowState(id).messages.map((message) => message.id)
+        expect(afterLive).toHaveLength(802)
+        expect(afterLive[0]).toBe('prompt')
+        expect(afterLive.at(-1)).toBe('live-tail')
+    })
+
     it('keeps an agent-run older page together with the agent-run rows already on screen', async () => {
         const id = sessionId('agent-run-older-page')
         const latest = Array.from({ length: 200 }, (_, index) =>

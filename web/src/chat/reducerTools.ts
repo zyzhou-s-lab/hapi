@@ -1,5 +1,5 @@
 import type { AgentState } from '@/types/api'
-import type { ChatBlock, ChatToolCall, NormalizedMessage, ToolCallBlock, ToolPermission, UsageData } from '@/chat/types'
+import type { ChatBlock, ChatToolCall, NormalizedMessage, ToolCallBlock, ToolPermission, ToolUseStatus, UsageData } from '@/chat/types'
 import { isObject } from '@hapi/protocol'
 
 export type PermissionEntry = {
@@ -51,6 +51,14 @@ export function getPermissions(agentState: AgentState | null | undefined): Map<s
     return map
 }
 
+function mapToolUseStatusToState(status: ToolUseStatus | undefined): ChatToolCall['state'] | null {
+    if (status === 'completed') return 'completed'
+    if (status === 'failed' || status === 'cancelled' || status === 'canceled' || status === 'error') return 'error'
+    if (status === 'pending') return 'pending'
+    if (status === 'in_progress' || status === 'running') return 'running'
+    return null
+}
+
 export function ensureToolBlock(
     blocks: ChatBlock[],
     toolBlocksById: Map<string, ToolCallBlock>,
@@ -69,6 +77,7 @@ export function ensureToolBlock(
         nativeTitle?: string | null
         nativeKind?: string | null
         progress?: unknown
+        status?: ToolUseStatus
         permission?: ToolPermission
         /** Claude entry execution-machine timestamp for the tool_use, if known (see `ChatToolCall.execStartedAt`). */
         agentTimestamp?: number | null
@@ -102,11 +111,13 @@ export function ensureToolBlock(
         }
         if (seed.input !== null && seed.input !== undefined) {
             const nextInput = isObject(existing.tool.input) && isObject(seed.input)
-                ? {
-                    ...(typeof existing.tool.input.i === 'string' ? { i: existing.tool.input.i } : {}),
-                    ...(typeof existing.tool.input.intent === 'string' ? { intent: existing.tool.input.intent } : {}),
-                    ...seed.input
-                }
+                ? (Object.keys(seed.input).length === 0
+                    ? existing.tool.input
+                    : {
+                        ...(typeof existing.tool.input.i === 'string' && !('i' in seed.input) ? { i: existing.tool.input.i } : {}),
+                        ...(typeof existing.tool.input.intent === 'string' && !('intent' in seed.input) ? { intent: existing.tool.input.intent } : {}),
+                        ...seed.input
+                    })
                 : seed.input
             existing.tool = { ...existing.tool, input: nextInput }
         }
@@ -121,6 +132,14 @@ export function ensureToolBlock(
         }
         if (seed.progress !== undefined && existing.tool.state === 'running') {
             existing.tool = { ...existing.tool, result: seed.progress }
+        }
+        const mappedState = mapToolUseStatusToState(seed.status)
+        if (mappedState === 'completed' || mappedState === 'error') {
+            existing.tool = {
+                ...existing.tool,
+                state: existing.tool.state === 'error' ? 'error' : mappedState,
+                completedAt: existing.tool.completedAt ?? seed.createdAt
+            }
         }
         // The first call (tool_use) records when the tool was invoked. The
         // second call (tool_result) carries the result message's invokedAt,
@@ -142,11 +161,13 @@ export function ensureToolBlock(
         return existing
     }
 
+    const mappedState = mapToolUseStatusToState(seed.status)
     const initialState: ChatToolCall['state'] = seed.permission?.status === 'pending'
         ? 'pending'
         : seed.permission?.status === 'denied' || seed.permission?.status === 'canceled'
             ? 'error'
-            : 'running'
+            : mappedState ?? 'running'
+    const isTerminalInitialState = initialState === 'completed' || initialState === 'error'
 
     const tool: ChatToolCall = {
         id,
@@ -154,12 +175,12 @@ export function ensureToolBlock(
         state: initialState,
         input: seed.input,
         createdAt: seed.createdAt,
-        startedAt: initialState === 'running' ? seed.createdAt : null,
-        completedAt: null,
+        startedAt: initialState === 'pending' ? null : seed.createdAt,
+        completedAt: isTerminalInitialState ? seed.createdAt : null,
         // Exec start is only ever a real Claude entry timestamp (never the hub
         // receive time). Null keeps the tool on the hub-time fallback in
         // toolDurationMs; the tool_use path backfills the real value.
-        execStartedAt: initialState === 'running' ? (seed.agentTimestamp ?? null) : null,
+        execStartedAt: initialState === 'pending' ? null : (seed.agentTimestamp ?? null),
         execCompletedAt: null,
         description: seed.description,
         nativeTitle: seed.nativeTitle ?? null,

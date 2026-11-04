@@ -120,6 +120,21 @@ function withToolIntent(args: JsonValue, intent: unknown): JsonValue {
     return args;
 }
 
+function isEmptyObject(value: JsonValue | undefined): boolean {
+    return value !== null
+        && value !== undefined
+        && typeof value === 'object'
+        && !Array.isArray(value)
+        && Object.keys(value).length === 0;
+}
+
+function mergeToolArgs(existingArgs: JsonValue | undefined, incomingArgs: JsonValue, intent: unknown): JsonValue {
+    const baseArgs = existingArgs === undefined || (isEmptyObject(existingArgs) && !isEmptyObject(incomingArgs))
+        ? incomingArgs
+        : existingArgs;
+    return withToolIntent(baseArgs, intent);
+}
+
 const ToolEndSchema = z.object({
     type: z.literal('tool_execution_end'),
     toolCallId: z.string(),
@@ -339,6 +354,7 @@ type ToolLifecycle = {
     partialResult?: JsonValue;
     executionResult?: JsonValue;
     executionFailed?: boolean;
+    lastEmittedKey?: string;
 };
 
 type SubagentState = {
@@ -358,6 +374,7 @@ type SubagentState = {
     startEmitted: boolean;
     seenMessages: Set<string>;
     tools: Map<string, ToolLifecycle>;
+    completedToolIds: Set<string>;
 };
 
 export type OmpRpcEventAdapterCallbacks = {
@@ -431,6 +448,7 @@ export class OmpRpcEventAdapter {
     private activeMessage: MainMessageAccumulator | null = null;
     private lastDisplayId: string | null = null;
     private readonly tools = new Map<string, ToolLifecycle>();
+    private readonly completedToolIds = new Set<string>();
     private readonly subagents = new Map<string, SubagentState>();
 
     private snapshotTimer: NodeJS.Timeout | null = null;
@@ -897,7 +915,7 @@ export class OmpRpcEventAdapter {
         toolResult: z.infer<typeof ToolResultMessageSchema>
     ): void {
         const parentUuid = this.lastDisplayId;
-        const timestamp = new Date(toolResult.timestamp ?? Date.now()).toISOString();
+        const timestamp = new Date().toISOString();
         const toolOutput = {
             content: toolResult.content,
             details: toolResult.details
@@ -921,6 +939,7 @@ export class OmpRpcEventAdapter {
             toolUseResult: toolOutput
         });
         if (output.enabled) this.lastDisplayId = displayId;
+        this.completedToolIds.add(toolResult.toolCallId);
         this.tools.delete(toolResult.toolCallId);
         this.callbacks.onInkMessage(
             this.textFromContent(toolResult.content) || `Tool ${toolResult.toolName} finished`,
@@ -934,6 +953,7 @@ export class OmpRpcEventAdapter {
             this.invalidEvent('tool_execution_start', parsed.error);
             return;
         }
+        this.completedToolIds.delete(parsed.data.toolCallId);
         const tool: ToolLifecycle = {
             id: parsed.data.toolCallId,
             name: parsed.data.toolName,
@@ -951,15 +971,23 @@ export class OmpRpcEventAdapter {
             return;
         }
         const existing = this.tools.get(parsed.data.toolCallId);
+        if (this.completedToolIds.has(parsed.data.toolCallId) || existing?.executionResult !== undefined) {
+            return;
+        }
         const tool: ToolLifecycle = {
             id: parsed.data.toolCallId,
             name: existing?.name ?? parsed.data.toolName,
-            args: withToolIntent(existing?.args ?? parsed.data.args, parsed.data.intent),
+            args: mergeToolArgs(existing?.args, parsed.data.args, parsed.data.intent),
             partialResult: parsed.data.partialResult,
             executionResult: existing?.executionResult,
-            executionFailed: existing?.executionFailed
+            executionFailed: existing?.executionFailed,
+            lastEmittedKey: existing?.lastEmittedKey
         };
         this.tools.set(tool.id, tool);
+        const nextKey = this.toolLifecycleKey(tool, 'in_progress');
+        if (tool.lastEmittedKey === nextKey) {
+            return;
+        }
         this.emitToolLifecycle(output, tool, 'in_progress');
     }
 
@@ -976,13 +1004,25 @@ export class OmpRpcEventAdapter {
             args: existing?.args ?? {},
             partialResult: existing?.partialResult,
             executionResult: parsed.data.result,
-            executionFailed: parsed.data.isError === true
+            executionFailed: parsed.data.isError === true,
+            lastEmittedKey: existing?.lastEmittedKey
         };
+        this.completedToolIds.add(tool.id);
         this.tools.set(tool.id, tool);
         this.emitToolLifecycle(output, tool, tool.executionFailed ? 'failed' : 'completed');
     }
 
+    private toolLifecycleKey(
+        tool: Pick<ToolLifecycle, 'name' | 'args'>,
+        status: Extract<AgentMessage, { type: 'tool_call' }>['status']
+    ): string {
+        return JSON.stringify({ name: tool.name, input: tool.args, status });
+    }
+
     private emitToolLifecycle(output: OmpEventProjection, tool: ToolLifecycle, status: Extract<AgentMessage, { type: 'tool_call' }>['status']): void {
+        if (output.enabled) {
+            tool.lastEmittedKey = this.toolLifecycleKey(tool, status);
+        }
         output.onAgentMessage({
             type: 'tool_call',
             id: tool.id,
@@ -1284,6 +1324,7 @@ export class OmpRpcEventAdapter {
                 },
                 status: toolResult.data.isError ? 'failed' : 'completed'
             });
+            state.completedToolIds.add(toolResult.data.toolCallId);
             state.tools.delete(toolResult.data.toolCallId);
         }
     }
@@ -1301,15 +1342,35 @@ export class OmpRpcEventAdapter {
             return;
         }
         const existing = state.tools.get(event.toolCallId);
+        if (event.type === 'tool_execution_start') {
+            state.completedToolIds.delete(event.toolCallId);
+        } else if (
+            event.type === 'tool_execution_update'
+            && (state.completedToolIds.has(event.toolCallId) || existing?.executionResult !== undefined)
+        ) {
+            return;
+        }
+        const incomingArgs = JsonValueSchema.safeParse(event.args);
         const tool: ToolLifecycle = {
             id: event.toolCallId,
             name: existing?.name ?? event.toolName,
-            args: withToolIntent(existing?.args ?? (event.args ?? {}), event.intent),
+            args: mergeToolArgs(existing?.args, incomingArgs.success ? incomingArgs.data : {}, event.intent),
             partialResult: event.partialResult ?? existing?.partialResult,
             executionResult: event.result ?? existing?.executionResult,
-            executionFailed: event.isError === true || existing?.executionFailed
+            executionFailed: event.isError === true || existing?.executionFailed,
+            lastEmittedKey: existing?.lastEmittedKey
         };
+        if (event.type === 'tool_execution_end') {
+            state.completedToolIds.add(tool.id);
+        }
         state.tools.set(tool.id, tool);
+        const nextKey = this.toolLifecycleKey(tool, status);
+        if (event.type === 'tool_execution_update' && tool.lastEmittedKey === nextKey) {
+            return;
+        }
+        if (output.enabled) {
+            tool.lastEmittedKey = nextKey;
+        }
         this.emitSubagentTrace(output, state, {
             type: 'tool_call',
             id: tool.id,
@@ -1345,7 +1406,8 @@ export class OmpRpcEventAdapter {
             cardId: `omp-subagent:${input.id}`,
             startEmitted: false,
             seenMessages: new Set(),
-            tools: new Map()
+            tools: new Map(),
+            completedToolIds: new Set()
         };
         this.subagents.set(input.id, state);
         return state;

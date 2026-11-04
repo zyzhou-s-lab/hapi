@@ -566,19 +566,29 @@ export function getHistoryCoverageRetryDelay(deadline: number, now: number): num
     return Math.max(0, deadline - now) + 16
 }
 
+const MAX_VISIBLE_BOUNDARY_LOAD_PAGES = 4
+
 export async function loadUntilVisibleBoundaryChanges(options: {
     getVisibleBoundary: () => string | null
     hasMoreMessages: () => boolean
     loadOlder: () => Promise<boolean>
+    maxPages?: number
 }): Promise<boolean> {
     const initialBoundary = options.getVisibleBoundary()
+    const maxPages = options.maxPages ?? MAX_VISIBLE_BOUNDARY_LOAD_PAGES
     let loadedAny = false
-    while (options.hasMoreMessages() && options.getVisibleBoundary() === initialBoundary) {
+    let pagesLoaded = 0
+    while (
+        pagesLoaded < maxPages
+        && options.hasMoreMessages()
+        && options.getVisibleBoundary() === initialBoundary
+    ) {
         const loaded = await options.loadOlder()
         if (!loaded) {
             break
         }
         loadedAny = true
+        pagesLoaded += 1
     }
     return loadedAny
 }
