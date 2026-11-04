@@ -10,10 +10,12 @@ import {
     DockedTodoProgressBar,
     SubmittedQuestionSummaryBubble,
     TimelineTurnBlockView,
+    TurnActivityIndicator,
     TurnActivitySparkleIcon,
     type DockedQuestionItem,
     type DockedTodoItem,
     type TranscriptViewMode,
+    type TurnActivityIndicatorVariant,
 } from '@/components/AssistantChat/messages/TimelineTurnBlock'
 import { cn } from '@/lib/utils'
 
@@ -383,16 +385,74 @@ const STAGES: Array<{ id: DemoLifecycleStage; stepLabel: string; subtitle: strin
         subtitle: 'Header switches to aggregated past-tense summary & auto-collapses; Todo bar -> 4 of 4 Done',
     },
 ]
+const INDICATOR_CANDIDATES: Array<{
+    id: TurnActivityIndicatorVariant
+    code: string
+    title: string
+    subtitle: string
+    motionDesc: string
+}> = [
+    {
+        id: 'pulse-orb',
+        code: 'A',
+        title: '方案 A · 呼吸光点 (Pulse Orb)',
+        subtitle: '实心圆核 + 同心柔光扩散环',
+        motionDesc: '极简克制，作为左侧垂直导轨向下的自然延伸锚点',
+    },
+    {
+        id: 'equalizer-bars',
+        code: 'B',
+        title: '方案 B · 律动声波柱 (Equalizer Bars)',
+        subtitle: '3 根圆角竖向微柱错峰律动',
+        motionDesc: '具象表达持续流式输出与命令执行，节奏感强',
+    },
+    {
+        id: 'orbit-ring',
+        code: 'C',
+        title: '方案 C · 双轨星环 (Orbit Ring)',
+        subtitle: '外圈缺口圆弧旋转 + 内核呼吸点',
+        motionDesc: '现代工程感（Linear 风格），比普通单圈转圈更细腻',
+    },
+    {
+        id: 'morph-diamond',
+        code: 'D',
+        title: '方案 D · 四芒星棱 (Morph Diamond)',
+        subtitle: '内凹四芒棱星旋转缩放呼吸',
+        motionDesc: '具备 AI 智能体辨识度，同时区别于八道杠米字星',
+    },
+    {
+        id: 'terminal-cursor',
+        code: 'E',
+        title: '方案 E · 终端流式光标 (Terminal Cursor)',
+        subtitle: '>_ 提示符 + 闪烁实心方块光标',
+        motionDesc: '开发者 CLI 原生风格，契合代码代理工具属性',
+    },
+    {
+        id: 'wave-dots',
+        code: 'F',
+        title: '方案 F · 三点波浪矩阵 (Wave Dots)',
+        subtitle: '3 颗水平微点按相位差依次跃动',
+        motionDesc: '经典对话流与工具流通用等待态，视觉干扰最低',
+    },
+]
+
+const INDICATOR_COLORS: Array<{ id: string; label: string; value: string }> = [
+    { id: 'terracotta', label: '陶土暖橙 (#da7756)', value: '#da7756' },
+    { id: 'blue', label: '电光蓝 (#3b82f6)', value: '#3b82f6' },
+    { id: 'emerald', label: '翡翠绿 (#10b981)', value: '#10b981' },
+    { id: 'amber', label: '琥珀金 (#f59e0b)', value: '#f59e0b' },
+]
 
 export function TurnTimelineDemo() {
     const [stage, setStage] = useState<DemoLifecycleStage>('working-step-3')
     const [layoutMode, setLayoutMode] = useState<'side-by-side' | 'timeline-only'>('side-by-side')
     const [viewMode, setViewMode] = useState<TranscriptViewMode>('normal')
-    const [lang, setLang] = useState<'en' | 'zh-CN'>('en')
+    const [lang, setLang] = useState<'en' | 'zh-CN'>('zh-CN')
     const [autoPlaying, setAutoPlaying] = useState(false)
     const [submittedAnswers, setSubmittedAnswers] = useState<Record<string, string> | null>(null)
     const [showSpecTable, setShowSpecTable] = useState(true)
-
+    const [indicatorVariant, setIndicatorVariant] = useState<TurnActivityIndicatorVariant>('pulse-orb')
+    const [indicatorColor, setIndicatorColor] = useState<string>('#da7756')
     useEffect(() => {
         if (!autoPlaying) return
         const order: DemoLifecycleStage[] = [
@@ -570,6 +630,119 @@ export function TurnTimelineDemo() {
 
             {/* Main Content Area */}
             <main className="mx-auto flex w-full max-w-6xl flex-1 flex-col gap-6 px-4 py-5">
+                {/* Bottom Active Indicator Selector Gallery */}
+                <section
+                    className="rounded-2xl border border-[var(--app-border)] bg-[var(--app-bg)] p-4 shadow-sm"
+                    data-testid="indicator-candidate-gallery"
+                >
+                    <div className="mb-3 flex flex-wrap items-center justify-between gap-2 border-b border-[var(--app-border)]/70 pb-2.5">
+                        <div className="flex items-center gap-2.5">
+                            <TurnActivityIndicator variant={indicatorVariant} color={indicatorColor} size={18} />
+                            <div>
+                                <h2 className="text-sm font-semibold text-[var(--app-fg)]">
+                                    底部活跃指示器候选方案（点击任意卡片切换下方实时预览）
+                                </h2>
+                                <p className="text-[11.5px] text-[var(--app-hint)]">
+                                    当回合处于运行态（<code className="font-mono">streaming = true</code>）时，显示在左侧时间线导轨底部的活跃状态指示器
+                                </p>
+                            </div>
+                        </div>
+
+                        {/* Color Accent Picker */}
+                        <div className="flex items-center gap-1.5">
+                            <span className="text-[11.5px] text-[var(--app-hint)] mr-1">指示器配色：</span>
+                            {INDICATOR_COLORS.map((c) => (
+                                <button
+                                    key={c.id}
+                                    type="button"
+                                    onClick={() => setIndicatorColor(c.value)}
+                                    className={cn(
+                                        'inline-flex items-center gap-1.5 rounded-lg border px-2 py-1 text-[11px] font-medium transition-all',
+                                        indicatorColor === c.value
+                                            ? 'border-[var(--app-fg)] bg-[var(--app-subtle-bg)] text-[var(--app-fg)] shadow-xs'
+                                            : 'border-[var(--app-border)] text-[var(--app-hint)] hover:text-[var(--app-fg)]'
+                                    )}
+                                >
+                                    <span
+                                        className="h-2.5 w-2.5 rounded-full"
+                                        style={{ backgroundColor: c.value }}
+                                    />
+                                    <span>{c.label.split(' ')[0]}</span>
+                                </button>
+                            ))}
+                        </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2 lg:grid-cols-3">
+                        {INDICATOR_CANDIDATES.map((item) => {
+                            const selected = indicatorVariant === item.id
+                            return (
+                                <button
+                                    key={item.id}
+                                    type="button"
+                                    data-testid={`indicator-option-${item.id}`}
+                                    onClick={() => {
+                                        setIndicatorVariant(item.id)
+                                        if (stage === 'completed') {
+                                            setStage('working-step-3')
+                                        }
+                                    }}
+                                    className={cn(
+                                        'group flex flex-col justify-between rounded-xl border p-3 text-left transition-all',
+                                        selected
+                                            ? 'border-[#da7756] bg-[#da7756]/8 ring-1 ring-[#da7756]/40'
+                                            : 'border-[var(--app-border)] bg-[var(--app-subtle-bg)]/25 hover:bg-[var(--app-subtle-bg)]/60'
+                                    )}
+                                >
+                                    <div>
+                                        <div className="flex items-center justify-between gap-2">
+                                            <span className="text-[13px] font-semibold text-[var(--app-fg)]">
+                                                {item.title}
+                                            </span>
+                                            <span
+                                                className={cn(
+                                                    'rounded px-1.5 py-0.5 text-[10.5px] font-mono',
+                                                    selected
+                                                        ? 'bg-[#da7756] text-white'
+                                                        : 'bg-[var(--app-subtle-bg)] text-[var(--app-hint)]'
+                                                )}
+                                            >
+                                                {selected ? '当前选中' : `方案 ${item.code}`}
+                                            </span>
+                                        </div>
+                                        <div className="mt-0.5 text-[11.5px] font-medium text-[var(--app-fg)]/80">
+                                            {item.subtitle}
+                                        </div>
+                                        <div className="mt-1 text-[11px] text-[var(--app-hint)]">
+                                            {item.motionDesc}
+                                        </div>
+                                    </div>
+
+                                    {/* Mini timeline rail context preview inside each card */}
+                                    <div className="mt-3 rounded-lg border border-[var(--app-border)]/70 bg-[var(--app-bg)] px-3 py-2">
+                                        <div className="ml-1.5 border-l border-[var(--app-border)] pl-3 text-[11.5px] text-[var(--app-hint)] space-y-1">
+                                            <div className="flex items-center justify-between">
+                                                <span>已运行 3 条命令，正在修改 TurnBlock.tsx</span>
+                                                <span className="font-mono text-[10.5px] text-emerald-600 dark:text-emerald-400">+4 -1</span>
+                                            </div>
+                                        </div>
+                                        <div className="mt-1.5 flex items-center gap-2 pl-0.5">
+                                            <TurnActivityIndicator
+                                                variant={item.id}
+                                                color={indicatorColor}
+                                                size={16}
+                                            />
+                                            <span className="text-[11px] text-[var(--app-hint)]">
+                                                正在执行下一步工具调用…
+                                            </span>
+                                        </div>
+                                    </div>
+                                </button>
+                            )
+                        })}
+                    </div>
+                </section>
+
                 {/* User Prompt Bubble */}
                 <div className="flex justify-end">
                     <div className="max-w-xl rounded-2xl border border-[var(--app-border)] bg-[var(--app-subtle-bg)] px-4 py-2.5 text-[14px] text-[var(--app-fg)]">
@@ -607,6 +780,8 @@ export function TurnTimelineDemo() {
                                 activeTodoText={stageData.activeTodoText}
                                 viewMode={viewMode}
                                 lang={lang}
+                                indicatorVariant={indicatorVariant}
+                                indicatorColor={indicatorColor}
                             />
 
                             {submittedAnswers ? (

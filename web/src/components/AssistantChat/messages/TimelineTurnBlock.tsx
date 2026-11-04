@@ -16,6 +16,15 @@ import { cn } from '@/lib/utils'
 
 export type TranscriptViewMode = 'normal' | 'thinking' | 'verbose'
 
+export type TurnActivityIndicatorVariant =
+    | 'pulse-orb'
+    | 'equalizer-bars'
+    | 'orbit-ring'
+    | 'morph-diamond'
+    | 'terminal-cursor'
+    | 'wave-dots'
+    | 'sparkle'
+
 export type DockedTodoItem = {
     id: string
     content: string
@@ -75,6 +84,141 @@ export function TurnActivitySparkleIcon(props: { className?: string; size?: numb
                 strokeLinecap="round"
             />
         </svg>
+    )
+}
+
+export function TurnActivityIndicator(props: {
+    variant?: TurnActivityIndicatorVariant
+    color?: string
+    size?: number
+    className?: string
+}) {
+    const variant = props.variant ?? 'pulse-orb'
+    const color = props.color ?? '#da7756'
+    const size = props.size ?? 16
+
+    if (variant === 'pulse-orb') {
+        return (
+            <span
+                className={cn('relative inline-flex items-center justify-center shrink-0', props.className)}
+                style={{ width: size, height: size, color }}
+                aria-hidden="true"
+                data-indicator-variant="pulse-orb"
+            >
+                <span
+                    className="absolute inline-flex h-3 w-3 animate-ping rounded-full opacity-55"
+                    style={{ backgroundColor: color }}
+                />
+                <span
+                    className="relative inline-flex h-2 w-2 rounded-full"
+                    style={{ backgroundColor: color }}
+                />
+            </span>
+        )
+    }
+
+    if (variant === 'equalizer-bars') {
+        return (
+            <span
+                className={cn('inline-flex items-end justify-center gap-[2.5px] shrink-0', props.className)}
+                style={{ width: size, height: size - 2, color }}
+                aria-hidden="true"
+                data-indicator-variant="equalizer-bars"
+            >
+                <span className="turn-eq-bar-1 w-[2.5px] h-full rounded-full" style={{ backgroundColor: color }} />
+                <span className="turn-eq-bar-2 w-[2.5px] h-full rounded-full" style={{ backgroundColor: color }} />
+                <span className="turn-eq-bar-3 w-[2.5px] h-full rounded-full" style={{ backgroundColor: color }} />
+            </span>
+        )
+    }
+
+    if (variant === 'orbit-ring') {
+        return (
+            <span
+                className={cn('relative inline-flex items-center justify-center shrink-0', props.className)}
+                style={{ width: size, height: size, color }}
+                aria-hidden="true"
+                data-indicator-variant="orbit-ring"
+            >
+                <svg
+                    width={size}
+                    height={size}
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    className="animate-spin"
+                >
+                    <circle cx="12" cy="12" r="9" stroke="currentColor" strokeOpacity="0.2" strokeWidth="2.4" />
+                    <path
+                        d="M21 12a9 9 0 0 0-9-9"
+                        stroke="currentColor"
+                        strokeWidth="2.4"
+                        strokeLinecap="round"
+                    />
+                </svg>
+                <span
+                    className="absolute h-1.5 w-1.5 rounded-full animate-pulse"
+                    style={{ backgroundColor: color }}
+                />
+            </span>
+        )
+    }
+
+    if (variant === 'morph-diamond') {
+        return (
+            <svg
+                width={size}
+                height={size}
+                viewBox="0 0 24 24"
+                fill="none"
+                className={cn('turn-diamond-icon shrink-0', props.className)}
+                style={{ color }}
+                aria-hidden="true"
+                data-indicator-variant="morph-diamond"
+            >
+                <path
+                    d="M12 2.5C12 8.2 15.8 12 21.5 12C15.8 12 12 15.8 12 21.5C12 15.8 8.2 12 2.5 12C8.2 12 12 8.2 12 2.5Z"
+                    fill="currentColor"
+                />
+            </svg>
+        )
+    }
+
+    if (variant === 'terminal-cursor') {
+        return (
+            <span
+                className={cn('inline-flex items-center gap-0.5 font-mono text-[11px] font-bold leading-none shrink-0', props.className)}
+                style={{ color }}
+                aria-hidden="true"
+                data-indicator-variant="terminal-cursor"
+            >
+                <span className="opacity-75">&gt;</span>
+                <span
+                    className="turn-caret-block inline-block h-3 w-1.5 rounded-[1px]"
+                    style={{ backgroundColor: color }}
+                />
+            </span>
+        )
+    }
+
+    if (variant === 'wave-dots') {
+        return (
+            <span
+                className={cn('inline-flex items-center gap-1 shrink-0', props.className)}
+                style={{ height: size, color }}
+                aria-hidden="true"
+                data-indicator-variant="wave-dots"
+            >
+                <span className="turn-wave-dot-1 h-1.5 w-1.5 rounded-full" style={{ backgroundColor: color }} />
+                <span className="turn-wave-dot-2 h-1.5 w-1.5 rounded-full" style={{ backgroundColor: color }} />
+                <span className="turn-wave-dot-3 h-1.5 w-1.5 rounded-full" style={{ backgroundColor: color }} />
+            </span>
+        )
+    }
+
+    return (
+        <span style={{ color }} className="inline-flex items-center" data-indicator-variant="sparkle">
+            <TurnActivitySparkleIcon size={size} className={props.className} />
+        </span>
     )
 }
 
@@ -401,6 +545,8 @@ export function TimelineTurnBlockView(props: {
     activeTodoText?: string | null
     viewMode?: TranscriptViewMode
     lang?: 'en' | 'zh-CN'
+    indicatorVariant?: TurnActivityIndicatorVariant
+    indicatorColor?: string
     renderTrailingText?: (text: string, streaming: boolean) => React.ReactNode
 }) {
     const lang = props.lang ?? 'en'
@@ -549,10 +695,14 @@ export function TimelineTurnBlockView(props: {
                         </div>
                     ) : null}
 
-                    {/* Active working sparkle indicator */}
+                    {/* Active working indicator */}
                     {props.streaming ? (
                         <div className="mt-2 flex items-center gap-2 pl-0.5" data-testid="turn-working-sparkle">
-                            <TurnActivitySparkleIcon size={15} />
+                            <TurnActivityIndicator
+                                variant={props.indicatorVariant ?? 'sparkle'}
+                                color={props.indicatorColor}
+                                size={16}
+                            />
                         </div>
                     ) : null}
                 </div>
