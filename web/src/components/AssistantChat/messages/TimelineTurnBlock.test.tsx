@@ -111,7 +111,7 @@ describe('TimelineTurnBlock & summarizeTurnActivity', () => {
         const header = screen.getByTestId('turn-level0-header')
         expect(header).toHaveAttribute('aria-expanded', 'true')
         expect(header.textContent).toContain('Researching documentation...')
-        expect(screen.getByTestId('turn-working-sparkle')).toBeInTheDocument()
+        expect(screen.queryByTestId('turn-working-sparkle')).toBeNull()
         expect(screen.getByTestId('turn-level1-rail')).toBeInTheDocument()
 
         expect(screen.getAllByText('docs.example.com').length).toBeGreaterThanOrEqual(1)
@@ -188,7 +188,7 @@ describe('TimelineTurnBlock & summarizeTurnActivity', () => {
         expect(submitted).toEqual({ q1: 'Opt A', q2: 'Opt C' })
     })
 
-    it('transitions from asking-user to resumed-working (Turn 2 active with B1 equalizer-bars) before completed', () => {
+    it('transitions from asking-user to resumed-working (Turn 2 active with rail-step-spinner) before completed', () => {
         render(
             <I18nProvider>
                 <TurnTimelineDemo />
@@ -205,7 +205,7 @@ describe('TimelineTurnBlock & summarizeTurnActivity', () => {
         expect(screen.getByTestId('submitted-qa-bubble')).toBeInTheDocument()
         const followUpBlock = screen.getByTestId('turn-followup-block')
         expect(followUpBlock).toBeInTheDocument()
-        expect(followUpBlock.querySelector('[data-indicator-variant="equalizer-bars"]')).not.toBeNull()
+        expect(followUpBlock.querySelector('[data-testid="rail-step-spinner"]')).not.toBeNull()
         expect(screen.getByTestId('demo-stop-running-btn')).toBeInTheDocument()
     })
 

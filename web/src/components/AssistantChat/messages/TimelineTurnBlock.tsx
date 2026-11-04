@@ -1130,20 +1130,6 @@ export function TimelineTurnBlockView(props: {
                         </>
                     ) : null}
 
-                    {/* Active working indicator */}
-                    {props.streaming ? (
-                        <div
-                            className="mt-2 flex items-center gap-2 pl-0.5"
-                            data-testid="turn-working-sparkle"
-                            data-hapi-share-exclude="true"
-                        >
-                            <TurnActivityIndicator
-                                variant={props.indicatorVariant ?? 'equalizer-bars'}
-                                color={props.indicatorColor}
-                                size={16}
-                            />
-                        </div>
-                    ) : null}
                 </div>
             ) : (
                 <div className="space-y-2">

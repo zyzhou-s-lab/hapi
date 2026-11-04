@@ -479,42 +479,6 @@ const STAGES: Array<{ id: DemoLifecycleStage; stepLabel: string; subtitle: strin
         subtitle: 'Turn 2 auto-collapses to past-tense summary & outputs answer; Todo -> 4 of 4 Done',
     },
 ]
-const INDICATOR_CANDIDATES: Array<{
-    id: TurnActivityIndicatorVariant
-    code: string
-    title: string
-    subtitle: string
-    motionDesc: string
-}> = [
-    {
-        id: 'equalizer-bars',
-        code: 'B1',
-        title: '方案 B1 · 4 柱宽舒声波 (4-Bar Wide)',
-        subtitle: '4 根 3px 圆角竖柱 · 3.5px 柱间距（总宽 22.5px）',
-        motionDesc: '比原 3 窄柱版加宽约 80%，4 相位错峰起伏，视觉重心饱满均衡',
-    },
-    {
-        id: 'eq-5bars-spectrum',
-        code: 'B2',
-        title: '方案 B2 · 5 柱对称频谱 (5-Bar Spectrum)',
-        subtitle: '5 根 2.8px 圆角竖柱 · 3px 柱间距（总宽 26px）',
-        motionDesc: '由中心向两侧对称相位律动，形成横向展开的声谱带',
-    },
-    {
-        id: 'eq-3bars-bold',
-        code: 'B3',
-        title: '方案 B3 · 3 柱加粗宽距 (3-Bar Bold Wide)',
-        subtitle: '3 根 3.5px 加粗胶囊柱 · 4px 柱间距（总宽 18.5px）',
-        motionDesc: '保留 3 柱经典结构，加粗单柱并拉大间距，轮廓更醒目利落',
-    },
-    {
-        id: 'eq-6bars-ribbon',
-        code: 'B4',
-        title: '方案 B4 · 6 柱宽幅波带 (6-Bar Ribbon)',
-        subtitle: '6 根 2.5px 圆角竖柱 · 3px 柱间距（总宽 30px）',
-        motionDesc: '连续 6 相位行波从左向右推进，适合宽幅流式输出感',
-    },
-]
 
 const INDICATOR_COLORS: Array<{ id: string; label: string; value: string }> = [
     { id: 'terracotta', label: '陶土暖橙 (#da7756)', value: '#da7756' },
@@ -724,114 +688,41 @@ export function TurnTimelineDemo() {
 
             {/* Main Content Area */}
             <main className="mx-auto flex w-full max-w-6xl flex-1 flex-col gap-6 px-4 py-5">
-                {/* Bottom Active Indicator Selector Gallery */}
+                {/* Compact Rail Indicator Accent Color Bar */}
                 <section
-                    className="rounded-2xl border border-[var(--app-border)] bg-[var(--app-bg)] p-4 shadow-sm"
-                    data-testid="indicator-candidate-gallery"
+                    className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-[var(--app-border)] bg-[var(--app-bg)] px-4 py-2.5 shadow-xs"
+                    data-testid="rail-indicator-toolbar"
                 >
-                    <div className="mb-3 flex flex-wrap items-center justify-between gap-2 border-b border-[var(--app-border)]/70 pb-2.5">
-                        <div className="flex items-center gap-2.5">
-                            <TurnActivityIndicator variant={indicatorVariant} color={indicatorColor} size={18} />
-                            <div>
-                                <h2 className="text-sm font-semibold text-[var(--app-fg)]">
-                                    底部活跃指示器候选方案（点击任意卡片切换下方实时预览）
-                                </h2>
-                                <p className="text-[11.5px] text-[var(--app-hint)]">
-                                    当回合处于运行态（<code className="font-mono">streaming = true</code>）时，显示在左侧时间线导轨底部的活跃状态指示器
-                                </p>
-                            </div>
-                        </div>
-
-                        {/* Color Accent Picker */}
-                        <div className="flex items-center gap-1.5">
-                            <span className="text-[11.5px] text-[var(--app-hint)] mr-1">指示器配色：</span>
-                            {INDICATOR_COLORS.map((c) => (
-                                <button
-                                    key={c.id}
-                                    type="button"
-                                    onClick={() => setIndicatorColor(c.value)}
-                                    className={cn(
-                                        'inline-flex items-center gap-1.5 rounded-lg border px-2 py-1 text-[11px] font-medium transition-all',
-                                        indicatorColor === c.value
-                                            ? 'border-[var(--app-fg)] bg-[var(--app-subtle-bg)] text-[var(--app-fg)] shadow-xs'
-                                            : 'border-[var(--app-border)] text-[var(--app-hint)] hover:text-[var(--app-fg)]'
-                                    )}
-                                >
-                                    <span
-                                        className="h-2.5 w-2.5 rounded-full"
-                                        style={{ backgroundColor: c.value }}
-                                    />
-                                    <span>{c.label.split(' ')[0]}</span>
-                                </button>
-                            ))}
-                        </div>
+                    <div className="flex items-center gap-2 text-xs text-[var(--app-hint)]">
+                        <span
+                            className="inline-block h-2.5 w-2.5 rounded-full"
+                            style={{ backgroundColor: indicatorColor }}
+                        />
+                        <span>
+                            导轨状态流转：<strong className="font-medium text-[var(--app-fg)]">旋转圆弧 → 360° 闭环收缩 → 同色实心打勾弹出 → 保持 → 沿导轨平滑滑向下一行</strong>
+                        </span>
                     </div>
-
-                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                        {INDICATOR_CANDIDATES.map((item) => {
-                            const selected = indicatorVariant === item.id
-                            return (
-                                <button
-                                    key={item.id}
-                                    type="button"
-                                    data-testid={`indicator-option-${item.id}`}
-                                    onClick={() => {
-                                        setIndicatorVariant(item.id)
-                                        if (stage === 'completed') {
-                                            setStage('working-step-3')
-                                        }
-                                    }}
-                                    className={cn(
-                                        'group flex flex-col justify-between rounded-xl border p-3 text-left transition-all',
-                                        selected
-                                            ? 'border-[#da7756] bg-[#da7756]/8 ring-1 ring-[#da7756]/40'
-                                            : 'border-[var(--app-border)] bg-[var(--app-subtle-bg)]/25 hover:bg-[var(--app-subtle-bg)]/60'
-                                    )}
-                                >
-                                    <div>
-                                        <div className="flex items-center justify-between gap-2">
-                                            <span className="text-[13px] font-semibold text-[var(--app-fg)]">
-                                                {item.title}
-                                            </span>
-                                            <span
-                                                className={cn(
-                                                    'rounded px-1.5 py-0.5 text-[10.5px] font-mono',
-                                                    selected
-                                                        ? 'bg-[#da7756] text-white'
-                                                        : 'bg-[var(--app-subtle-bg)] text-[var(--app-hint)]'
-                                                )}
-                                            >
-                                                {selected ? '当前选中' : `方案 ${item.code}`}
-                                            </span>
-                                        </div>
-                                        <div className="mt-0.5 text-[11.5px] font-medium text-[var(--app-fg)]/80">
-                                            {item.subtitle}
-                                        </div>
-                                        <div className="mt-1 text-[11px] text-[var(--app-hint)]">
-                                            {item.motionDesc}
-                                        </div>
-                                    </div>
-
-                                    {/* Mini timeline rail context preview inside each card */}
-                                    <div className="mt-3 rounded-lg border border-[var(--app-border)]/70 bg-[var(--app-bg)] px-3 py-2">
-                                        <div className="ml-2 border-l border-[var(--app-border)] pl-3.5 text-[11.5px] text-[var(--app-hint)] space-y-1">
-                                            <div>思考过程 &gt;</div>
-                                            <div className="flex items-center justify-between text-[var(--app-fg)]">
-                                                <span>已修改 TurnBlock.tsx</span>
-                                                <span className="font-mono text-[10.5px] text-emerald-600 dark:text-emerald-400">+4 -1</span>
-                                            </div>
-                                        </div>
-                                        <div className="mt-1.5 flex items-center pl-0.5">
-                                            <TurnActivityIndicator
-                                                variant={item.id}
-                                                color={indicatorColor}
-                                                size={16}
-                                            />
-                                        </div>
-                                    </div>
-                                </button>
-                            )
-                        })}
+                    <div className="flex items-center gap-1.5">
+                        <span className="text-[11.5px] text-[var(--app-hint)] mr-1">导轨指示器配色：</span>
+                        {INDICATOR_COLORS.map((c) => (
+                            <button
+                                key={c.id}
+                                type="button"
+                                onClick={() => setIndicatorColor(c.value)}
+                                className={cn(
+                                    'inline-flex items-center gap-1.5 rounded-lg border px-2 py-1 text-[11px] font-medium transition-all',
+                                    indicatorColor === c.value
+                                        ? 'border-[var(--app-fg)] bg-[var(--app-subtle-bg)] text-[var(--app-fg)] shadow-xs'
+                                        : 'border-[var(--app-border)] text-[var(--app-hint)] hover:text-[var(--app-fg)]'
+                                )}
+                            >
+                                <span
+                                    className="h-2.5 w-2.5 rounded-full"
+                                    style={{ backgroundColor: c.value }}
+                                />
+                                <span>{c.label.split(' ')[0]}</span>
+                            </button>
+                        ))}
                     </div>
                 </section>
 
