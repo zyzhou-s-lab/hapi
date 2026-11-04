@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { AddressInfo } from 'node:net'
 import { describe, expect, it, vi } from 'vitest'
-import { cachedProbe, checkMcpServer, checkMcpServers, clearProbeCache, probeCacheSize, probeGenerationSize } from './mcpServerCheck'
+import { cachedProbe, cachedProbeReport, checkMcpServer, checkMcpServers, clearProbeCache, probeCacheSize, probeConfigKey, probeGenerationSize } from './mcpServerCheck'
 
 const HAPI_VERSION = (JSON.parse(readFileSync(new URL('../../../package.json', import.meta.url), 'utf8')) as { version: string }).version
 
@@ -136,17 +136,20 @@ describe('mcp server probe', () => {
         })
     })
 
-    it('asks a silent server again instead of reusing a timeout', async () => {
+    it('caches a timed-out server and re-probes only when fresh is requested', async () => {
         clearProbeCache()
-        // Wall clock: each unanswered stdio probe uses the real 8s budget, so two calls must not collapse into one.
         const started = Date.now()
         const target = { name: 'slow', transport: 'stdio' as const, command: '/bin/sleep', args: ['30'] }
         expect((await checkMcpServers([target])).get('slow')).toBe(false)
+        expect(cachedProbeReport(target)).toEqual({ ok: false, timedOut: true, reason: 'timeout' })
+        const secondStart = Date.now()
         expect((await checkMcpServers([target])).get('slow')).toBe(false)
-        const elapsed = Date.now() - started
-        expect(elapsed).toBeGreaterThan(12_000)
-        expect(elapsed).toBeLessThan(24_000)
-    }, 30_000)
+        expect(Date.now() - secondStart).toBeLessThan(100)
+        expect(Date.now() - started).toBeLessThan(12_000)
+        expect(probeConfigKey({ name: 'http-a', transport: 'http', url: 'http://127.0.0.1:8080/mcp', cwd: '/work/a' })).toBe(
+            probeConfigKey({ name: 'http-b', transport: 'http', url: 'http://127.0.0.1:8080/mcp', cwd: '/work/b' }),
+        )
+    }, 20_000)
 
     it.skipIf(process.platform === 'win32')('leaves no process after a shell that ignores SIGTERM', async () => {
         const token = `hapi-probe-leak-${process.pid}-${Date.now()}`

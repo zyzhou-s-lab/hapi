@@ -460,10 +460,11 @@ export class RpcGateway {
         }
     }
 
-    async listSessionConfig(sessionId: string, options?: { fresh?: boolean; check?: string }) {
+    async listSessionConfig(sessionId: string, options?: { fresh?: boolean; check?: string; probe?: boolean }) {
         const raw = await this.sessionRpc(sessionId, RPC_METHODS.ListSessionConfig, {
             ...(options?.fresh ? { fresh: true } : {}),
             ...(options?.check ? { check: options.check } : {}),
+            ...(options?.probe === false ? { probe: false } : {}),
         })
         return parseSessionConfigRpc(raw)
     }

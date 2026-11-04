@@ -349,7 +349,7 @@ export default function SessionConfigPage() {
     const goBack = useAppGoBack()
     const { sessionId } = useParams({ from: '/sessions/$sessionId/config' })
     const { session } = useSession(api, sessionId)
-    const { config, error, isLoading, isFetching, refetch, reload } = useSessionConfig(api, sessionId)
+    const { config, error, isLoading, isFetching, refetch, reload } = useSessionConfig(api, sessionId, session ? (session.metadata?.flavor ?? '') : undefined)
     const [pendingKey, setPendingKey] = useState<string | null>(null)
     const [rechecking, setRechecking] = useState(false)
     const [toggleError, setToggleError] = useState<string | null>(null)

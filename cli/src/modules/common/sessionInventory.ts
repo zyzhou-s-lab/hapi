@@ -584,7 +584,7 @@ async function withOmpCheckedLoadState(
     servers: readonly SessionInventoryMcpServer[],
     tools: readonly string[] | undefined,
     cwd: string,
-    options?: { fresh?: boolean; check?: string },
+    options?: { fresh?: boolean; check?: string; probe?: boolean },
 ): Promise<SessionInventoryMcpServer[]> {
     const knownNames = servers.map((server) => server.name)
     const known = new Set(knownNames)
@@ -599,7 +599,7 @@ async function withOmpCheckedLoadState(
     const selected = options?.check?.trim()
     const probing: McpProbeTarget[] = []
     const forced: McpProbeTarget[] = []
-    const cachedProject = new Map<string, McpProbeReport>()
+    const cached = new Map<string, McpProbeReport>()
     for (const server of servers) {
         if (server.enabled === false) continue
         const target = byName.get(server.name)
@@ -608,14 +608,14 @@ async function withOmpCheckedLoadState(
             forced.push(target)
             continue
         }
-        if (server.source === 'project') {
+        if (server.source === 'project' || options?.probe === false) {
             const hit = cachedProbeReport(target)
             if (hit === undefined) continue
-            if (options?.fresh) {
+            if (options?.fresh && options?.probe !== false) {
                 probing.push(target)
                 continue
             }
-            cachedProject.set(server.name, hit)
+            cached.set(server.name, hit)
             continue
         }
         probing.push(target)
@@ -636,9 +636,9 @@ async function withOmpCheckedLoadState(
                 const { tools: _tools, toolsTruncated: _truncated, loadError: _error, ...rest } = server
                 return { ...rest, loaded: false as const }
             }
-            const report = loaded.get(server.name) ?? cachedProject.get(server.name)
+            const report = loaded.get(server.name) ?? cached.get(server.name)
             if (report) return probed(server, report)
-            if (server.source === 'project') {
+            if (server.source === 'project' || (options?.probe === false && byName.has(server.name))) {
                 const { loaded: _loaded, tools: _tools, toolsTruncated: _truncated, loadError: _error, ...rest } = server
                 return rest
             }
@@ -1106,6 +1106,7 @@ export async function readLiveSessionConfig(input: {
     promptLive?: SessionPromptLive;
     fresh?: boolean;
     check?: string;
+    probe?: boolean;
 }): Promise<LiveSessionConfig> {
     const flavor = (input.flavor ?? '').trim().toLowerCase();
     const sections = flavorInventory({ ...input, flavor });
@@ -1114,7 +1115,7 @@ export async function readLiveSessionConfig(input: {
         ? {
             kind: 'servers' as const,
             servers: flavor === 'omp'
-                ? await withOmpCheckedLoadState(sections.mcp.servers, input.tools, input.cwd, { fresh: input.fresh, check: input.check })
+                ? await withOmpCheckedLoadState(sections.mcp.servers, input.tools, input.cwd, { fresh: input.fresh, check: input.check, probe: input.probe })
                 : withMcpLoadState(sections.mcp.servers, input.tools),
         }
         : undefined;
@@ -1153,7 +1154,7 @@ export async function listedSessionConfigRealpaths(input: {
     skills?: LiveSessionConfig['skills'];
     promptLive?: SessionPromptLive;
 }): Promise<Set<string>> {
-    const config = await readLiveSessionConfig(input);
+    const config = await readLiveSessionConfig({ ...input, probe: false });
     const paths = [
         ...(config.mcp?.servers ?? []).flatMap((server) => server.filePath ? [server.filePath] : []),
         ...(config.hooks?.items ?? []).flatMap((hook) => [hook.filePath, hook.scriptPath].filter((path): path is string => Boolean(path))),

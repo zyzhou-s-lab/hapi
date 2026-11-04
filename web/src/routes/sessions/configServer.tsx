@@ -36,7 +36,7 @@ export default function SessionConfigServerPage() {
     const { sessionId } = useParams({ from: '/sessions/$sessionId/config/server' })
     const search = useSearch({ from: '/sessions/$sessionId/config/server' })
     const { session } = useSession(api, sessionId)
-    const { config, error, isLoading, isFetching, refetch, reload } = useSessionConfig(api, sessionId)
+    const { config, error, isLoading, isFetching, refetch, reload } = useSessionConfig(api, sessionId, session ? (session.metadata?.flavor ?? '') : undefined)
     const [checking, setChecking] = useState(false)
     const [checkError, setCheckError] = useState<string | null>(null)
     const server = config?.mcp?.servers.find((item) => item.name === search.name && item.source === search.source)

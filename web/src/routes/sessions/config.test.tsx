@@ -513,6 +513,44 @@ describe('SessionConfigPage', () => {
         }))
     })
 
+    it('renders the fast non-probing omp config first and fills in MCP status from the background probe', async () => {
+        mocks.flavor = 'omp'
+        let finishProbe: () => void = () => undefined
+        const probeGate = new Promise<void>((resolve) => {
+            finishProbe = resolve
+        })
+        mocks.getSessionConfig.mockImplementation(async (_sessionId: string, options?: { probe?: boolean }) => {
+            if (options?.probe === false) {
+                return {
+                    success: true,
+                    mcp: {
+                        kind: 'servers',
+                        servers: [{ name: 'winrt', source: 'user', filePath: '/Users/dev/.omp/agent/mcp.json' }],
+                    },
+                    skills: { items: [{ name: 'fast-skill', source: 'user', description: 'Renders immediately' }] },
+                    hooks: { availability: 'none', items: [] },
+                }
+            }
+            await probeGate
+            return {
+                success: true,
+                mcp: {
+                    kind: 'servers',
+                    servers: [{ name: 'winrt', source: 'user', filePath: '/Users/dev/.omp/agent/mcp.json', loaded: false, loadError: 'timeout' }],
+                },
+                skills: { items: [{ name: 'fast-skill', source: 'user', description: 'Renders immediately' }] },
+                hooks: { availability: 'none', items: [] },
+            }
+        })
+        renderPage()
+        expect(await screen.findByText('fast-skill')).toBeTruthy()
+        expect(screen.getByText('winrt')).toBeTruthy()
+        expect(screen.queryByText(/Not loaded/)).toBeNull()
+        expect(mocks.getSessionConfig).toHaveBeenCalledWith('session-1', { probe: false })
+        finishProbe()
+        expect(await screen.findByText('Not loaded · Timed out')).toBeTruthy()
+    })
+
 
 
 })

@@ -972,4 +972,56 @@ command = "my-hook --token abc"
             rmSync(outside, { recursive: true, force: true })
         }
     })
+
+    it('skips MCP server probes in listedSessionConfigRealpaths and when probe is false until cached', async () => {
+        clearProbeCache()
+        const workspace = mkdtempSync(join(tmpdir(), 'hapi-no-probe-'))
+        const agent = mkdtempSync(join(tmpdir(), 'hapi-no-probe-agent-'))
+        const previous = process.env.PI_CODING_AGENT_DIR
+        process.env.PI_CODING_AGENT_DIR = agent
+        mkdirSync(join(workspace, '.git'))
+        const hits = join(agent, 'hits.txt')
+        const script = join(agent, 'user.cjs')
+        writeFileSync(script, `
+            const fs = require('node:fs')
+            const readline = require('node:readline')
+            fs.appendFileSync(${JSON.stringify(hits)}, 'u')
+            const rl = readline.createInterface({ input: process.stdin })
+            rl.on('line', (line) => {
+                let msg
+                try { msg = JSON.parse(line) } catch { return }
+                if (!msg || !msg.id) return
+                const result = msg.method === 'tools/list' ? { tools: [{ name: 'ping' }] } : { protocolVersion: '2025-06-18', capabilities: {} }
+                process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result }) + '\\n')
+            })
+        `)
+        const mcpPath = join(agent, 'mcp.json')
+        writeFileSync(mcpPath, JSON.stringify({
+            mcpServers: { userServer: { command: process.execPath, args: [script] } },
+        }))
+        try {
+            const allowed = await listedSessionConfigRealpaths({ flavor: 'omp', cwd: workspace, tools: [] })
+            expect(allowed.has(realpathSync(mcpPath))).toBe(true)
+            expect(existsSync(hits)).toBe(false)
+
+            const fast = await readLiveSessionConfig({ flavor: 'omp', cwd: workspace, tools: [], probe: false })
+            const unprobed = fast.mcp?.servers.find((server) => server.name === 'userServer')
+            expect(unprobed?.loaded).toBeUndefined()
+            expect(existsSync(hits)).toBe(false)
+
+            const probed = await readLiveSessionConfig({ flavor: 'omp', cwd: workspace, tools: [] })
+            expect(probed.mcp?.servers.find((server) => server.name === 'userServer')?.loaded).toBe(true)
+            expect(readFileSync(hits, 'utf8')).toBe('u')
+
+            const warmFast = await readLiveSessionConfig({ flavor: 'omp', cwd: workspace, tools: [], probe: false })
+            expect(warmFast.mcp?.servers.find((server) => server.name === 'userServer')?.loaded).toBe(true)
+            expect(readFileSync(hits, 'utf8')).toBe('u')
+        } finally {
+            if (previous === undefined) delete process.env.PI_CODING_AGENT_DIR
+            else process.env.PI_CODING_AGENT_DIR = previous
+            rmSync(workspace, { recursive: true, force: true })
+            rmSync(agent, { recursive: true, force: true })
+            clearProbeCache()
+        }
+    })
 })
