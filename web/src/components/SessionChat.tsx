@@ -2122,7 +2122,11 @@ function SessionChatInner(props: SessionChatProps) {
                     />
 
                     <div className="px-3">
-                        <TodoPanel sessionId={props.session.id} todos={props.session.todos} />
+                        <TodoPanel
+                            sessionId={props.session.id}
+                            todos={props.session.todos}
+                            sessionThinking={Boolean(props.session.thinking)}
+                        />
                         {/*
                          * Scratchlist drawer - composer-controlled. Only
                          * mounted when the operator clicks the notepad icon

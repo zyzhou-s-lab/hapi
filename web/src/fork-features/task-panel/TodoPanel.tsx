@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { TodoItem } from '@hapi/protocol/types'
 import { ChecklistList, extractTodoChecklist } from '@/components/ToolCard/checklist'
 import { useTranslation } from '@/lib/use-translation'
@@ -13,15 +13,24 @@ function ChevronIcon(props: { open: boolean }) {
     )
 }
 
-export function TodoPanel(props: { sessionId: string; todos: TodoItem[] | undefined }) {
+export function TodoPanel(props: { sessionId: string; todos: TodoItem[] | undefined; sessionThinking?: boolean }) {
     const { t } = useTranslation()
-    const [collapsed, setCollapsed] = useState(() => localStorage.getItem(COLLAPSED_STORAGE_KEY) === '1')
     const items = useMemo(() => extractTodoChecklist({ todos: props.todos }, null), [props.todos])
     const completed = items.filter((item) => item.status === 'completed').length
     const inProgress = items.find((item) => item.status === 'in_progress') ?? null
     const allDone = items.length > 0 && completed === items.length
+    const isStaleCompleted = allDone && Boolean(props.sessionThinking)
+    const [collapsed, setCollapsed] = useState(
+        () => localStorage.getItem(COLLAPSED_STORAGE_KEY) === '1' || isStaleCompleted
+    )
+    const prevStaleRef = useRef(isStaleCompleted)
+    useEffect(() => {
+        if (isStaleCompleted && !prevStaleRef.current) {
+            setCollapsed(true)
+        }
+        prevStaleRef.current = isStaleCompleted
+    }, [isStaleCompleted])
     if (items.length === 0) return null
-
     const toggleCollapsed = () => {
         const next = !collapsed
         localStorage.setItem(COLLAPSED_STORAGE_KEY, next ? '1' : '0')
@@ -34,7 +43,15 @@ export function TodoPanel(props: { sessionId: string; todos: TodoItem[] | undefi
                 <button type="button" onClick={toggleCollapsed} aria-expanded={!collapsed} aria-controls={`todo-panel-body-${props.sessionId}`} className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs font-medium text-[var(--app-fg)] hover:opacity-90">
                     <span className="shrink-0 text-[11px] tabular-nums text-[var(--app-hint)]">{completed}/{items.length}</span>
                     <span className="sr-only">{t('todoPanel.title')}</span>
-                    {allDone ? (
+                    {isStaleCompleted ? (
+                        <span
+                            className="inline-flex min-w-0 flex-1 items-center gap-1 text-[var(--app-hint)]"
+                            data-testid="todo-panel-stale-done"
+                        >
+                            <span aria-hidden="true">✓</span>
+                            <span className="truncate">{t('todoPanel.previousDone')}</span>
+                        </span>
+                    ) : allDone ? (
                         <span className="inline-flex min-w-0 flex-1 items-center gap-1 text-emerald-600 dark:text-emerald-400">
                             <span aria-hidden="true">✓</span>
                             <span>Done</span>

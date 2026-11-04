@@ -828,4 +828,66 @@ describe('TimelineTurnBlock & summarizeTurnActivity', () => {
         expect(screen.getByText('for turn-level0-header in src')).toBeInTheDocument()
         expect(screen.getByText('Done')).toBeInTheDocument()
     })
+
+    it('renders single-line Thought summary when collapsed and coalesces consecutive Read and Subagent steps in normal mode', () => {
+        const partition = partitionTurn(
+            [
+                { type: 'reasoning', text: '**Inspecting OmpRpcEventAdapter** to verify event handling\nMore details here.' },
+                call(tool('r1', 'Read', {
+                    state: 'completed',
+                    input: { path: '/repo/src/OmpRpcEventAdapter.ts:1-40' },
+                    result: 'line 1\nline 2',
+                })),
+                call(tool('r2', 'Read', {
+                    state: 'completed',
+                    input: { path: '/repo/src/OmpRpcEventAdapter.ts:41-80' },
+                    result: 'line 3\nline 4\nline 5',
+                })),
+                call(tool('ft1', 'fork_task', {
+                    state: 'completed',
+                    input: {
+                        tasks: [
+                            { name: 'MentorPlan', task: 'Check plan' },
+                            { name: 'DiscussSteady', task: 'Check steady' },
+                        ],
+                    },
+                    result: 'Spawned',
+                })),
+                { type: 'reasoning', text: 'Waiting for both agents to finish.' },
+                call(tool('wt1', 'wait', {
+                    state: 'completed',
+                    input: { i: 'Waiting for agents' },
+                    result: 'Completed',
+                })),
+                { type: 'text', text: 'Investigation complete.' },
+            ],
+            null
+        )
+
+        render(
+            <I18nProvider>
+                <TimelineTurnBlockView
+                    partition={partition}
+                    streaming={false}
+                    durationMs={5000}
+                    initiallyOpen={true}
+                />
+            </I18nProvider>
+        )
+
+        expect(screen.getByTestId('thought-row-summary')).toHaveTextContent(
+            'Inspecting OmpRpcEventAdapter to verify event handling'
+        )
+        const readBatch = screen.getByTestId('coalesced-step-read')
+        expect(readBatch).toHaveTextContent('Viewed')
+        expect(readBatch).toHaveTextContent('OmpRpcEventAdapter.ts')
+        expect(readBatch).toHaveTextContent('2 ranges · 5 lines')
+
+        const subagentBatch = screen.getByTestId('coalesced-step-subagent')
+        expect(subagentBatch).toHaveTextContent('Ran 2 agents')
+        expect(subagentBatch).toHaveTextContent('MentorPlan, DiscussSteady')
+
+        fireEvent.click(readBatch.querySelector('button')!)
+        expect(screen.getAllByText('OmpRpcEventAdapter.ts').length).toBeGreaterThanOrEqual(2)
+    })
 })

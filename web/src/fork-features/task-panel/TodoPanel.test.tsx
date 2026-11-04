@@ -65,4 +65,27 @@ describe('TodoPanel', () => {
         expect(screen.getAllByTestId('todo-panel')).toHaveLength(1)
         expect(screen.getByTestId('todo-panel')).toHaveTextContent('仅属于 session A')
     })
+
+    it('auto-collapses and shows previous tasks completed when sessionThinking starts after all tasks finish', () => {
+        const completedTodos: TodoItem[] = [
+            { id: '1', content: '定位问题', status: 'completed', priority: 'medium' },
+            { id: '2', content: '提交修复', status: 'completed', priority: 'medium' }
+        ]
+        const view = render(
+            <I18nProvider>
+                <TodoPanel sessionId="session-117" todos={completedTodos} sessionThinking={false} />
+            </I18nProvider>
+        )
+        const toggle = screen.getByRole('button', { name: /Tasks/ })
+        expect(toggle).toHaveAttribute('aria-expanded', 'true')
+        expect(screen.queryByTestId('todo-panel-stale-done')).toBeNull()
+
+        view.rerender(
+            <I18nProvider>
+                <TodoPanel sessionId="session-117" todos={completedTodos} sessionThinking={true} />
+            </I18nProvider>
+        )
+        expect(toggle).toHaveAttribute('aria-expanded', 'false')
+        expect(screen.getByTestId('todo-panel-stale-done')).toHaveTextContent('Previous tasks completed')
+    })
 })

@@ -1,8 +1,12 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { formatDuration } from '@/chat/presentation'
 import {
+    coalesceTurnStepRows,
+    describeCoalescedTurnStep,
     describeTurnToolStep,
+    extractThoughtSummary,
     summarizeTurnActivity,
+    type TurnCoalescedRow,
     type TurnStepPreview,
     type TurnPartition,
     type TurnReasoningRow,
@@ -670,6 +674,10 @@ function TimelineThoughtRow(props: {
     const label = props.lang === 'zh-CN'
         ? (props.isActiveStreaming ? '正在思考...' : '思考过程')
         : (props.isActiveStreaming ? 'Thinking...' : 'Thought')
+    const thoughtSummary = useMemo(
+        () => (!props.isActiveStreaming ? extractThoughtSummary(props.row.text) : ''),
+        [props.isActiveStreaming, props.row.text]
+    )
 
     return (
         <div data-hapi-share-exclude="true" className="relative py-0.5">
@@ -684,7 +692,7 @@ function TimelineThoughtRow(props: {
             >
                 <span
                     className={cn(
-                        'transition-opacity duration-200',
+                        'shrink-0 transition-opacity duration-200',
                         props.isActiveStreaming && props.suppressRunningShimmer
                             ? 'text-[var(--app-hint)] opacity-45'
                             : props.isActiveStreaming
@@ -694,7 +702,17 @@ function TimelineThoughtRow(props: {
                 >
                     {label}
                 </span>
-                <SmallChevron open={open} className="opacity-70 group-hover:opacity-100" />
+                {!props.isActiveStreaming && !open && thoughtSummary ? (
+                    <span
+                        className="min-w-0 flex-1 truncate text-[var(--app-hint)]/80 group-hover:text-[var(--app-fg)]/85"
+                        data-testid="thought-row-summary"
+                    >
+                        {thoughtSummary}
+                    </span>
+                ) : (
+                    <span className="min-w-0 flex-1" />
+                )}
+                <SmallChevron open={open} className="shrink-0 opacity-70 group-hover:opacity-100" />
             </button>
             <div
                 className="turn-collapsible-shell"
@@ -848,6 +866,89 @@ function TimelineToolStepRow(props: {
     )
 }
 
+function TimelineCoalescedStepRow(props: {
+    row: TurnCoalescedRow
+    lang: 'en' | 'zh-CN'
+    accentColor?: string
+    forceMorph?: boolean
+}) {
+    const [open, setOpen] = useState(false)
+    const [hasOpened, setHasOpened] = useState(false)
+    const descriptor = useMemo(
+        () => describeCoalescedTurnStep(props.row, props.lang),
+        [props.row, props.lang]
+    )
+
+    return (
+        <div data-hapi-share-exclude="true" className="relative py-0.5" data-testid={`coalesced-step-${props.row.category}`}>
+            <RailStepCompletionMorphBadge
+                isRunning={false}
+                forceMorph={props.forceMorph}
+                color={props.accentColor}
+            />
+            <button
+                type="button"
+                aria-expanded={open}
+                onClick={() => {
+                    setHasOpened(true)
+                    setOpen((v) => !v)
+                }}
+                className="group flex w-full items-center gap-1.5 rounded-md px-1.5 py-1 text-left text-[13.5px] leading-5 transition-colors hover:bg-[var(--app-subtle-bg)]/60"
+            >
+                <span className="shrink-0 text-[var(--app-hint)] transition-opacity duration-200 group-hover:text-[var(--app-fg)]">
+                    {descriptor.verbLabel}
+                </span>
+                {descriptor.intentLabel ? (
+                    <span className="min-w-0 flex-1 truncate text-[var(--app-hint)] transition-opacity duration-200 group-hover:text-[var(--app-fg)]">
+                        {descriptor.intentLabel}
+                    </span>
+                ) : (
+                    <span className="min-w-0 flex-1" />
+                )}
+                {descriptor.secondaryBadge ? (
+                    <span className="shrink-0 text-[12px] tabular-nums text-[var(--app-hint)]/85">
+                        {descriptor.secondaryBadge}
+                    </span>
+                ) : null}
+                <SmallChevron open={open} className="text-[var(--app-hint)] opacity-75 group-hover:opacity-100" />
+            </button>
+            <div
+                className="turn-collapsible-shell"
+                data-open={open ? 'true' : 'false'}
+                aria-hidden={!open}
+            >
+                <div className="turn-collapsible-body">
+                    {open || hasOpened ? (
+                        <div className="ml-2 mt-1 mb-1.5 border-l border-[var(--app-border)]/70 pl-2.5 space-y-0.5">
+                            {props.row.rows.map((member, memberIdx) =>
+                                member.kind === 'reasoning' ? (
+                                    <TimelineThoughtRow
+                                        key={member.key}
+                                        row={member}
+                                        isActiveStreaming={false}
+                                        defaultExpanded={false}
+                                        lang={props.lang}
+                                        accentColor={props.accentColor}
+                                    />
+                                ) : (
+                                    <TimelineToolStepRow
+                                        key={member.key}
+                                        row={member}
+                                        rowIndex={memberIdx}
+                                        defaultExpanded={false}
+                                        lang={props.lang}
+                                        accentColor={props.accentColor}
+                                    />
+                                )
+                            )}
+                        </div>
+                    ) : null}
+                </div>
+            </div>
+        </div>
+    )
+}
+
 function renderSimpleMarkdownText(text: string): React.ReactNode {
     const tokens = text.split(/(\*\*[^*]+\*\*|`[^`]+`)/g)
     return (
@@ -929,11 +1030,17 @@ export function TimelineTurnBlockView(props: {
         ),
         [props.partition.rows]
     )
-    const stepRows = useMemo(
+    const rawStepRows = useMemo(
         () => nonTrailingRows.filter(
             (row) => row.kind !== 'image' && row.kind !== 'file'
         ),
         [nonTrailingRows]
+    )
+    const stepRows = useMemo(
+        () => (viewMode === 'verbose'
+            ? rawStepRows
+            : coalesceTurnStepRows(rawStepRows, { absorbTransitionalThoughts: viewMode === 'normal' })),
+        [rawStepRows, viewMode]
     )
     const mediaRows = useMemo(
         () => nonTrailingRows.filter(
@@ -943,20 +1050,20 @@ export function TimelineTurnBlockView(props: {
     )
     const pinnedToolRows = useMemo(
         () => stepRows.filter(
-            (row): row is TurnToolRow => row.kind === 'tool' && row.pinned
+            (row): row is TurnToolRow | TurnCoalescedRow => (row.kind === 'tool' || row.kind === 'coalesced') && row.pinned
         ),
         [stepRows]
     )
     const isInitialStreamingWait = props.streaming && stepRows.length === 0 && mediaRows.length === 0 && trailing.length === 0
-    const hasSteps = stepRows.some((row) => row.kind === 'reasoning' || row.kind === 'tool') || isInitialStreamingWait
+    const hasSteps = stepRows.some((row) => row.kind === 'reasoning' || row.kind === 'tool' || row.kind === 'coalesced') || isInitialStreamingWait
     const headerText = props.streaming ? summary.workingHeader : summary.completedHeader
     const accentColor = props.indicatorColor ?? '#da7756'
 
     const hasRunningOrPendingTool = useMemo(
-        () => stepRows.some(
+        () => rawStepRows.some(
             (row) => row.kind === 'tool' && (row.block.tool.state === 'running' || row.block.tool.state === 'pending' || row.permission)
         ),
-        [stepRows]
+        [rawStepRows]
     )
     const hasTrailingReasoningStep =
         props.streaming
@@ -1021,9 +1128,20 @@ export function TimelineTurnBlockView(props: {
     }, [])
 
     useLayoutEffect(() => {
-        const currentTools = new Map<string, { isRunning: boolean; isCompleted: boolean; rowIndex: number }>()
+        const currentTools = new Map<string, { isRunning: boolean; isCompleted: boolean; rowIndex: number; rowKey: string }>()
         for (let i = 0; i < stepRows.length; i += 1) {
             const row = stepRows[i]!
+            if (row.kind === 'coalesced') {
+                for (const memberKey of row.memberKeys) {
+                    currentTools.set(memberKey, {
+                        isRunning: false,
+                        isCompleted: true,
+                        rowIndex: i,
+                        rowKey: row.key,
+                    })
+                }
+                continue
+            }
             if (row.kind !== 'tool') continue
             const isRunning = row.block.tool.state === 'running' || (row.block.tool.state === 'pending' && row.permission)
             const isQueued = row.block.tool.state === 'pending' && !row.permission
@@ -1031,6 +1149,7 @@ export function TimelineTurnBlockView(props: {
                 isRunning,
                 isCompleted: !isRunning && !isQueued,
                 rowIndex: i,
+                rowKey: row.key,
             })
         }
 
@@ -1059,7 +1178,7 @@ export function TimelineTurnBlockView(props: {
             if (transitionedMorphRowIndex < 0 && props.streaming) {
                 for (const [key, info] of currentTools.entries()) {
                     if (!seenToolStatesRef.current.has(key) && info.isCompleted) {
-                        fastArrivedKey = key
+                        fastArrivedKey = info.rowKey
                         fastArrivedRowIndex = info.rowIndex
                     }
                 }
@@ -1234,6 +1353,24 @@ export function TimelineTurnBlockView(props: {
                                             </div>
                                         )
                                     }
+                                    if (row.kind === 'coalesced') {
+                                        return (
+                                            <div
+                                                key={row.key}
+                                                ref={(el) => {
+                                                    rowElsRef.current[idx] = el
+                                                }}
+                                                data-rail-row-index={idx}
+                                            >
+                                                <TimelineCoalescedStepRow
+                                                    row={row}
+                                                    lang={lang}
+                                                    accentColor={accentColor}
+                                                    forceMorph={row.key === fastMorphRowKey}
+                                                />
+                                            </div>
+                                        )
+                                    }
                                     if (row.kind === 'tool') {
                                         return (
                                             <div
@@ -1323,17 +1460,26 @@ export function TimelineTurnBlockView(props: {
                                     className="relative ml-2.5 mt-1 border-l border-[var(--app-border)] pl-3.5 space-y-0.5"
                                     data-testid="turn-collapsed-pinned-rail"
                                 >
-                                    {pinnedToolRows.map((row, idx) => (
-                                        <TimelineToolStepRow
-                                            key={row.key}
-                                            row={row}
-                                            rowIndex={idx}
-                                            defaultExpanded={false}
-                                            lang={lang}
-                                            accentColor={accentColor}
-                                            showInlineRailSpinner={true}
-                                        />
-                                    ))}
+                                    {pinnedToolRows.map((row, idx) =>
+                                        row.kind === 'coalesced' ? (
+                                            <TimelineCoalescedStepRow
+                                                key={row.key}
+                                                row={row}
+                                                lang={lang}
+                                                accentColor={accentColor}
+                                            />
+                                        ) : (
+                                            <TimelineToolStepRow
+                                                key={row.key}
+                                                row={row}
+                                                rowIndex={idx}
+                                                defaultExpanded={false}
+                                                lang={lang}
+                                                accentColor={accentColor}
+                                                showInlineRailSpinner={true}
+                                            />
+                                        )
+                                    )}
                                 </div>
                             ) : null}
                             {nonTrailingRows.map((row, idx) => {

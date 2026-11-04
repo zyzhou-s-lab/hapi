@@ -135,14 +135,86 @@ function basename(path: string): string {
     return parts[parts.length - 1] ?? path
 }
 
+export function parseAgentUriTarget(path: string | null | undefined): string | null {
+    if (typeof path !== 'string') return null
+    const trimmed = path.trim()
+    if (!trimmed.startsWith('agent://')) return null
+    const target = trimmed.slice('agent://'.length).split('/')[0]?.trim() ?? ''
+    return target || 'agent'
+}
+
+function isSubagentTool(rawName: string, resolvedName: string): boolean {
+    return isSubagentToolName(rawName) || isSubagentToolName(resolvedName)
+}
+
+export function normalizeReadFilePath(rawPath: string): {
+    basePath: string
+    fileName: string
+    selector: string | null
+} {
+    const trimmed = rawPath.trim()
+    if (!trimmed) return { basePath: '', fileName: '', selector: null }
+    let working = trimmed
+    let selector: string | null = null
+    const queryIdx = working.indexOf('?')
+    if (queryIdx > 0) {
+        selector = working.slice(queryIdx)
+        working = working.slice(0, queryIdx)
+    }
+    const rangeMatch = working.match(/^(.+?)(:raw(?::-?\d+(?:-\d+)?)?|:-?\d+(?:-\d+)?)$/)
+    if (rangeMatch && rangeMatch[1]) {
+        working = rangeMatch[1]
+        selector = `${rangeMatch[2]}${selector ?? ''}`
+    }
+    return {
+        basePath: working,
+        fileName: basename(working),
+        selector,
+    }
+}
+
+export function extractSubagentNames(tool: ChatToolCall): string[] {
+    const names: string[] = []
+    const addName = (candidate: unknown) => {
+        if (typeof candidate !== 'string') return
+        const clean = candidate.trim()
+        if (!clean || clean === 'all' || clean === 'agent') return
+        if (!names.includes(clean)) names.push(clean)
+    }
+    if (tool.name.startsWith('Agent:') || tool.name.startsWith('Task:')) {
+        addName(tool.name.slice(tool.name.indexOf(':') + 1))
+    }
+    if (isObject(tool.input)) {
+        if (Array.isArray(tool.input.tasks)) {
+            for (const item of tool.input.tasks) {
+                if (isObject(item)) {
+                    addName(item.name ?? item.agent)
+                }
+            }
+        }
+        addName(stringField(tool.input, ['name', 'task_name']))
+    }
+    const uriTarget = parseAgentUriTarget(stringField(tool.input, ['file_path', 'path', 'to']))
+    if (uriTarget) addName(uriTarget)
+    return names
+}
+
 function verbFor(tool: ChatToolCall, fallbackTitle: string): string {
+    const rawLower = tool.name.toLowerCase()
     const name = resolveToolViewName(tool.name)
+    if (rawLower === 'wait') return 'turn.verb.wait'
+    if (rawLower === 'delete') return 'turn.verb.delete'
+    if (rawLower === 'write_stdin') return 'turn.verb.stdin'
+    if (rawLower === 'kill_session') return 'turn.verb.killSession'
     if (name === 'Read') return 'turn.verb.read'
     if (name === 'Grep') return 'turn.verb.grep'
     if (name === 'Glob') return 'turn.verb.glob'
     if (name === 'Bash' || name === 'CodexBash') return 'turn.verb.ran'
+    if (name === 'Write' && parseAgentUriTarget(stringField(tool.input, ['file_path', 'path']))) {
+        return 'turn.verb.messagedAgent'
+    }
     if (name === 'Edit' || name === 'MultiEdit' || name === 'Write') return name === 'Write' ? 'turn.verb.wrote' : 'turn.verb.edit'
-    if (isSubagentToolName(tool.name)) return 'turn.verb.ranAgent'
+    if (isSubagentTool(tool.name, name)) return 'turn.verb.ranAgent'
     if (TODO_TOOL_NAMES[name] || TODO_TOOL_NAMES[tool.name]) return 'turn.verb.todo'
     if (name === 'CodexReasoning') return 'turn.verb.reasoning'
     if (tool.name === 'ContextCompaction') return 'turn.verb.compaction'
@@ -199,9 +271,18 @@ function plainSubagentLabel(value: string): string {
     return truncate(label, SUBAGENT_INTENT_LIMIT)
 }
 
+export function extractThoughtSummary(text: string, maxLength = 72): string {
+    const lines = text
+        .split(/\r?\n/)
+        .map((line) => stripMarkdownLine(line))
+        .filter((line) => line.length > 0 && !/^-{3,}$/.test(line))
+    if (lines.length === 0) return ''
+    return truncate(lines[0]!, maxLength)
+}
+
 function subagentIntent(tool: ChatToolCall): string | null {
     const candidates = [
-        stringField(tool.input, ['description', 'name', 'task_name', 'summary', 'title', 'task']),
+        stringField(tool.input, ['description', 'name', 'task_name', 'summary', 'title', 'task', 'i', 'intent']),
         tool.description,
         tool.nativeTitle,
         stringField(tool.input, ['prompt', 'message']),
@@ -219,7 +300,7 @@ function intentFor(tool: ChatToolCall, verb: string, fallbackTitle: string): str
     if (tool.name === 'ContextCompaction') {
         return extractCompactionIntent(tool.input)
     }
-    if (isSubagentToolName(tool.name)) {
+    if (isSubagentTool(tool.name, name)) {
         return subagentIntent(tool) ?? (fallbackTitle === verb ? '' : fallbackTitle)
     }
     if (name === 'Read') {
@@ -255,7 +336,7 @@ function isPinned(tool: ChatToolCall, errorRecovered = false): boolean {
     const name = resolveToolViewName(tool.name)
     if (tool.state === 'error' && !errorRecovered) return true
     if (needsUser(tool)) return true
-    if (isSubagentToolName(tool.name) || MILESTONE_TOOL_NAMES[name] || MILESTONE_TOOL_NAMES[tool.name]) return true
+    if (isSubagentTool(tool.name, name) || MILESTONE_TOOL_NAMES[name] || MILESTONE_TOOL_NAMES[tool.name]) return true
     if ((PLAN_TOOL_NAMES[name] || PLAN_TOOL_NAMES[tool.name]) && name !== 'CodexReasoning') return true
     return false
 }
@@ -599,6 +680,10 @@ export function countTurnActions(rows: readonly TurnRow[]): TurnActionCounts {
         thoughts: 0,
         compactions: 0,
     }
+    const hasChildAgentRows = rows.some(
+        (row) => row.kind === 'tool' && (row.block.tool.name.startsWith('Agent:') || row.block.tool.name.startsWith('Task:'))
+    )
+    let hasAgentMessage = false
     for (const row of rows) {
         if (row.kind === 'reasoning') {
             counts.thoughts += 1
@@ -606,15 +691,28 @@ export function countTurnActions(rows: readonly TurnRow[]): TurnActionCounts {
         }
         if (row.kind !== 'tool') continue
         const rawName = row.block.tool.name
+        const rawLower = rawName.toLowerCase()
         const name = resolveToolViewName(rawName)
-        if (TODO_TOOL_NAMES[name] || TODO_TOOL_NAMES[rawName] || isAskUserQuestionToolName(rawName) || isRequestUserInputToolName(rawName)) {
+        if (
+            TODO_TOOL_NAMES[name]
+            || TODO_TOOL_NAMES[rawName]
+            || isAskUserQuestionToolName(rawName)
+            || isRequestUserInputToolName(rawName)
+            || rawLower === 'wait'
+        ) {
             continue
         }
         if (rawName === 'ContextCompaction') {
             counts.compactions = (counts.compactions ?? 0) + 1
             continue
         }
-        if (isWebFetchTool(rawName, name)) {
+        if (name === 'Write' && parseAgentUriTarget(stringField(row.block.tool.input, ['file_path', 'path']))) {
+            hasAgentMessage = true
+            continue
+        }
+        if (rawLower === 'delete') {
+            counts.edits += 1
+        } else if (isWebFetchTool(rawName, name)) {
             counts.webFetches += 1
         } else if (isWebSearchTool(rawName, name)) {
             counts.webSearches += 1
@@ -626,11 +724,17 @@ export function countTurnActions(rows: readonly TurnRow[]): TurnActionCounts {
             counts.edits += 1
         } else if (name === 'Grep' || name === 'Glob') {
             counts.searches += 1
-        } else if (isSubagentToolName(rawName)) {
-            counts.agents += 1
+        } else if (isSubagentTool(rawName, name)) {
+            const tasksList = isObject(row.block.tool.input) && Array.isArray(row.block.tool.input.tasks)
+                ? row.block.tool.input.tasks
+                : null
+            counts.agents += !hasChildAgentRows && tasksList && tasksList.length > 1 ? tasksList.length : 1
         } else {
             counts.commands += 1
         }
+    }
+    if (hasAgentMessage && counts.agents === 0) {
+        counts.agents = 1
     }
     return counts
 }
@@ -747,6 +851,26 @@ function translateTurnVerbKey(
             return zh
                 ? (isRunning ? '正在压缩上下文' : isQueued ? '待压缩上下文' : '已压缩上下文')
                 : (isRunning ? 'Compacting conversation' : isQueued ? 'Queued compaction' : 'Compacted conversation')
+        case 'turn.verb.messagedAgent':
+            return zh
+                ? (isRunning ? '正在通知代理' : isQueued ? '待通知代理' : '已通知代理')
+                : (isRunning ? 'Messaging' : isQueued ? 'Queued message' : 'Messaged')
+        case 'turn.verb.wait':
+            return zh
+                ? (isRunning ? '正在等待代理完成' : isQueued ? '待等待' : '已等待代理完成')
+                : (isRunning ? 'Waiting for agents' : isQueued ? 'Queued wait' : 'Waited for agents')
+        case 'turn.verb.delete':
+            return zh
+                ? (isRunning ? '正在删除' : isQueued ? '待删除' : '已删除')
+                : (isRunning ? 'Deleting' : isQueued ? 'Queued delete' : 'Deleted')
+        case 'turn.verb.stdin':
+            return zh
+                ? (isRunning ? '正在发送输入' : isQueued ? '待发送输入' : '已发送输入')
+                : (isRunning ? 'Sending input' : isQueued ? 'Queued input' : 'Sent input')
+        case 'turn.verb.killSession':
+            return zh
+                ? (isRunning ? '正在停止会话' : isQueued ? '待停止会话' : '已停止会话')
+                : (isRunning ? 'Stopping session' : isQueued ? 'Queued stop' : 'Stopped session')
         default:
             if (verb.startsWith('turn.verb.')) {
                 const suffix = verb.slice('turn.verb.'.length)
@@ -939,7 +1063,8 @@ export function describeTurnToolStep(
 
     if (name === 'Read') {
         const filePath = stringField(tool.input, ['file_path', 'path']) ?? ''
-        const targetLabel = filePath ? basename(filePath) : ''
+        const normalized = normalizeReadFilePath(filePath)
+        const targetLabel = normalized.fileName || (filePath ? basename(filePath) : '')
         const content = extractResultText(tool.result)
         const lineCount = content ? content.split(/\r?\n/).length : 0
         return {
@@ -955,6 +1080,60 @@ export function describeTurnToolStep(
                 filePath: filePath || row.intent,
                 content,
                 lineCount,
+            },
+        }
+    }
+
+    if (name === 'Write') {
+        const rawTarget = stringField(tool.input, ['file_path', 'path'])
+        const agentTarget = parseAgentUriTarget(rawTarget)
+        if (agentTarget) {
+            return {
+                isRunning,
+                isQueued,
+                verbLabel: translateTurnVerbKey('turn.verb.messagedAgent', isRunning, isQueued, zh),
+                intentLabel: isRunning || isQueued ? (activeIntent ?? agentTarget) : agentTarget,
+                secondaryBadge: null,
+                preview: {
+                    kind: 'default',
+                    block: row.block,
+                },
+            }
+        }
+    }
+
+    if (rawName.toLowerCase() === 'delete' || row.verb === 'turn.verb.delete') {
+        const paths = isObject(tool.input) && Array.isArray(tool.input.paths)
+            ? tool.input.paths.filter((p): p is string => typeof p === 'string' && p.trim().length > 0)
+            : []
+        const targetSummary = paths.length === 1
+            ? basename(paths[0]!)
+            : paths.length > 1
+                ? (zh ? `${paths.length} 个路径 (${basename(paths[0]!)} …)` : `${paths.length} paths (${basename(paths[0]!)} …)`)
+                : ''
+        return {
+            isRunning,
+            isQueued,
+            verbLabel: translateTurnVerbKey('turn.verb.delete', isRunning, isQueued, zh),
+            intentLabel: isRunning || isQueued ? (activeIntent ?? (targetSummary || row.intent)) : targetSummary,
+            secondaryBadge: null,
+            preview: {
+                kind: 'default',
+                block: row.block,
+            },
+        }
+    }
+
+    if (rawName.toLowerCase() === 'wait' || row.verb === 'turn.verb.wait') {
+        return {
+            isRunning,
+            isQueued,
+            verbLabel: translateTurnVerbKey('turn.verb.wait', isRunning, isQueued, zh),
+            intentLabel: isRunning || isQueued ? (activeIntent ?? '') : '',
+            secondaryBadge: null,
+            preview: {
+                kind: 'default',
+                block: row.block,
             },
         }
     }
@@ -1003,7 +1182,7 @@ export function describeTurnToolStep(
     }
 
     if (name === 'Grep' || name === 'Glob') {
-        const pattern = stringField(tool.input, ['pattern', 'query']) ?? ''
+        const pattern = stringField(tool.input, ['pattern', 'query', 'pat']) ?? ''
         const target = stringField(tool.input, ['path', 'include'])
         const targetSummary = pattern && target
             ? (zh ? `在 ${basename(target)} 中搜索 ${pattern}` : `for ${pattern} in ${basename(target)}`)
@@ -1023,14 +1202,25 @@ export function describeTurnToolStep(
         }
     }
 
-    if (isSubagentToolName(rawName)) {
+    if (isSubagentTool(rawName, name)) {
+        const agentNames = extractSubagentNames(tool)
+        const completedVerb = agentNames.length > 1
+            ? (zh ? `已运行 ${agentNames.length} 个代理` : `Ran ${agentNames.length} agents`)
+            : (zh ? '已运行代理' : 'Ran agent')
+        const completedIntent = agentNames.length > 1
+            ? `(${agentNames.join(', ')})`
+            : agentNames.length === 1
+                ? agentNames[0]!
+                : ''
         return {
             isRunning,
             isQueued,
-            verbLabel: zh
-                ? (isRunning ? '正在运行代理' : isQueued ? '待运行代理' : '已运行代理')
-                : (isRunning ? 'Running agent' : isQueued ? 'Queued agent' : 'Ran agent'),
-            intentLabel: isRunning || isQueued ? row.intent : '',
+            verbLabel: isRunning || isQueued
+                ? (zh
+                    ? (isRunning ? '正在运行代理' : '待运行代理')
+                    : (isRunning ? 'Running agent' : 'Queued agent'))
+                : completedVerb,
+            intentLabel: isRunning || isQueued ? row.intent : completedIntent,
             secondaryBadge: !isRunning && !isQueued ? (zh ? '完成' : 'Done') : null,
             preview: {
                 kind: 'default',
@@ -1086,6 +1276,224 @@ export function describeTurnToolStep(
     }
 }
 
+export type TurnCoalescedCategory = 'read' | 'search' | 'subagent' | 'compaction'
+
+export type TurnCoalescedRow = {
+    kind: 'coalesced'
+    key: string
+    category: TurnCoalescedCategory
+    memberKeys: string[]
+    rows: Array<TurnToolRow | TurnReasoningRow>
+    toolRows: TurnToolRow[]
+    pinned: boolean
+}
+
+export type TurnDisplayStepRow = TurnRow | TurnCoalescedRow
+
+function coalescibleCategoryForToolRow(row: TurnToolRow): TurnCoalescedCategory | null {
+    const tool = row.block.tool
+    if (tool.state !== 'completed' || row.error || row.permission) return null
+    const rawName = tool.name
+    if (isAskUserQuestionToolName(rawName) || isRequestUserInputToolName(rawName)) return null
+    const name = resolveToolViewName(rawName)
+    if (rawName === 'ContextCompaction' || row.verb === 'turn.verb.compaction') return 'compaction'
+    if (name === 'Read') return 'read'
+    if (name === 'Grep' || name === 'Glob') return 'search'
+    if (
+        isSubagentTool(rawName, name)
+        || (name === 'Write' && parseAgentUriTarget(stringField(tool.input, ['file_path', 'path'])) !== null)
+        || rawName.toLowerCase() === 'wait'
+    ) {
+        return 'subagent'
+    }
+    return null
+}
+
+export function coalesceTurnStepRows(
+    stepRows: readonly TurnRow[],
+    options?: {
+        absorbTransitionalThoughts?: boolean
+    }
+): TurnDisplayStepRow[] {
+    const absorbThoughts = options?.absorbTransitionalThoughts ?? true
+    const result: TurnDisplayStepRow[] = []
+    let i = 0
+    while (i < stepRows.length) {
+        const current = stepRows[i]!
+        if (current.kind !== 'tool') {
+            result.push(current)
+            i += 1
+            continue
+        }
+        const category = coalescibleCategoryForToolRow(current)
+        if (!category) {
+            result.push(current)
+            i += 1
+            continue
+        }
+        const collectedRows: Array<TurnToolRow | TurnReasoningRow> = [current]
+        const collectedTools: TurnToolRow[] = [current]
+        let j = i + 1
+        while (j < stepRows.length) {
+            const next = stepRows[j]!
+            if (next.kind === 'tool' && coalescibleCategoryForToolRow(next) === category) {
+                collectedRows.push(next)
+                collectedTools.push(next)
+                j += 1
+                continue
+            }
+            if (absorbThoughts && next.kind === 'reasoning') {
+                let k = j
+                while (k < stepRows.length && stepRows[k]?.kind === 'reasoning') {
+                    k += 1
+                }
+                const afterThoughts = k < stepRows.length ? stepRows[k] : undefined
+                if (afterThoughts?.kind === 'tool' && coalescibleCategoryForToolRow(afterThoughts) === category) {
+                    for (let m = j; m < k; m += 1) {
+                        collectedRows.push(stepRows[m] as TurnReasoningRow)
+                    }
+                    collectedRows.push(afterThoughts)
+                    collectedTools.push(afterThoughts)
+                    j = k + 1
+                    continue
+                }
+            }
+            break
+        }
+        if (collectedTools.length >= 2) {
+            result.push({
+                kind: 'coalesced',
+                key: `coalesced:${category}:${collectedTools[0]!.key}`,
+                category,
+                memberKeys: collectedTools.map((t) => t.key),
+                rows: collectedRows,
+                toolRows: collectedTools,
+                pinned: collectedTools.some((t) => t.pinned),
+            })
+            i = j
+        } else {
+            result.push(current)
+            i += 1
+        }
+    }
+    return result
+}
+
+export function describeCoalescedTurnStep(
+    row: TurnCoalescedRow,
+    lang: 'en' | 'zh-CN' = 'en'
+): {
+    verbLabel: string
+    intentLabel: string
+    secondaryBadge: string | null
+} {
+    const zh = lang === 'zh-CN'
+    const count = row.toolRows.length
+
+    if (row.category === 'compaction') {
+        return {
+            verbLabel: zh ? '已压缩上下文' : 'Compacted conversation',
+            intentLabel: '',
+            secondaryBadge: `${count}×`,
+        }
+    }
+
+    if (row.category === 'read') {
+        const uniqueFiles: string[] = []
+        let totalLines = 0
+        for (const toolRow of row.toolRows) {
+            const rawPath = stringField(toolRow.block.tool.input, ['file_path', 'path']) ?? ''
+            const { fileName } = normalizeReadFilePath(rawPath)
+            if (fileName && !uniqueFiles.includes(fileName)) {
+                uniqueFiles.push(fileName)
+            }
+            const content = extractResultText(toolRow.block.tool.result)
+            if (content) {
+                totalLines += content.split(/\r?\n/).length
+            }
+        }
+        if (uniqueFiles.length === 1) {
+            const linesSuffix = totalLines > 0
+                ? (zh ? ` · ${totalLines} 行` : ` · ${totalLines} lines`)
+                : ''
+            return {
+                verbLabel: zh ? '已查看' : 'Viewed',
+                intentLabel: uniqueFiles[0]!,
+                secondaryBadge: zh ? `${count} 处${linesSuffix}` : `${count} ranges${linesSuffix}`,
+            }
+        }
+        const fileSummary = uniqueFiles.length <= 3
+            ? uniqueFiles.join(', ')
+            : `${uniqueFiles[0]} … ${uniqueFiles[uniqueFiles.length - 1]}`
+        const fileCount = uniqueFiles.length || count
+        return {
+            verbLabel: zh ? '已查看' : 'Viewed',
+            intentLabel: zh
+                ? `${fileCount} 个文件${fileSummary ? ` (${fileSummary})` : ''}`
+                : `${fileCount} files${fileSummary ? ` (${fileSummary})` : ''}`,
+            secondaryBadge: totalLines > 0 ? (zh ? `${totalLines} 行` : `${totalLines} lines`) : null,
+        }
+    }
+
+    if (row.category === 'search') {
+        const patterns: string[] = []
+        for (const toolRow of row.toolRows) {
+            const rawPattern = stringField(toolRow.block.tool.input, ['pattern', 'query', 'pat'])
+                ?? stringField(toolRow.block.tool.input, ['path', 'include'])
+                ?? ''
+            const clean = truncate(rawPattern.trim(), 28)
+            if (clean && !patterns.includes(clean)) {
+                patterns.push(clean)
+            }
+        }
+        const patternSummary = patterns.length <= 2
+            ? patterns.join(', ')
+            : `${patterns.slice(0, 2).join(', ')}, …`
+        return {
+            verbLabel: zh ? '已搜索' : 'Searched',
+            intentLabel: zh
+                ? `${count} 次${patternSummary ? ` (${patternSummary})` : ''}`
+                : `${count} patterns${patternSummary ? ` (${patternSummary})` : ''}`,
+            secondaryBadge: null,
+        }
+    }
+
+    const uniqueAgents: string[] = []
+    let subagentLaunchCount = 0
+    for (const toolRow of row.toolRows) {
+        const rawName = toolRow.block.tool.name
+        const name = resolveToolViewName(rawName)
+        if (isSubagentTool(rawName, name)) {
+            const tasksList = isObject(toolRow.block.tool.input) && Array.isArray(toolRow.block.tool.input.tasks)
+                ? toolRow.block.tool.input.tasks
+                : null
+            subagentLaunchCount += tasksList && tasksList.length > 1 ? tasksList.length : 1
+        }
+        for (const agentName of extractSubagentNames(toolRow.block.tool)) {
+            if (!uniqueAgents.includes(agentName)) {
+                uniqueAgents.push(agentName)
+            }
+        }
+    }
+    if (subagentLaunchCount > 0) {
+        const agentCount = Math.max(uniqueAgents.length, subagentLaunchCount)
+        return {
+            verbLabel: zh
+                ? (agentCount === 1 ? '已运行代理' : `已运行 ${agentCount} 个代理`)
+                : (agentCount === 1 ? 'Ran agent' : `Ran ${agentCount} agents`),
+            intentLabel: uniqueAgents.length > 0
+                ? (agentCount === 1 && uniqueAgents.length === 1 ? uniqueAgents[0]! : `(${uniqueAgents.join(', ')})`)
+                : '',
+            secondaryBadge: zh ? '完成' : 'Done',
+        }
+    }
+    return {
+        verbLabel: zh ? '已通知代理' : 'Messaged',
+        intentLabel: uniqueAgents.join(', ') || 'agent',
+        secondaryBadge: zh ? '完成' : 'Done',
+    }
+}
+
 export function summarizeTurnActivity(
     partition: TurnPartition,
     options?: {
@@ -1103,7 +1511,9 @@ export function summarizeTurnActivity(
 
     const activeTodo = shownTitle(options?.activeTodoText)
     const tools = partition.rows.filter((row): row is TurnToolRow => row.kind === 'tool')
-    const runningTool = tools.find((row) => row.block.tool.state === 'running' || row.block.tool.state === 'pending')
+    const runningTool = tools.find((row) => row.block.tool.state === 'pending' && row.permission)
+        ?? tools.findLast((row) => row.block.tool.state === 'running')
+        ?? tools.findLast((row) => row.block.tool.state === 'pending')
     const isCompacting = runningTool?.block.tool.name === 'ContextCompaction'
     const runningStep = runningTool ? describeTurnToolStep(runningTool, lang) : null
     const runningPhrase = runningStep
@@ -1112,9 +1522,14 @@ export function summarizeTurnActivity(
             : `${runningStep.verbLabel}${runningStep.intentLabel ? ` ${runningStep.intentLabel}` : ''}...`)
         : null
 
-    const fallbackTitle = partition.title
-        ? translateTurnVerbKey(partition.title, true, false, lang === 'zh-CN')
-        : ''
+    const lastStepRow = [...partition.rows].reverse().find((row) => !(row.kind === 'text' && row.trailing))
+    const trailingThoughtTitle = !runningTool && lastStepRow?.kind === 'reasoning'
+        ? shownTitle(extractThoughtSummary(lastStepRow.text, TITLE_LIMIT))
+        : null
+    const fallbackTitle = trailingThoughtTitle
+        ?? (partition.title
+            ? translateTurnVerbKey(partition.title, true, false, lang === 'zh-CN')
+            : '')
     const workingHeader = isCompacting && runningPhrase
         ? runningPhrase
         : activeTodo

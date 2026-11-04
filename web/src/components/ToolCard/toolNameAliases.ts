@@ -27,6 +27,10 @@ const TOOL_NAME_ALIASES: Record<string, string> = {
     notebookedit: 'NotebookEdit',
     notebook_edit: 'NotebookEdit',
     skill: 'Skill',
+    exec_command: 'Bash',
+    ast_grep: 'Grep',
+    ast_edit: 'Edit',
+    fork_task: 'Task',
 }
 
 /**

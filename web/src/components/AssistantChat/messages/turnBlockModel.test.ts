@@ -1,7 +1,18 @@
 import { describe, expect, it } from 'vitest'
 import type { ToolCallBlock } from '@/chat/types'
 import type { ToolGroupBlock } from '@/chat/toolGroups'
-import { partitionTurn, turnDurationMs, type TurnContentPart } from '@/components/AssistantChat/messages/turnBlockModel'
+import {
+    coalesceTurnStepRows,
+    countTurnActions,
+    describeCoalescedTurnStep,
+    describeTurnToolStep,
+    extractThoughtSummary,
+    partitionTurn,
+    turnDurationMs,
+    type TurnCoalescedRow,
+    type TurnContentPart,
+    type TurnToolRow,
+} from '@/components/AssistantChat/messages/turnBlockModel'
 
 function tool(id: string, name: string, extra: Partial<ToolCallBlock['tool']> = {}): ToolCallBlock {
     return {
@@ -350,5 +361,119 @@ describe('turnDurationMs', () => {
     it('uses the live clock only while the turn is streaming', () => {
         expect(turnDurationMs({ invokedAt: 1_000, createdAt: 1_500, now: 4_000, streaming: true })).toBe(3_000)
         expect(turnDurationMs({ invokedAt: 1_000, createdAt: 2_500, now: 9_000, streaming: false })).toBe(1_500)
+    })
+})
+
+describe('OMP native tool aliases, Thought summary, and homogeneous step coalescing', () => {
+    it('maps OMP native tools and Write agent:// URIs to semantic verbs and action counts', () => {
+        const partition = partitionTurn([
+            call(tool('ex1', 'exec_command', { input: { cmd: 'bun test', title: 'Run tests' } })),
+            call(tool('ag1', 'ast_grep', { input: { pat: 'foo($A)', path: 'src' } })),
+            call(tool('ae1', 'ast_edit', { input: { paths: ['src/app.ts'] } })),
+            call(tool('ft1', 'fork_task', {
+                input: {
+                    tasks: [
+                        { name: 'MentorPlan', task: 'Review plan' },
+                        { name: 'DiscussSteady', task: 'Check risks' },
+                    ],
+                },
+            })),
+            call(tool('w1', 'Write', { input: { path: 'agent://MentorPlan', content: 'Debrief findings' } })),
+            call(tool('wt1', 'wait', { input: { i: 'Waiting for MentorPlan debrief' } })),
+            call(tool('del1', 'delete', { input: { paths: ['tmp/old.ts'] } })),
+            call(tool('in1', 'write_stdin', { input: { session_id: 3, chars: 'q\n' } })),
+            call(tool('ks1', 'kill_session', { input: { session_id: 3 } })),
+        ], null)
+
+        expect(countTurnActions(partition.rows)).toEqual({
+            commands: 3,
+            reads: 0,
+            searches: 1,
+            edits: 2,
+            webFetches: 0,
+            webSearches: 0,
+            thoughts: 0,
+            agents: 2,
+            compactions: 0,
+        })
+
+        const toolRows = partition.rows.filter((r): r is TurnToolRow => r.kind === 'tool')
+        expect(toolRows.map((r) => r.verb)).toEqual([
+            'turn.verb.ran',
+            'turn.verb.grep',
+            'turn.verb.edit',
+            'turn.verb.ranAgent',
+            'turn.verb.messagedAgent',
+            'turn.verb.wait',
+            'turn.verb.delete',
+            'turn.verb.stdin',
+            'turn.verb.killSession',
+        ])
+
+        expect(describeTurnToolStep(toolRows[4]!, 'en')).toMatchObject({
+            verbLabel: 'Messaged',
+            intentLabel: 'MentorPlan',
+            secondaryBadge: null,
+        })
+        expect(describeTurnToolStep(toolRows[5]!, 'en')).toMatchObject({
+            verbLabel: 'Waited for agents',
+            secondaryBadge: null,
+        })
+    })
+
+    it('strips line-range selectors from Read step intentLabel while keeping range in preview', () => {
+        const partition = partitionTurn([
+            call(tool('r1', 'Read', {
+                input: { path: '/repo/cli/src/omp/OmpRpcEventAdapter.ts:120-180' },
+                result: 'line1\nline2',
+            })),
+        ], null)
+        const readRow = partition.rows[0] as TurnToolRow
+        expect(readRow.intent).toBe('OmpRpcEventAdapter.ts:120-180')
+        const desc = describeTurnToolStep(readRow, 'en')
+        expect(desc.intentLabel).toBe('OmpRpcEventAdapter.ts')
+        expect(desc.preview).toEqual({
+            kind: 'file-read',
+            filePath: '/repo/cli/src/omp/OmpRpcEventAdapter.ts:120-180',
+            content: 'line1\nline2',
+            lineCount: 2,
+        })
+    })
+
+    it('extracts a clean single-line Thought summary without markdown prefixes', () => {
+        expect(extractThoughtSummary('### Root Cause Analysis\nSecond line')).toBe('Root Cause Analysis')
+        expect(extractThoughtSummary('- **Check `TimelineTurnBlock.tsx`** for transition flash')).toBe(
+            'Check TimelineTurnBlock.tsx for transition flash'
+        )
+    })
+
+    it('coalesces consecutive completed Read, Search, Subagent, and ContextCompaction steps', () => {
+        const sameFilePartition = partitionTurn([
+            call(tool('r1', 'Read', { input: { path: '/repo/src/OmpRpcEventAdapter.ts:1-50' }, result: 'a\nb' })),
+            call(tool('r2', 'Read', { input: { path: '/repo/src/OmpRpcEventAdapter.ts:51-100' }, result: 'c\nd\ne' })),
+        ], null)
+        const coalescedSameFile = coalesceTurnStepRows(sameFilePartition.rows)
+        expect(coalescedSameFile).toHaveLength(1)
+        expect(coalescedSameFile[0]?.kind).toBe('coalesced')
+        expect(describeCoalescedTurnStep(coalescedSameFile[0] as TurnCoalescedRow, 'en')).toEqual({
+            verbLabel: 'Viewed',
+            intentLabel: 'OmpRpcEventAdapter.ts',
+            secondaryBadge: '2 ranges · 5 lines',
+        })
+
+        const subagentLifecycle = partitionTurn([
+            call(tool('t1', 'Task', { input: { name: 'MentorPlan', task: 'Check plan' } })),
+            { type: 'reasoning', text: 'Let us wait for MentorPlan to respond.' },
+            call(tool('wt1', 'wait', { input: { i: 'Waiting for MentorPlan' } })),
+            call(tool('w1', 'Write', { input: { path: 'agent://MentorPlan', content: 'Follow up' } })),
+        ], null)
+        const coalescedSubagents = coalesceTurnStepRows(subagentLifecycle.rows, { absorbTransitionalThoughts: true })
+        expect(coalescedSubagents).toHaveLength(1)
+        expect(coalescedSubagents[0]?.kind).toBe('coalesced')
+        expect(describeCoalescedTurnStep(coalescedSubagents[0] as TurnCoalescedRow, 'en')).toEqual({
+            verbLabel: 'Ran agent',
+            intentLabel: 'MentorPlan',
+            secondaryBadge: 'Done',
+        })
     })
 })

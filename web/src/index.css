@@ -634,6 +634,11 @@ html:has(.chat-scroll-y) #root {
     margin-right: 0.55rem;
 }
 
+.katex .katex-mathml {
+    user-select: none;
+    -webkit-user-select: none;
+}
+
 .aui-md :where(:not(.katex-display)) > :where(.katex) {
     margin: 0 0.14em;
     font-size: 1.04em;
