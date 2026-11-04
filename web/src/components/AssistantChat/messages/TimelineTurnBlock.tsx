@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { formatDuration } from '@/chat/presentation'
 import {
-    describeClaudeToolStep,
-    summarizeTurnForClaudeDesktop,
-    type ClaudeStepPreview,
+    describeTurnToolStep,
+    summarizeTurnActivity,
+    type TurnStepPreview,
     type TurnPartition,
     type TurnReasoningRow,
     type TurnRow,
@@ -14,16 +14,16 @@ import { ToolDetailDialogContent } from '@/components/ToolCard/ToolCard'
 import { useOptionalHappyChatContext } from '@/components/AssistantChat/context'
 import { cn } from '@/lib/utils'
 
-export type ClaudeTranscriptViewMode = 'normal' | 'thinking' | 'verbose'
+export type TranscriptViewMode = 'normal' | 'thinking' | 'verbose'
 
-export type ClaudeDemoTodoItem = {
+export type DockedTodoItem = {
     id: string
     content: string
     activeForm?: string
     status: 'pending' | 'in_progress' | 'completed'
 }
 
-export type ClaudeDemoQuestionItem = {
+export type DockedQuestionItem = {
     id: string
     question: string
     options: Array<{ label: string; description?: string }>
@@ -56,7 +56,7 @@ function SmallChevron(props: { open: boolean; direction?: 'right' | 'up'; classN
     )
 }
 
-export function ClaudeSparkleIcon(props: { className?: string; size?: number }) {
+export function TurnActivitySparkleIcon(props: { className?: string; size?: number }) {
     const size = props.size ?? 16
     return (
         <svg
@@ -65,7 +65,7 @@ export function ClaudeSparkleIcon(props: { className?: string; size?: number }) 
             viewBox="0 0 24 24"
             fill="none"
             xmlns="http://www.w3.org/2000/svg"
-            className={cn('claude-sparkle-icon shrink-0', props.className)}
+            className={cn('turn-sparkle-icon shrink-0', props.className)}
             aria-hidden="true"
         >
             <path
@@ -117,7 +117,7 @@ function DomainFaviconBadge(props: { domain: string }) {
     )
 }
 
-function ClaudeLevel2PreviewCard(props: { preview: ClaudeStepPreview }) {
+function StepInlinePreviewCard(props: { preview: TurnStepPreview }) {
     const ctx = useOptionalHappyChatContext()
     const { preview } = props
 
@@ -125,7 +125,7 @@ function ClaudeLevel2PreviewCard(props: { preview: ClaudeStepPreview }) {
         return (
             <div
                 className="mt-1.5 mb-2 overflow-hidden rounded-lg border border-[var(--app-border)] bg-[var(--app-subtle-bg)]/45 text-xs"
-                data-testid="claude-level2-bash"
+                data-testid="turn-level2-bash"
             >
                 <div className="flex items-center justify-between border-b border-[var(--app-border)]/70 px-3 py-1.5 text-[11px] font-medium text-[var(--app-hint)]">
                     <span>Bash</span>
@@ -152,17 +152,19 @@ function ClaudeLevel2PreviewCard(props: { preview: ClaudeStepPreview }) {
         return (
             <div
                 className="mt-1.5 mb-2 overflow-hidden rounded-lg border border-[var(--app-border)] bg-[var(--app-subtle-bg)]/45 p-3 text-xs"
-                data-testid="claude-level2-webfetch"
+                data-testid="turn-level2-webfetch"
             >
                 <div className="font-medium text-[13px] text-[var(--app-fg)]">{preview.title}</div>
-                <a
-                    href={preview.url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="mt-0.5 block truncate text-[12px] text-[var(--app-hint)] hover:text-[var(--app-link)] hover:underline"
-                >
-                    {preview.url}
-                </a>
+                {preview.url ? (
+                    <a
+                        href={preview.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="mt-0.5 block truncate text-[12px] text-[var(--app-hint)] hover:text-[var(--app-link)] hover:underline"
+                    >
+                        {preview.url}
+                    </a>
+                ) : null}
                 {preview.excerpt ? (
                     <div className="mt-2 line-clamp-3 text-[12px] leading-relaxed text-[var(--app-hint)]">
                         {preview.excerpt}
@@ -180,7 +182,7 @@ function ClaudeLevel2PreviewCard(props: { preview: ClaudeStepPreview }) {
         return (
             <div
                 className="mt-1.5 mb-2 overflow-hidden rounded-lg border border-[var(--app-border)] bg-[var(--app-subtle-bg)]/45 p-1.5 text-xs"
-                data-testid="claude-level2-websearch"
+                data-testid="turn-level2-websearch"
             >
                 {preview.query ? (
                     <div className="border-b border-[var(--app-border)]/60 px-2 py-1 text-[11.5px] font-mono text-[var(--app-hint)]">
@@ -214,7 +216,7 @@ function ClaudeLevel2PreviewCard(props: { preview: ClaudeStepPreview }) {
         return (
             <div
                 className="mt-1.5 mb-2 overflow-hidden rounded-lg border border-[var(--app-border)] bg-[var(--app-subtle-bg)]/45 text-xs"
-                data-testid="claude-level2-diff"
+                data-testid="turn-level2-diff"
             >
                 <div className="flex items-center justify-between border-b border-[var(--app-border)]/70 px-3 py-1.5 text-[11.5px]">
                     <span className="font-mono text-[var(--app-fg)] truncate">{preview.filePath}</span>
@@ -248,7 +250,7 @@ function ClaudeLevel2PreviewCard(props: { preview: ClaudeStepPreview }) {
         return (
             <div
                 className="mt-1.5 mb-2 overflow-hidden rounded-lg border border-[var(--app-border)] bg-[var(--app-subtle-bg)]/45 text-xs"
-                data-testid="claude-level2-read"
+                data-testid="turn-level2-read"
             >
                 <div className="flex items-center justify-between border-b border-[var(--app-border)]/70 px-3 py-1.5 text-[11.5px] text-[var(--app-hint)]">
                     <span className="font-mono text-[var(--app-fg)] truncate">{preview.filePath}</span>
@@ -270,7 +272,7 @@ function ClaudeLevel2PreviewCard(props: { preview: ClaudeStepPreview }) {
     )
 }
 
-function ClaudeThoughtRow(props: {
+function TimelineThoughtRow(props: {
     row: TurnReasoningRow
     isActiveStreaming: boolean
     defaultExpanded: boolean
@@ -293,7 +295,7 @@ function ClaudeThoughtRow(props: {
                 onClick={() => setOpen((v) => !v)}
                 className="group flex w-full items-center gap-1.5 rounded-md px-1.5 py-1 text-left text-[13.5px] leading-5 text-[var(--app-hint)] transition-colors hover:bg-[var(--app-subtle-bg)]/60 hover:text-[var(--app-fg)]"
             >
-                <span className={cn(props.isActiveStreaming && 'claude-text-shimmer font-medium')}>
+                <span className={cn(props.isActiveStreaming && 'turn-text-shimmer font-medium')}>
                     {label}
                 </span>
                 <SmallChevron open={open} className="opacity-70 group-hover:opacity-100" />
@@ -307,7 +309,7 @@ function ClaudeThoughtRow(props: {
     )
 }
 
-function ClaudeToolStepRow(props: {
+function TimelineToolStepRow(props: {
     row: TurnToolRow
     defaultExpanded: boolean
     lang: 'en' | 'zh-CN'
@@ -318,7 +320,7 @@ function ClaudeToolStepRow(props: {
     }, [props.defaultExpanded])
 
     const descriptor = useMemo(
-        () => describeClaudeToolStep(props.row, props.lang),
+        () => describeTurnToolStep(props.row, props.lang),
         [props.row, props.lang]
     )
 
@@ -339,7 +341,7 @@ function ClaudeToolStepRow(props: {
                         props.row.error
                             ? 'text-[var(--app-badge-error-text)]'
                             : descriptor.isRunning
-                                ? 'claude-text-shimmer font-medium'
+                                ? 'turn-text-shimmer font-medium'
                                 : 'text-[var(--app-hint)] group-hover:text-[var(--app-fg)]'
                     )}
                 >
@@ -350,7 +352,7 @@ function ClaudeToolStepRow(props: {
                         className={cn(
                             'min-w-0 flex-1 truncate',
                             descriptor.isRunning
-                                ? 'claude-text-shimmer font-medium'
+                                ? 'turn-text-shimmer font-medium'
                                 : 'text-[var(--app-hint)] group-hover:text-[var(--app-fg)]'
                         )}
                     >
@@ -366,7 +368,7 @@ function ClaudeToolStepRow(props: {
                 ) : null}
                 <SmallChevron open={open} className="text-[var(--app-hint)] opacity-75 group-hover:opacity-100" />
             </button>
-            {open ? <ClaudeLevel2PreviewCard preview={descriptor.preview} /> : null}
+            {open ? <StepInlinePreviewCard preview={descriptor.preview} /> : null}
         </div>
     )
 }
@@ -391,13 +393,13 @@ function renderSimpleMarkdownText(text: string): React.ReactNode {
     })
 }
 
-export function ClaudeDesktopTurnBlockView(props: {
+export function TimelineTurnBlockView(props: {
     partition: TurnPartition
     streaming: boolean
     durationMs: number | null
     initiallyOpen?: boolean
     activeTodoText?: string | null
-    viewMode?: ClaudeTranscriptViewMode
+    viewMode?: TranscriptViewMode
     lang?: 'en' | 'zh-CN'
     renderTrailingText?: (text: string, streaming: boolean) => React.ReactNode
 }) {
@@ -408,7 +410,6 @@ export function ClaudeDesktopTurnBlockView(props: {
     )
     const sawStream = useRef(props.streaming)
 
-    // Auto-collapse on completion transition (matches Snapzy_Recording_2026-11-04_14-13-59.mp4 f5650 -> f5750)
     useEffect(() => {
         if (sawStream.current && !props.streaming && viewMode !== 'verbose') {
             setOpen(false)
@@ -421,7 +422,7 @@ export function ClaudeDesktopTurnBlockView(props: {
     }, [viewMode])
 
     const summary = useMemo(
-        () => summarizeTurnForClaudeDesktop(props.partition, {
+        () => summarizeTurnActivity(props.partition, {
             activeTodoText: props.activeTodoText,
             lang,
         }),
@@ -451,7 +452,7 @@ export function ClaudeDesktopTurnBlockView(props: {
     }
 
     return (
-        <div className="my-2.5" data-testid="claude-desktop-turn-block">
+        <div className="my-2.5" data-testid="turn-timeline-block">
             {hasSteps ? (
                 <div>
                     {/* Level 0: Lightweight borderless summary header */}
@@ -459,14 +460,14 @@ export function ClaudeDesktopTurnBlockView(props: {
                         type="button"
                         aria-expanded={open}
                         onClick={() => setOpen((v) => !v)}
-                        data-testid="claude-level0-header"
+                        data-testid="turn-level0-header"
                         className="group inline-flex max-w-full items-center gap-1.5 rounded-md py-1 pr-2 text-left text-[13.5px] leading-5 text-[var(--app-hint)] transition-colors hover:text-[var(--app-fg)]"
                     >
                         <span
                             key={headerText}
                             className={cn(
-                                'claude-timeline-status-enter truncate',
-                                props.streaming ? 'claude-text-shimmer font-medium' : 'font-normal'
+                                'turn-timeline-status-enter truncate',
+                                props.streaming ? 'turn-text-shimmer font-medium' : 'font-normal'
                             )}
                         >
                             {headerText}
@@ -483,13 +484,13 @@ export function ClaudeDesktopTurnBlockView(props: {
                     {open ? (
                         <div
                             className="ml-2 mt-1 border-l border-[var(--app-border)] pl-3.5 space-y-0.5"
-                            data-testid="claude-level1-rail"
+                            data-testid="turn-level1-rail"
                         >
                             {stepRows.map((row, idx) => {
                                 const isLastStep = idx === stepRows.length - 1
                                 if (row.kind === 'reasoning') {
                                     return (
-                                        <ClaudeThoughtRow
+                                        <TimelineThoughtRow
                                             key={row.key}
                                             row={row}
                                             isActiveStreaming={props.streaming && isLastStep}
@@ -500,7 +501,7 @@ export function ClaudeDesktopTurnBlockView(props: {
                                 }
                                 if (row.kind === 'tool') {
                                     return (
-                                        <ClaudeToolStepRow
+                                        <TimelineToolStepRow
                                             key={row.key}
                                             row={row}
                                             defaultExpanded={viewMode === 'verbose'}
@@ -533,12 +534,11 @@ export function ClaudeDesktopTurnBlockView(props: {
                             })}
                         </div>
                     ) : viewMode === 'thinking' ? (
-                        /* In "Thinking" mode (Ctrl+O), tool calls stay collapsed into summaries while reasoning stays visible */
                         <div className="ml-2 mt-1 border-l border-[var(--app-border)] pl-3.5 space-y-1">
                             {stepRows
                                 .filter((row): row is TurnReasoningRow => row.kind === 'reasoning')
                                 .map((row) => (
-                                    <ClaudeThoughtRow
+                                    <TimelineThoughtRow
                                         key={row.key}
                                         row={row}
                                         isActiveStreaming={false}
@@ -549,10 +549,10 @@ export function ClaudeDesktopTurnBlockView(props: {
                         </div>
                     ) : null}
 
-                    {/* Active working terracotta sparkle indicator */}
+                    {/* Active working sparkle indicator */}
                     {props.streaming ? (
-                        <div className="mt-2 flex items-center gap-2 pl-0.5" data-testid="claude-working-sparkle">
-                            <ClaudeSparkleIcon size={15} />
+                        <div className="mt-2 flex items-center gap-2 pl-0.5" data-testid="turn-working-sparkle">
+                            <TurnActivitySparkleIcon size={15} />
                         </div>
                     ) : null}
                 </div>
@@ -563,7 +563,7 @@ export function ClaudeDesktopTurnBlockView(props: {
                 <div
                     key={row.key}
                     className="mt-3 text-[15px] leading-relaxed text-[var(--app-fg)] whitespace-pre-wrap"
-                    data-testid="claude-trailing-answer"
+                    data-testid="turn-trailing-answer"
                 >
                     {props.renderTrailingText ? props.renderTrailingText(row.text, props.streaming) : renderSimpleMarkdownText(row.text)}
                 </div>
@@ -572,13 +572,8 @@ export function ClaudeDesktopTurnBlockView(props: {
     )
 }
 
-/**
- * Docked Todo Progress Bar above the composer, aligned to Claude Desktop Video 2 (`f580`–`f5750`):
- * - Collapsed bar: `<current> of <total>   <Active task title or Done>   ^`
- * - Expanded list: numbered items with circular status icons (spinner / checkmark / empty circle).
- */
-export function ClaudeDockedTodoBar(props: {
-    todos: ClaudeDemoTodoItem[]
+export function DockedTodoProgressBar(props: {
+    todos: DockedTodoItem[]
     defaultExpanded?: boolean
     lang?: 'en' | 'zh-CN'
 }) {
@@ -605,7 +600,7 @@ export function ClaudeDockedTodoBar(props: {
     return (
         <div
             className="composer-dock-card overflow-hidden rounded-t-xl border border-b-0 border-[var(--app-border)] bg-[var(--app-subtle-bg)]/70"
-            data-testid="claude-docked-todo-bar"
+            data-testid="docked-todo-bar"
         >
             <button
                 type="button"
@@ -670,14 +665,8 @@ export function ClaudeDockedTodoBar(props: {
     )
 }
 
-/**
- * Docked AskUserQuestion Multi-Step Wizard above the composer, aligned to Video 3 (`14-37-52.mp4`):
- * - Header: Question prompt on the left + `< 1 of 3 >` pager on the right
- * - Numbered option rows (`1`, `2`, `3`)
- * - Pencil `Something else` free-text row + `Skip` button
- */
-export function ClaudeAskUserQuestionWizard(props: {
-    questions: ClaudeDemoQuestionItem[]
+export function DockedQuestionWizard(props: {
+    questions: DockedQuestionItem[]
     onSubmit: (answers: Record<string, string>) => void
     onSkip?: () => void
 }) {
@@ -705,7 +694,7 @@ export function ClaudeAskUserQuestionWizard(props: {
     return (
         <div
             className="composer-dock-card overflow-hidden rounded-xl border border-[var(--app-border)] bg-[var(--app-bg)] p-3.5 shadow-sm"
-            data-testid="claude-ask-user-wizard"
+            data-testid="docked-question-wizard"
         >
             <div className="flex items-start justify-between gap-3">
                 <div className="text-[14px] font-medium leading-5 text-[var(--app-fg)]">
@@ -764,7 +753,6 @@ export function ClaudeAskUserQuestionWizard(props: {
                     )
                 })}
 
-                {/* "Something else" free-text option row */}
                 <div className="flex items-center gap-2">
                     {editingCustom ? (
                         <form
@@ -817,16 +805,12 @@ export function ClaudeAskUserQuestionWizard(props: {
     )
 }
 
-/**
- * Right-aligned structured multi-Q&A user message bubble rendered after submitting AskUserQuestion
- * (matches Video 3 `Snapzy_Recording_2026-11-04_14-37-52.mp4` at 16s–25s).
- */
-export function ClaudeSubmittedQaBubble(props: {
-    questions: ClaudeDemoQuestionItem[]
+export function SubmittedQuestionSummaryBubble(props: {
+    questions: DockedQuestionItem[]
     answers: Record<string, string>
 }) {
     return (
-        <div className="my-3 flex justify-end" data-testid="claude-submitted-qa-bubble">
+        <div className="my-3 flex justify-end" data-testid="submitted-qa-bubble">
             <div className="max-w-lg space-y-2.5 rounded-2xl border border-[var(--app-border)] bg-[var(--app-subtle-bg)] px-4 py-3 text-[13.5px]">
                 {props.questions.map((q) => (
                     <div key={q.id} className="space-y-0.5">

@@ -412,7 +412,7 @@ export function turnDurationMs(input: {
     return elapsed >= 0 ? elapsed : null
 }
 
-export type ClaudeTurnActionCounts = {
+export type TurnActionCounts = {
     commands: number
     reads: number
     edits: number
@@ -423,19 +423,19 @@ export type ClaudeTurnActionCounts = {
     thoughts: number
 }
 
-export type ClaudeWebSearchResultItem = {
+export type TurnWebSearchResultItem = {
     title: string
     url: string
     domain: string
     faviconUrl?: string
 }
 
-export type ClaudeDiffLine = {
+export type TurnDiffLine = {
     type: 'ctx' | 'add' | 'del'
     text: string
 }
 
-export type ClaudeStepPreview =
+export type TurnStepPreview =
     | {
         kind: 'bash'
         command: string
@@ -455,14 +455,14 @@ export type ClaudeStepPreview =
     | {
         kind: 'web-search'
         query: string
-        results: ClaudeWebSearchResultItem[]
+        results: TurnWebSearchResultItem[]
     }
     | {
         kind: 'file-diff'
         filePath: string
         added: number
         removed: number
-        lines: ClaudeDiffLine[]
+        lines: TurnDiffLine[]
     }
     | {
         kind: 'file-read'
@@ -475,12 +475,12 @@ export type ClaudeStepPreview =
         block: ToolCallBlock
     }
 
-export type ClaudeToolStepDescriptor = {
+export type TurnToolStepDescriptor = {
     isRunning: boolean
     verbLabel: string
     intentLabel: string
     secondaryBadge: string | null
-    preview: ClaudeStepPreview
+    preview: TurnStepPreview
 }
 
 function extractDomain(rawUrl: string): string {
@@ -512,14 +512,14 @@ function extractResultText(result: unknown): string {
     return ''
 }
 
-function extractWebSearchResults(result: unknown): ClaudeWebSearchResultItem[] {
+function extractWebSearchResults(result: unknown): TurnWebSearchResultItem[] {
     if (!isObject(result)) return []
     const rawList = Array.isArray(result.results)
         ? result.results
         : Array.isArray(result.content)
             ? result.content
             : []
-    const items: ClaudeWebSearchResultItem[] = []
+    const items: TurnWebSearchResultItem[] = []
     for (const entry of rawList) {
         if (!isObject(entry)) continue
         const url = typeof entry.url === 'string' ? entry.url : ''
@@ -550,8 +550,8 @@ function isWebSearchTool(rawName: string, resolvedName: string): boolean {
     return resolvedName === 'WebSearch' || lower === 'websearch' || lower === 'web_search' || lower === 'web_search_fast' || lower.endsWith('__web_search')
 }
 
-export function countClaudeTurnActions(rows: readonly TurnRow[]): ClaudeTurnActionCounts {
-    const counts: ClaudeTurnActionCounts = {
+export function countTurnActions(rows: readonly TurnRow[]): TurnActionCounts {
+    const counts: TurnActionCounts = {
         commands: 0,
         reads: 0,
         edits: 0,
@@ -598,8 +598,8 @@ function capitalizeFirst(text: string): string {
     return text.charAt(0).toUpperCase() + text.slice(1)
 }
 
-export function formatClaudeAggregatedSummary(
-    counts: ClaudeTurnActionCounts,
+export function formatTurnAggregatedSummary(
+    counts: TurnActionCounts,
     lang: 'en' | 'zh-CN' = 'en'
 ): string {
     if (lang === 'zh-CN') {
@@ -651,10 +651,10 @@ export function formatClaudeAggregatedSummary(
     return capitalizeFirst(`${clauses.slice(0, -1).join(', ')}, and ${clauses[clauses.length - 1]}`)
 }
 
-export function describeClaudeToolStep(
+export function describeTurnToolStep(
     row: TurnToolRow,
     lang: 'en' | 'zh-CN' = 'en'
-): ClaudeToolStepDescriptor {
+): TurnToolStepDescriptor {
     const tool = row.block.tool
     const rawName = tool.name
     const name = resolveToolViewName(rawName)
@@ -685,8 +685,8 @@ export function describeClaudeToolStep(
             preview: {
                 kind: 'web-fetch',
                 title: pageTitle,
-                url: url || 'https://code.claude.com/docs/en/desktop',
-                domain: domain || 'code.claude.com',
+                url: url || '',
+                domain: domain || '',
                 excerpt: text ? truncate(text, 360) : '',
                 sizeLabel,
                 linesCount,
@@ -707,7 +707,7 @@ export function describeClaudeToolStep(
                 : null,
             preview: {
                 kind: 'web-search',
-                query: query || 'claude code desktop',
+                query: query || '',
                 results,
             },
         }
@@ -756,9 +756,9 @@ export function describeClaudeToolStep(
         const newStr = stringField(tool.input, ['new_string', 'newText', 'content']) ?? ''
         const oldLines = oldStr ? oldStr.split(/\r?\n/) : []
         const newLines = newStr ? newStr.split(/\r?\n/) : []
-        const lines: ClaudeDiffLine[] = [
-            ...oldLines.slice(0, 8).map((text): ClaudeDiffLine => ({ type: 'del', text })),
-            ...newLines.slice(0, 10).map((text): ClaudeDiffLine => ({ type: 'add', text })),
+        const lines: TurnDiffLine[] = [
+            ...oldLines.slice(0, 8).map((text): TurnDiffLine => ({ type: 'del', text })),
+            ...newLines.slice(0, 10).map((text): TurnDiffLine => ({ type: 'add', text })),
         ]
         const added = newLines.length
         const removed = oldLines.length
@@ -825,7 +825,7 @@ export function describeClaudeToolStep(
     }
 }
 
-export function summarizeTurnForClaudeDesktop(
+export function summarizeTurnActivity(
     partition: TurnPartition,
     options?: {
         activeTodoText?: string | null
@@ -834,16 +834,16 @@ export function summarizeTurnForClaudeDesktop(
 ): {
     workingHeader: string
     completedHeader: string
-    counts: ClaudeTurnActionCounts
+    counts: TurnActionCounts
 } {
     const lang = options?.lang ?? 'en'
-    const counts = countClaudeTurnActions(partition.rows)
-    const completedHeader = formatClaudeAggregatedSummary(counts, lang)
+    const counts = countTurnActions(partition.rows)
+    const completedHeader = formatTurnAggregatedSummary(counts, lang)
 
     const activeTodo = shownTitle(options?.activeTodoText)
     const tools = partition.rows.filter((row): row is TurnToolRow => row.kind === 'tool')
     const runningTool = tools.find((row) => row.block.tool.state === 'running' || row.block.tool.state === 'pending')
-    const runningStep = runningTool ? describeClaudeToolStep(runningTool, lang) : null
+    const runningStep = runningTool ? describeTurnToolStep(runningTool, lang) : null
     const runningPhrase = runningStep
         ? `${runningStep.verbLabel}${runningStep.intentLabel ? ` ${runningStep.intentLabel}` : ''}...`
         : null

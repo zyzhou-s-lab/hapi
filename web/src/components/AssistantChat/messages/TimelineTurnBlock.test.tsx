@@ -4,14 +4,14 @@ import { I18nProvider } from '@/lib/i18n-context'
 import type { ToolCallBlock } from '@/chat/types'
 import {
     partitionTurn,
-    summarizeTurnForClaudeDesktop,
+    summarizeTurnActivity,
     type TurnContentPart,
 } from '@/components/AssistantChat/messages/turnBlockModel'
 import {
-    ClaudeAskUserQuestionWizard,
-    ClaudeDesktopTurnBlockView,
-    ClaudeDockedTodoBar,
-} from '@/components/AssistantChat/messages/ClaudeDesktopTurnBlock'
+    DockedQuestionWizard,
+    DockedTodoProgressBar,
+    TimelineTurnBlockView,
+} from '@/components/AssistantChat/messages/TimelineTurnBlock'
 
 function tool(id: string, name: string, extra: Partial<ToolCallBlock['tool']> = {}): ToolCallBlock {
     return {
@@ -40,7 +40,7 @@ function call(block: ToolCallBlock): TurnContentPart {
     return { type: 'tool-call', toolName: block.tool.name, toolCallId: block.id, artifact: block }
 }
 
-describe('ClaudeDesktopTurnBlock & summarizeTurnForClaudeDesktop', () => {
+describe('TimelineTurnBlock & summarizeTurnActivity', () => {
     it('computes active Todo working header while streaming and Oxford-comma past-tense summary when completed', () => {
         const partition = partitionTurn([
             { type: 'reasoning', text: 'Inspecting local bundle first.' },
@@ -49,17 +49,17 @@ describe('ClaudeDesktopTurnBlock & summarizeTurnForClaudeDesktop', () => {
             call(tool('b3', 'Bash', { input: { command: 'whoami' }, description: 'Check user' })),
             call(tool('r1', 'Read', { input: { file_path: 'src/index.html' } })),
             call(tool('f1', 'WebFetch', {
-                input: { url: 'https://code.claude.com/docs/en/claude-code-on-the-web' },
-                description: 'Claude Code on the web',
+                input: { url: 'https://example.com/docs/web-guide' },
+                description: 'Web documentation guide',
                 result: { bytes: 22425, lines: 584, content: 'Docs body' },
             })),
         ], null)
 
-        const summary = summarizeTurnForClaudeDesktop(partition, {
-            activeTodoText: 'Inspecting local Claude Desktop configuration and app resources',
+        const summary = summarizeTurnActivity(partition, {
+            activeTodoText: 'Inspecting local configuration and app resources',
         })
 
-        expect(summary.workingHeader).toBe('Inspecting local Claude Desktop configuration and app resources...')
+        expect(summary.workingHeader).toBe('Inspecting local configuration and app resources...')
         expect(summary.completedHeader).toBe('Ran 3 commands, viewed a file, and fetched a page')
         expect(summary.counts).toMatchObject({
             commands: 3,
@@ -75,19 +75,19 @@ describe('ClaudeDesktopTurnBlock & summarizeTurnForClaudeDesktop', () => {
             call(tool('b1', 'Bash', {
                 input: { command: 'ls -la ~/Library' },
                 description: 'Check Library folder',
-                result: { stdout: 'total 16\ndrwxr-xr-x Claude' },
+                result: { stdout: 'total 16\ndrwxr-xr-x AppSupport' },
             })),
             call(tool('f1', 'WebFetch', {
-                input: { url: 'https://code.claude.com/docs/en/desktop' },
-                description: 'Claude Code Desktop',
+                input: { url: 'https://docs.example.com/en/desktop' },
+                description: 'Desktop documentation',
                 result: { bytes: 10240, lines: 240, content: 'Desktop docs' },
             })),
             call(tool('s1', 'WebSearch', {
-                input: { query: 'claude code desktop' },
+                input: { query: 'timeline tool cards' },
                 result: {
                     results: [
-                        { title: 'Claude Code Docs', url: 'https://code.claude.com/docs', domain: 'code.claude.com' },
-                        { title: 'Anthropic Support', url: 'https://support.claude.com/en', domain: 'support.claude.com' },
+                        { title: 'Developer Docs', url: 'https://docs.example.com/guide', domain: 'docs.example.com' },
+                        { title: 'Support Center', url: 'https://support.example.com/en', domain: 'support.example.com' },
                     ],
                 },
             })),
@@ -97,41 +97,36 @@ describe('ClaudeDesktopTurnBlock & summarizeTurnForClaudeDesktop', () => {
 
         const { rerender } = render(
             <I18nProvider>
-                <ClaudeDesktopTurnBlockView
+                <TimelineTurnBlockView
                     partition={partition}
                     streaming={true}
                     durationMs={5000}
                     initiallyOpen={true}
-                    activeTodoText="Researching official documentation"
+                    activeTodoText="Researching documentation"
                 />
             </I18nProvider>
         )
 
-        // While streaming: Level-0 header shows active Todo with shimmer, and Level-1 rail is open
-        const header = screen.getByTestId('claude-level0-header')
+        const header = screen.getByTestId('turn-level0-header')
         expect(header).toHaveAttribute('aria-expanded', 'true')
-        expect(header.textContent).toContain('Researching official documentation...')
-        expect(screen.getByTestId('claude-working-sparkle')).toBeInTheDocument()
-        expect(screen.getByTestId('claude-level1-rail')).toBeInTheDocument()
+        expect(header.textContent).toContain('Researching documentation...')
+        expect(screen.getByTestId('turn-working-sparkle')).toBeInTheDocument()
+        expect(screen.getByTestId('turn-level1-rail')).toBeInTheDocument()
 
-        // Right-aligned badges on Level-1 rows
-        expect(screen.getByText('code.claude.com')).toBeInTheDocument()
+        expect(screen.getByText('docs.example.com')).toBeInTheDocument()
         expect(screen.getByText('2 results')).toBeInTheDocument()
 
-        // Clicking Bash step opens Level-2 Bash card inline
         fireEvent.click(screen.getByText('Check Library folder'))
-        expect(screen.getByTestId('claude-level2-bash')).toBeInTheDocument()
+        expect(screen.getByTestId('turn-level2-bash')).toBeInTheDocument()
         expect(screen.getByText('total 16', { exact: false })).toBeInTheDocument()
 
-        // Clicking WebFetch step opens Level-2 WebFetch card inline
-        fireEvent.click(screen.getByText('Claude Code Desktop'))
-        expect(screen.getByTestId('claude-level2-webfetch')).toBeInTheDocument()
+        fireEvent.click(screen.getByText('Desktop documentation'))
+        expect(screen.getByTestId('turn-level2-webfetch')).toBeInTheDocument()
         expect(screen.getByText('10.0 KB · 240 lines')).toBeInTheDocument()
 
-        // Transition streaming true -> false: auto-collapses and switches header to aggregated past-tense summary
         rerender(
             <I18nProvider>
-                <ClaudeDesktopTurnBlockView
+                <TimelineTurnBlockView
                     partition={partition}
                     streaming={false}
                     durationMs={8000}
@@ -143,13 +138,13 @@ describe('ClaudeDesktopTurnBlock & summarizeTurnForClaudeDesktop', () => {
 
         expect(header).toHaveAttribute('aria-expanded', 'false')
         expect(header.textContent).toContain('Ran a command, fetched a page, and searched the web')
-        expect(screen.queryByTestId('claude-level1-rail')).toBeNull()
-        expect(screen.getByTestId('claude-trailing-answer').textContent).toContain('Final alignment summary.')
+        expect(screen.queryByTestId('turn-level1-rail')).toBeNull()
+        expect(screen.getByTestId('turn-trailing-answer').textContent).toContain('Final alignment summary.')
     })
 
-    it('renders docked Todo bar (1 of 2 -> 2 of 2 Done) and AskUserQuestion wizard', () => {
+    it('renders docked Todo bar (1 of 2 -> 2 of 2 Done) and DockedQuestionWizard', () => {
         const { rerender, unmount } = render(
-            <ClaudeDockedTodoBar
+            <DockedTodoProgressBar
                 todos={[
                     { id: '1', content: 'Inspect bundle', activeForm: 'Inspecting bundle', status: 'in_progress' },
                     { id: '2', content: 'Verify UI', status: 'pending' },
@@ -161,7 +156,7 @@ describe('ClaudeDesktopTurnBlock & summarizeTurnForClaudeDesktop', () => {
         expect(screen.getByText('Inspecting bundle')).toBeInTheDocument()
 
         rerender(
-            <ClaudeDockedTodoBar
+            <DockedTodoProgressBar
                 todos={[
                     { id: '1', content: 'Inspect bundle', status: 'completed' },
                     { id: '2', content: 'Verify UI', status: 'completed' },
@@ -174,7 +169,7 @@ describe('ClaudeDesktopTurnBlock & summarizeTurnForClaudeDesktop', () => {
 
         let submitted: Record<string, string> | null = null
         render(
-            <ClaudeAskUserQuestionWizard
+            <DockedQuestionWizard
                 questions={[
                     { id: 'q1', question: 'First question?', options: [{ label: 'Opt A' }, { label: 'Opt B' }] },
                     { id: 'q2', question: 'Second question?', options: [{ label: 'Opt C' }] },

@@ -6,15 +6,15 @@ import {
 } from '@/components/AssistantChat/messages/turnBlockModel'
 import { TurnBlockView } from '@/components/AssistantChat/messages/TurnBlock'
 import {
-    ClaudeAskUserQuestionWizard,
-    ClaudeDesktopTurnBlockView,
-    ClaudeDockedTodoBar,
-    ClaudeSparkleIcon,
-    ClaudeSubmittedQaBubble,
-    type ClaudeDemoQuestionItem,
-    type ClaudeDemoTodoItem,
-    type ClaudeTranscriptViewMode,
-} from '@/components/AssistantChat/messages/ClaudeDesktopTurnBlock'
+    DockedQuestionWizard,
+    DockedTodoProgressBar,
+    SubmittedQuestionSummaryBubble,
+    TimelineTurnBlockView,
+    TurnActivitySparkleIcon,
+    type DockedQuestionItem,
+    type DockedTodoItem,
+    type TranscriptViewMode,
+} from '@/components/AssistantChat/messages/TimelineTurnBlock'
 import { cn } from '@/lib/utils'
 
 export type DemoLifecycleStage =
@@ -36,7 +36,7 @@ function makeToolPart(input: {
         kind: 'tool-call',
         id: input.id,
         localId: input.id,
-         createdAt: 1700000000000,
+        createdAt: 1700000000000,
         children: [],
         tool: {
             id: input.id,
@@ -61,13 +61,13 @@ function makeToolPart(input: {
     }
 }
 
-const DEMO_QUESTIONS: ClaudeDemoQuestionItem[] = [
+const DEMO_QUESTIONS: DockedQuestionItem[] = [
     {
         id: 'header-style',
         question: 'How should HAPI render the Level-0 TurnBlock header while tools are running?',
         options: [
             {
-                label: 'Sync with active Todo + text shimmer (Claude Desktop style)',
+                label: 'Sync with active Todo + text shimmer (Timeline style)',
                 description: 'Shows in-progress task title while working, then auto-collapses to aggregated past-tense summary on completion',
             },
             {
@@ -100,7 +100,7 @@ const DEMO_QUESTIONS: ClaudeDemoQuestionItem[] = [
         options: [
             {
                 label: 'Docked above the bottom composer card',
-                description: 'Matches Claude Desktop Code tab (1 of 4 -> 4 of 4 Done + < 1 of 3 > wizard)',
+                description: 'Shows 1 of 4 -> 4 of 4 Done bar and < 1 of 3 > wizard above composer',
             },
             {
                 label: 'Pinned inline inside the chat scrollback',
@@ -112,28 +112,28 @@ const DEMO_QUESTIONS: ClaudeDemoQuestionItem[] = [
 
 const WEB_SEARCH_RESULTS = [
     {
-        title: 'Claude Code on the web - Claude Code Docs',
-        url: 'https://code.claude.com/docs/en/claude-code-on-the-web',
-        domain: 'code.claude.com',
+        title: 'Remote Session Architecture - Documentation',
+        url: 'https://docs.example.com/en/remote-sessions',
+        domain: 'docs.example.com',
     },
     {
-        title: 'Using Claude Code with Desktop - Claude Code Docs',
-        url: 'https://code.claude.com/docs/en/desktop',
-        domain: 'code.claude.com',
+        title: 'Desktop Workspace & Panes Guide',
+        url: 'https://docs.example.com/en/desktop',
+        domain: 'docs.example.com',
     },
     {
-        title: 'Configure preview servers & local environments - Claude Docs',
-        url: 'https://code.claude.com/docs/en/desktop#environment-configuration',
-        domain: 'code.claude.com',
+        title: 'Configure Preview Servers & Local Environments',
+        url: 'https://docs.example.com/en/desktop#environment-configuration',
+        domain: 'docs.example.com',
     },
     {
-        title: 'Getting started with Claude Code on desktop | Anthropic Help Center',
-        url: 'https://support.claude.com/en/articles/claude-code-desktop',
-        domain: 'support.claude.com',
+        title: 'Interactive Tool Permissions & Auto Mode | Help Center',
+        url: 'https://support.example.com/en/articles/interactive-permissions',
+        domain: 'support.example.com',
     },
     {
-        title: 'anthropics/claude-code: Agentic coding tool in your terminal & desktop',
-        url: 'https://github.com/anthropics/claude-code',
+        title: 'hapi/web: Frontend turn timeline & tool card components',
+        url: 'https://github.com/mouriya-s-lab/hapi',
         domain: 'github.com',
     },
 ]
@@ -142,12 +142,12 @@ function buildStageData(stage: DemoLifecycleStage): {
     parts: TurnContentPart[]
     streaming: boolean
     durationMs: number
-    todos: ClaudeDemoTodoItem[]
+    todos: DockedTodoItem[]
     activeTodoText: string | null
 } {
     const thought1: TurnContentPart = {
         type: 'reasoning',
-        text: 'The user wants to know where Claude Desktop saves local environment configurations and how working tool cards group, expand, and auto-collapse. Let me inspect ~/Library/Application Support/Claude and the local ion-dist.asar bundle first.',
+        text: 'The user wants to inspect how working tool cards group, expand across 3 levels, and auto-collapse upon completion. Let me inspect the local workspace configuration and TurnBlock implementation first.',
         status: { type: 'complete' },
     }
 
@@ -155,17 +155,17 @@ function buildStageData(stage: DemoLifecycleStage): {
         id: 'tool-bash-1',
         name: 'Bash',
         state: stage === 'working-step-1' ? 'running' : 'completed',
-        description: 'Inspect ~/Library/Application Support/Claude and ~/.claude',
+        description: 'Inspect local workspace configuration and session directories',
         toolInput: {
-            command: 'ls -la "$HOME/Library/Application Support/Claude" "$HOME/.claude"',
-            description: 'Inspect ~/Library/Application Support/Claude and ~/.claude',
+            command: 'ls -la "$HOME/.hapi" "web/src/components/AssistantChat/messages"',
+            description: 'Inspect local workspace configuration and session directories',
         },
         result: {
             stdout: [
-                'drwxr-xr-x@ 26 user  staff     832 Nov  4 14:10 .',
-                '-rw-r--r--@  1 user  staff    1962 Nov  4 13:58 claude_desktop_config.json',
-                'drwxr-xr-x@  9 user  staff     288 Nov  4 14:02 claude-code-sessions',
-                'drwxr-xr-x@  5 user  staff     160 Nov  2 09:41 local-agent-mode-sessions',
+                'drwxr-xr-x@ 12 user  staff    384 Nov  4 14:10 .',
+                '-rw-r--r--@  1 user  staff   1962 Nov  4 13:58 settings.json',
+                '-rw-r--r--@  1 user  staff  11420 Nov  4 14:02 TurnBlock.tsx',
+                '-rw-r--r--@  1 user  staff  14890 Nov  4 14:02 turnBlockModel.ts',
             ].join('\n'),
         },
     })
@@ -174,16 +174,16 @@ function buildStageData(stage: DemoLifecycleStage): {
         id: 'tool-bash-2',
         name: 'Bash',
         state: 'completed',
-        description: 'Search ion-dist.asar for TimelineGroup and tool summary strings',
+        description: 'Search frontend styles for timeline status and shimmer utilities',
         toolInput: {
-            command: 'rg -o "TimelineGroup|timeline-status-enter|result-list-box" /Applications/Claude.app/Contents/Resources/ion-dist.asar',
-            description: 'Search ion-dist.asar for TimelineGroup and tool summary strings',
+            command: 'rg -n "turn-timeline-status-enter|turn-text-shimmer|collapsible-panel" web/src/index.css',
+            description: 'Search frontend styles for timeline status and shimmer utilities',
         },
         result: {
             stdout: [
-                'assets/v1/shared-styles-BawOO5XW.css:timeline-status-enter',
-                'assets/v1/c5b91cb82-RJi2TUsc.js:TimelineGroup',
-                'assets/v1/c5b91cb82-RJi2TUsc.js:result-list-box',
+                '475:.collapsible-panel {',
+                '931:.turn-text-shimmer {',
+                '945:.turn-timeline-status-enter {',
             ].join('\n'),
         },
     })
@@ -220,7 +220,7 @@ function buildStageData(stage: DemoLifecycleStage): {
                 '    streaming: boolean',
                 '    durationMs: number | null',
                 '    initiallyOpen: boolean',
-                '    variant?: "classic" | "claude"',
+                '    variant?: "classic" | "timeline"',
                 '}) {',
                 '    const sawStream = useRef(props.streaming)',
                 '    useEffect(() => {',
@@ -234,7 +234,7 @@ function buildStageData(stage: DemoLifecycleStage): {
 
     const thought2: TurnContentPart = {
         type: 'reasoning',
-        text: 'Now let me fetch the official Claude Code Desktop documentation on code.claude.com and compare its 3-level expansion hierarchy (Level 0 summary -> Level 1 vertical rail -> Level 2 compact preview cards) with HAPI.',
+        text: 'Now let me fetch the reference documentation and compare the 3-level expansion hierarchy (Level 0 summary -> Level 1 vertical rail -> Level 2 compact preview cards) with classic TurnBlock.',
         status: { type: 'complete' },
     }
 
@@ -242,16 +242,16 @@ function buildStageData(stage: DemoLifecycleStage): {
         id: 'tool-webfetch-1',
         name: 'WebFetch',
         state: 'completed',
-        description: 'Claude Code on the web',
+        description: 'Interactive Turn Timeline & View Modes',
         toolInput: {
-            url: 'https://code.claude.com/docs/en/claude-code-on-the-web',
-            description: 'Claude Code on the web',
+            url: 'https://docs.example.com/en/turn-timeline',
+            description: 'Interactive Turn Timeline & View Modes',
         },
         result: {
-            title: 'Claude Code on the web',
+            title: 'Interactive Turn Timeline & View Modes',
             bytes: 22425,
             lines: 584,
-            content: 'In the Code tab, each conversation is a session with its own chat history and project folder. Switch transcript view modes (Normal, Thinking, Verbose) with Ctrl+O.',
+            content: 'Each conversation turn groups intermediate tool calls and reasoning under a collapsible timeline header. Switch transcript view modes (Normal, Thinking, Verbose) with Ctrl+O.',
         },
     })
 
@@ -261,7 +261,7 @@ function buildStageData(stage: DemoLifecycleStage): {
         state: 'completed',
         description: 'Searched the web',
         toolInput: {
-            query: '"claude desktop" code tab tool cards timeline group',
+            query: 'turn timeline tool cards grouping preview',
         },
         result: {
             results: WEB_SEARCH_RESULTS,
@@ -272,11 +272,11 @@ function buildStageData(stage: DemoLifecycleStage): {
         id: 'tool-edit-1',
         name: 'Edit',
         state: stage === 'working-step-3' ? 'running' : 'completed',
-        description: 'Update TurnBlockView to support Claude Desktop timeline layout',
+        description: 'Update TurnBlockView to support timeline layout',
         toolInput: {
             file_path: 'web/src/components/AssistantChat/messages/TurnBlock.tsx',
             old_string: '<div className="divide-y divide-[var(--app-divider)] overflow-hidden rounded-2xl border border-[var(--app-border)]">',
-            new_string: '<ClaudeDesktopTurnBlockView\n    partition={props.partition}\n    streaming={props.streaming}\n    activeTodoText={props.activeTodoText}\n/>',
+            new_string: '<TimelineTurnBlockView\n    partition={props.partition}\n    streaming={props.streaming}\n    activeTodoText={props.activeTodoText}\n/>',
         },
         result: { ok: true },
     })
@@ -284,20 +284,20 @@ function buildStageData(stage: DemoLifecycleStage): {
     const trailingAnswer: TurnContentPart = {
         type: 'text',
         text: [
-            'Here is how Claude Desktop’s **Code** tab structures working tool cards and how HAPI aligns to it:',
+            'Here is how the **Timeline** turn layout structures working tool cards across 3 levels:',
             '',
-            '1. **Level 0 (Group Summary Header)**: Borderless row showing the active Todo task with `.claude-text-shimmer` while working, then automatically collapsing on completion into an aggregated past-tense summary (`Ran 3 commands, viewed a file, edited a file, fetched a page, and searched the web`).',
-            '2. **Level 1 (Vertical Step Timeline Rail)**: Indented `border-l` rail with collapsible `Thought` rows, present-participle running verbs (`Running`, `Viewing`, `Fetching`), and right-aligned metadata badges (`code.claude.com`, `5 results`, `+4 -1`).',
+            '1. **Level 0 (Group Summary Header)**: Borderless row showing the active Todo task with `.turn-text-shimmer` while working, then automatically collapsing on completion into an aggregated past-tense summary (`Ran 3 commands, viewed a file, edited a file, fetched a page, and searched the web`).',
+            '2. **Level 1 (Vertical Step Timeline Rail)**: Indented `border-l` rail with collapsible `Thought` rows, present-participle running verbs (`Running`, `Viewing`, `Fetching`), and right-aligned metadata badges (`docs.example.com`, `5 results`, `+4 -1`).',
             '3. **Level 2 (Inline Compact Preview Cards)**: Purpose-built inline Bash (copy + scrollable stdout), WebFetch (URL + byte/line footer), WebSearch (favicon + domain list), and File Diff cards.',
         ].join('\n'),
         status: { type: 'complete' },
     }
 
     if (stage === 'working-step-1') {
-        const todos: ClaudeDemoTodoItem[] = [
-            { id: '1', content: 'Inspect local Claude Desktop configuration and app resources', activeForm: 'Inspecting local Claude Desktop configuration and app resources', status: 'in_progress' },
-            { id: '2', content: 'Search Claude.app UI bundle for TimelineGroup and step cards', activeForm: 'Searching Claude.app UI bundle for TimelineGroup and step cards', status: 'pending' },
-            { id: '3', content: 'Fetch official Claude Code Desktop documentation and compare with HAPI', activeForm: 'Fetching official Claude Code Desktop documentation and comparing with HAPI', status: 'pending' },
+        const todos: DockedTodoItem[] = [
+            { id: '1', content: 'Inspect local workspace configuration and session directories', activeForm: 'Inspecting local workspace configuration and session directories', status: 'in_progress' },
+            { id: '2', content: 'Search frontend bundle for timeline group and step cards', activeForm: 'Searching frontend bundle for timeline group and step cards', status: 'pending' },
+            { id: '3', content: 'Fetch reference documentation and compare with classic TurnBlock', activeForm: 'Fetching reference documentation and comparing with classic TurnBlock', status: 'pending' },
             { id: '4', content: 'Verify 3-level expansion, auto-collapse, and docked composer widgets', activeForm: 'Verifying 3-level expansion, auto-collapse, and docked composer widgets', status: 'pending' },
         ]
         return {
@@ -310,10 +310,10 @@ function buildStageData(stage: DemoLifecycleStage): {
     }
 
     if (stage === 'working-step-2') {
-        const todos: ClaudeDemoTodoItem[] = [
-            { id: '1', content: 'Inspect local Claude Desktop configuration and app resources', status: 'completed' },
-            { id: '2', content: 'Search Claude.app UI bundle for TimelineGroup and step cards', activeForm: 'Searching Claude.app UI bundle for TimelineGroup and step cards', status: 'in_progress' },
-            { id: '3', content: 'Fetch official Claude Code Desktop documentation and compare with HAPI', status: 'pending' },
+        const todos: DockedTodoItem[] = [
+            { id: '1', content: 'Inspect local workspace configuration and session directories', status: 'completed' },
+            { id: '2', content: 'Search frontend bundle for timeline group and step cards', activeForm: 'Searching frontend bundle for timeline group and step cards', status: 'in_progress' },
+            { id: '3', content: 'Fetch reference documentation and compare with classic TurnBlock', status: 'pending' },
             { id: '4', content: 'Verify 3-level expansion, auto-collapse, and docked composer widgets', status: 'pending' },
         ]
         return {
@@ -326,10 +326,10 @@ function buildStageData(stage: DemoLifecycleStage): {
     }
 
     if (stage === 'working-step-3' || stage === 'asking-user') {
-        const todos: ClaudeDemoTodoItem[] = [
-            { id: '1', content: 'Inspect local Claude Desktop configuration and app resources', status: 'completed' },
-            { id: '2', content: 'Search Claude.app UI bundle for TimelineGroup and step cards', status: 'completed' },
-            { id: '3', content: 'Fetch official Claude Code Desktop documentation and compare with HAPI', activeForm: 'Fetching official Claude Code Desktop documentation and comparing with HAPI', status: 'in_progress' },
+        const todos: DockedTodoItem[] = [
+            { id: '1', content: 'Inspect local workspace configuration and session directories', status: 'completed' },
+            { id: '2', content: 'Search frontend bundle for timeline group and step cards', status: 'completed' },
+            { id: '3', content: 'Fetch reference documentation and compare with classic TurnBlock', activeForm: 'Fetching reference documentation and comparing with classic TurnBlock', status: 'in_progress' },
             { id: '4', content: 'Verify 3-level expansion, auto-collapse, and docked composer widgets', status: 'pending' },
         ]
         return {
@@ -341,10 +341,10 @@ function buildStageData(stage: DemoLifecycleStage): {
         }
     }
 
-    const todos: ClaudeDemoTodoItem[] = [
-        { id: '1', content: 'Inspect local Claude Desktop configuration and app resources', status: 'completed' },
-        { id: '2', content: 'Search Claude.app UI bundle for TimelineGroup and step cards', status: 'completed' },
-        { id: '3', content: 'Fetch official Claude Code Desktop documentation and compare with HAPI', status: 'completed' },
+    const todos: DockedTodoItem[] = [
+        { id: '1', content: 'Inspect local workspace configuration and session directories', status: 'completed' },
+        { id: '2', content: 'Search frontend bundle for timeline group and step cards', status: 'completed' },
+        { id: '3', content: 'Fetch reference documentation and compare with classic TurnBlock', status: 'completed' },
         { id: '4', content: 'Verify 3-level expansion, auto-collapse, and docked composer widgets', status: 'completed' },
     ]
     return {
@@ -360,7 +360,7 @@ const STAGES: Array<{ id: DemoLifecycleStage; stepLabel: string; subtitle: strin
     {
         id: 'working-step-1',
         stepLabel: '1. Working (Todo 1/4)',
-        subtitle: 'Shimmering header synced with Todo #1 + live running Bash step + terracotta sparkle',
+        subtitle: 'Shimmering header synced with Todo #1 + live running Bash step + activity sparkle',
     },
     {
         id: 'working-step-2',
@@ -370,11 +370,11 @@ const STAGES: Array<{ id: DemoLifecycleStage; stepLabel: string; subtitle: strin
     {
         id: 'working-step-3',
         stepLabel: '3. Working (Todo 3/4)',
-        subtitle: 'WebFetch (code.claude.com badge) + WebSearch (5 results) + Edit diff (+4 -1)',
+        subtitle: 'WebFetch (domain badge) + WebSearch (5 results) + Edit diff (+4 -1)',
     },
     {
         id: 'asking-user',
-        stepLabel: '4. AskUserQuestion Wizard',
+        stepLabel: '4. Question Wizard',
         subtitle: 'Multi-step < 1 of 3 > wizard docked above composer + Q&A summary bubble',
     },
     {
@@ -384,10 +384,10 @@ const STAGES: Array<{ id: DemoLifecycleStage; stepLabel: string; subtitle: strin
     },
 ]
 
-export function ClaudeDesktopAlignmentDemo() {
+export function TurnTimelineDemo() {
     const [stage, setStage] = useState<DemoLifecycleStage>('working-step-3')
-    const [layoutMode, setLayoutMode] = useState<'side-by-side' | 'claude-only'>('side-by-side')
-    const [viewMode, setViewMode] = useState<ClaudeTranscriptViewMode>('normal')
+    const [layoutMode, setLayoutMode] = useState<'side-by-side' | 'timeline-only'>('side-by-side')
+    const [viewMode, setViewMode] = useState<TranscriptViewMode>('normal')
     const [lang, setLang] = useState<'en' | 'zh-CN'>('en')
     const [autoPlaying, setAutoPlaying] = useState(false)
     const [submittedAnswers, setSubmittedAnswers] = useState<Record<string, string> | null>(null)
@@ -414,7 +414,6 @@ export function ClaudeDesktopAlignmentDemo() {
         return () => window.clearInterval(timer)
     }, [autoPlaying])
 
-    // Support Ctrl+O shortcut to cycle Normal -> Thinking -> Verbose just like Claude Desktop
     useEffect(() => {
         const handler = (e: KeyboardEvent) => {
             if (e.ctrlKey && e.key.toLowerCase() === 'o') {
@@ -434,19 +433,19 @@ export function ClaudeDesktopAlignmentDemo() {
     return (
         <div
             className="min-h-screen bg-[var(--app-bg)] text-[var(--app-fg)] flex flex-col"
-            data-testid="claude-desktop-alignment-workbench"
+            data-testid="turn-timeline-workbench"
         >
             {/* Top Workbench Control Bar */}
             <header className="sticky top-0 z-20 border-b border-[var(--app-border)] bg-[var(--app-bg)]/95 backdrop-blur px-4 py-3">
                 <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-3">
                     <div className="flex items-center gap-2.5">
-                        <ClaudeSparkleIcon size={18} />
+                        <TurnActivitySparkleIcon size={18} />
                         <div>
                             <h1 className="text-sm font-semibold tracking-tight">
-                                HAPI × Claude Desktop UI Alignment Workbench
+                                HAPI Turn Timeline & Tool Card Workbench
                             </h1>
                             <p className="text-[11.5px] text-[var(--app-hint)]">
-                                Grounded in macOS Claude Desktop recordings, <code className="font-mono">ion-dist.asar</code>, and <code className="font-mono">code.claude.com/docs/en/desktop</code>
+                                3-Level Timeline Hierarchy (<code className="font-mono">variant="timeline"</code>) vs. Classic TurnBlock (<code className="font-mono">variant="classic"</code>)
                             </p>
                         </div>
                     </div>
@@ -515,16 +514,16 @@ export function ClaudeDesktopAlignmentDemo() {
                             </button>
                             <button
                                 type="button"
-                                data-testid="layout-claude-only"
-                                onClick={() => setLayoutMode('claude-only')}
+                                data-testid="layout-timeline-only"
+                                onClick={() => setLayoutMode('timeline-only')}
                                 className={cn(
                                     'rounded-md px-2 py-1 text-[11.5px] font-medium transition-colors',
-                                    layoutMode === 'claude-only'
+                                    layoutMode === 'timeline-only'
                                         ? 'bg-[var(--app-bg)] text-[var(--app-fg)] shadow-sm'
                                         : 'text-[var(--app-hint)] hover:text-[var(--app-fg)]'
                                 )}
                             >
-                                Claude Desktop Focus
+                                Timeline Focus
                             </button>
                         </div>
 
@@ -574,7 +573,7 @@ export function ClaudeDesktopAlignmentDemo() {
                 {/* User Prompt Bubble */}
                 <div className="flex justify-end">
                     <div className="max-w-xl rounded-2xl border border-[var(--app-border)] bg-[var(--app-subtle-bg)] px-4 py-2.5 text-[14px] text-[var(--app-fg)]">
-                        Where does Claude Desktop save local environment configurations, and how should HAPI’s frontend align with Claude Desktop’s working tool cards?
+                        How should HAPI’s frontend structure working tool cards, 3-level expansion, and docked progress widgets?
                     </div>
                 </div>
 
@@ -582,17 +581,17 @@ export function ClaudeDesktopAlignmentDemo() {
                 <div
                     className={cn(
                         'grid gap-6',
-                        layoutMode === 'side-by-side' ? ' grid-cols-1 lg:grid-cols-2' : 'grid-cols-1 max-w-3xl mx-auto w-full'
+                        layoutMode === 'side-by-side' ? 'grid-cols-1 lg:grid-cols-2' : 'grid-cols-1 max-w-3xl mx-auto w-full'
                     )}
                 >
-                    {/* Column 1: Claude Desktop Aligned TurnBlock */}
+                    {/* Column 1: Timeline TurnBlock */}
                     <section className="flex flex-col justify-between rounded-2xl border border-[var(--app-border)] bg-[var(--app-bg)] p-4 shadow-sm">
                         <div>
                             <div className="mb-3 flex items-center justify-between border-b border-[var(--app-border)]/70 pb-2.5">
                                 <div className="flex items-center gap-2">
                                     <span className="inline-block h-2 w-2 rounded-full bg-[#da7756]" />
                                     <h2 className="text-xs font-semibold uppercase tracking-wider text-[var(--app-fg)]">
-                                        Claude Desktop Aligned (<code className="font-mono">variant="claude"</code>)
+                                        Timeline Layout (<code className="font-mono">variant="timeline"</code>)
                                     </h2>
                                 </div>
                                 <span className="rounded bg-[#da7756]/15 px-2 py-0.5 text-[11px] font-medium text-[#da7756]">
@@ -600,7 +599,7 @@ export function ClaudeDesktopAlignmentDemo() {
                                 </span>
                             </div>
 
-                            <ClaudeDesktopTurnBlockView
+                            <TimelineTurnBlockView
                                 partition={partition}
                                 streaming={stageData.streaming}
                                 durationMs={stageData.durationMs}
@@ -611,7 +610,7 @@ export function ClaudeDesktopAlignmentDemo() {
                             />
 
                             {submittedAnswers ? (
-                                <ClaudeSubmittedQaBubble
+                                <SubmittedQuestionSummaryBubble
                                     questions={DEMO_QUESTIONS}
                                     answers={submittedAnswers}
                                 />
@@ -622,7 +621,7 @@ export function ClaudeDesktopAlignmentDemo() {
                         <div className="mt-6 pt-3 border-t border-[var(--app-border)]/50">
                             {stage === 'asking-user' ? (
                                 <div className="mb-2">
-                                    <ClaudeAskUserQuestionWizard
+                                    <DockedQuestionWizard
                                         questions={DEMO_QUESTIONS}
                                         onSubmit={(ans) => {
                                             setSubmittedAnswers(ans)
@@ -633,7 +632,7 @@ export function ClaudeDesktopAlignmentDemo() {
                                 </div>
                             ) : null}
 
-                            <ClaudeDockedTodoBar
+                            <DockedTodoProgressBar
                                 todos={stageData.todos}
                                 defaultExpanded={stage === 'working-step-1'}
                                 lang={lang}
@@ -641,7 +640,7 @@ export function ClaudeDesktopAlignmentDemo() {
 
                             <div className="rounded-b-xl border border-[var(--app-border)] bg-[var(--app-subtle-bg)]/35 px-3.5 py-2.5">
                                 <div className="flex items-center justify-between text-[13px] text-[var(--app-hint)]">
-                                    <span>Reply to Claude... (Enter to send, Shift+Enter for newline)</span>
+                                    <span>Write a message... (Enter to send, Shift+Enter for newline)</span>
                                     <span className="rounded border border-[var(--app-border)] px-1.5 py-0.5 text-[11px] font-mono">
                                         Ctrl+O: {viewMode}
                                     </span>
@@ -693,7 +692,7 @@ export function ClaudeDesktopAlignmentDemo() {
                         onClick={() => setShowSpecTable((v) => !v)}
                         className="flex w-full items-center justify-between bg-[var(--app-subtle-bg)]/40 px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-[var(--app-fg)] hover:bg-[var(--app-subtle-bg)]/70"
                     >
-                        <span>Claude Desktop vs. HAPI Frontend Alignment Matrix (Code & Recording Evidence)</span>
+                        <span>Timeline vs. Classic TurnBlock Architecture Matrix</span>
                         <span className="text-[11px] font-normal text-[var(--app-hint)]">
                             {showSpecTable ? 'Hide Matrix ▲' : 'Show Matrix ▼'}
                         </span>
@@ -705,46 +704,46 @@ export function ClaudeDesktopAlignmentDemo() {
                                 <thead>
                                     <tr className="border-b border-[var(--app-border)] bg-[var(--app-subtle-bg)]/25 text-[11px] uppercase text-[var(--app-hint)]">
                                         <th className="px-4 py-2.5">Surface / Layer</th>
-                                        <th className="px-4 py-2.5">Claude Desktop (Recordings + ion-dist.asar)</th>
-                                        <th className="px-4 py-2.5">Current HAPI (<code className="font-mono">TurnBlock.tsx</code>)</th>
-                                        <th className="px-4 py-2.5">Alignment Implementation</th>
+                                        <th className="px-4 py-2.5">Target Timeline Behavior</th>
+                                        <th className="px-4 py-2.5">Current Classic (<code className="font-mono">TurnBlock.tsx</code>)</th>
+                                        <th className="px-4 py-2.5">Implementation Symbol</th>
                                     </tr>
                                 </thead>
                                 <tbody className="divide-y divide-[var(--app-border)]/60">
                                     <tr>
                                         <td className="px-4 py-2.5 font-medium">Level 0: Working Header</td>
                                         <td className="px-4 py-2.5 text-[var(--app-hint)]">
-                                            Borderless row showing active Todo (<code className="font-mono">Inspecting local Claude Desktop... &gt;</code>) with text shimmer; clickable while running
+                                            Borderless row showing active Todo (<code className="font-mono">Inspecting local workspace... &gt;</code>) with text shimmer; clickable while running
                                         </td>
                                         <td className="px-4 py-2.5 text-[var(--app-hint)]">
                                             Bordered box header with static first/last tool intent (<code className="font-mono">turnBlockModel.ts:380</code>)
                                         </td>
                                         <td className="px-4 py-2.5 font-mono text-[11.5px]">
-                                            summarizeTurnForClaudeDesktop().workingHeader + .claude-text-shimmer
+                                            summarizeTurnActivity().workingHeader + .turn-text-shimmer
                                         </td>
                                     </tr>
                                     <tr>
                                         <td className="px-4 py-2.5 font-medium">Level 0: Completion & Auto-Collapse</td>
                                         <td className="px-4 py-2.5 text-[var(--app-hint)]">
-                                            Auto-collapses at <code className="font-mono">f5650 → f5750</code> and switches header to <code className="font-mono">Ran 3 commands, viewed a file, and fetched a page</code>
+                                            Auto-collapses on completion and switches header to <code className="font-mono">Ran 3 commands, viewed a file, and fetched a page</code>
                                         </td>
                                         <td className="px-4 py-2.5 text-[var(--app-hint)]">
                                             Keeps single tool intent string even after completion
                                         </td>
                                         <td className="px-4 py-2.5 font-mono text-[11.5px]">
-                                            formatClaudeAggregatedSummary(counts) + streaming transition useEffect
+                                            formatTurnAggregatedSummary(counts) + streaming transition useEffect
                                         </td>
                                     </tr>
                                     <tr>
                                         <td className="px-4 py-2.5 font-medium">Level 1: Step Timeline Rail</td>
                                         <td className="px-4 py-2.5 text-[var(--app-hint)]">
-                                            Indented <code className="font-mono">border-l</code> vertical rail; collapsible <code className="font-mono">Thought &gt;</code>; right-aligned domain/count badges (<code className="font-mono">code.claude.com</code>, <code className="font-mono">10 results</code>)
+                                            Indented <code className="font-mono">border-l</code> vertical rail; collapsible <code className="font-mono">Thought &gt;</code>; right-aligned domain/count badges (<code className="font-mono">docs.example.com</code>, <code className="font-mono">10 results</code>)
                                         </td>
                                         <td className="px-4 py-2.5 text-[var(--app-hint)]">
                                             Full-width <code className="font-mono">divide-y</code> rows; raw uncollapsed reasoning paragraphs; past-tense verbs only
                                         </td>
                                         <td className="px-4 py-2.5 font-mono text-[11.5px]">
-                                            ClaudeThoughtRow + ClaudeToolStepRow + describeClaudeToolStep()
+                                            TimelineThoughtRow + TimelineToolStepRow + describeTurnToolStep()
                                         </td>
                                     </tr>
                                     <tr>
@@ -756,11 +755,11 @@ export function ClaudeDesktopAlignmentDemo() {
                                             Embeds modal <code className="font-mono">ToolDetailDialogContent</code> with heavy <code className="font-mono">INPUT</code>/<code className="font-mono">OUTPUT</code> trace headers
                                         </td>
                                         <td className="px-4 py-2.5 font-mono text-[11.5px]">
-                                            ClaudeLevel2PreviewCard (bash | web-fetch | web-search | file-diff | file-read)
+                                            StepInlinePreviewCard (bash | web-fetch | web-search | file-diff | file-read)
                                         </td>
                                     </tr>
                                     <tr>
-                                        <td className="px-4 py-2.5 font-medium">Docked Todo & AskUserQuestion</td>
+                                        <td className="px-4 py-2.5 font-medium">Docked Todo & Question Wizard</td>
                                         <td className="px-4 py-2.5 text-[var(--app-hint)]">
                                             Docked above composer: <code className="font-mono">1 of 4 Active task ^</code> → <code className="font-mono">4 of 4 Done</code>; <code className="font-mono">&lt; 1 of 3 &gt;</code> question wizard + Q&A user bubble
                                         </td>
@@ -768,7 +767,7 @@ export function ClaudeDesktopAlignmentDemo() {
                                             <code className="font-mono">TodoPanel.tsx</code> disconnected from TurnBlock header; <code className="font-mono">AskUserQuestionFooter</code> inline in scrollback
                                         </td>
                                         <td className="px-4 py-2.5 font-mono text-[11.5px]">
-                                            ClaudeDockedTodoBar + ClaudeAskUserQuestionWizard + ClaudeSubmittedQaBubble
+                                            DockedTodoProgressBar + DockedQuestionWizard + SubmittedQuestionSummaryBubble
                                         </td>
                                     </tr>
                                 </tbody>

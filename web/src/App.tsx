@@ -416,7 +416,7 @@ function AppInner() {
     })
 
     // Loading auth source
-    if (pathname === '/demo/claude-desktop') {
+    if (pathname === '/demo/turn-timeline') {
         return (
             <div className="h-full min-h-0 flex flex-col overflow-y-auto">
                 <Outlet />

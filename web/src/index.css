@@ -896,8 +896,8 @@ html[data-theme="oled"] .shiki span:not([data-line-number]) {
     color: var(--app-hint);
 }
 
-/* Claude Desktop Code tab alignment utilities */
-@keyframes claude-shimmer-sweep {
+/* Turn timeline & activity utilities */
+@keyframes turn-shimmer-sweep {
     0% {
         background-position: 200% 0;
     }
@@ -906,7 +906,7 @@ html[data-theme="oled"] .shiki span:not([data-line-number]) {
     }
 }
 
-@keyframes claude-timeline-enter {
+@keyframes turn-timeline-enter {
     0% {
         opacity: 0.85;
         transform: translateY(2px);
@@ -917,7 +917,7 @@ html[data-theme="oled"] .shiki span:not([data-line-number]) {
     }
 }
 
-@keyframes claude-sparkle-breathe {
+@keyframes turn-sparkle-breathe {
     0%, 100% {
         transform: scale(1) rotate(0deg);
         opacity: 0.92;
@@ -928,7 +928,7 @@ html[data-theme="oled"] .shiki span:not([data-line-number]) {
     }
 }
 
-.claude-text-shimmer {
+.turn-text-shimmer {
     background: linear-gradient(
         90deg,
         var(--app-hint) 0%,
@@ -939,15 +939,15 @@ html[data-theme="oled"] .shiki span:not([data-line-number]) {
     -webkit-background-clip: text;
     background-clip: text;
     color: transparent;
-    animation: claude-shimmer-sweep 2.2s linear infinite;
+    animation: turn-shimmer-sweep 2.2s linear infinite;
 }
 
-.claude-timeline-status-enter {
-    animation: claude-timeline-enter 220ms cubic-bezier(0.22, 1, 0.36, 1);
+.turn-timeline-status-enter {
+    animation: turn-timeline-enter 220ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 
-.claude-sparkle-icon {
+.turn-sparkle-icon {
     color: #da7756;
-    animation: claude-sparkle-breathe 2.4s ease-in-out infinite;
+    animation: turn-sparkle-breathe 2.4s ease-in-out infinite;
 }
 
