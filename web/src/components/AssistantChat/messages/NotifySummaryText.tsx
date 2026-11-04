@@ -126,6 +126,8 @@ export const NotifySummaryText: TextMessagePartComponent = ({ text, status }) =>
 
     previousTextRef.current = text
 
+    if (!text.trim()) return null
+
     if (!showInChat) {
         const stripped = stripNotifySummaryFooter(text)
         if (!stripped) return null

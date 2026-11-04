@@ -1,4 +1,4 @@
-import { foldCompactionEvents } from '@/chat/reducerEvents'
+import { foldCompactionEvents, isSkippedOmpCompactionEvent } from '@/chat/reducerEvents'
 import type { AgentEvent } from '@/chat/types'
 import type { VisibleChatBlock } from '@/chat/toolGroups'
 export function isEventVisibleForFlavor(
@@ -7,7 +7,7 @@ export function isEventVisibleForFlavor(
 ): boolean {
     if (flavor !== 'omp') return true
     if (event.type === 'limit-warning' || event.type === 'limit-reached') return false
-    if (event.type === 'omp-compaction' && 'outcome' in event && event.outcome === 'skipped') {
+    if (isSkippedOmpCompactionEvent(event)) {
         return false
     }
     // Older CLIs duplicated each host tool as a session event; the tool row already shows it.

@@ -1,3 +1,4 @@
+import { isInlineCompactionEvent } from '@/chat/reducerEvents'
 import type { ChatBlock, RoundSummary, ToolCallBlock } from '@/chat/types'
 import { getCodexCommandActions, isCodexExplorationTool } from '@/chat/codexCommandPresentation'
 import { isSubagentToolName } from '@/chat/subagentTool'
@@ -50,7 +51,9 @@ export type VisibleChatBlockRole = 'user' | 'assistant' | 'system'
  */
 export function visibleBlockRole(block: VisibleChatBlock): VisibleChatBlockRole {
     if (block.kind === 'user-text') return 'user'
-    if (block.kind === 'agent-event') return 'system'
+    if (block.kind === 'agent-event') {
+        return isInlineCompactionEvent(block.event) ? 'assistant' : 'system'
+    }
     if (block.kind === 'cli-output') return block.source === 'user' ? 'user' : 'assistant'
     return 'assistant'
 }

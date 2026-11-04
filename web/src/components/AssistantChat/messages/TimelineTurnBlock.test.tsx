@@ -608,4 +608,103 @@ describe('TimelineTurnBlock & summarizeTurnActivity', () => {
             vi.useRealTimers()
         }
     })
+
+    it('renders the timeline working indicator and rail spinner immediately for an empty streaming turn instead of returning null', () => {
+        const emptyPartition = partitionTurn([], null)
+        expect(emptyPartition.hasActivity).toBe(false)
+
+        render(
+            <I18nProvider>
+                <TimelineTurnBlockView
+                    partition={emptyPartition}
+                    streaming={true}
+                    durationMs={500}
+                    initiallyOpen={true}
+                />
+            </I18nProvider>
+        )
+
+        expect(screen.getByTestId('turn-level0-header')).toHaveTextContent('Thinking...')
+        expect(screen.getByTestId('rail-frontier-row')).toHaveTextContent('Thinking...')
+        expect(screen.getByTestId('rail-step-spinner')).toHaveAttribute('data-active-row-index', '0')
+    })
+
+    it('renders ContextCompaction as a Level 1 timeline step, morphs to checkmark on completion, and expands Level 2 summary', () => {
+        vi.useFakeTimers()
+        try {
+            const startedCompaction = partitionTurn(
+                [
+                    call(tool('b1', 'Bash', { state: 'completed', input: { command: 'ls', description: 'Listing files' } })),
+                    call(tool('c1', 'ContextCompaction', {
+                        state: 'running',
+                        input: {
+                            type: 'omp-compaction',
+                            phase: 'started',
+                            action: 'context-full',
+                            reason: 'threshold',
+                        },
+                    })),
+                ],
+                null
+            )
+
+            const { rerender } = render(
+                <I18nProvider>
+                    <TimelineTurnBlockView
+                        partition={startedCompaction}
+                        streaming={true}
+                        durationMs={1500}
+                        initiallyOpen={true}
+                    />
+                </I18nProvider>
+            )
+
+            expect(screen.getByTestId('turn-level0-header')).toHaveTextContent('Compacting conversation...')
+            expect(screen.getByText('Compacting conversation')).toBeInTheDocument()
+            expect(screen.getAllByText('context-full · threshold').length).toBeGreaterThan(0)
+            expect(screen.getByTestId('rail-step-spinner')).toHaveAttribute('data-active-row-index', '1')
+
+            // Compaction finishes in place (same id 'c1') while the turn is still streaming (waiting for next LLM output)
+            const finishedCompaction = partitionTurn(
+                [
+                    call(tool('b1', 'Bash', { state: 'completed', input: { command: 'ls', description: 'Listing files' } })),
+                    call(tool('c1', 'ContextCompaction', {
+                        state: 'completed',
+                        input: {
+                            type: 'omp-compaction',
+                            phase: 'finished',
+                            action: 'context-full',
+                            outcome: 'completed',
+                            result: {
+                                tokensBefore: 156000,
+                                shortSummary: 'Summarized earlier session context and tool results.',
+                            },
+                        },
+                    })),
+                ],
+                null
+            )
+
+            rerender(
+                <I18nProvider>
+                    <TimelineTurnBlockView
+                        partition={finishedCompaction}
+                        streaming={true}
+                        durationMs={2500}
+                        initiallyOpen={true}
+                    />
+                </I18nProvider>
+            )
+
+            expect(screen.getByText('Compacted conversation')).toBeInTheDocument()
+            expect(screen.getByText('156k tokens')).toBeInTheDocument()
+            expect(screen.getByTestId('rail-step-checkmark')).toBeInTheDocument()
+            expect(screen.getByTestId('rail-frontier-row')).toHaveTextContent('Thinking...')
+            expect(screen.getByTestId('rail-step-spinner')).toHaveAttribute('data-active-row-index', '2')
+            fireEvent.click(screen.getByText('Compacted conversation'))
+            expect(screen.getByTestId('turn-level2-compaction')).toHaveTextContent('Summarized earlier session context and tool results.')
+        } finally {
+            vi.useRealTimers()
+        }
+    })
 })

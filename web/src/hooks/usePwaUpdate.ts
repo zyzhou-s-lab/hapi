@@ -75,12 +75,19 @@ export function setupRegistrationUpdateChecks(
             void registration.update()
         }
     }
+    const handleWindowFocus = () => {
+        void registration.update()
+    }
 
     document.addEventListener('visibilitychange', handleVisibilityChange)
+    window.addEventListener('focus', handleWindowFocus)
+    window.addEventListener('online', handleWindowFocus)
 
     return () => {
         window.clearInterval(intervalId)
         document.removeEventListener('visibilitychange', handleVisibilityChange)
+        window.removeEventListener('focus', handleWindowFocus)
+        window.removeEventListener('online', handleWindowFocus)
     }
 }
 

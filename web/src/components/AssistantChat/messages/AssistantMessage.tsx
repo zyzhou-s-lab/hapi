@@ -47,7 +47,14 @@ export function HappyAssistantMessage() {
         const parts = s.message.content
         return parts.length > 0 && parts.every((part) => part.type === 'tool-call')
     })
-    const turnActivity = useAuiState((s) => s.message.role === 'assistant' && messageHasTurnActivity(s.message.content))
+    const turnActivity = useAuiState((s) => {
+        if (s.message.role !== 'assistant') return false
+        if (messageHasTurnActivity(s.message.content)) return true
+        if (s.message.status?.type !== 'running') return false
+        return !s.message.content.some(
+            (part) => part.type === 'text' && typeof part.text === 'string' && part.text.trim().length > 0
+        )
+    })
     const copyText = useAuiState((s) => {
         if (s.message.role !== 'assistant') return ''
         return getAssistantCopyText(s.message.content, {
