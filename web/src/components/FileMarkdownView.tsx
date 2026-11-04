@@ -98,7 +98,7 @@ const components: Components = {
     blockquote: ({ className, ...rest }) => (
         <blockquote
             {...rest}
-            className={cn('aui-md-blockquote my-3 rounded-r-2xl border-l-[3px] border-[var(--app-md-quote-border)] bg-[var(--app-md-quote-bg)] px-4 py-3 text-[var(--app-md-quote-fg)]', className)}
+            className={cn('aui-md-blockquote my-2 border-l-2 border-[var(--app-md-quote-border)] bg-transparent pl-3.5 py-0.5 text-[var(--app-md-quote-fg)]', className)}
         />
     ),
     ul: ({ className, ...rest }) => <ul {...rest} className={cn('aui-md-ul my-2.5 list-disc pl-6 marker:text-[var(--app-hint)] [&>li]:mt-1.5', className)} />,

@@ -748,7 +748,7 @@ function Blockquote(props: ComponentPropsWithoutRef<'blockquote'>) {
         <blockquote
             {...props}
             className={cn(
-                'aui-md-blockquote my-3 rounded-r-2xl border-l-[3px] border-[var(--app-md-quote-border)] bg-[var(--app-md-quote-bg)] px-4 py-3 text-[var(--app-md-quote-fg)]',
+                'aui-md-blockquote my-2 border-l-2 border-[var(--app-md-quote-border)] bg-transparent pl-3.5 py-0.5 text-[var(--app-md-quote-fg)]',
                 props.className
             )}
         />

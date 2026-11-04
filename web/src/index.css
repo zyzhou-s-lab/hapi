@@ -34,7 +34,7 @@
     --app-inline-code-border: transparent;
     --app-inline-code-fg: #2d333b;
     --app-md-quote-bg: #f1f3f5;
-    --app-md-quote-border: #c9d0d8;
+    --app-md-quote-border: #800020;
     --app-md-quote-fg: #525965;
     --app-md-table-bg: #f5f6f7;
     --app-md-table-head-bg: #eceff2;
@@ -147,7 +147,7 @@
     --app-inline-code-border: transparent;
     --app-inline-code-fg: #f5f7fa;
     --app-md-quote-bg: #31363d;
-    --app-md-quote-border: #6b7481;
+    --app-md-quote-border: #800020;
     --app-md-quote-fg: #d7dde6;
     --app-md-table-bg: #2a2f35;
     --app-md-table-head-bg: #353b43;
@@ -231,7 +231,7 @@
     --app-inline-code-border: transparent;
     --app-inline-code-fg: #f5f7fa;
     --app-md-quote-bg: #131316;
-    --app-md-quote-border: #3a3a40;
+    --app-md-quote-border: #800020;
     --app-md-quote-fg: #d7dde6;
     --app-md-table-bg: #0e0e10;
     --app-md-table-head-bg: #161618;
