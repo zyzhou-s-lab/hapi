@@ -428,4 +428,83 @@ describe('TimelineTurnBlock & summarizeTurnActivity', () => {
             vi.useRealTimers()
         }
     })
+
+    it('renders rail spinners simultaneously on all concurrently running subagents and keeps remaining subagents spinning when one finishes', () => {
+        vi.useFakeTimers()
+        try {
+            const concurrentRunning = partitionTurn(
+                [
+                    call(tool('parent-task', 'task', {
+                        state: 'running',
+                        input: { i: 'Dispatching two subagents to inspect code' },
+                    })),
+                    call(tool('sub-1', 'Task', {
+                        state: 'running',
+                        input: { description: 'Inspect compaction event handling', subagent_type: 'Explore' },
+                    })),
+                    call(tool('sub-2', 'Task', {
+                        state: 'running',
+                        input: { description: 'Inspect concurrent subagent spinner logic', subagent_type: 'Explore' },
+                    })),
+                ],
+                null
+            )
+
+            const { rerender } = render(
+                <I18nProvider>
+                    <TimelineTurnBlockView
+                        partition={concurrentRunning}
+                        streaming={true}
+                        durationMs={1200}
+                        initiallyOpen={true}
+                    />
+                </I18nProvider>
+            )
+
+            const spinners = screen.getAllByTestId('rail-step-spinner')
+            expect(spinners).toHaveLength(3)
+            expect(spinners.map((el) => el.getAttribute('data-active-row-index'))).toEqual(['0', '1', '2'])
+            expect(screen.queryByText('Queued')).toBeNull()
+
+            // First row completes while sub-1 and sub-2 continue running concurrently
+            const firstCompleted = partitionTurn(
+                [
+                    call(tool('parent-task', 'task', {
+                        state: 'completed',
+                        input: { i: 'Dispatching two subagents to inspect code' },
+                    })),
+                    call(tool('sub-1', 'Task', {
+                        state: 'running',
+                        input: { description: 'Inspect compaction event handling', subagent_type: 'Explore' },
+                    })),
+                    call(tool('sub-2', 'Task', {
+                        state: 'running',
+                        input: { description: 'Inspect concurrent subagent spinner logic', subagent_type: 'Explore' },
+                    })),
+                ],
+                null
+            )
+
+            rerender(
+                <I18nProvider>
+                    <TimelineTurnBlockView
+                        partition={firstCompleted}
+                        streaming={true}
+                        durationMs={2000}
+                        initiallyOpen={true}
+                    />
+                </I18nProvider>
+            )
+
+            // Row 0 plays completion morph while Rows 1 and 2 continue spinning immediately without Queued hold
+            expect(screen.getByTestId('rail-step-checkmark')).toBeInTheDocument()
+            const remainingSpinners = screen.getAllByTestId('rail-step-spinner')
+            expect(remainingSpinners).toHaveLength(2)
+            expect(remainingSpinners.map((el) => el.getAttribute('data-active-row-index'))).toEqual(['1', '2'])
+            expect(remainingSpinners[0]).toHaveAttribute('data-handoff-phase', 'sliding')
+            expect(screen.queryByText('Queued')).toBeNull()
+        } finally {
+            vi.useRealTimers()
+        }
+    })
 })

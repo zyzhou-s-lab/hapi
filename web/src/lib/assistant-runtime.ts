@@ -9,6 +9,7 @@ import {
     type ComposerSendIntent,
 } from '@/lib/messageDelivery'
 import { safeStringify } from '@hapi/protocol'
+import { isLegacyCompactionEndEvent, isLegacyCompactionStartEvent } from '@/chat/reducerEvents'
 import { renderEventLabel } from '@/chat/presentation'
 import { filterVisibleBlocksForFlavor } from '@/fork-features/omp-product/eventVisibility'
 import type { ChatBlock, CliOutputBlock, CodexReview, RoundSummary, UsageData } from '@/chat/types'
@@ -144,8 +145,13 @@ export function getResponseGroupTimestamps(
     return timestamps
 }
 
-function isTitleChangedBlock(block: VisibleChatBlock): boolean {
-    return block.kind === 'agent-event' && block.event.type === 'title-changed'
+function isMidTurnHoistableEventBlock(block: VisibleChatBlock): boolean {
+    if (block.kind !== 'agent-event') return false
+    const event = block.event
+    return event.type === 'title-changed'
+        || event.type === 'omp-compaction'
+        || isLegacyCompactionStartEvent(event)
+        || isLegacyCompactionEndEvent(event)
 }
 
 /**
@@ -155,7 +161,7 @@ function isTitleChangedBlock(block: VisibleChatBlock): boolean {
  * line sits between the prompt and the turn it belongs to.
  */
 export function hoistMidTurnTitleEvents(blocks: readonly VisibleChatBlock[]): readonly VisibleChatBlock[] {
-    if (!blocks.some(isTitleChangedBlock)) return blocks
+    if (!blocks.some(isMidTurnHoistableEventBlock)) return blocks
     const result: VisibleChatBlock[] = []
     let runStart = -1
     for (const block of blocks) {
@@ -164,7 +170,7 @@ export function hoistMidTurnTitleEvents(blocks: readonly VisibleChatBlock[]): re
             result.push(block)
             continue
         }
-        if (runStart >= 0 && isTitleChangedBlock(block)) {
+        if (runStart >= 0 && isMidTurnHoistableEventBlock(block)) {
             result.splice(runStart, 0, block)
             runStart += 1
             continue

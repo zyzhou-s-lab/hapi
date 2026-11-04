@@ -316,13 +316,30 @@ export function TurnBlock() {
     const { locale } = useTranslation()
     const { reasoningCollapsed } = useReasoningCollapse()
     const content = useAuiState((state) => state.message.role === 'assistant' ? state.message.content : [])
-    const streaming = useAuiState((state) => state.message.status?.type === 'running')
+    const auiRunning = useAuiState((state) => state.message.status?.type === 'running')
+    const isLastMessage = useAuiState((state) => state.message.isLast)
     const createdAt = useAuiState((state) => state.message.createdAt.getTime())
     const custom = useAuiState((state) => state.message.metadata.custom as Partial<HappyChatMessageMetadata> | undefined)
     const partition = useMemo(
         () => partitionTurn(contentParts(content), ctx?.metadata ?? null),
         [content, ctx?.metadata]
     )
+    const hasRunningTool = useMemo(
+        () => partition.rows.some(
+            (row) => row.kind === 'tool'
+                && (row.block.tool.state === 'running' || (row.block.tool.state === 'pending' && Boolean(row.permission)))
+        ),
+        [partition.rows]
+    )
+    const isActiveSessionTailTurn = Boolean(
+        isLastMessage
+        && ctx?.sessionThinking
+        && (
+            ctx.activeTurnStartedAt == null
+            || Math.max(createdAt, custom?.invokedAt ?? 0) >= ctx.activeTurnStartedAt
+        )
+    )
+    const streaming = auiRunning || hasRunningTool || isActiveSessionTailTurn
     const [now, setNow] = useState(() => Date.now())
 
     const activeTodoText = streaming

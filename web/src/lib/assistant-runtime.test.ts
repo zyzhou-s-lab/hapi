@@ -260,6 +260,36 @@ describe('hoistMidTurnTitleEvents', () => {
         ]
         expect(hoistMidTurnTitleEvents(withTitleBetween).map((block) => block.id)).toEqual(['a1', 'e', 'title', 'a2'])
     })
+
+    it('hoists mid-turn compaction events before the active assistant run so the turn stays one streaming card', () => {
+        const compacting = agentEvent('c-start', {
+            type: 'omp-compaction',
+            phase: 'started',
+            strategy: 'context-full',
+            reason: 'threshold'
+        })
+        const legacyCompacted = agentEvent('c-legacy', {
+            type: 'message',
+            message: 'Conversation compacted'
+        })
+        const blocks: VisibleChatBlock[] = [
+            userText('u1'),
+            agentText('a1'),
+            toolCall('t1'),
+            compacting,
+            legacyCompacted,
+            agentText('a2')
+        ]
+
+        expect(hoistMidTurnTitleEvents(blocks).map((block) => block.id)).toEqual([
+            'u1',
+            'c-start',
+            'c-legacy',
+            'a1',
+            't1',
+            'a2'
+        ])
+    })
 })
 
 describe('assignThreadMessageIds', () => {

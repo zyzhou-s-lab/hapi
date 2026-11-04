@@ -12,6 +12,8 @@ export type HappyChatContextValue = {
     sessionId: string
     metadata: SessionMetadataSummary | null
     todos?: TodoItem[]
+    sessionThinking?: boolean
+    activeTurnStartedAt?: number | null
     terminalToolDisplayMode: TerminalToolDisplayMode
     /** Hub-wide AGENT_NOTIFY_SUMMARY chat display; polled once at chat shell. */
     showSessionSummaryInChat: boolean

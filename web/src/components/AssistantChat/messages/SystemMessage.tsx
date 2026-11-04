@@ -1,11 +1,20 @@
 import { MessagePrimitive, useAuiState } from '@assistant-ui/react'
+import { isLegacyCompactionStartEvent } from '@/chat/reducerEvents'
 import { getEventPresentation } from '@/chat/presentation'
 import type { AgentEvent } from '@/chat/types'
 import type { HappyChatMessageMetadata } from '@/lib/assistant-runtime'
 import { getConversationMessageAnchorId } from '@/chat/outline'
+import { useOptionalHappyChatContext } from '@/components/AssistantChat/context'
 import { MessageTimestamp } from '@/components/AssistantChat/messages/MessageTimestamp'
 import { MarkdownRenderer } from '@/components/MarkdownRenderer'
+import { cn } from '@/lib/utils'
 
+function isActiveSystemEvent(event: AgentEvent | undefined): boolean {
+    if (!event) return false
+    if (event.type === 'omp-compaction' && 'phase' in event && event.phase === 'started') return true
+    if (event.type === 'omp-retry' && 'phase' in event && event.phase === 'started') return true
+    return isLegacyCompactionStartEvent(event)
+}
 function formatTokenDelta(event: AgentEvent | undefined): string | null {
     if (!event || event.type !== 'compact-summary') return null
     const parts: string[] = []
@@ -16,18 +25,21 @@ function formatTokenDelta(event: AgentEvent | undefined): string | null {
 }
 
 export function HappySystemMessage() {
+    const ctx = useOptionalHappyChatContext()
     const role = useAuiState((s) => s.message.role)
     const messageId = useAuiState((s) => s.message.id)
     const text = useAuiState((s) => {
         if (s.message.role !== 'system') return ''
         return s.message.content[0]?.type === 'text' ? s.message.content[0].text : ''
     })
-    const icon = useAuiState((s) => {
-        if (s.message.role !== 'system') return null
+    const event = useAuiState((s) => {
+        if (s.message.role !== 'system') return undefined
         const custom = s.message.metadata.custom as Partial<HappyChatMessageMetadata> | undefined
-        const event = custom?.kind === 'event' ? custom.event : undefined
-        return event ? getEventPresentation(event).icon : null
+        return custom?.kind === 'event' ? custom.event : undefined
     })
+    const icon = event ? getEventPresentation(event).icon : null
+    const isSessionRunning = ctx?.sessionThinking !== undefined ? Boolean(ctx.sessionThinking) : true
+    const showActiveSpinner = isActiveSystemEvent(event) && isSessionRunning
     const compactSummary = useAuiState((s) => {
         if (s.message.role !== 'system') return undefined
         const custom = s.message.metadata.custom as Partial<HappyChatMessageMetadata> | undefined
@@ -63,9 +75,29 @@ export function HappySystemMessage() {
     return (
         <MessagePrimitive.Root id={getConversationMessageAnchorId(messageId)} className="scroll-mt-4 py-1">
             <div className="mx-auto w-fit max-w-[92%] px-2 text-center text-xs text-[var(--app-hint)] opacity-80">
-                <span className="inline-flex items-center gap-1">
-                    {icon ? <span aria-hidden="true">{icon}</span> : null}
-                    <span>{text}</span>
+                <span className="inline-flex items-center gap-1.5">
+                    {showActiveSpinner ? (
+                        <svg
+                            viewBox="0 0 16 16"
+                            className="turn-step-spinner-svg h-3.5 w-3.5 shrink-0 text-[#da7756]"
+                            data-testid="system-event-spinner"
+                            aria-hidden="true"
+                        >
+                            <circle
+                                cx="8"
+                                cy="8"
+                                r="5.75"
+                                fill="none"
+                                stroke="currentColor"
+                                strokeWidth="1.8"
+                                strokeDasharray="16 38"
+                                strokeLinecap="round"
+                            />
+                        </svg>
+                    ) : icon ? (
+                        <span aria-hidden="true">{icon}</span>
+                    ) : null}
+                    <span className={cn(showActiveSpinner && 'turn-text-shimmer font-medium')}>{text}</span>
                     <MessageTimestamp className="text-[10px]" />
                 </span>
             </div>
