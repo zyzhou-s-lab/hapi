@@ -1118,6 +1118,59 @@ describe('history view and older pagination', () => {
         expect(kept.at(-1)).toBe('L56')
     })
 
+    it('keeps visible tail turns when an older page prepends 20 human turns', async () => {
+        const id = sessionId('twenty-older-turns-preserve-tail')
+        const olderTurns = Array.from({ length: 20 }, (_, index) => [
+            makeUserMessage({
+                id: `old-user-${index}`,
+                seq: index * 2 + 1,
+                invokedAt: index * 2 + 1,
+                createdAt: index * 2 + 1,
+            }),
+            makeAgentMessage({
+                id: `old-agent-${index}`,
+                seq: index * 2 + 2,
+                at: index * 2 + 2,
+            }),
+        ]).flat()
+        const tailTurns = [
+            makeUserMessage({ id: 'tail-user-1', seq: 100, invokedAt: 100, createdAt: 100 }),
+            makeAgentMessage({ id: 'tail-agent-1', seq: 101, at: 101 }),
+            makeUserMessage({ id: 'tail-user-2', seq: 102, invokedAt: 102, createdAt: 102 }),
+            makeAgentMessage({ id: 'tail-agent-2', seq: 103, at: 103 }),
+        ]
+        const getMessages = vi.fn()
+            .mockResolvedValueOnce(latestResponse(tailTurns, {
+                epoch: 1,
+                hasMore: true,
+                nextBeforeAt: 100,
+                nextBeforeSeq: 100,
+            }))
+            .mockResolvedValueOnce(beforeResponse(olderTurns, {
+                epoch: 1,
+                hasMore: false,
+                nextBeforeAt: 1,
+                nextBeforeSeq: 1,
+            }))
+        const api = createApi(getMessages)
+        await syncTailMessages(api, id)
+        setMessageViewMode(id, 'history')
+
+        const loaded = await fetchOlderMessages(api, id)
+        expect(loaded).toMatchObject({ kind: 'applied', hasMore: false })
+
+        const keptIds = getMessageWindowState(id).messages.map((message) => message.id)
+        expect(keptIds[0]).toBe('old-user-0')
+        expect(keptIds).toContain('tail-user-1')
+        expect(keptIds).toContain('tail-user-2')
+        expect(keptIds.at(-1)).toBe('tail-agent-2')
+
+        // Returning to tail mode after expanding history must not truncate the loaded turns
+        // or trigger a full latest reset when the tail is still present.
+        setMessageViewMode(id, 'tail')
+        expect(getMessageWindowState(id).messages.map((message) => message.id)).toEqual(keptIds)
+    })
+
     it('keeps the end of a 5000-row turn across older pages', async () => {
         const id = sessionId('five-thousand-turn')
         const rows = [

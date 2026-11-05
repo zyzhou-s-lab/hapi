@@ -10,6 +10,8 @@ const SYSTEM_INJECTION_PREFIXES = [
     '<command-name>',
     '<local-command-caveat>',
     '<system-reminder>',
+    '<system-notice>',
+    '<post-compact-ctx>',
 ]
 
 export const TURN_PAGE_SIZE = 20

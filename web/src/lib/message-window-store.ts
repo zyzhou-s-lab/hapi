@@ -643,6 +643,7 @@ function mergeIntoWindow(
         mode?: 'append' | 'prepend'
         regularLimit?: number
         agentRunLimit?: number
+        turnLimit?: number
         reserveQueuedBudget?: boolean
         advanceTailRevision?: boolean
     } = {}
@@ -664,12 +665,16 @@ function mergeIntoWindow(
     const historyLimit = Math.max(previous.messages.length, historyFloor)
     const regularLimit = options.regularLimit
         ?? (retainHistory ? historyLimit : VISIBLE_WINDOW_SIZE)
+    const turnLimit = options.turnLimit
+        ?? (retainHistory || mode === 'prepend'
+            ? Math.max(HISTORY_TURN_LIMIT, previous.messages.length)
+            : TURN_PAGE_SIZE)
     const { kept, dropped } = trimConversation(
         merged,
         regularLimit,
         mode,
         previous.finalizedStreamIds,
-        retainHistory ? HISTORY_TURN_LIMIT : TURN_PAGE_SIZE,
+        turnLimit,
         {
             agentRunLimit: options.agentRunLimit ?? (retainHistory ? historyLimit : undefined),
             reserveQueuedBudget: options.reserveQueuedBudget ?? !retainHistory,
@@ -994,6 +999,10 @@ function enterTailMode(previous: InternalState): InternalState {
         hasMore: previous.hasMore || dropped.length > 0,
         viewMode: 'tail',
         hasExpandedHistory: false,
+        isLoadingMore: false,
+        olderGeneration: previous.isLoadingMore
+            ? previous.olderGeneration + 1
+            : previous.olderGeneration,
         epoch: forceLatest ? null : previous.epoch,
         oldestPositionAt: oldest?.at ?? null,
         oldestPositionSeq: oldest?.seq ?? null,
@@ -1170,6 +1179,7 @@ export async function fetchOlderMessages(
                 mode: 'prepend',
                 regularLimit: rowLimit,
                 agentRunLimit: rowLimit,
+                turnLimit: Math.max(HISTORY_TURN_LIMIT, rowLimit),
                 reserveQueuedBudget: false
             })
             const hubOlder = pagePosition(response.page.nextBeforeAt, response.page.nextBeforeSeq)
@@ -1251,6 +1261,15 @@ export function setMessageViewMode(sessionId: string, mode: MessageViewMode): vo
         }
         if (mode === 'history') {
             return buildState(previous, { viewMode: 'history' })
+        }
+        if (previous.hasExpandedHistory && !previous.requiresLatestReset) {
+            return buildState(previous, {
+                viewMode: 'tail',
+                isLoadingMore: false,
+                olderGeneration: previous.isLoadingMore
+                    ? previous.olderGeneration + 1
+                    : previous.olderGeneration
+            })
         }
         return enterTailMode(previous)
     }, true)

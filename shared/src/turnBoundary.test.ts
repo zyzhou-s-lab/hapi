@@ -34,6 +34,14 @@ describe('isHumanTurnStart', () => {
         })).toBe(false)
         expect(isHumanTurnStart({
             invokedAt: 1,
+            content: { role: 'user', content: '<system-notice>\nUser interjection' }
+        })).toBe(false)
+        expect(isHumanTurnStart({
+            invokedAt: 1,
+            content: { role: 'user', content: '<post-compact-ctx>\nAuto-attached after compaction' }
+        })).toBe(false)
+        expect(isHumanTurnStart({
+            invokedAt: 1,
             content: { role: 'user', content: { type: 'text', text: 'child' }, isSidechain: true }
         })).toBe(false)
     })
