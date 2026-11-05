@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useRef, useState, type CSSProperties, type MouseEvent, type PointerEvent, type ReactNode, type SyntheticEvent, type WheelEvent } from 'react'
+import { useCallback, useEffect, useRef, useState, type CSSProperties, type MouseEvent, type PointerEvent, type ReactNode, type SyntheticEvent } from 'react'
+import { createPortal } from 'react-dom'
 import { CloseIcon } from '@/components/icons'
 
 const MIN_IMAGE_SCALE = 0.25
@@ -49,11 +50,11 @@ export function ImagePreview(props: {
     const [offset, setOffset] = useState({ x: 0, y: 0 })
     const scaleRef = useRef(scale)
     const offsetRef = useRef(offset)
+    const canvasRef = useRef<HTMLDivElement | null>(null)
     const activePointersRef = useRef(new Map<number, ImagePoint>())
     const dragRef = useRef<{ pointerId: number; startX: number; startY: number; originX: number; originY: number } | null>(null)
     const pinchRef = useRef<{ startDistance: number; startScale: number; startCenter: ImagePoint; origin: ImagePoint } | null>(null)
     const backdropPressRef = useRef<{ pointerId: number; x: number; y: number } | null>(null)
-
     const stopEvent = useCallback((event: SyntheticEvent) => {
         event.stopPropagation()
     }, [])
@@ -126,11 +127,30 @@ export function ImagePreview(props: {
         updateScale((current) => clampImageScale(current + delta))
     }, [updateScale])
 
-    const handleWheel = useCallback((event: WheelEvent<HTMLDivElement>) => {
-        event.preventDefault()
-        const delta = event.deltaY < 0 ? IMAGE_SCALE_STEP : -IMAGE_SCALE_STEP
-        zoomBy(delta)
-    }, [zoomBy])
+    useEffect(() => {
+        if (!viewerOpen) return
+        const canvas = canvasRef.current
+        if (!canvas) return
+
+        const handleWheel = (event: globalThis.WheelEvent) => {
+            event.preventDefault()
+            event.stopPropagation()
+            if (event.deltaY === 0) return
+            const pixelDelta = event.deltaMode === 1
+                ? event.deltaY * 40
+                : event.deltaMode === 2
+                    ? event.deltaY * 400
+                    : event.ctrlKey
+                        ? event.deltaY * 4
+                        : event.deltaY
+            const rawDelta = (-pixelDelta / 100) * IMAGE_SCALE_STEP
+            const boundedDelta = Math.max(-IMAGE_SCALE_STEP, Math.min(IMAGE_SCALE_STEP, rawDelta))
+            zoomBy(boundedDelta)
+        }
+
+        canvas.addEventListener('wheel', handleWheel, { passive: false })
+        return () => canvas.removeEventListener('wheel', handleWheel)
+    }, [viewerOpen, zoomBy])
 
     const beginPinch = useCallback(() => {
         const pointers = Array.from(activePointersRef.current.values())
@@ -296,12 +316,15 @@ export function ImagePreview(props: {
                 <span className="sr-only">{props.fileName}</span>
             </button>
 
-            {viewerOpen ? (
+            {viewerOpen && typeof document !== 'undefined' ? createPortal(
                 <div
-                    className="fixed inset-0 z-50 flex flex-col bg-black/90 text-white"
+                    className="fixed inset-0 z-50 flex h-[100dvh] w-full flex-col bg-black/90 text-white"
                     role="dialog"
                     aria-modal="true"
                     aria-label={activePreview.label}
+                    onClick={stopEvent}
+                    onMouseDown={stopEvent}
+                    onTouchStart={stopEvent}
                 >
                     <div className="flex items-center gap-2 border-b border-white/10 bg-black/50 px-3 pb-2 pt-[calc(env(safe-area-inset-top)+0.5rem)]">
                         <div className="min-w-0 flex-1 truncate text-sm font-medium">{activePreview.fileName}</div>
@@ -368,8 +391,8 @@ export function ImagePreview(props: {
                         </button>
                     </div>
                     <div
+                        ref={canvasRef}
                         className="relative min-h-0 flex-1 cursor-grab touch-none overflow-hidden active:cursor-grabbing"
-                        onWheel={handleWheel}
                         onPointerDown={handlePointerDown}
                         onPointerMove={handlePointerMove}
                         onPointerUp={handlePointerUp}
@@ -380,14 +403,15 @@ export function ImagePreview(props: {
                             src={activePreview.src}
                             alt={activePreview.label}
                             draggable={false}
-                            className="absolute left-1/2 top-1/2 max-h-[90vh] max-w-[90vw] select-none object-contain"
+                            className="absolute left-1/2 top-1/2 max-h-[85dvh] max-w-[90vw] select-none object-contain"
                             style={{
                                 transform: `translate(calc(-50% + ${offset.x}px), calc(-50% + ${offset.y}px)) scale(${scale})`,
                                 transformOrigin: 'center center'
                             }}
                         />
                     </div>
-                </div>
+                </div>,
+                document.body
             ) : null}
         </>
     )

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, type PointerEvent, type ReactNode, type WheelEvent } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type PointerEvent, type ReactNode } from 'react'
 import * as DialogPrimitive from '@radix-ui/react-dialog'
 import { CloseIcon } from '@/components/icons'
 
@@ -207,11 +207,30 @@ export function ZoomableLightbox(props: ZoomableLightboxProps) {
         updateScale((current) => clampScale(current + delta, getMinInteractiveScale()))
     }, [getMinInteractiveScale, updateScale])
 
-    const handleWheel = useCallback((event: WheelEvent<HTMLDivElement>) => {
-        event.preventDefault()
-        const delta = event.deltaY < 0 ? SCALE_STEP : -SCALE_STEP
-        zoomBy(delta)
-    }, [zoomBy])
+    useEffect(() => {
+        if (!open) return
+        const viewport = viewportRef.current
+        if (!viewport) return
+
+        const handleWheel = (event: globalThis.WheelEvent) => {
+            event.preventDefault()
+            event.stopPropagation()
+            if (event.deltaY === 0) return
+            const pixelDelta = event.deltaMode === 1
+                ? event.deltaY * 40
+                : event.deltaMode === 2
+                    ? event.deltaY * 400
+                    : event.ctrlKey
+                        ? event.deltaY * 4
+                        : event.deltaY
+            const rawDelta = (-pixelDelta / 100) * SCALE_STEP
+            const boundedDelta = Math.max(-SCALE_STEP, Math.min(SCALE_STEP, rawDelta))
+            zoomBy(boundedDelta)
+        }
+
+        viewport.addEventListener('wheel', handleWheel, { passive: false })
+        return () => viewport.removeEventListener('wheel', handleWheel)
+    }, [open, zoomBy])
 
     const beginPinch = useCallback(() => {
         const pointers = Array.from(activePointersRef.current.values())
@@ -417,7 +436,6 @@ export function ZoomableLightbox(props: ZoomableLightboxProps) {
                         ref={viewportRef}
                         className="absolute inset-x-0 bottom-0 cursor-grab touch-none overflow-hidden active:cursor-grabbing"
                         style={{ top: `${toolbarHeight}px` }}
-                        onWheel={handleWheel}
                         onPointerDown={handlePointerDown}
                         onPointerMove={handlePointerMove}
                         onPointerUp={handlePointerUp}

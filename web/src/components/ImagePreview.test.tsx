@@ -85,4 +85,31 @@ describe('ImagePreview gallery navigation', () => {
         expect(onTriggerClick).toHaveBeenCalledTimes(1)
         expect(screen.getByRole('dialog', { name: 'Drag image' })).toBeInTheDocument()
     })
+
+    it('portals the fullscreen dialog to document.body outside contained message ancestors and scales smoothly on trackpad wheel', () => {
+        const { container } = render(
+            <div data-testid="contained-turn-block" style={{ contentVisibility: 'auto' }}>
+                <ImagePreview src="/chart.png" fileName="chart.png" label="Chart image" />
+            </div>
+        )
+
+        fireEvent.click(screen.getByRole('button', { name: /chart image/i }))
+
+        const dialog = screen.getByRole('dialog', { name: 'Chart image' })
+        const turnBlock = screen.getByTestId('contained-turn-block')
+        expect(dialog.parentElement).toBe(document.body)
+        expect(turnBlock.contains(dialog)).toBe(false)
+
+        const previewImg = within(dialog).getByRole('img', { name: 'Chart image' })
+        const canvas = previewImg.parentElement as HTMLElement
+        const smallTrackpadWheel = new WheelEvent('wheel', {
+            bubbles: true,
+            cancelable: true,
+            deltaMode: 0,
+            deltaY: 8
+        })
+        fireEvent(canvas, smallTrackpadWheel)
+        expect(smallTrackpadWheel.defaultPrevented).toBe(true)
+        expect(within(dialog).getByTitle('Reset zoom')).toHaveTextContent('98%')
+    })
 })
