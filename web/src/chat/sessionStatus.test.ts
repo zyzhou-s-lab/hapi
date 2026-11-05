@@ -68,6 +68,12 @@ describe('buildSessionStatusData', () => {
         ]
 
         expect(buildSessionStatusData({ goal, tasks, blocks: [], messages: [] })).toMatchObject({ goal, tasks })
+        expect(buildSessionStatusData({
+            goal: { ...goal, status: 'complete' },
+            blocks: [],
+            messages: [],
+            includeSubagents: false,
+        })).toBeNull()
     })
 
     it('lists only active or failed subagents', () => {

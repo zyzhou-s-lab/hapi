@@ -150,10 +150,11 @@ function subagentFromBlock(block: ToolCallBlock): SessionStatusSubagent | null {
 
 export function buildSessionStatusData(args: {
     goal: ThreadGoal | null | undefined
-    tasks: readonly TodoItem[] | null | undefined
+    tasks?: readonly TodoItem[] | null | undefined
     blocks: readonly ChatBlock[]
     messages: readonly NormalizedMessage[]
     backgroundTaskCount?: number
+    includeSubagents?: boolean
 }): SessionStatusData | null {
     const tools = collectToolBlocks(args.blocks)
     const detectedTerminals = buildBackgroundTerminals(tools, args.messages)
@@ -168,12 +169,15 @@ export function buildSessionStatusData(args: {
     const possibleTerminalCommands = undiscoveredTerminalCount > 0
         ? detectedTerminals.uncertain.map((terminal) => terminal.command)
         : []
+    const activeGoal = args.goal && args.goal.status !== 'complete' ? args.goal : null
     const data: SessionStatusData = {
-        goal: args.goal ?? null,
+        goal: activeGoal,
         tasks: args.tasks ? [...args.tasks] : [],
-        subagents: tools
-            .map(subagentFromBlock)
-            .filter((subagent): subagent is SessionStatusSubagent => subagent !== null),
+        subagents: args.includeSubagents === false
+            ? []
+            : tools
+                .map(subagentFromBlock)
+                .filter((subagent): subagent is SessionStatusSubagent => subagent !== null),
         terminals,
         undiscoveredTerminalCount,
         possibleTerminalCommands
