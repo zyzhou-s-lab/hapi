@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { memo, useEffect, useMemo, useRef, useState } from 'react'
 import type { TodoItem } from '@hapi/protocol/types'
 import { ChecklistList, extractTodoChecklist } from '@/components/ToolCard/checklist'
 import { useTranslation } from '@/lib/use-translation'
@@ -13,7 +13,7 @@ function ChevronIcon(props: { open: boolean }) {
     )
 }
 
-export function TodoPanel(props: { sessionId: string; todos: TodoItem[] | undefined; sessionThinking?: boolean }) {
+export const TodoPanel = memo(function TodoPanel(props: { sessionId: string; todos: TodoItem[] | undefined; sessionThinking?: boolean }) {
     const { t } = useTranslation()
     const items = useMemo(() => extractTodoChecklist({ todos: props.todos }, null), [props.todos])
     const completed = items.filter((item) => item.status === 'completed').length
@@ -63,12 +63,12 @@ export function TodoPanel(props: { sessionId: string; todos: TodoItem[] | undefi
                     )}
                     <ChevronIcon open={!collapsed} />
                 </button>
-                <div id={`todo-panel-body-${props.sessionId}`} className="collapsible-panel" aria-hidden={collapsed} {...(!collapsed ? { 'data-open': '' } : {})}>
-                    <div className="collapsible-inner" inert={collapsed}>
-                        <div className="max-h-44 overflow-y-auto px-3 pb-2"><ChecklistList items={items} /></div>
+                {!collapsed ? (
+                    <div id={`todo-panel-body-${props.sessionId}`} className="max-h-44 overflow-y-auto px-3 pb-2">
+                        <ChecklistList items={items} />
                     </div>
-                </div>
+                ) : null}
             </div>
         </div>
     )
-}
+})

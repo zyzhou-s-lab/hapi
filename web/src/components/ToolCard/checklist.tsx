@@ -1,3 +1,4 @@
+import { memo } from 'react'
 import type { ReactNode } from 'react'
 import { isObject } from '@hapi/protocol'
 
@@ -334,7 +335,7 @@ function checklistIcon(item: ChecklistItem): ReactNode {
     return '☐'
 }
 
-export function ChecklistList(props: { items: ChecklistItem[]; emptyLabel?: string | null }) {
+export const ChecklistList = memo(function ChecklistList(props: { items: ChecklistItem[]; emptyLabel?: string | null }) {
     if (props.items.length === 0) {
         return props.emptyLabel ? (
             <div className="text-sm text-[var(--app-hint)]">{props.emptyLabel}</div>
@@ -353,4 +354,4 @@ export function ChecklistList(props: { items: ChecklistItem[]; emptyLabel?: stri
             })}
         </div>
     )
-}
+})

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { ThreadPrimitive, unstable_useThreadMessageIds, useAuiState } from '@assistant-ui/react'
 import type { ComponentProps } from 'react'
 import { useQuery } from '@tanstack/react-query'
@@ -10,6 +10,7 @@ import { getConversationMessageAnchorId } from '@/chat/outline'
 import { formatMessageTimestampTitle, formatOutlineTimestamp } from '@/chat/presentation'
 import {
     HappyChatProvider,
+    type HappyChatContextValue,
     type OlderHistoryLoadResult
 } from '@/components/AssistantChat/context'
 import { HappyAssistantMessage } from '@/components/AssistantChat/messages/AssistantMessage'
@@ -697,7 +698,7 @@ type ThreadMessageComponents = ComponentProps<typeof ThreadPrimitive.Unstable_Me
  * for message 0 while its lookup table is already empty. Stable id providers
  * unmount removed rows without consulting a stale index.
  */
-export function ThreadMessagesById({ components }: { components: ThreadMessageComponents }) {
+export const ThreadMessagesById = memo(function ThreadMessagesById({ components }: { components: ThreadMessageComponents }) {
     const messageIds = unstable_useThreadMessageIds()
 
     return (
@@ -711,7 +712,7 @@ export function ThreadMessagesById({ components }: { components: ThreadMessageCo
             ))}
         </>
     )
-}
+})
 
 export function ConversationOutlinePanel(props: {
     items: readonly ConversationOutlineItem[]
@@ -1808,6 +1809,9 @@ export function HappyThread(props: {
 
 
     const needsViewportCoverage = useCallback((): boolean => {
+        if (!hasMoreMessagesRef.current) {
+            return false
+        }
         const viewport = viewportRef.current
         const sentinel = topSentinelRef.current
         if (!viewport || !sentinel) {
@@ -2350,32 +2354,57 @@ export function HappyThread(props: {
             snapshots: completeSnapshots,
             sourceContentWidth: sourceContentWidth > 0 ? sourceContentWidth : null,
         })
-    }, [props.session])
+    }, [])
+
+    const activeTurnStartedAt = props.session?.activeTurnStartedAt ?? null
+    const chatContextValue = useMemo<HappyChatContextValue>(() => ({
+        api: props.api,
+        sessionId: props.sessionId,
+        metadata: props.metadata,
+        todos: props.session?.todos,
+        sessionThinking: props.session?.thinking,
+        activeTurnStartedAt,
+        terminalToolDisplayMode,
+        showSessionSummaryInChat,
+        disabled: props.disabled,
+        onRefresh: props.onRefresh,
+        onRetryMessage: props.onRetryMessage,
+        historyActionPending: props.historyActionPending,
+        onForkConversation: props.onForkConversation,
+        onRewindConversation: props.onRewindConversation,
+        isLatestCompletedBoundary: props.isLatestCompletedBoundary,
+        onShareTurn: handleShareTurn,
+        hasMoreMessages: props.hasMoreMessages,
+        isSyncingTail: props.isSyncingTail,
+        isLoadingMoreMessages: props.isLoadingMoreMessages,
+        onNestedScrollFollowChange: handleNestedScrollFollowChange,
+        loadOlderMessagesPreservingScroll: loadOlderFromConsumer
+    }), [
+        props.api,
+        props.sessionId,
+        props.metadata,
+        props.session?.todos,
+        props.session?.thinking,
+        activeTurnStartedAt,
+        terminalToolDisplayMode,
+        showSessionSummaryInChat,
+        props.disabled,
+        props.onRefresh,
+        props.onRetryMessage,
+        props.historyActionPending,
+        props.onForkConversation,
+        props.onRewindConversation,
+        props.isLatestCompletedBoundary,
+        handleShareTurn,
+        props.hasMoreMessages,
+        props.isSyncingTail,
+        props.isLoadingMoreMessages,
+        handleNestedScrollFollowChange,
+        loadOlderFromConsumer
+    ])
 
     return (
-        <HappyChatProvider value={{
-            api: props.api,
-            sessionId: props.sessionId,
-            metadata: props.metadata,
-            todos: props.session?.todos,
-            sessionThinking: props.session?.thinking,
-            activeTurnStartedAt: props.session?.activeTurnStartedAt ?? null,
-            terminalToolDisplayMode,
-            showSessionSummaryInChat,
-            disabled: props.disabled,
-            onRefresh: props.onRefresh,
-            onRetryMessage: props.onRetryMessage,
-            historyActionPending: props.historyActionPending,
-            onForkConversation: props.onForkConversation,
-            onRewindConversation: props.onRewindConversation,
-            isLatestCompletedBoundary: props.isLatestCompletedBoundary,
-            onShareTurn: handleShareTurn,
-            hasMoreMessages: props.hasMoreMessages,
-            isSyncingTail: props.isSyncingTail,
-            isLoadingMoreMessages: props.isLoadingMoreMessages,
-            onNestedScrollFollowChange: handleNestedScrollFollowChange,
-            loadOlderMessagesPreservingScroll: loadOlderFromConsumer
-        }}>
+        <HappyChatProvider value={chatContextValue}>
             <ThreadPrimitive.Root className="flex min-h-0 flex-1 flex-col relative">
                 {!props.isSyncingTail && (
                     isLoadingMoreOrApplying || pullToLoadState !== 'idle'
