@@ -32,7 +32,7 @@ interface MathMatch {
 
 const EXPLICIT_MATH_DELIMITER = /\\\[([\s\S]+?)\\\]|\\\(([\s\S]+?)\\\)|(?<!\\)\$\$([\s\S]+?)(?<!\\)\$\$/g
 const PLACEHOLDER_PATTERN = /\uE000HAPIMATH(\d+)\uE000/g
-const CURRENCY_PROSE_PREFIX = /^[0-9][0-9,]*(?:\.[0-9]+)?(?:\/[a-zA-Z]+|[kKmMbB])?(?:[,.;:!?)）(（\]}—–-]|\s+(?:[a-zA-Z]{2,}|[,.;:!?(（\[—–-]))/
+const CURRENCY_PROSE_PREFIX = /^[0-9][0-9,]*(?:\.[0-9]+)?(?![0-9]|[.,][0-9])(?:\/[a-zA-Z]+|[kKmMbB])?(?:[,.;:!?)）(（\]}—–-]|\s+(?:[a-zA-Z]{2,}|[,.;:!?(（\[—–-]))/
 const NON_CLOSING_PREV_CHAR = /^[([（【「『“‘，：；,:;*]$/
 const STANDALONE_LINE_PREFIX = /^\s*(?:>\s*)*(?:(?:[-*+]|\d+[.)])\s+)?$/
 const STANDALONE_LINE_SUFFIX = /^\s*[，。；：,.;:]?\s*$/

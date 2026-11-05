@@ -76,6 +76,13 @@ describe('remarkLatexBracketMath', () => {
         expect(renderProduction('The plan is $200/mo and the bill is $80.')).not.toContain('class="katex"')
     })
 
+    it('renders inline math that starts with a decimal number while keeping decimal currency literal', () => {
+        const html = renderProduction('跨靶点方差比值仅 $5.67 \\times 10^{-8}$，`NIR = 0.500`；成本 $5.50, 总计 $12.')
+        expect(html.match(/class="katex"/g)).toHaveLength(1)
+        expect(html).not.toContain('$5.67')
+        expect(html).toContain('成本 $5.50, 总计 $12.')
+    })
+
     it('uses the production assistant plugin chain', () => {
         expect(renderProduction(String.raw`\[a^2+b^2=c^2\]`)).toContain('katex-display')
     })
