@@ -775,10 +775,10 @@ function ComposerPreviewCard(props: {
     selectedMode: string
     onSelectMode: (id: string) => void
     contextPercent: number
-    showWorkspaceMeta: boolean
+    gitClean: boolean
     interactiveMenus?: boolean
 }) {
-    const [openMenu, setOpenMenu] = useState<'model' | 'effort' | 'mode' | 'context' | null>(null)
+    const [openMenu, setOpenMenu] = useState<'model' | 'effort' | 'mode' | 'context' | 'git' | null>(null)
     const modelObj = COMPOSER_MODELS.find((m) => m.id === props.selectedModel) ?? COMPOSER_MODELS[0]!
     const effortObj = COMPOSER_EFFORTS.find((e) => e.id === props.selectedEffort) ?? COMPOSER_EFFORTS[2]!
     const modeObj = COMPOSER_MODES.find((m) => m.id === props.selectedMode) ?? COMPOSER_MODES[0]!
@@ -801,11 +801,21 @@ function ComposerPreviewCard(props: {
         return (
             <div className="w-full space-y-1" data-testid="composer-variant-c0">
                 {/* Current Top StatusBar */}
-                <div className="flex items-center justify-between px-2 pb-0.5 text-[11.5px] text-[var(--app-hint)]">
+                <div className="flex items-center justify-between px-2 pb-1 text-[11.5px] text-[var(--app-hint)]">
                     <div className="flex items-center gap-2">
                         <span className="inline-flex items-center gap-1.5 text-[var(--app-badge-success-text)]">
                             <span className="h-2 w-2 rounded-full bg-current" />
                             <span>online</span>
+                        </span>
+                        <span className="inline-flex items-center gap-1 font-mono text-[11px]">
+                            <DemoBranchIcon />
+                            <span>main</span>
+                            {!props.gitClean ? (
+                                <span className="inline-flex items-center gap-1">
+                                    <span className="text-[var(--app-badge-success-text)]">+48</span>
+                                    <span className="text-[var(--app-badge-error-text)]">-12</span>
+                                </span>
+                            ) : null}
                         </span>
                         <span className="inline-flex items-center gap-1.5">
                             <span className="h-1 w-10 overflow-hidden rounded-full bg-[var(--app-border)]">
@@ -899,6 +909,50 @@ function ComposerPreviewCard(props: {
 
     return (
         <div className="relative w-full" data-testid={`composer-variant-${props.variant}`}>
+            {/* Top-Left Status Row: online + git status (Outside & Above Input Box Top-Left) */}
+            <div
+                className="flex items-center justify-between px-2 pb-1.5 text-[11.5px]"
+                data-testid="composer-top-left-status"
+            >
+                <div className="flex flex-wrap items-center gap-2">
+                    <span className="inline-flex items-center gap-1.5 text-[var(--app-badge-success-text)]">
+                        <span
+                            className={cn(
+                                'h-2 w-2 rounded-full bg-current',
+                                isStreaming && 'animate-pulse'
+                            )}
+                        />
+                        <span>{isStreaming ? 'responding...' : 'online'}</span>
+                    </span>
+
+                    <span className="text-[var(--app-border)]" aria-hidden="true">·</span>
+
+                    <button
+                        type="button"
+                        data-testid="top-left-git-status"
+                        onClick={() => props.interactiveMenus && setOpenMenu(openMenu === 'git' ? null : 'git')}
+                        title="Git 分支与工作区状态（点击查看改动文件）"
+                        className="inline-flex items-center gap-1.5 rounded-md px-1.5 py-0.5 font-mono text-[11px] text-[var(--app-hint)] transition-colors hover:bg-[var(--app-subtle-bg)]/70 hover:text-[var(--app-fg)]"
+                    >
+                        <span className="inline-flex items-center gap-1 text-[var(--app-fg)]/85">
+                            <DemoBranchIcon />
+                            <span>main</span>
+                        </span>
+                        {props.gitClean ? (
+                            <span className="text-[10.5px] text-[var(--app-hint)]">clean</span>
+                        ) : (
+                            <>
+                                <span className="inline-flex items-center gap-1 font-medium">
+                                    <span className="text-[var(--app-badge-success-text)]">+48</span>
+                                    <span className="text-[var(--app-badge-error-text)]">-12</span>
+                                </span>
+                                <span className="text-[10.5px] text-[var(--app-hint)]">· 2 files</span>
+                            </>
+                        )}
+                    </button>
+                </div>
+            </div>
+
             {/* Pure Input Box */}
             <div
                 className={cn(
@@ -988,31 +1042,17 @@ function ComposerPreviewCard(props: {
             >
                 {isBalancedVariant ? (
                     <>
-                        {/* C2 Left: Workspace / Branch / Terminal */}
-                        <div className="flex flex-wrap items-center gap-1.5 text-[11.5px] text-[var(--app-hint)]">
-                            <span className="inline-flex items-center gap-1 text-[var(--app-badge-success-text)]">
-                                <span className="h-1.5 w-1.5 rounded-full bg-current" />
-                                <span>online</span>
-                            </span>
-                            <span className="inline-flex items-center gap-1 rounded-md px-1 py-0.5 hover:bg-[var(--app-subtle-bg)]/60 hover:text-[var(--app-fg)]">
-                                <DemoFolderIcon />
-                                <span>hapi</span>
-                            </span>
-                            <span className="inline-flex items-center gap-1 rounded-md px-1 py-0.5 font-mono hover:bg-[var(--app-subtle-bg)]/60 hover:text-[var(--app-fg)]">
-                                <DemoBranchIcon />
-                                <span>main</span>
-                            </span>
+                        {/* C2 Left: Mode + Model + Effort */}
+                        <div className="flex flex-wrap items-center gap-1.5">
                             <button
                                 type="button"
-                                className="inline-flex items-center gap-1 rounded-md px-1 py-0.5 hover:bg-[var(--app-subtle-bg)]/60 hover:text-[var(--app-fg)]"
-                                title="打开终端"
+                                onClick={() => props.interactiveMenus && setOpenMenu(openMenu === 'mode' ? null : 'mode')}
+                                className={cn(chipBaseClass, modeToneClass)}
                             >
-                                <DemoTerminalIcon />
+                                <DemoAgentModeIcon />
+                                <span>{modeObj.label}</span>
+                                <DemoChevronDownIcon />
                             </button>
-                        </div>
-
-                        {/* C2 Right: Model + Effort + Mode + Context Ring */}
-                        <div className="flex flex-wrap items-center gap-1">
                             <button
                                 type="button"
                                 onClick={() => props.interactiveMenus && setOpenMenu(openMenu === 'model' ? null : 'model')}
@@ -1029,15 +1069,32 @@ function ComposerPreviewCard(props: {
                                 <span>{effortObj.label}</span>
                                 <DemoChevronDownIcon />
                             </button>
+                        </div>
+
+                        {/* C2 Right: Quick Tools (Terminal / Scratchlist / Schedule) + Context Ring */}
+                        <div className="flex items-center gap-1 text-[var(--app-hint)]">
                             <button
                                 type="button"
-                                onClick={() => props.interactiveMenus && setOpenMenu(openMenu === 'mode' ? null : 'mode')}
-                                className={cn(chipBaseClass, modeToneClass)}
+                                className="inline-flex h-6 w-6 items-center justify-center rounded-md hover:bg-[var(--app-subtle-bg)]/70 hover:text-[var(--app-fg)]"
+                                title="打开终端 (Terminal)"
                             >
-                                <DemoAgentModeIcon />
-                                <span>{modeObj.label}</span>
-                                <DemoChevronDownIcon />
+                                <DemoTerminalIcon />
                             </button>
+                            <button
+                                type="button"
+                                className="inline-flex h-6 w-6 items-center justify-center rounded-md hover:bg-[var(--app-subtle-bg)]/70 hover:text-[var(--app-fg)]"
+                                title="草稿箱 (Scratchlist)"
+                            >
+                                <DemoScratchlistIcon />
+                            </button>
+                            <button
+                                type="button"
+                                className="inline-flex h-6 w-6 items-center justify-center rounded-md hover:bg-[var(--app-subtle-bg)]/70 hover:text-[var(--app-fg)]"
+                                title="定时发送 (Schedule)"
+                            >
+                                <DemoClockIcon />
+                            </button>
+                            <span className="mx-0.5 h-3 w-px bg-[var(--app-border)]" aria-hidden="true" />
                             <button
                                 type="button"
                                 onClick={() => props.interactiveMenus && setOpenMenu(openMenu === 'context' ? null : 'context')}
@@ -1096,37 +1153,10 @@ function ComposerPreviewCard(props: {
                                 <span>{effortObj.label}</span>
                                 <DemoChevronDownIcon />
                             </button>
-
-                            {props.showWorkspaceMeta ? (
-                                <>
-                                    <span className="mx-0.5 h-3 w-px bg-[var(--app-border)]" aria-hidden="true" />
-                                    <button
-                                        type="button"
-                                        className={chipBaseClass}
-                                        title="打开终端"
-                                    >
-                                        <DemoTerminalIcon />
-                                    </button>
-                                </>
-                            ) : null}
                         </div>
 
-                        {/* C1 & C3 Right: [Optional Folder/Branch] + [Context 55%] */}
+                        {/* C1 & C3 Right: [Context 55%] */}
                         <div className="flex items-center gap-2 text-[var(--app-hint)]">
-                            {props.showWorkspaceMeta ? (
-                                <div className="hidden sm:flex items-center gap-1.5 text-[11.5px]">
-                                    <span className="inline-flex items-center gap-1">
-                                        <DemoFolderIcon />
-                                        <span>hapi</span>
-                                    </span>
-                                    <span className="opacity-40">·</span>
-                                    <span className="inline-flex items-center gap-0.5 font-mono">
-                                        <DemoBranchIcon />
-                                        <span>main</span>
-                                    </span>
-                                </div>
-                            ) : null}
-
                             <button
                                 type="button"
                                 data-testid="external-context-trigger"
@@ -1149,15 +1179,15 @@ function ComposerPreviewCard(props: {
                     data-testid={`composer-popover-${openMenu}`}
                 >
                     <div className="flex items-center justify-between border-b border-[var(--app-border)]/60 pb-1.5 text-[11px] font-semibold uppercase tracking-wider text-[var(--app-hint)]">
-                        <span>
                             {openMenu === 'model'
                                 ? '选择模型 (Model)'
                                 : openMenu === 'effort'
                                     ? '选择推理强度 (Reasoning Effort)'
                                     : openMenu === 'mode'
                                         ? '选择智能体/权限模式 (Agent & Permission Mode)'
-                                        : '上下文窗口详情 (Context Usage)'}
-                        </span>
+                                        : openMenu === 'git'
+                                            ? 'Git 工作区状态 (main)'
+                                            : '上下文窗口详情 (Context Usage)'}
                         <button
                             type="button"
                             onClick={() => setOpenMenu(null)}
@@ -1261,6 +1291,37 @@ function ComposerPreviewCard(props: {
                             </span>
                         </div>
                     ) : null}
+
+                    {openMenu === 'git' ? (
+                        <div className="space-y-1.5 px-1 py-1 text-[11.5px]">
+                            <div className="flex items-center justify-between text-[var(--app-hint)]">
+                                <span>
+                                    当前分支：<strong className="font-mono text-[var(--app-fg)]">main</strong>（跟踪 <code className="font-mono">mine/main</code>）
+                                </span>
+                                <span className="font-mono text-[11px]">
+                                    {props.gitClean ? 'working tree clean' : '2 modified · +48 -12'}
+                                </span>
+                            </div>
+                            {!props.gitClean ? (
+                                <div className="space-y-1 rounded-lg border border-[var(--app-border)]/60 bg-[var(--app-subtle-bg)]/30 p-2 font-mono text-[11px]">
+                                    <div className="flex items-center justify-between">
+                                        <span className="truncate text-[var(--app-fg)]">M web/src/components/AssistantChat/HappyComposer.tsx</span>
+                                        <span className="shrink-0 space-x-1">
+                                            <span className="text-[var(--app-badge-success-text)]">+36</span>
+                                            <span className="text-[var(--app-badge-error-text)]">-8</span>
+                                        </span>
+                                    </div>
+                                    <div className="flex items-center justify-between">
+                                        <span className="truncate text-[var(--app-fg)]">M web/src/components/AssistantChat/StatusBar.tsx</span>
+                                        <span className="shrink-0 space-x-1">
+                                            <span className="text-[var(--app-badge-success-text)]">+12</span>
+                                            <span className="text-[var(--app-badge-error-text)]">-4</span>
+                                        </span>
+                                    </div>
+                                </div>
+                            ) : null}
+                        </div>
+                    ) : null}
                 </div>
             ) : null}
         </div>
@@ -1282,7 +1343,7 @@ function ComposerExternalControlsStudio(props: {
     const [viewLayout, setViewLayout] = useState<ComposerDemoViewLayout>('side-by-side')
     const [stateMode, setStateMode] = useState<ComposerDemoStateMode>('idle')
     const [radiusClass, setRadiusClass] = useState<string>('rounded-[20px]')
-    const [showWorkspaceMeta, setShowWorkspaceMeta] = useState<boolean>(false)
+    const [gitClean, setGitClean] = useState<boolean>(false)
     const [draftText, setDraftText] = useState<string>('')
     const [contextPercent, setContextPercent] = useState<number>(55)
 
@@ -1307,7 +1368,7 @@ function ComposerExternalControlsStudio(props: {
                         Composer 输入框外置选项栏样式工作台（选项下移至输入框外部下方）
                     </h2>
                     <p className="text-xs text-[var(--app-hint)]">
-                        将模型选择（<code className="font-mono">GPT-5.4 ∨</code>）、推理强度（<code className="font-mono">High ∨</code>）、代理模式（<code className="font-mono">Agent ∨</code>）及上下文使用率（<code className="font-mono">55%</code>）全部移出输入框，置于输入框外部下方；输入框内部仅保留纯净文本输入与右侧圆形上箭头发送按钮。
+                        输入框左上方保留 <code className="font-mono">online</code> 连接状态与 <code className="inline-flex items-center gap-1 font-mono"><DemoBranchIcon /> main +48 -12</code> Git 状态；模型选择（<code className="font-mono">GPT-5.4 ∨</code>）、推理强度（<code className="font-mono">High ∨</code>）、代理模式（<code className="font-mono">Agent ∨</code>）及上下文使用率（<code className="font-mono">55%</code>）置于输入框外部下方。
                     </p>
                 </div>
 
@@ -1344,9 +1405,9 @@ function ComposerExternalControlsStudio(props: {
                     <span className="text-[11.5px] font-medium text-[var(--app-hint)] mr-1">外置布局方案：</span>
                     {(
                         [
-                            { id: 'c1-reference', label: '方案 C1 · 复刻参考图（左下 + / Agent / Model / Effort · 右下 55%）' },
-                            { id: 'c2-balanced', label: '方案 C2 · 双侧平衡（框内左 + · 左下环境 · 右下模型与 55%）' },
-                            { id: 'c3-pills', label: '方案 C3 · 外置微边框胶囊芯片' },
+                            { id: 'c1-reference', label: '方案 C1 · 复刻参考图（左上 online+Git · 左下 + / Agent / Model / Effort · 右下 55%）' },
+                            { id: 'c2-balanced', label: '方案 C2 · 双侧工具分栏（左上 online+Git · 左下模式与模型 · 右下工具与 55%）' },
+                            { id: 'c3-pills', label: '方案 C3 · 外置微边框胶囊芯片（左上 online+Git · 下方胶囊按钮）' },
                         ] as const
                     ).map((v) => (
                         <button
@@ -1447,18 +1508,18 @@ function ComposerExternalControlsStudio(props: {
                         ))}
                     </div>
 
-                    {/* Optional Workspace/Terminal toggle for C1 */}
+                    {/* Git status toggle */}
                     <button
                         type="button"
-                        onClick={() => setShowWorkspaceMeta((v) => !v)}
+                        onClick={() => setGitClean((v) => !v)}
                         className={cn(
                             'rounded-lg border px-2 py-1 text-[11px] font-medium transition-colors',
-                            showWorkspaceMeta
+                            !gitClean
                                 ? 'border-[var(--app-fg)]/40 bg-[var(--app-subtle-bg)] text-[var(--app-fg)]'
                                 : 'border-[var(--app-border)] bg-[var(--app-bg)] text-[var(--app-hint)]'
                         )}
                     >
-                        {showWorkspaceMeta ? '✓ 显示仓库/终端图标' : '+ 显示仓库/终端图标'}
+                        {gitClean ? 'Git: clean（点击切换有改动）' : 'Git: +48 -12 · 2 files'}
                     </button>
                 </div>
             </div>
@@ -1499,7 +1560,7 @@ function ComposerExternalControlsStudio(props: {
                                 selectedMode={props.selectedMode}
                                 onSelectMode={props.onSelectMode}
                                 contextPercent={contextPercent}
-                                showWorkspaceMeta={showWorkspaceMeta}
+                                gitClean={gitClean}
                                 interactiveMenus={true}
                             />
                         </div>
@@ -1533,7 +1594,7 @@ function ComposerExternalControlsStudio(props: {
                             selectedMode={props.selectedMode}
                             onSelectMode={props.onSelectMode}
                             contextPercent={contextPercent}
-                            showWorkspaceMeta={showWorkspaceMeta}
+                            gitClean={gitClean}
                             interactiveMenus={false}
                         />
                     </div>
@@ -1577,7 +1638,7 @@ function ComposerExternalControlsStudio(props: {
                         selectedMode={props.selectedMode}
                         onSelectMode={props.onSelectMode}
                         contextPercent={contextPercent}
-                        showWorkspaceMeta={showWorkspaceMeta}
+                        gitClean={gitClean}
                         interactiveMenus={true}
                     />
                 </div>
@@ -1638,7 +1699,7 @@ function ComposerExternalControlsStudio(props: {
                                 selectedMode={props.selectedMode}
                                 onSelectMode={props.onSelectMode}
                                 contextPercent={contextPercent}
-                                showWorkspaceMeta={showWorkspaceMeta}
+                                gitClean={gitClean}
                                 interactiveMenus={item.id !== 'c0-current'}
                             />
                         </div>
@@ -2267,6 +2328,35 @@ export function TurnTimelineDemo() {
 
                         {/* Simulated Docked Composer Area */}
                         <div className="mt-6 pt-3 border-t border-[var(--app-border)]/50">
+                            {/* Top-Left Status Row: online + git status above Docked Todo / Input Box */}
+                            <div className="flex items-center justify-between px-2 pb-1.5 text-[11.5px]">
+                                <div className="flex flex-wrap items-center gap-2">
+                                    <span className="inline-flex items-center gap-1.5 text-[var(--app-badge-success-text)]">
+                                        <span
+                                            className={cn(
+                                                'h-2 w-2 rounded-full bg-current',
+                                                (stageData.streaming || stageData.followUpStreaming) && 'animate-pulse'
+                                            )}
+                                        />
+                                        <span>
+                                            {stageData.streaming || stageData.followUpStreaming ? 'responding...' : 'online'}
+                                        </span>
+                                    </span>
+                                    <span className="text-[var(--app-border)]" aria-hidden="true">·</span>
+                                    <span className="inline-flex items-center gap-1.5 font-mono text-[11px] text-[var(--app-hint)]">
+                                        <span className="inline-flex items-center gap-1 text-[var(--app-fg)]/85">
+                                            <DemoBranchIcon />
+                                            <span>main</span>
+                                        </span>
+                                        <span className="inline-flex items-center gap-1 font-medium">
+                                            <span className="text-[var(--app-badge-success-text)]">+48</span>
+                                            <span className="text-[var(--app-badge-error-text)]">-12</span>
+                                        </span>
+                                        <span className="text-[10.5px] text-[var(--app-hint)]">· 2 files</span>
+                                    </span>
+                                </div>
+                            </div>
+
                             {stage === 'asking-user' ? (
                                 <div className="mb-2">
                                     <DockedQuestionWizard
@@ -2285,7 +2375,6 @@ export function TurnTimelineDemo() {
                                 defaultExpanded={stage === 'working-step-1'}
                                 lang={lang}
                             />
-
                             {/* Input Box (Docked under Todo bar) */}
                             <div className="rounded-b-2xl border border-[var(--app-border)] bg-[var(--app-bg)] px-3.5 py-2.5 shadow-2xs">
                                 <div className="flex items-center justify-between gap-2">
