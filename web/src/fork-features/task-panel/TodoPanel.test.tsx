@@ -30,17 +30,25 @@ describe('TodoPanel', () => {
         expect(screen.getByText('1/2')).toBeInTheDocument()
     })
 
-    it('persists collapse state and exposes the active task in the header', () => {
-        const todos: TodoItem[] = [{ id: '2', content: '运行 smoke', status: 'in_progress', priority: 'medium' }]
+    it('persists collapse state, unmounts the checklist body while collapsed, and exposes the active task in the header', () => {
+        const todos: TodoItem[] = [
+            { id: '1', content: '已完成任务', status: 'completed', priority: 'medium' },
+            { id: '2', content: '运行 smoke', status: 'in_progress', priority: 'medium' }
+        ]
         const first = renderPanel(todos)
+        expect(document.getElementById('todo-panel-body-session-117')).not.toBeNull()
+        expect(screen.getByTestId('todo-panel')).toHaveTextContent('已完成任务')
         const toggle = screen.getByRole('button', { name: /Tasks/ })
         fireEvent.click(toggle)
         expect(toggle).toHaveAttribute('aria-expanded', 'false')
         expect(toggle).toHaveTextContent('运行 smoke')
+        expect(document.getElementById('todo-panel-body-session-117')).toBeNull()
+        expect(screen.getByTestId('todo-panel')).not.toHaveTextContent('已完成任务')
         first.unmount()
 
         renderPanel(todos)
         expect(screen.getByRole('button', { name: /Tasks/ })).toHaveAttribute('aria-expanded', 'false')
+        expect(document.getElementById('todo-panel-body-session-117')).toBeNull()
     })
 
     it('clears and restores task content when the supplied projection changes', () => {

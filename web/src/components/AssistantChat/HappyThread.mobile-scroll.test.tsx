@@ -1,14 +1,23 @@
 import { act, cleanup, fireEvent, render } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import type { PropsWithChildren } from 'react'
+import { memo, type PropsWithChildren } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { I18nProvider } from '@/lib/i18n-context'
+import { useHappyChatContext } from '@/components/AssistantChat/context'
 
 vi.mock('@/hooks/queries/useMachines', () => ({
     useMachines: () => ({ machines: [] })
 }))
 
 let mockRuntimeExtras: { messagesVersion: number; historyVersion: number } | undefined
+let mockMessageIds: readonly string[] = []
+let contextConsumerRenderCount = 0
+
+const MockContextConsumer = memo(function MockContextConsumer() {
+    useHappyChatContext()
+    contextConsumerRenderCount += 1
+    return <div data-testid="mock-message-consumer" />
+})
 
 vi.mock('@assistant-ui/react', async (importOriginal) => {
     const actual = await importOriginal<typeof import('@assistant-ui/react')>()
@@ -17,14 +26,15 @@ vi.mock('@assistant-ui/react', async (importOriginal) => {
         useAuiState: (selector: (state: unknown) => unknown) => selector({
             thread: { extras: mockRuntimeExtras }
         }),
-        unstable_useThreadMessageIds: () => [],
+        unstable_useThreadMessageIds: () => mockMessageIds,
         ThreadPrimitive: {
             ...actual.ThreadPrimitive,
             Root: ({ children, className }: PropsWithChildren<{ className?: string }>) => (
                 <div className={className}>{children}</div>
             ),
             Viewport: ({ children }: PropsWithChildren) => children,
-            Messages: () => null
+            Messages: () => null,
+            Unstable_MessageById: () => <MockContextConsumer />
         }
     }
 })
@@ -316,5 +326,67 @@ describe('initial scroll synchronization with assistant-ui store commit', () => 
         result.rerender(renderWithVersion(1))
 
         expect(viewport.scrollTop).toBe(1_000)
+    })
+
+    it('does not re-render HappyChatContext message consumers when bottomInsetPx changes on TodoPanel toggle', () => {
+        mockMessageIds = ['msg-1', 'msg-2']
+        contextConsumerRenderCount = 0
+        const queryClient = new QueryClient({
+            defaultOptions: { queries: { retry: false } }
+        })
+        const api = {
+            getHubSettings: vi.fn().mockResolvedValue({ sessionSummaryContract: false, sessionSummaryInChat: false })
+        } as unknown as ApiClient
+        const metadata = {} as Session['metadata']
+        const todos = [{ id: '1', content: 'task 1', status: 'in_progress' as const, priority: 'medium' as const }]
+        const onRefresh = vi.fn()
+        const onViewModeChange = vi.fn()
+        const onLoadMore = vi.fn().mockResolvedValue({ status: 'exhausted' as const })
+        const onCancelLoadMore = vi.fn()
+        const onOutlineOpenChange = vi.fn()
+        const outlineItems: never[] = []
+
+        const renderWithBottomInset = (bottomInsetPx: number, sessionObj: Session) => (
+            <QueryClientProvider client={queryClient}>
+                <I18nProvider>
+                    <HappyThread
+                        api={api}
+                        session={sessionObj}
+                        sessionId="dock-resize-session"
+                        metadata={metadata}
+                        disabled={false}
+                        onRefresh={onRefresh}
+                        onViewModeChange={onViewModeChange}
+                        isSyncingTail={false}
+                        messagesWarning={null}
+                        hasMoreMessages={false}
+                        isLoadingMoreMessages={false}
+                        onLoadMore={onLoadMore}
+                        onCancelLoadMore={onCancelLoadMore}
+                        unseenCount={0}
+                        rawMessagesCount={2}
+                        normalizedMessagesCount={2}
+                        messagesVersion={1}
+                        historyVersion={0}
+                        forceScrollToken={0}
+                        bottomInsetPx={bottomInsetPx}
+                        outlineOpen={false}
+                        outlineItems={outlineItems}
+                        onOutlineOpenChange={onOutlineOpenChange}
+                    />
+                </I18nProvider>
+            </QueryClientProvider>
+        )
+
+        const initialSession = { metadata, todos, thinking: true, activeTurnStartedAt: 1000 } as unknown as Session
+        const view = render(renderWithBottomInset(88, initialSession))
+        expect(contextConsumerRenderCount).toBe(2)
+
+        // Expanding TodoPanel updates bottomInsetPx and may pass a cloned session object with identical fields.
+        const clonedSession = { metadata, todos, thinking: true, activeTurnStartedAt: 1000 } as unknown as Session
+        view.rerender(renderWithBottomInset(248, clonedSession))
+        expect(contextConsumerRenderCount).toBe(2)
+
+        mockMessageIds = []
     })
 })
