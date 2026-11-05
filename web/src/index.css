@@ -914,9 +914,11 @@ html[data-theme="oled"] .shiki span:not([data-line-number]) {
     }
 }
 
-:focus-visible {
-    outline: 2px solid var(--app-button);
-    outline-offset: 2px;
+@layer base {
+    :focus-visible {
+        outline: 2px solid var(--app-button);
+        outline-offset: 2px;
+    }
 }
 
 [class*="text-[var(--app-fg)]/40"],

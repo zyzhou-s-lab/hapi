@@ -2373,8 +2373,8 @@ export function HappyComposer(props: {
         ? 'relative flex min-h-0 flex-1 flex-col'
         : 'relative'
     const editorClassName = isExpanded
-        ? 'app-input-text h-full min-h-[var(--app-line-input)] flex-1 overflow-y-auto whitespace-pre-wrap break-words bg-transparent text-[var(--app-fg)] focus:outline-none'
-        : 'app-input-text max-h-[7.5rem] min-h-[var(--app-line-input)] flex-1 overflow-y-auto whitespace-pre-wrap break-words bg-transparent text-[var(--app-fg)] focus:outline-none'
+        ? 'app-input-text h-full min-h-[var(--app-line-input)] flex-1 overflow-y-auto whitespace-pre-wrap break-words bg-transparent text-[var(--app-fg)] outline-none focus:outline-none focus-visible:outline-none'
+        : 'app-input-text max-h-[7.5rem] min-h-[var(--app-line-input)] flex-1 overflow-y-auto whitespace-pre-wrap break-words bg-transparent text-[var(--app-fg)] outline-none focus:outline-none focus-visible:outline-none'
     const frameClassName = `overflow-hidden ${
         isExpanded
             ? 'flex min-h-0 flex-1 flex-col rounded-[20px] bg-[var(--app-secondary-bg)]'
@@ -2521,7 +2521,7 @@ export function HappyComposer(props: {
                                             showContinueHint,
                                         }))}
                                         disabled={controlsDisabled}
-                                        className="app-input-text h-full min-h-0 flex-1 resize-none overflow-y-auto bg-transparent text-[var(--app-fg)] placeholder-[var(--app-hint)] focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
+                                        className="app-input-text h-full min-h-0 flex-1 resize-none overflow-y-auto bg-transparent text-[var(--app-fg)] placeholder-[var(--app-hint)] outline-none focus:outline-none focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-50"
                                     />
                                 </ComposerPrimitive.Input>
                             ) : (
@@ -2540,7 +2540,7 @@ export function HappyComposer(props: {
                                     onSelect={handleSelect}
                                     onKeyDown={handleKeyDown}
                                     onPaste={handlePaste}
-                                    className="app-input-text flex-1 resize-none bg-transparent text-[var(--app-fg)] placeholder-[var(--app-hint)] focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
+                                    className="app-input-text flex-1 resize-none bg-transparent text-[var(--app-fg)] placeholder-[var(--app-hint)] outline-none focus:outline-none focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-50"
                                 />
                             )}
                         </div>
