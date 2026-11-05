@@ -2161,4 +2161,43 @@ describe('canonical assistant snapshot compaction', () => {
         expect(afterReentry.messages[1]).toBe(secondRef)
         expect(afterReentry.messagesVersion).toBe(versionBefore)
     })
+
+    it('advances oldestPositionSeq to hub nextBeforeSeq when oldest row of an older page is a superseded snapshot and preserves in-flight older load on tail mode switch', async () => {
+        const id = sessionId('older-cursor-superseded-snapshot')
+        const final = makeCanonicalSnapshot('stream-1', 'assistant', 20, false)
+        const supersededOldest = makeCanonicalSnapshot('stream-1', 'assistant', 5, true)
+        const keptMiddle = makeUserMessage({ id: 'u-middle', seq: 10, createdAt: 800, invokedAt: 800 })
+        const oldestTurn = makeUserMessage({ id: 'u-oldest', seq: 2, createdAt: 200, invokedAt: 200 })
+
+        let resolveOlderPage: ((value: MessagesResponse) => void) | null = null
+        const getMessages = vi.fn()
+            .mockResolvedValueOnce(latestResponse([final], { hasMore: true, nextBeforeAt: 1_000, nextBeforeSeq: 20 }))
+            .mockImplementationOnce(() => new Promise((resolve) => {
+                resolveOlderPage = resolve
+            }))
+            .mockResolvedValueOnce(beforeResponse([oldestTurn], { hasMore: false, nextBeforeAt: null, nextBeforeSeq: null }))
+        const api = createApi(getMessages)
+
+        await syncTailMessages(api, id)
+        setMessageViewMode(id, 'history')
+        const olderPromise = fetchOlderMessages(api, id)
+        setMessageViewMode(id, 'tail')
+        expect(getMessageWindowState(id).isLoadingMore).toBe(true)
+
+        resolveOlderPage!(beforeResponse([supersededOldest, keptMiddle], {
+            hasMore: true,
+            nextBeforeAt: 500,
+            nextBeforeSeq: 5
+        }))
+        const firstResult = await olderPromise
+        expect(firstResult.kind).toBe('applied')
+
+        const secondResult = await fetchOlderMessages(api, id)
+        expect(secondResult.kind).toBe('applied')
+        expect(getMessages).toHaveBeenNthCalledWith(3, id, expect.objectContaining({
+            beforeAt: 500,
+            beforeSeq: 5
+        }))
+        expect(getMessageWindowState(id).hasMore).toBe(false)
+    })
 })

@@ -820,4 +820,33 @@ describe('visible older-history loading', () => {
         expect(loadOlder).toHaveBeenCalledTimes(3)
         expect(isTopTurnHeadlessAssistant(viewport)).toBe(false)
     })
+
+    it('skips multiple leading hoisted system messages when capturing scroll anchor for a split assistant turn', () => {
+        const viewport = document.createElement('div')
+        viewport.getBoundingClientRect = () => DOMRect.fromRect({ x: 0, y: 0, width: 600, height: 600 })
+        const container = document.createElement('div')
+        container.className = 'happy-thread-messages'
+        viewport.append(container)
+
+        const system1 = document.createElement('div')
+        system1.id = 'hapi-message-agent-event-title-1'
+        system1.setAttribute('data-hapi-message-role', 'system')
+        system1.getBoundingClientRect = () => DOMRect.fromRect({ x: 0, y: 0, width: 600, height: 24 })
+
+        const system2 = document.createElement('div')
+        system2.id = 'hapi-message-agent-event-title-2'
+        system2.setAttribute('data-hapi-message-role', 'system')
+        system2.getBoundingClientRect = () => DOMRect.fromRect({ x: 0, y: 24, width: 600, height: 24 })
+
+        const assistant = document.createElement('div')
+        assistant.id = 'hapi-message-assistant-split'
+        assistant.setAttribute('data-hapi-message-role', 'assistant')
+        assistant.getBoundingClientRect = () => DOMRect.fromRect({ x: 0, y: 48, width: 600, height: 500 })
+
+        container.append(system1, system2, assistant)
+
+        const anchor = captureScrollAnchor(viewport)
+        expect(anchor?.id).toBe('hapi-message-assistant-split')
+        expect(isTopTurnHeadlessAssistant(viewport)).toBe(true)
+    })
 })
