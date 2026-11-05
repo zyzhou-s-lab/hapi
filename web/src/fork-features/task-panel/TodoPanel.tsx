@@ -38,8 +38,8 @@ export function TodoPanel(props: { sessionId: string; todos: TodoItem[] | undefi
     }
 
     return (
-        <div className="mx-auto mb-1 w-full max-w-content">
-            <div className="composer-dock-card rounded-lg" data-testid="todo-panel">
+        <div className="relative mx-auto mb-1 h-[calc(1.75rem+2px)] w-full max-w-content">
+            <div className="composer-dock-card absolute inset-x-0 bottom-0 z-10 rounded-lg" data-testid="todo-panel">
                 <button type="button" onClick={toggleCollapsed} aria-expanded={!collapsed} aria-controls={`todo-panel-body-${props.sessionId}`} className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs font-medium text-[var(--app-fg)] hover:opacity-90">
                     <span className="shrink-0 text-[11px] tabular-nums text-[var(--app-hint)]">{completed}/{items.length}</span>
                     <span className="sr-only">{t('todoPanel.title')}</span>
