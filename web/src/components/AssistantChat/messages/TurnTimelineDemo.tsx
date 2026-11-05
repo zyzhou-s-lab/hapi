@@ -1899,8 +1899,8 @@ export function TurnTimelineDemo() {
     const [indicatorVariant] = useState<TurnActivityIndicatorVariant>('equalizer-bars')
     const [indicatorColor, setIndicatorColor] = useState<string>('#da7756')
     const [activeToolIdx, setActiveToolIdx] = useState<number>(0)
-    const [composerVariant, setComposerVariant] = useState<ComposerDemoVariant>('c1-reference')
-    const [composerPlusPlacement, setComposerPlusPlacement] = useState<'outside' | 'inside'>('outside')
+    const [composerVariant, setComposerVariant] = useState<ComposerDemoVariant>('c2-balanced')
+    const [composerPlusPlacement, setComposerPlusPlacement] = useState<'outside' | 'inside'>('inside')
     const [composerModel, setComposerModel] = useState<string>('gpt-5.4')
     const [composerEffort, setComposerEffort] = useState<string>('high')
     const [composerMode, setComposerMode] = useState<string>('agent')
@@ -2462,9 +2462,33 @@ export function TurnTimelineDemo() {
                                         <DemoChevronDownIcon />
                                     </button>
                                 </div>
-                                <div className="flex items-center gap-1.5 font-mono text-[11px]">
-                                    <DemoContextProgressRing percent={55} size={13} />
-                                    <span>55%</span>
+                                <div className="flex items-center gap-1 text-[var(--app-hint)]">
+                                    <button
+                                        type="button"
+                                        className="inline-flex h-6 w-6 items-center justify-center rounded-md hover:bg-[var(--app-subtle-bg)] hover:text-[var(--app-fg)]"
+                                        title="打开终端 (Terminal)"
+                                    >
+                                        <DemoTerminalIcon />
+                                    </button>
+                                    <button
+                                        type="button"
+                                        className="inline-flex h-6 w-6 items-center justify-center rounded-md hover:bg-[var(--app-subtle-bg)] hover:text-[var(--app-fg)]"
+                                        title="草稿箱 (Scratchlist)"
+                                    >
+                                        <DemoScratchlistIcon />
+                                    </button>
+                                    <button
+                                        type="button"
+                                        className="inline-flex h-6 w-6 items-center justify-center rounded-md hover:bg-[var(--app-subtle-bg)] hover:text-[var(--app-fg)]"
+                                        title="定时发送 (Schedule)"
+                                    >
+                                        <DemoClockIcon />
+                                    </button>
+                                    <span className="mx-0.5 h-3 w-px bg-[var(--app-border)]" aria-hidden="true" />
+                                    <div className="flex items-center gap-1.5 px-1 font-mono text-[11px]">
+                                        <DemoContextProgressRing percent={55} size={13} />
+                                        <span>55%</span>
+                                    </div>
                                 </div>
                             </div>
                         </div>
