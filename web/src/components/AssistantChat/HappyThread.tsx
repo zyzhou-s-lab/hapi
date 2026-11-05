@@ -1010,7 +1010,7 @@ export function HappyThread(props: {
     const requestOlderRef = useRef<(source: HistoryLoadSource) => Promise<OlderHistoryLoadResult>>(
         () => Promise.resolve('transient-stop')
     )
-    const loadOlderFromUserGestureRef = useRef<() => Promise<void>>(() => Promise.resolve())
+    const loadOlderFromUserGestureRef = useRef<() => Promise<boolean>>(() => Promise.resolve(false))
     const startHistoryLoadAttemptRef = useRef<(runId: number) => void>(() => {})
     const needsViewportCoverageRef = useRef<() => boolean>(() => false)
     const atBottomRef = useRef(true)
@@ -1134,6 +1134,7 @@ export function HappyThread(props: {
         let lastWheelAt = 0
         let wheelIntentUntil = 0
         let wheelLatched = false
+        let wheelLatchStartedAt = 0
         let nestedScrollFocused = false
         let focusedNestedScroller: HTMLElement | null = null
         let outerWheelActive = false
@@ -1163,9 +1164,21 @@ export function HappyThread(props: {
             }
             if (wheelIntentUntil >= Date.now() && !wheelLatched) {
                 wheelLatched = true
+                wheelLatchStartedAt = Date.now()
                 return true
             }
             return false
+        }
+        const runUserGestureLoad = () => {
+            const latchToken = wheelLatchStartedAt
+            void loadOlderFromUserGestureRef.current().then((loaded) => {
+                if (wheelLatchStartedAt !== latchToken) {
+                    return
+                }
+                if (!loaded || Date.now() - latchToken >= WHEEL_GESTURE_GAP_MS) {
+                    wheelLatched = false
+                }
+            })
         }
 
         const handleScroll = () => {
@@ -1229,7 +1242,7 @@ export function HappyThread(props: {
             // scroll events cannot bypass backoff or a paused coverage run.
             if (needsCoverage) {
                 if (explicitUpwardIntent) {
-                    void loadOlderFromUserGestureRef.current()
+                    runUserGestureLoad()
                 } else {
                     void requestOlderRef.current('coverage')
                 }
@@ -1547,7 +1560,10 @@ export function HappyThread(props: {
             // events. Remember the gesture before the following scroll event
             // so an approach from outside the preload area is also classified
             // as explicit user intent.
-            if (now - lastWheelAt > WHEEL_GESTURE_GAP_MS) {
+            if (
+                now - lastWheelAt > WHEEL_GESTURE_GAP_MS
+                || (!pendingLoadPromiseRef.current && now - wheelLatchStartedAt > ANCHOR_PIN_MAX_MS)
+            ) {
                 wheelLatched = false
             }
             lastWheelAt = now
@@ -1560,7 +1576,8 @@ export function HappyThread(props: {
                 return
             }
             wheelLatched = true
-            void loadOlderFromUserGestureRef.current()
+            wheelLatchStartedAt = now
+            runUserGestureLoad()
         }
 
         const handleTouchStart = (event: TouchEvent) => {
@@ -1972,6 +1989,19 @@ export function HappyThread(props: {
 
     const requestOlder = useCallback((source: HistoryLoadSource): Promise<OlderHistoryLoadResult> => {
         if (pendingLoadPromiseRef.current) {
+            if (source === 'user') {
+                const current = historyLoaderRef.current
+                if (current.source !== 'user' || current.autoPaused) {
+                    historyLoaderRef.current = {
+                        ...current,
+                        source: 'user',
+                        autoPaused: false
+                    }
+                }
+                if (pendingScrollRef.current && wheelGestureUntilRef.current > Date.now()) {
+                    pendingScrollRef.current.pinOnRestore = true
+                }
+            }
             return pendingLoadPromiseRef.current
         }
 
@@ -2049,19 +2079,19 @@ export function HappyThread(props: {
             isTopTurnIncomplete: () => isTopTurnHeadlessAssistant(viewport),
             hasMoreMessages: () => (
                 hasMoreMessagesRef.current
-                && (needsViewportCoverageRef.current() || isTopTurnHeadlessAssistant(viewport))
+                && needsViewportCoverageRef.current()
             ),
-            loadOlder: async () => await requestOlder('user') === 'loaded'
+            loadOlder: async () => await requestOlder('user') === 'loaded',
+            maxPages: 8
         })
     }, [requestOlder])
 
-    const loadOlderFromUserGesture = useCallback(async (): Promise<void> => {
+    const loadOlderFromUserGesture = useCallback(async (): Promise<boolean> => {
         const viewport = viewportRef.current
         if (viewport?.querySelector(`${MESSAGE_ANCHOR_SELECTOR}[data-hapi-message-role]`)) {
-            await loadOlderUntilVisible()
-            return
+            return await loadOlderUntilVisible()
         }
-        await requestOlder('user')
+        return await requestOlder('user') === 'loaded'
     }, [loadOlderUntilVisible, requestOlder])
     loadOlderFromUserGestureRef.current = loadOlderFromUserGesture
 

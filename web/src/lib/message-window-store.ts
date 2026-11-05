@@ -999,8 +999,8 @@ function enterTailMode(previous: InternalState): InternalState {
         hasMore: previous.hasMore || dropped.length > 0,
         viewMode: 'tail',
         hasExpandedHistory: false,
-        isLoadingMore: false,
-        olderGeneration: previous.isLoadingMore
+        isLoadingMore: forceLatest ? false : previous.isLoadingMore,
+        olderGeneration: forceLatest && previous.isLoadingMore
             ? previous.olderGeneration + 1
             : previous.olderGeneration,
         epoch: forceLatest ? null : previous.epoch,
@@ -1184,24 +1184,16 @@ export async function fetchOlderMessages(
             })
             const hubOlder = pagePosition(response.page.nextBeforeAt, response.page.nextBeforeSeq)
             const keptOldest = derivePosition(merged.messages, 'oldest')
-            const keptIds = new Set(merged.messages.map((message) => message.id))
+            const existingOldest = readPosition(previous.oldestPositionAt, previous.oldestPositionSeq)
             const renderableIncoming = response.messages.filter(shouldRetainWindowMessage)
+            const keptIds = new Set(merged.messages.map((message) => message.id))
             const keptIncoming = renderableIncoming.some((message) => keptIds.has(message.id))
             const allIncomingDiscarded = renderableIncoming.length > 0 && !keptIncoming
-            const resumeAtKept = keptIncoming
-                && keptOldest !== null
-                && hubOlder !== null
-                && comparePosition(keptOldest, hubOlder) > 0
-            // Every renderable row of this page was discarded, for example a
-            // live snapshot of a stream that already has a final. Those rows
-            // are superseded, so nextBefore is the next page, not a hole.
-            // Advance to that hub cursor and keep hub hasMore. Stopping, or
-            // leaving the previous cursor, hides every older page, and a
-            // latest reset requests this same page again.
             if (allIncomingDiscarded) addedRenderableCount = 0
-            reportedHasMore = resumeAtKept || response.page.hasMore
-            const oldestAt = resumeAtKept ? keptOldest!.at : response.page.nextBeforeAt
-            const oldestSeq = resumeAtKept ? keptOldest!.seq : response.page.nextBeforeSeq
+            const nextOldest = hubOlder ?? keptOldest ?? existingOldest
+            const oldestAt = nextOldest?.at ?? null
+            const oldestSeq = nextOldest?.seq ?? null
+            reportedHasMore = response.page.hasMore && oldestAt !== null && oldestSeq !== null
             historyVersion = nextHistoryVersion
             return buildState(merged, {
                 hasMore: reportedHasMore,
@@ -1264,11 +1256,7 @@ export function setMessageViewMode(sessionId: string, mode: MessageViewMode): vo
         }
         if (previous.hasExpandedHistory && !previous.requiresLatestReset) {
             return buildState(previous, {
-                viewMode: 'tail',
-                isLoadingMore: false,
-                olderGeneration: previous.isLoadingMore
-                    ? previous.olderGeneration + 1
-                    : previous.olderGeneration
+                viewMode: 'tail'
             })
         }
         return enterTailMode(previous)

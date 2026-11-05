@@ -54,7 +54,7 @@ export function HappySystemMessage() {
     if (compactSummary && compactSummary.type === 'compact-summary') {
         const delta = formatTokenDelta(compactSummary)
         return (
-            <MessagePrimitive.Root id={getConversationMessageAnchorId(messageId)} className="scroll-mt-4 py-1">
+            <MessagePrimitive.Root id={getConversationMessageAnchorId(messageId)} data-hapi-message-role="system" className="scroll-mt-4 py-1">
                 <div className="mx-auto max-w-[92%] rounded-lg border border-[var(--app-border)] bg-[var(--app-subtle-bg)] px-3 py-2">
                     <div className="flex items-center gap-1.5 text-xs text-[var(--app-hint)]">
                         <span aria-hidden="true">📦</span>
@@ -73,7 +73,7 @@ export function HappySystemMessage() {
     }
 
     return (
-        <MessagePrimitive.Root id={getConversationMessageAnchorId(messageId)} className="scroll-mt-4 py-1">
+        <MessagePrimitive.Root id={getConversationMessageAnchorId(messageId)} data-hapi-message-role="system" className="scroll-mt-4 py-1">
             <div className="mx-auto w-fit max-w-[92%] px-2 text-center text-xs text-[var(--app-hint)] opacity-80">
                 <span className="inline-flex items-center gap-1.5">
                     {showActiveSpinner ? (
