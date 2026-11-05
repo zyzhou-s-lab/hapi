@@ -1062,4 +1062,36 @@ describe('TimelineTurnBlock & summarizeTurnActivity', () => {
         expect(screen.getByText('Clear completed OMP todoPhases')).toBeInTheDocument()
         expect(screen.queryByText('Deduplicate SessionStatusPanel')).not.toBeInTheDocument()
     })
+
+    it('renders TimelineTodoChecklistCard from fallbackTodos when a truncated turn has no todo tool call in its window', () => {
+        const truncatedTurnWithoutTodoTool = partitionTurn(
+            [
+                { type: 'reasoning', text: 'Inspecting scroll jitter in AssistantChat.tsx' },
+                call(tool('r1', 'Read', { input: { file_path: 'web/src/components/AssistantChat.tsx' } })),
+            ],
+            null
+        )
+
+        render(
+            <I18nProvider>
+                <TimelineTurnBlockView
+                    partition={truncatedTurnWithoutTodoTool}
+                    streaming={true}
+                    durationMs={12000}
+                    initiallyOpen={false}
+                    fallbackTodos={[
+                        { id: 'Phase 1:1', content: 'Old completed task', status: 'completed', priority: 'medium' },
+                        { id: 'Phase 2:1', content: 'Reproduce scroll jump', status: 'completed', priority: 'medium' },
+                        { id: 'Phase 2:2', content: 'Anchor viewport during prepend', status: 'in_progress', priority: 'medium' },
+                    ]}
+                />
+            </I18nProvider>
+        )
+
+        const todoCard = screen.getByTestId('turn-todo-checklist-card')
+        expect(todoCard).toBeInTheDocument()
+        expect(screen.getByText('Reproduce scroll jump')).toBeInTheDocument()
+        expect(screen.getByText('Anchor viewport during prepend')).toBeInTheDocument()
+        expect(screen.queryByText('Old completed task')).not.toBeInTheDocument()
+    })
 })

@@ -351,7 +351,7 @@ describe('TurnBlockView', () => {
             />
         )
 
-        const collapsedRail = screen.getByTestId('turn-collapsed-pinned-rail')
+        const collapsedRail = screen.getByTestId('turn-live-todo-cards')
         const deliverables = screen.getByTestId('turn-media-deliverables')
         const imageNodeBefore = screen.getByText('image preview.png')
 

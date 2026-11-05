@@ -29,6 +29,7 @@ import {
 import { resolveToolViewName } from '@/components/ToolCard/toolNameAliases'
 import type { ToolCallBlock } from '@/chat/types'
 import { useOptionalHappyChatContext } from '@/components/AssistantChat/context'
+import type { TodoItem } from '@/types/api'
 import { cn } from '@/lib/utils'
 
 export type TranscriptViewMode = 'normal' | 'thinking' | 'verbose'
@@ -528,7 +529,11 @@ function StepInlinePreviewCard(props: { preview: TurnStepPreview }) {
     )
 }
 
-function extractToolChecklistItems(block: ToolCallBlock, allRows?: readonly TurnRow[]): ChecklistItem[] {
+function extractToolChecklistItems(
+    block: ToolCallBlock,
+    allRows?: readonly TurnRow[],
+    fallbackItems?: readonly ChecklistItem[]
+): ChecklistItem[] {
     const resolved = resolveToolViewName(block.tool.name)
     if (resolved !== 'TodoWrite' && resolved !== 'UpdatePlan') return []
     const turnContext = resolved === 'TodoWrite' && allRows
@@ -544,7 +549,7 @@ function extractToolChecklistItems(block: ToolCallBlock, allRows?: readonly Turn
 
     let items = rawItems
     if (allRows && block.tool.result == null) {
-        let baseItems: ChecklistItem[] = []
+        let baseItems: ChecklistItem[] = fallbackItems ? [...fallbackItems] : []
         for (const row of allRows) {
             if (row.kind !== 'tool') continue
             if (row.block.id === block.id) break
@@ -1142,6 +1147,7 @@ export function TimelineTurnBlockView(props: {
     durationMs: number | null
     initiallyOpen?: boolean
     activeTodoText?: string | null
+    fallbackTodos?: readonly TodoItem[] | null
     viewMode?: TranscriptViewMode
     lang?: 'en' | 'zh-CN'
     indicatorVariant?: TurnActivityIndicatorVariant
@@ -1217,21 +1223,31 @@ export function TimelineTurnBlockView(props: {
         ),
         [stepRows]
     )
+    const fallbackChecklistItems = useMemo(() => {
+        if (!props.fallbackTodos || props.fallbackTodos.length === 0) return []
+        return extractTodoChecklist({ todos: props.fallbackTodos }, undefined)
+    }, [props.fallbackTodos])
     const pinnedChecklistByKey = useMemo(() => {
         const map = new Map<string, ChecklistItem[]>()
         for (const row of pinnedToolRows) {
             if (row.kind !== 'tool') continue
-            const items = extractToolChecklistItems(row.block, rawStepRows)
+            const items = extractToolChecklistItems(row.block, rawStepRows, fallbackChecklistItems)
             if (items.length > 0) {
                 map.set(row.key, items)
             }
         }
         return map
-    }, [pinnedToolRows, rawStepRows])
+    }, [pinnedToolRows, rawStepRows, fallbackChecklistItems])
     const pinnedRailRows = useMemo(
         () => pinnedToolRows.filter((row) => !pinnedChecklistByKey.has(row.key)),
         [pinnedToolRows, pinnedChecklistByKey]
     )
+    const fallbackTodoCardItems = useMemo(() => {
+        if (pinnedChecklistByKey.size > 0) return []
+        if (fallbackChecklistItems.length === 0) return []
+        if (!fallbackChecklistItems.some((item) => item.status !== 'completed')) return []
+        return fallbackChecklistItems
+    }, [pinnedChecklistByKey.size, fallbackChecklistItems])
     const isInitialStreamingWait = props.streaming && stepRows.length === 0 && mediaRows.length === 0 && trailing.length === 0
     const hasSteps = stepRows.some((row) => row.kind === 'reasoning' || row.kind === 'tool' || row.kind === 'coalesced') || isInitialStreamingWait
     const headerText = props.streaming ? summary.workingHeader : summary.completedHeader
@@ -1663,11 +1679,15 @@ export function TimelineTurnBlockView(props: {
                         </>
                     ) : null}
 
-                    {pinnedChecklistByKey.size > 0 ? (
+                    {pinnedChecklistByKey.size > 0 || fallbackTodoCardItems.length > 0 ? (
                         <div className="mt-2 space-y-2" data-testid="turn-live-todo-cards">
-                            {Array.from(pinnedChecklistByKey.entries()).map(([key, items]) => (
-                                <TimelineTodoChecklistCard key={key} items={items} />
-                            ))}
+                            {pinnedChecklistByKey.size > 0
+                                ? Array.from(pinnedChecklistByKey.entries()).map(([key, items]) => (
+                                    <TimelineTodoChecklistCard key={key} items={items} />
+                                ))
+                                : (
+                                    <TimelineTodoChecklistCard key="session-fallback-todos" items={fallbackTodoCardItems} />
+                                )}
                         </div>
                     ) : null}
 

@@ -238,6 +238,30 @@ function selectRelevantOmpPhases(
     return validPhases
 }
 
+function scopeChecklistItemsByOmpPhaseId(items: ChecklistItem[]): ChecklistItem[] {
+    if (items.length <= 1) return items
+    const phaseGroups: ChecklistItem[][] = []
+    let currentPhase = ''
+    for (const item of items) {
+        if (!item.id) return items
+        const match = /^(.+):\d+$/.exec(item.id)
+        if (!match) return items
+        const phaseName = match[1]
+        if (phaseGroups.length === 0 || phaseName !== currentPhase) {
+            currentPhase = phaseName
+            phaseGroups.push([item])
+        } else {
+            phaseGroups[phaseGroups.length - 1]!.push(item)
+        }
+    }
+    if (phaseGroups.length <= 1) return items
+    const firstActiveIdx = phaseGroups.findIndex((group) => group.some((item) => item.status !== 'completed'))
+    if (firstActiveIdx >= 0) {
+        return phaseGroups.slice(firstActiveIdx).flat()
+    }
+    return phaseGroups[phaseGroups.length - 1]!
+}
+
 export function extractTodoChecklist(
     input: unknown,
     result: unknown,
@@ -248,7 +272,9 @@ export function extractTodoChecklist(
             textKey: 'content',
             idKey: 'id'
         })
-        if (items.length > 0) return items
+        if (items.length > 0) {
+            return scopeChecklistItemsByOmpPhaseId(items)
+        }
     }
 
     // OMP `todo` results store the live list under details.phases[].tasks[].
