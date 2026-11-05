@@ -334,7 +334,7 @@ function needsUser(tool: ChatToolCall): boolean {
 
 function isPinned(tool: ChatToolCall, errorRecovered = false): boolean {
     const name = resolveToolViewName(tool.name)
-    if (tool.state === 'error' && !errorRecovered) return true
+    if (tool.state === 'error') return !errorRecovered
     if (needsUser(tool)) return true
     if (isSubagentTool(tool.name, name) || MILESTONE_TOOL_NAMES[name] || MILESTONE_TOOL_NAMES[tool.name]) return true
     if ((PLAN_TOOL_NAMES[name] || PLAN_TOOL_NAMES[tool.name]) && name !== 'CodexReasoning') return true
@@ -470,6 +470,22 @@ export function partitionTurn(
             row.pinned = isPinned(row.block.tool, true)
         }
     })
+
+    for (const verb of ['turn.verb.todo', 'turn.verb.plan'] as const) {
+        let latestPinnedIndex = -1
+        rows.forEach((row, index) => {
+            if (row.kind === 'tool' && row.pinned && !row.error && row.verb === verb) {
+                latestPinnedIndex = index
+            }
+        })
+        if (latestPinnedIndex >= 0) {
+            rows.forEach((row, index) => {
+                if (index < latestPinnedIndex && row.kind === 'tool' && row.pinned && !row.error && row.verb === verb) {
+                    row.pinned = false
+                }
+            })
+        }
+    }
 
     const foldable = rows.filter((row) => {
         if (row.kind === 'text') return !row.trailing

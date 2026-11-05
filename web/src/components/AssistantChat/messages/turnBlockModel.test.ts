@@ -254,6 +254,34 @@ describe('partitionTurn', () => {
         ])
     })
 
+    it('unpins recovered TodoWrite errors and supersedes earlier TodoWrite snapshots in a turn', () => {
+        const partition = partitionTurn([
+            call(tool('todo-err', 'todo', {
+                state: 'error',
+                input: { input: '*** Begin Todo\n*** End Todo' },
+                result: 'Validation failed',
+            })),
+            call(tool('todo-1', 'todo', {
+                state: 'completed',
+                input: { todos: [{ id: '1', content: 'Task 1', status: 'in_progress' }] },
+            })),
+            call(tool('todo-2', 'todo', {
+                state: 'completed',
+                input: { todos: [{ id: '1', content: 'Task 1', status: 'completed' }] },
+            })),
+        ], null)
+
+        expect(partition.rows.filter((row) => row.kind === 'tool').map((row) => [
+            row.key,
+            row.pinned,
+            row.error,
+        ])).toEqual([
+            ['todo-err', false, true],
+            ['todo-1', false, false],
+            ['todo-2', true, false],
+        ])
+    })
+
     it('uses a Codex reasoning title and does not render that tool as a row', () => {
         const partition = partitionTurn([
             call(tool('reason', 'CodexReasoning', { input: { title: 'Building a screenshot script' } })),
