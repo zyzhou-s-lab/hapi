@@ -330,4 +330,72 @@ describe('omp todo extraction', () => {
             input: { todos: [{ content: 'codex task', status: 'completed', priority: 'high', id: 'c1' }] }
         }))).toEqual([{ content: 'codex task', status: 'completed', priority: 'high', id: 'c1' }])
     })
+
+    test('excludes earlier completed phases when a subsequent turn appends and completes a new phase', () => {
+        const priorPhase = {
+            name: 'Tasks',
+            tasks: [
+                { id: 'task-1', content: 'Deduplicate SessionStatusPanel', status: 'completed' },
+                { id: 'task-2', content: 'Implement TimelineTodoChecklistCard', status: 'completed' }
+            ]
+        }
+        const nextTurnStart = ompToolResult({
+            op: 'batch',
+            operations: ['append', 'start'],
+            changes: [
+                {
+                    op: 'append',
+                    phase: 'Markdown Table Pipe Repair',
+                    items: [{ id: 'task-5', title: 'Escape pipes in table code spans' }]
+                },
+                {
+                    op: 'start',
+                    task: 'Escape pipes in table code spans'
+                }
+            ],
+            phases: [
+                priorPhase,
+                {
+                    name: 'Markdown Table Pipe Repair',
+                    tasks: [
+                        { id: 'task-5', content: 'Escape pipes in table code spans', status: 'in_progress' }
+                    ]
+                }
+            ],
+            storage: 'session'
+        })
+        expect(extractTodoWriteTodosFromMessageContent(nextTurnStart)).toEqual([
+            { content: 'Escape pipes in table code spans', status: 'in_progress', priority: 'medium', id: 'task-5' }
+        ])
+
+        const nextTurnDone = ompToolResult({
+            op: 'done',
+            operations: ['done'],
+            changes: [
+                {
+                    op: 'done',
+                    task: 'Escape pipes in table code spans'
+                }
+            ],
+            completedTasks: [
+                {
+                    task: 'Escape pipes in table code spans',
+                    commit: '848b095'
+                }
+            ],
+            phases: [
+                priorPhase,
+                {
+                    name: 'Markdown Table Pipe Repair',
+                    tasks: [
+                        { id: 'task-5', content: 'Escape pipes in table code spans', status: 'completed' }
+                    ]
+                }
+            ],
+            storage: 'session'
+        })
+        expect(extractTodoWriteTodosFromMessageContent(nextTurnDone)).toEqual([
+            { content: 'Escape pipes in table code spans', status: 'completed', priority: 'medium', id: 'task-5' }
+        ])
+    })
 })

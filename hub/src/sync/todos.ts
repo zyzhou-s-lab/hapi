@@ -15,7 +15,9 @@ const OMP_TODO_OPS: Record<string, true> = {
     block: true,
     unblock: true,
     append: true,
-    view: true
+    view: true,
+    batch: true,
+    goal: true
 }
 
 // Empty phases clear the panel only for these ops. A result with no op is
@@ -52,10 +54,101 @@ function ompTodoId(phaseName: string, index: number, id: unknown): string {
     return `${phaseName}:${index}`
 }
 
-function ompTodoDetails(value: Record<string, unknown>): { op: string | null; phases: unknown[] } | null {
+function ompTodoDetails(value: Record<string, unknown>): { op: string | null; phases: unknown[]; raw: Record<string, unknown> } | null {
     if (!Array.isArray(value.phases)) return null
     const op = typeof value.op === 'string' ? value.op : null
-    return { op, phases: value.phases }
+    return { op, phases: value.phases, raw: value }
+}
+
+function isOmpPhaseTerminal(phase: Record<string, unknown>): boolean {
+    if (!Array.isArray(phase.tasks)) return true
+    for (const task of phase.tasks) {
+        if (!isObject(task) || typeof task.content !== 'string') continue
+        if (task.blocked === true) return false
+        if (task.status !== 'completed' && task.status !== 'abandoned') return false
+    }
+    return true
+}
+
+function collectOmpTouchedTargets(raw: Record<string, unknown>): { phases: Set<string>; tasks: Set<string> } {
+    const phases = new Set<string>()
+    const tasks = new Set<string>()
+    if (Array.isArray(raw.changes)) {
+        for (const change of raw.changes) {
+            if (!isObject(change)) continue
+            if (typeof change.phase === 'string' && change.phase !== '') phases.add(change.phase)
+            if (typeof change.task === 'string' && change.task !== '') tasks.add(change.task)
+            if (Array.isArray(change.items)) {
+                for (const item of change.items) {
+                    if (isObject(item) && typeof item.title === 'string' && item.title !== '') {
+                        tasks.add(item.title)
+                    }
+                }
+            }
+            if (Array.isArray(change.list)) {
+                for (const group of change.list) {
+                    if (!isObject(group)) continue
+                    if (typeof group.phase === 'string' && group.phase !== '') phases.add(group.phase)
+                    if (Array.isArray(group.items)) {
+                        for (const item of group.items) {
+                            if (isObject(item) && typeof item.title === 'string' && item.title !== '') {
+                                tasks.add(item.title)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    if (Array.isArray(raw.completedTasks)) {
+        for (const entry of raw.completedTasks) {
+            if (!isObject(entry)) continue
+            if (typeof entry.phase === 'string' && entry.phase !== '') phases.add(entry.phase)
+            if (typeof entry.task === 'string' && entry.task !== '') tasks.add(entry.task)
+            if (typeof entry.content === 'string' && entry.content !== '') tasks.add(entry.content)
+        }
+    }
+    return { phases, tasks }
+}
+
+function selectRelevantOmpPhases(details: { op: string | null; phases: unknown[]; raw: Record<string, unknown> }): unknown[] {
+    const { op, phases, raw } = details
+    if (phases.length <= 1) return phases
+    if (phases.some((phase) => !isObject(phase) || !Array.isArray(phase.tasks))) {
+        return phases
+    }
+    const isInit = op === 'init'
+        || (Array.isArray(raw.operations) && raw.operations.includes('init'))
+        || (Array.isArray(raw.changes) && raw.changes.some((change) => isObject(change) && change.op === 'init'))
+    if (isInit) return phases
+
+    const touched = collectOmpTouchedTargets(raw)
+    const isRelevant = (phase: unknown): boolean => {
+        if (!isObject(phase) || !Array.isArray(phase.tasks)) return true
+        if (!isOmpPhaseTerminal(phase)) return true
+        if (typeof phase.name === 'string' && touched.phases.has(phase.name)) return true
+        return phase.tasks.some(
+            (task) => isObject(task) && typeof task.content === 'string' && touched.tasks.has(task.content)
+        )
+    }
+
+    const firstRelevantIdx = phases.findIndex(isRelevant)
+    if (firstRelevantIdx > 0) {
+        return phases.slice(firstRelevantIdx)
+    }
+    if (firstRelevantIdx === -1) {
+        for (let i = phases.length - 1; i >= 0; i -= 1) {
+            const phase = phases[i]
+            if (!isObject(phase) || !Array.isArray(phase.tasks)) continue
+            const hasVisible = phase.tasks.some(
+                (task) => isObject(task) && typeof task.content === 'string' && visibleOmpTask(task.status) !== null
+            )
+            if (hasVisible) {
+                return [phase]
+            }
+        }
+    }
+    return phases
 }
 
 // Result details only: `{ op, phases }` or `{ content, details: { op, phases } }`.
@@ -71,7 +164,7 @@ function extractOmpTodoSnapshot(value: unknown, namedTodo: boolean): TodoItem[] 
 
     const todos: Array<Pick<TodoItem, 'content' | 'status' | 'priority' | 'id' | 'blocked'>> = []
     let opaque = false
-    for (const phase of details.phases) {
+    for (const phase of selectRelevantOmpPhases(details)) {
         if (!isObject(phase) || !Array.isArray(phase.tasks)) {
             opaque = true
             continue
@@ -96,7 +189,13 @@ function extractOmpTodoSnapshot(value: unknown, namedTodo: boolean): TodoItem[] 
 
     if (todos.length > 0) return todosFromClaudeArray(todos)
     if (opaque) return null
-    if (known && details.op !== null && OMP_TODO_CLEAR_OPS[details.op] === true) {
+    const isClearOp = (details.op !== null && OMP_TODO_CLEAR_OPS[details.op] === true)
+        || (
+            details.op === 'batch'
+            && Array.isArray(details.raw.operations)
+            && details.raw.operations.some((op) => typeof op === 'string' && OMP_TODO_CLEAR_OPS[op] === true)
+        )
+    if (known && isClearOp) {
         return []
     }
     return null

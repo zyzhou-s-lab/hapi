@@ -13,7 +13,8 @@ import type {
     OmpOutboundControlFrame,
     OmpResponseDataByCommand,
     OmpSessionState,
-    OmpSubagentSnapshot
+    OmpSubagentSnapshot,
+    OmpTodoPhase
 } from './rpc/types';
 import { parseOmpInboundLine } from './rpc/schemas';
 import type { RawJSONLines } from '@/claude/types';
@@ -58,7 +59,7 @@ function state(currentModel: OmpModel | null): OmpSessionState {
         autoCompactionEnabled: true,
         messageCount: 0,
         queuedMessageCount: harness.queuedMessageCount,
-        todoPhases: [],
+        todoPhases: harness.todoPhases,
         dumpTools: harness.dumpTools,
         contextUsage: harness.contextUsage
     };
@@ -80,6 +81,7 @@ const harness = vi.hoisted(() => ({
     promptResponse: { agentInvoked: true } as OmpResponseDataByCommand['prompt'],
     stateStreaming: false,
     queuedMessageCount: 0,
+    todoPhases: [] as OmpTodoPhase[],
     currentModel: null as OmpModel | null,
     availableModels: [] as OmpModel[],
     availableCommands: [] as OmpAvailableCommand[],
@@ -181,6 +183,9 @@ vi.mock('./rpc/OmpRpcClient', () => ({
                         }
                         case 'get_state':
                             return state(harness.currentModel);
+                        case 'set_todos':
+                            harness.todoPhases = command.phases;
+                            return { todoPhases: command.phases };
                         case 'set_host_tools':
                             return { toolNames: command.tools.map((tool) => tool.name) };
                         case 'set_host_uri_schemes':
@@ -440,6 +445,7 @@ describe('ompRemoteLauncher RPC lifecycle', () => {
         harness.promptResponse = { agentInvoked: true };
         harness.stateStreaming = false;
         harness.queuedMessageCount = 0;
+        harness.todoPhases = [];
         harness.currentModel = model('ollama', 'launch-default', 'Launch default');
         harness.availableModels = [
             harness.currentModel,
@@ -1465,5 +1471,43 @@ describe('ompRemoteLauncher RPC lifecycle', () => {
         ]);
 
         await expect(ompRemoteLauncher(session as never)).rejects.toThrow('OMP RPC close failed');
+    });
+
+    it('clears OMP todoPhases via set_todos when all tasks are terminal, but preserves active phases', async () => {
+        harness.todoPhases = [
+            {
+                name: 'Tasks',
+                tasks: [
+                    { content: 'Step 1', status: 'completed' },
+                    { content: 'Step 2', status: 'abandoned' }
+                ]
+            }
+        ];
+        const { session } = createSessionStub([
+            { message: 'next unrelated task', mode: createMode() }
+        ]);
+
+        await ompRemoteLauncher(session as never);
+
+        expect(harness.requests.some((request) => request.type === 'set_todos' && request.phases.length === 0)).toBe(true);
+        expect(harness.todoPhases).toEqual([]);
+
+        harness.requests = [];
+        harness.todoPhases = [
+            {
+                name: 'Tasks',
+                tasks: [
+                    { content: 'Step 1', status: 'completed' },
+                    { content: 'Step 2', status: 'in_progress' }
+                ]
+            }
+        ];
+        const { session: activeSession } = createSessionStub([
+            { message: 'continue task', mode: createMode() }
+        ]);
+
+        await ompRemoteLauncher(activeSession as never);
+
+        expect(harness.requests.some((request) => request.type === 'set_todos')).toBe(false);
     });
 });
