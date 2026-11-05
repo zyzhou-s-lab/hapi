@@ -3,6 +3,7 @@ import { TextMessagePartProvider, useAuiState } from '@assistant-ui/react'
 import { formatDuration } from '@/chat/presentation'
 import type { ToolCallBlock } from '@/chat/types'
 import { useOptionalHappyChatContext } from '@/components/AssistantChat/context'
+import type { TodoItem } from '@/types/api'
 import { NotifySummaryText } from '@/components/AssistantChat/messages/NotifySummaryText'
 import { GeneratedFileCard, GeneratedImageCard } from '@/components/AssistantChat/messages/ToolMessage'
 import { partitionTurn, turnDurationMs, type TurnContentPart, type TurnPartition, type TurnRow, type TurnToolRow } from '@/components/AssistantChat/messages/turnBlockModel'
@@ -224,6 +225,7 @@ export function TurnBlockView(props: {
     initiallyOpen: boolean
     variant?: 'classic' | 'timeline'
     activeTodoText?: string | null
+    fallbackTodos?: readonly TodoItem[] | null
     viewMode?: TranscriptViewMode
     lang?: 'en' | 'zh-CN'
 }) {
@@ -245,6 +247,7 @@ export function TurnBlockView(props: {
                 durationMs={props.durationMs}
                 initiallyOpen={props.initiallyOpen}
                 activeTodoText={props.activeTodoText}
+                fallbackTodos={props.fallbackTodos}
                 viewMode={props.viewMode}
                 lang={props.lang}
                 renderTrailingText={(text, isStreaming) => <TurnText text={text} streaming={isStreaming} />}
@@ -355,6 +358,7 @@ export function TurnBlock() {
     const activeTodoText = streaming
         ? (ctx?.todos?.find((item) => item.status === 'in_progress')?.content ?? null)
         : null
+    const fallbackTodos = (streaming || isLastMessage) ? (ctx?.todos ?? null) : null
 
     useEffect(() => {
         if (!streaming) return
@@ -366,6 +370,7 @@ export function TurnBlock() {
         <TurnBlockView
             variant="timeline"
             activeTodoText={activeTodoText}
+            fallbackTodos={fallbackTodos}
             lang={locale === 'zh-CN' ? 'zh-CN' : 'en'}
             partition={partition}
             streaming={streaming}

@@ -204,6 +204,24 @@ describe('extractTodoChecklist', () => {
             { id: 'task-5', text: 'Escape pipes in table code spans', status: 'completed' },
         ])
     })
+
+    it('scopes session-level input.todos with OMP phase-prefixed IDs to the active phase', () => {
+        const items = extractTodoChecklist(
+            {
+                todos: [
+                    { id: 'Fix lag:1', content: 'Inspect session switch', status: 'completed', priority: 'medium' },
+                    { id: 'Fix lag:2', content: 'Commit and merge', status: 'completed', priority: 'medium' },
+                    { id: 'Fix scroll:1', content: 'Reproduce scroll jump', status: 'completed', priority: 'medium' },
+                    { id: 'Fix scroll:2', content: 'Anchor viewport', status: 'in_progress', priority: 'medium' }
+                ]
+            },
+            undefined
+        )
+        expect(items).toEqual([
+            { id: 'Fix scroll:1', text: 'Reproduce scroll jump', status: 'completed' },
+            { id: 'Fix scroll:2', text: 'Anchor viewport', status: 'in_progress' }
+        ])
+    })
 })
 
 describe('update_plan tool presentation', () => {
