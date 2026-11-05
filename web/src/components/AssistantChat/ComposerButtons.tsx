@@ -166,7 +166,7 @@ function ChevronIcon() {
     return <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"><path d="M2.5 3.75L5 6.25L7.5 3.75" /></svg>
 }
 
-function VoiceAssistantIcon() {
+function VoiceAssistantIcon(props: { className?: string }) {
     return (
         <svg
             xmlns="http://www.w3.org/2000/svg"
@@ -178,6 +178,7 @@ function VoiceAssistantIcon() {
             strokeWidth="2"
             strokeLinecap="round"
             strokeLinejoin="round"
+            className={props.className}
         >
             {/* 三条声波线，代表语音助手的输出 */}
             <path d="M12 6v12" />
@@ -759,6 +760,7 @@ export function UnifiedButton(props: {
      * would fall back to chat, the button must look like a normal chat send.
      */
     routesToScratchlist?: boolean
+    inlineMode?: boolean
 }) {
     const { t } = useTranslation()
 
@@ -829,7 +831,7 @@ export function UnifiedButton(props: {
             disabled={isDisabled}
             aria-label={ariaLabel}
             title={ariaLabel}
-            className={`ml-1 flex h-8 w-8 items-center justify-center rounded-full transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${className}`}
+            className={`${props.inlineMode ? '' : 'ml-1 '}flex h-8 w-8 shrink-0 items-center justify-center rounded-full transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${className}`}
         >
             {icon}
         </button>
@@ -1162,6 +1164,52 @@ export function ComposerButtons(props: {
         const showScheduleInRight = Boolean(scheduleNode && !effectiveLayout.hidden.includes('schedule'))
         const showExpandInRight = !effectiveLayout.hidden.includes('expand')
         const showContextRing = props.contextSize !== undefined && props.agentFlavor !== 'cursor'
+        const inlineCircleButtonClass = 'flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-[var(--app-border)] bg-[var(--app-bg)]/80 text-[var(--app-fg)]/75 shadow-2xs transition-colors hover:bg-[var(--app-subtle-bg)] hover:text-[var(--app-fg)] disabled:cursor-not-allowed disabled:opacity-50'
+        const showInlineAbort = props.showAbortButton && (!props.abortDisabled || props.isAborting)
+        const isInlineVoiceConnecting = props.voiceStatus === 'connecting'
+        const isInlineVoiceConnected = props.voiceStatus === 'connected'
+        const isInlineVoiceActive = isInlineVoiceConnecting || isInlineVoiceConnected
+        const inlineVoiceLabel = isInlineVoiceConnecting
+            ? t('voice.connecting')
+            : isInlineVoiceConnected
+                ? t('composer.stop')
+                : (props.dictationEnabled ? t('composer.dictate') : t('composer.voice'))
+        const inlineVoiceNode = !showInlineAbort || isInlineVoiceActive ? (
+            <button
+                type="button"
+                aria-label={inlineVoiceLabel}
+                title={inlineVoiceLabel}
+                disabled={props.controlsDisabled || (!props.voiceEnabled && !isInlineVoiceActive)}
+                data-testid="composer-voice-button"
+                onClick={props.onVoiceToggle}
+                className={
+                    isInlineVoiceConnected
+                        ? 'flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-transparent bg-[var(--app-badge-error-text)] text-white shadow-2xs transition-colors hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50'
+                        : inlineCircleButtonClass
+                }
+            >
+                {isInlineVoiceConnecting ? (
+                    <LoadingIcon />
+                ) : isInlineVoiceConnected ? (
+                    <StopIcon />
+                ) : (
+                    <VoiceAssistantIcon className="h-4 w-4" />
+                )}
+            </button>
+        ) : null
+        const inlineAbortNode = showInlineAbort ? (
+            <button
+                type="button"
+                aria-label={t('composer.abort')}
+                title={t('composer.abort')}
+                disabled={props.abortDisabled}
+                data-testid="composer-abort-button"
+                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-[var(--app-badge-error-border)] bg-[var(--app-badge-error-bg)] text-[var(--app-badge-error-text)] shadow-2xs transition-colors hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+                onClick={props.onAbort}
+            >
+                {props.isAborting ? <LoadingIcon /> : <StopIcon />}
+            </button>
+        ) : null
 
         return (
             <>
@@ -1171,7 +1219,7 @@ export function ComposerButtons(props: {
                         title={t('composer.attach')}
                         disabled={props.controlsDisabled || hasSchedule}
                         data-testid="composer-attach-plus"
-                        className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[var(--app-subtle-bg)] text-[var(--app-fg)]/75 transition-colors hover:bg-[var(--app-border)] hover:text-[var(--app-fg)] disabled:cursor-not-allowed disabled:opacity-50"
+                        className={inlineCircleButtonClass}
                     >
                         <PlusIcon />
                     </ComposerPrimitive.AddAttachment>,
@@ -1180,9 +1228,22 @@ export function ComposerButtons(props: {
                 {createPortal(
                     <>
                         {voiceMicNode}
-                        {abortNode}
                         {switchNode}
-                        {primaryActionsCluster}
+                        {inlineVoiceNode}
+                        {inlineAbortNode}
+                        <UnifiedButton
+                            inlineMode
+                            canSend={props.canSend}
+                            voiceStatus="disconnected"
+                            voiceEnabled={false}
+                            controlsDisabled={props.controlsDisabled}
+                            onSend={props.onSend}
+                            onVoiceToggle={props.onVoiceToggle}
+                            routesToScratchlist={
+                                (props.scratchlistMode ?? false)
+                                && props.pendingSchedule == null
+                            }
+                        />
                     </>,
                     props.inlineTrailingSlot,
                 )}

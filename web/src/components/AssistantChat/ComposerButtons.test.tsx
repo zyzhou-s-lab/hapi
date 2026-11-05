@@ -275,7 +275,7 @@ describe('ComposerButtons responsive toolbar', () => {
         expect(getComposerToolbarJustifyContent('split')).toBe('flex-start')
     })
 
-    it('portals attachment plus and send button into inline frame slots and renders external bottom bar with context ring in Scheme 2 mode', () => {
+    it('portals attachment plus, voice input (when idle), and send button with uniform h-8 w-8 circular sizing in Scheme 2 mode', () => {
         const noop = () => {}
         const leadingSlot = document.createElement('div')
         const trailingSlot = document.createElement('div')
@@ -283,11 +283,11 @@ describe('ComposerButtons responsive toolbar', () => {
         document.body.appendChild(trailingSlot)
 
         try {
-            render(
+            const { rerender } = render(
                 <RuntimeProviders>
                     <div style={{ width: 760 }}>
                         <ComposerButtons
-                            canSend
+                            canSend={false}
                             controlsDisabled={false}
                             showSettingsButton
                             onSettingsToggle={noop}
@@ -301,15 +301,15 @@ describe('ComposerButtons responsive toolbar', () => {
                             terminalDisabled={false}
                             terminalLabel="Terminal"
                             onTerminal={noop}
-                            showAbortButton={false}
-                            abortDisabled={false}
+                            showAbortButton
+                            abortDisabled
                             isAborting={false}
                             onAbort={noop}
                             showSwitchButton={false}
                             switchDisabled={false}
                             isSwitching={false}
                             onSwitch={noop}
-                            voiceEnabled={false}
+                            voiceEnabled
                             dictationEnabled
                             voiceStatus="disconnected"
                             onVoiceToggle={noop}
@@ -326,14 +326,81 @@ describe('ComposerButtons responsive toolbar', () => {
                 </RuntimeProviders>,
             )
 
-            expect(within(leadingSlot).getByTestId('composer-attach-plus')).toBeInTheDocument()
-            expect(within(trailingSlot).getByRole('button', { name: 'Send' })).toBeInTheDocument()
+            const attachBtn = within(leadingSlot).getByTestId('composer-attach-plus')
+            const voiceBtn = within(trailingSlot).getByTestId('composer-voice-button')
+            const sendBtn = within(trailingSlot).getByRole('button', { name: 'Send' })
+
+            // When idle (abortDisabled=true), stop/abort button must NOT appear; voice button appears to the left of Send
+            expect(within(trailingSlot).queryByTestId('composer-abort-button')).not.toBeInTheDocument()
+            expect(voiceBtn).toBeInTheDocument()
+            expect(sendBtn).toBeInTheDocument()
+
+            // All 3 inline circular buttons share uniform 32x32 (h-8 w-8 shrink-0 rounded-full) dimensions
+            for (const btn of [attachBtn, voiceBtn, sendBtn]) {
+                expect(btn.className).toContain('h-8')
+                expect(btn.className).toContain('w-8')
+                expect(btn.className).toContain('shrink-0')
+                expect(btn.className).toContain('rounded-full')
+            }
+
             const externalBar = screen.getByTestId('composer-external-bar')
             expect(within(externalBar).getByTestId('composer-toolbar-items')).toBeInTheDocument()
             expect(within(externalBar).getByText('GPT-5.4')).toBeInTheDocument()
             expect(within(externalBar).getByText('High')).toBeInTheDocument()
             const contextRing = within(externalBar).getByTestId('composer-context-ring')
             expect(contextRing.textContent).toContain('55%')
+
+            // When running (abortDisabled=false), abort button replaces voice button with the same h-8 w-8 circular size
+            rerender(
+                <RuntimeProviders>
+                    <div style={{ width: 760 }}>
+                        <ComposerButtons
+                            canSend={false}
+                            controlsDisabled={false}
+                            showSettingsButton
+                            onSettingsToggle={noop}
+                            modelValueLabel="GPT-5.4"
+                            onModelValueToggle={noop}
+                            effortValueLabel="High"
+                            onEffortValueToggle={noop}
+                            expanded={false}
+                            onExpandedToggle={noop}
+                            showTerminalButton
+                            terminalDisabled={false}
+                            terminalLabel="Terminal"
+                            onTerminal={noop}
+                            showAbortButton
+                            abortDisabled={false}
+                            isAborting={false}
+                            onAbort={noop}
+                            showSwitchButton={false}
+                            switchDisabled={false}
+                            isSwitching={false}
+                            onSwitch={noop}
+                            voiceEnabled
+                            dictationEnabled
+                            voiceStatus="disconnected"
+                            onVoiceToggle={noop}
+                            onSend={noop}
+                            onSchedule={noop}
+                            onScratchlistToggle={noop}
+                            inlineLeadingSlot={leadingSlot}
+                            inlineTrailingSlot={trailingSlot}
+                            contextSize={137_500}
+                            contextCacheRead={94_200}
+                            contextWindow={250_000}
+                        />
+                    </div>
+                </RuntimeProviders>,
+            )
+
+            const abortBtn = within(trailingSlot).getByTestId('composer-abort-button')
+            expect(abortBtn).toBeInTheDocument()
+            expect(within(trailingSlot).queryByTestId('composer-voice-button')).not.toBeInTheDocument()
+            expect(abortBtn.className).toContain('h-8')
+            expect(abortBtn.className).toContain('w-8')
+            expect(abortBtn.className).toContain('shrink-0')
+            expect(abortBtn.className).toContain('rounded-full')
         } finally {
             leadingSlot.remove()
             trailingSlot.remove()
