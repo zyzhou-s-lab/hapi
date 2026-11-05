@@ -33,6 +33,7 @@ import { VoiceErrorBanner } from '@/components/VoiceErrorBanner'
 import { RunnerVersionSkewBanner } from '@/components/RunnerVersionSkewBanner'
 import { LoadingState } from '@/components/LoadingState'
 import { ToastContainer } from '@/components/ToastContainer'
+import { TurnTimelineDemo } from '@/components/AssistantChat/messages/TurnTimelineDemo'
 import { PwaUpdateProvider } from '@/lib/pwa-update-context'
 import { ToastProvider, useToast } from '@/lib/toast-context'
 import type { SyncEvent } from '@/types/api'
@@ -416,6 +417,10 @@ function AppInner() {
     })
 
     // Loading auth source
+    if (location.pathname.startsWith('/demo/turn-timeline')) {
+        return <TurnTimelineDemo />
+    }
+
     if (isAuthSourceLoading) {
         return withPwaBanner(
             <div className="h-full flex items-center justify-center p-4">

@@ -494,6 +494,183 @@ export function TurnTimelineDemo() {
     const [lang, setLang] = useState<'en' | 'zh-CN'>('zh-CN')
     const [autoPlaying, setAutoPlaying] = useState(false)
     const [submittedAnswers, setSubmittedAnswers] = useState<Record<string, string> | null>(null)
+    const [todoShowcaseState, setTodoShowcaseState] = useState<'running' | 'completed' | 'multi'>('running')
+
+    const todoShowcaseRunningPartition = useMemo(
+        () =>
+            partitionTurn(
+                [
+                    {
+                        type: 'reasoning',
+                        text: '**Inspecting deployment state** across remote main, worktrees, and live Hub service.',
+                        status: { type: 'complete' },
+                    },
+                    makeToolPart({
+                        id: 'showcase-todo-running',
+                        name: 'todo',
+                        state: 'completed',
+                        description: '初始化任务并开始检查部署状态',
+                        toolInput: {
+                            i: 'Initializing deployment check todo',
+                        },
+                        result: {
+                            details: {
+                                phases: [
+                                    {
+                                        id: 'phase-1',
+                                        name: 'Tasks',
+                                        tasks: [
+                                            {
+                                                id: 'task-1',
+                                                content: '检查当前部署状态与未上线改动',
+                                                status: 'in_progress',
+                                            },
+                                        ],
+                                    },
+                                ],
+                            },
+                        },
+                    }),
+                    makeToolPart({
+                        id: 'showcase-bash-running',
+                        name: 'Bash',
+                        state: 'running',
+                        description: 'Checking git rev-parse and remote release tags',
+                        toolInput: {
+                            command: 'git fetch mine && git log --oneline -n 5 HEAD..mine/main',
+                            description: 'Checking git rev-parse and remote release tags',
+                        },
+                    }),
+                ],
+                null
+            ),
+        []
+    )
+
+    const todoShowcaseCompletedPartition = useMemo(
+        () =>
+            partitionTurn(
+                [
+                    {
+                        type: 'reasoning',
+                        text: '**Inspecting deployment state** across remote main, worktrees, and live Hub service.',
+                        status: { type: 'complete' },
+                    },
+                    makeToolPart({
+                        id: 'showcase-bash-1',
+                        name: 'Bash',
+                        state: 'completed',
+                        description: 'Checking git status and branch commits',
+                        toolInput: { command: 'git status -sb' },
+                        result: { stdout: '## main...mine/main' },
+                    }),
+                    makeToolPart({
+                        id: 'showcase-bash-2',
+                        name: 'Bash',
+                        state: 'completed',
+                        description: 'Checking remote release tags',
+                        toolInput: { command: 'gh release list -L 3' },
+                        result: { stdout: 'v0.29.0-fork.33\tLatest' },
+                    }),
+                    makeToolPart({
+                        id: 'showcase-bash-3',
+                        name: 'Bash',
+                        state: 'completed',
+                        description: 'Checking production Hub binary hash',
+                        toolInput: { command: 'sha256sum /usr/local/bin/hapi' },
+                        result: { stdout: '041b2585dec4140d5d6adfb2ac45b1620339f6392be653f289fd6fdf7cab5b57' },
+                    }),
+                    makeToolPart({
+                        id: 'showcase-todo-completed',
+                        name: 'todo',
+                        state: 'completed',
+                        description: '完成部署状态检查',
+                        toolInput: {
+                            i: 'Marking deployment check complete',
+                        },
+                        result: {
+                            details: {
+                                phases: [
+                                    {
+                                        id: 'phase-1',
+                                        name: 'Tasks',
+                                        tasks: [
+                                            {
+                                                id: 'task-1',
+                                                content: '检查当前部署状态与未上线改动',
+                                                status: 'completed',
+                                            },
+                                        ],
+                                    },
+                                ],
+                            },
+                        },
+                    }),
+                    {
+                        type: 'text',
+                        text: '我帮你把 `mine/main`、本机/Mac 的主仓库以及线上 `root@aliyun` 的运行状态全部核对了一遍，目前没有任何未部署的改动。',
+                        status: { type: 'complete' },
+                    },
+                ],
+                null
+            ),
+        []
+    )
+
+    const todoShowcaseMultiPartition = useMemo(
+        () =>
+            partitionTurn(
+                [
+                    makeToolPart({
+                        id: 'showcase-todo-multi',
+                        name: 'todo',
+                        state: 'completed',
+                        description: '更新多任务进度',
+                        toolInput: { i: 'Updating multi-step todo card' },
+                        result: {
+                            details: {
+                                phases: [
+                                    {
+                                        id: 'phase-1',
+                                        name: 'Tasks',
+                                        tasks: [
+                                            {
+                                                id: 'task-1',
+                                                content: '收敛顶部 SessionStatusPanel 与下方 TodoPanel 的重复信息',
+                                                status: 'completed',
+                                            },
+                                            {
+                                                id: 'task-2',
+                                                content: '将 Updated todos 改造为圆角任务卡片（进行中转圈 / 完成打勾）',
+                                                status: 'in_progress',
+                                            },
+                                            {
+                                                id: 'task-3',
+                                                content: '暴露 TurnTimelineDemo 页面供 Mac 直接访问验证',
+                                                status: 'pending',
+                                            },
+                                        ],
+                                    },
+                                ],
+                            },
+                        },
+                    }),
+                    makeToolPart({
+                        id: 'showcase-edit-multi',
+                        name: 'Edit',
+                        state: 'running',
+                        description: 'Updating TimelineTurnBlock.tsx with TimelineTodoChecklistCard',
+                        toolInput: {
+                            file_path: 'web/src/components/AssistantChat/messages/TimelineTurnBlock.tsx',
+                            old_string: '<TimelineToolStepRow ... />',
+                            new_string: '<TimelineTodoChecklistCard items={checklistItems} />',
+                        },
+                    }),
+                ],
+                null
+            ),
+        []
+    )
     const [showSpecTable, setShowSpecTable] = useState(true)
     const [indicatorVariant, setIndicatorVariant] = useState<TurnActivityIndicatorVariant>('equalizer-bars')
     const [indicatorColor, setIndicatorColor] = useState<string>('#da7756')
@@ -723,6 +900,114 @@ export function TurnTimelineDemo() {
                                 <span>{c.label.split(' ')[0]}</span>
                             </button>
                         ))}
+                    </div>
+                </section>
+
+                {/* Updated Todos Card Redesign Showcase */}
+                <section
+                    className="rounded-2xl border border-[var(--app-border)] bg-[var(--app-bg)] p-4 sm:p-5 shadow-xs space-y-4"
+                    data-testid="todo-card-redesign-showcase"
+                >
+                    <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--app-border)]/70 pb-3">
+                        <div>
+                            <div className="flex items-center gap-2">
+                                <span className="inline-block h-2.5 w-2.5 rounded-full bg-[#10b981]" />
+                                <h2 className="text-sm font-semibold text-[var(--app-fg)]">
+                                    Updated Todos 任务卡片新样式预览（进行中转圈 → 完成后打勾）
+                                </h2>
+                            </div>
+                            <p className="mt-0.5 text-xs text-[var(--app-hint)]">
+                                自动将回合内的 <code className="font-mono">todo</code> / <code className="font-mono">TodoWrite</code> 渲染为独立圆角任务卡片，并自动折叠同一回合内被后续覆盖的历史快照与已恢复错误。
+                            </p>
+                        </div>
+                        <div className="inline-flex items-center rounded-lg border border-[var(--app-border)] bg-[var(--app-subtle-bg)]/50 p-0.5">
+                            {(
+                                [
+                                    { id: 'running', label: '1. 进行中（转圈）' },
+                                    { id: 'completed', label: '2. 已完成（折叠打勾）' },
+                                    { id: 'multi', label: '3. 多任务流转态' },
+                                ] as const
+                            ).map((tab) => (
+                                <button
+                                    key={tab.id}
+                                    type="button"
+                                    onClick={() => setTodoShowcaseState(tab.id)}
+                                    className={cn(
+                                        'rounded-md px-2.5 py-1 text-[11.5px] font-medium transition-colors',
+                                        todoShowcaseState === tab.id
+                                            ? 'bg-[var(--app-bg)] text-[var(--app-fg)] shadow-xs'
+                                            : 'text-[var(--app-hint)] hover:text-[var(--app-fg)]'
+                                    )}
+                                >
+                                    {tab.label}
+                                </button>
+                            ))}
+                        </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+                        {/* Left: Interactive single turn switching between running & completed */}
+                        <div className="rounded-xl border border-[var(--app-border)]/80 bg-[var(--app-subtle-bg)]/20 p-4 space-y-2.5">
+                            <div className="flex items-center justify-between text-xs text-[var(--app-hint)]">
+                                <span className="font-medium text-[var(--app-fg)]">
+                                    交互预览（点击右上角按钮切换流转态）
+                                </span>
+                                <span className="font-mono text-[11px]">
+                                    {todoShowcaseState === 'running'
+                                        ? 'status = in_progress (spinner)'
+                                        : todoShowcaseState === 'completed'
+                                            ? 'status = completed (check)'
+                                            : 'completed + in_progress + pending'}
+                                </span>
+                            </div>
+                            <TimelineTurnBlockView
+                                partition={
+                                    todoShowcaseState === 'running'
+                                        ? todoShowcaseRunningPartition
+                                        : todoShowcaseState === 'completed'
+                                            ? todoShowcaseCompletedPartition
+                                            : todoShowcaseMultiPartition
+                                }
+                                streaming={todoShowcaseState !== 'completed'}
+                                durationMs={todoShowcaseState === 'completed' ? 8400 : 3200}
+                                initiallyOpen={todoShowcaseState !== 'completed'}
+                                viewMode={viewMode}
+                                lang="zh-CN"
+                                indicatorColor={indicatorColor}
+                            />
+                        </div>
+
+                        {/* Right: Side-by-side static comparison of Running vs Completed */}
+                        <div className="rounded-xl border border-[var(--app-border)]/80 bg-[var(--app-subtle-bg)]/20 p-4 space-y-4">
+                            <div className="space-y-1.5">
+                                <div className="text-[11.5px] font-medium text-[var(--app-hint)]">
+                                    A. 正在进行时（圆角卡片 + 左侧旋转圆弧）：
+                                </div>
+                                <TimelineTurnBlockView
+                                    partition={todoShowcaseRunningPartition}
+                                    streaming={true}
+                                    durationMs={3200}
+                                    initiallyOpen={false}
+                                    viewMode={viewMode}
+                                    lang="zh-CN"
+                                    indicatorColor={indicatorColor}
+                                />
+                            </div>
+                            <div className="border-t border-[var(--app-border)]/60 pt-3 space-y-1.5">
+                                <div className="text-[11.5px] font-medium text-[var(--app-hint)]">
+                                    B. 回合完成后（自动折叠导轨 + 卡片实心圆打勾）：
+                                </div>
+                                <TimelineTurnBlockView
+                                    partition={todoShowcaseCompletedPartition}
+                                    streaming={false}
+                                    durationMs={8400}
+                                    initiallyOpen={false}
+                                    viewMode={viewMode}
+                                    lang="zh-CN"
+                                    indicatorColor={indicatorColor}
+                                />
+                            </div>
+                        </div>
                     </div>
                 </section>
 
