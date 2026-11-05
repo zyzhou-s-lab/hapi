@@ -353,6 +353,43 @@ describe('assignThreadMessageIds', () => {
         expect(afterSecondPrepend[1].threadMessageId).toBe('agent-text:b-tail')
         expect(new Set(afterSecondPrepend.map((entry) => entry.threadMessageId)).size).toBe(5)
     })
+
+    it('preserves wrapper identity and aggregate metadata for historical and active-turn head blocks when a streaming tail text block updates', () => {
+        const cache = new WeakMap<VisibleChatBlock, BlockWithThreadMessageId>()
+        const pastUser = userText('u1')
+        const pastAssistant1 = agentText('a1', {
+            localId: 'turn-1a',
+            model: 'claude-opus-4-6',
+            usage: { input_tokens: 100, output_tokens: 50 },
+        })
+        const pastAssistant2 = agentText('a2', {
+            localId: 'turn-1b',
+            model: 'claude-opus-4-6',
+            usage: { input_tokens: 120, output_tokens: 80 },
+        })
+        const activeUser = userText('u2')
+        const activeTools = toolGroup('g-active', [toolCall('read-active')])
+        const streamingTextTick1 = agentText('a-stream', { text: 'Partial markdown table | col1 |' })
+        const streamingTextTick2 = agentText('a-stream', { text: 'Partial markdown table | col1 | col2 |' })
+
+        const tick1 = assignThreadMessageIdsWithStableWrappers(
+            [pastUser, pastAssistant1, pastAssistant2, activeUser, activeTools, streamingTextTick1],
+            cache
+        )
+        const tick2 = assignThreadMessageIdsWithStableWrappers(
+            [pastUser, pastAssistant1, pastAssistant2, activeUser, activeTools, streamingTextTick2],
+            cache
+        )
+
+        expect(tick2[0]).toBe(tick1[0])
+        expect(tick2[1]).toBe(tick1[1])
+        expect(tick2[1]?.aggregate?.turnCount).toBe(2)
+        expect(tick2[2]).toBe(tick1[2])
+        expect(tick2[3]).toBe(tick1[3])
+        expect(tick2[4]).toBe(tick1[4])
+        expect(tick2[5]).not.toBe(tick1[5])
+        expect(tick2[5]?.threadMessageId).toBe(tick1[5]?.threadMessageId)
+    })
 })
 
 describe('aggregateResponseGroups generation duration', () => {

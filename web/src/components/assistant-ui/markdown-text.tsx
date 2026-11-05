@@ -924,11 +924,11 @@ export const defaultComponents: DefaultComponentsMap = memoizeMarkdownComponents
     img: Image,
 } as const) as unknown as DefaultComponentsMap
 
-export function MarkdownText({ smooth }: { smooth?: boolean } = {}) {
+export function MarkdownText({ smooth: _smooth }: { smooth?: boolean } = {}) {
     return (
         <UriConfirmProvider>
             <MarkdownTextPrimitive
-                smooth={smooth}
+                smooth={false}
                 remarkPlugins={MARKDOWN_PLUGINS}
                 rehypePlugins={MARKDOWN_REHYPE_PLUGINS}
                 components={defaultComponents}

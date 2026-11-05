@@ -451,14 +451,29 @@ export function partitionTurn(
         }
     })
 
-    let lastTool = -1
+    const isSubRoundStep = ( candidate: TurnRow ): boolean =>
+        (candidate.kind === 'tool' && candidate.block.tool.name !== 'ContextCompaction')
+        || candidate.kind === 'image'
+        || candidate.kind === 'file'
+    const isCompactionBoundary = ( candidate: TurnRow ): boolean =>
+        candidate.kind === 'tool' && candidate.block.tool.name === 'ContextCompaction'
+
     rows.forEach((row, index) => {
-        if (row.kind === 'tool' || row.kind === 'image' || row.kind === 'file') lastTool = index
+        if (row.kind !== 'text') return
+        let boundaryIndex = rows.length
+        for (let cursor = index + 1; cursor < rows.length; cursor += 1) {
+            if (isCompactionBoundary(rows[cursor]!)) {
+                boundaryIndex = cursor
+                break
+            }
+        }
+        const hasStepBeforeBoundary = rows
+            .slice(index + 1, boundaryIndex)
+            .some(isSubRoundStep)
+        if (!hasStepBeforeBoundary) {
+            row.trailing = true
+        }
     })
-    for (let index = lastTool + 1; index < rows.length; index += 1) {
-        const row = rows[index]
-        if (row.kind === 'text') row.trailing = true
-    }
 
     const hasPendingTool = rows.some((row) => row.kind === 'tool' && row.block.tool.state === 'pending')
     rows.forEach((row, index) => {

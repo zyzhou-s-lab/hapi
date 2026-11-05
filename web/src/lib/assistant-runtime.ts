@@ -441,6 +441,39 @@ export function aggregateResponseGroups(
 export type BlockWithThreadMessageId = {
     block: VisibleChatBlock
     threadMessageId: string
+    timestamp?: number
+    aggregate?: AggregatedAssistantMeta
+}
+
+function isSameUsage(a: UsageData | undefined, b: UsageData | undefined): boolean {
+    if (a === b) return true
+    if (!a || !b) return false
+    return a.input_tokens === b.input_tokens
+        && a.output_tokens === b.output_tokens
+        && a.reasoning_output_tokens === b.reasoning_output_tokens
+        && a.cache_creation_input_tokens === b.cache_creation_input_tokens
+        && a.cache_read_input_tokens === b.cache_read_input_tokens
+        && a.context_tokens === b.context_tokens
+        && a.context_window === b.context_window
+        && a.thread_id === b.thread_id
+        && a.scope_role === b.scope_role
+        && a.service_tier === b.service_tier
+        && a.cost_usd === b.cost_usd
+        && a.generation_duration_ms === b.generation_duration_ms
+}
+
+function isSameAggregate(
+    a: AggregatedAssistantMeta | undefined,
+    b: AggregatedAssistantMeta | undefined
+): boolean {
+    if (a === b) return true
+    if (!a || !b) return false
+    return a.model === b.model
+        && a.invokedAt === b.invokedAt
+        && a.durationMs === b.durationMs
+        && a.turnCount === b.turnCount
+        && a.roundSummary === b.roundSummary
+        && isSameUsage(a.usage, b.usage)
 }
 
 /**
@@ -530,13 +563,30 @@ export function assignThreadMessageIdsWithStableWrappers(
     }
     assistantGroupIdCache.set(wrapperCache, nextGroupByRawId)
 
+    const responseGroupTimestamps = getResponseGroupTimestamps(blocks)
+    const aggregates = aggregateResponseGroups(blocks)
+
     return blocks.map((block, blockIndex) => {
         const threadMessageId = assignedIds[blockIndex]!
+        const timestamp = responseGroupTimestamps.get(block) ?? getBlockPresentationTimestamp(block)
+        const aggregate = aggregates.get(block.id)
         const cached = wrapperCache.get(block)
-        if (cached?.threadMessageId === threadMessageId) {
+        if (
+            cached?.threadMessageId === threadMessageId
+            && cached.timestamp === timestamp
+            && isSameAggregate(cached.aggregate, aggregate)
+        ) {
             return cached
         }
-        const next: BlockWithThreadMessageId = { block, threadMessageId }
+        const stableAggregate = cached && isSameAggregate(cached.aggregate, aggregate)
+            ? cached.aggregate
+            : aggregate
+        const next: BlockWithThreadMessageId = {
+            block,
+            threadMessageId,
+            timestamp,
+            aggregate: stableAggregate,
+        }
         wrapperCache.set(block, next)
         return next
     })
@@ -1100,23 +1150,13 @@ export function useHappyRuntime(props: {
         [visibleBlocks]
     )
 
-    const aggregates = useMemo(
-        () => aggregateResponseGroups(visibleBlocks),
-        [visibleBlocks]
-    )
-    const responseGroupTimestamps = useMemo(
-        () => getResponseGroupTimestamps(visibleBlocks),
-        [visibleBlocks]
-    )
-
     const convertBlock = useCallback(
-        ({ block, threadMessageId }: BlockWithThreadMessageId): ThreadMessageLike => {
+        ({ block, threadMessageId, timestamp, aggregate }: BlockWithThreadMessageId): ThreadMessageLike => {
             const message = toThreadMessageLike(
                 block,
                 threadMessageId,
-                responseGroupTimestamps.get(block) ?? getBlockPresentationTimestamp(block)
+                timestamp ?? getBlockPresentationTimestamp(block)
             )
-            const aggregate = aggregates.get(block.id)
             if (!aggregate) return message
             const existing = message.metadata?.custom as HappyChatMessageMetadata | undefined
             return {
@@ -1135,7 +1175,7 @@ export function useHappyRuntime(props: {
                 }
             }
         },
-        [aggregates, responseGroupTimestamps]
+        []
     )
 
     // Use cached message converter for performance optimization

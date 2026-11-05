@@ -1259,18 +1259,19 @@ export function TimelineTurnBlockView(props: {
         ),
         [rawStepRows]
     )
+    const lastRow = props.partition.rows[props.partition.rows.length - 1]
+    const endsWithTrailingText = Boolean(lastRow && lastRow.kind === 'text' && lastRow.trailing)
     const hasTrailingReasoningStep =
         props.streaming
-        && trailing.length === 0
+        && !endsWithTrailingText
         && stepRows.length > 0
         && stepRows[stepRows.length - 1]?.kind === 'reasoning'
     const showFrontierSlot =
         props.streaming
         && hasSteps
-        && trailing.length === 0
+        && !endsWithTrailingText
         && !hasRunningOrPendingTool
         && !hasTrailingReasoningStep
-
     const activeRunningRowIndices = useMemo(() => {
         const indices: number[] = []
         for (let i = 0; i < stepRows.length; i += 1) {
@@ -1462,11 +1463,14 @@ export function TimelineTurnBlockView(props: {
         if (trailing.length === 0) return null
         return (
             <div className="my-2 space-y-3">
-                {trailing.map((row) => (
-                    <div key={row.key} className="text-[15px] leading-relaxed text-[var(--app-fg)] whitespace-pre-wrap">
-                        {props.renderTrailingText ? props.renderTrailingText(row.text, props.streaming) : renderSimpleMarkdownText(row.text)}
-                    </div>
-                ))}
+                {trailing.map((row) => {
+                    const isRowStreaming = props.streaming && row === lastRow
+                    return (
+                        <div key={row.key} className="text-[15px] leading-relaxed text-[var(--app-fg)] whitespace-pre-wrap">
+                            {props.renderTrailingText ? props.renderTrailingText(row.text, isRowStreaming) : renderSimpleMarkdownText(row.text)}
+                        </div>
+                    )
+                })}
             </div>
         )
     }
@@ -1753,15 +1757,18 @@ export function TimelineTurnBlockView(props: {
             ) : null}
 
             {/* Trailing final assistant response */}
-            {trailing.map((row) => (
-                <div
-                    key={row.key}
-                    className="mt-3 text-[15px] leading-relaxed text-[var(--app-fg)]"
-                    data-testid="turn-trailing-answer"
-                >
-                    {props.renderTrailingText ? props.renderTrailingText(row.text, props.streaming) : renderSimpleMarkdownText(row.text)}
-                </div>
-            ))}
+            {trailing.map((row) => {
+                const isRowStreaming = props.streaming && row === lastRow
+                return (
+                    <div
+                        key={row.key}
+                        className="mt-3 text-[15px] leading-relaxed text-[var(--app-fg)]"
+                        data-testid="turn-trailing-answer"
+                    >
+                        {props.renderTrailingText ? props.renderTrailingText(row.text, isRowStreaming) : renderSimpleMarkdownText(row.text)}
+                    </div>
+                )
+            })}
         </div>
     )
 }

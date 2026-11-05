@@ -85,7 +85,7 @@ const states = new Map<string, InternalState>()
 const listeners = new Map<string, Set<() => void>>()
 const tailSyncControllers = new Map<string, TailSyncController>()
 
-const NOTIFY_THROTTLE_MS = 150
+const NOTIFY_THROTTLE_MS = 50
 const PERSIST_THROTTLE_MS = 200
 const STORAGE_KEY_PREFIX = 'hapi:message-window:v2:'
 const pendingNotifySessionIds = new Set<string>()
