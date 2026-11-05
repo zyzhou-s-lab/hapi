@@ -9,8 +9,10 @@ import {
     getHistoryCoverageRetryDelay,
     getPullToLoadState,
     getScrollIntent,
+    getVisibleTurnBoundaryId,
     hasAppliedHistoryVersion,
     isNestedScrollEvent,
+    isTopTurnHeadlessAssistant,
     measureComposerDockInset,
     loadUntilVisibleBoundaryChanges,
     locateOutlineTargetMessage,
@@ -743,5 +745,79 @@ describe('visible older-history loading', () => {
             loadOlder
         })).resolves.toBe(true)
         expect(loadOlder).toHaveBeenCalledTimes(4)
+    })
+
+    it('keeps a split assistant turn and its prepended user prompt on the same visible turn boundary until an earlier turn arrives', () => {
+        const viewport = document.createElement('div')
+        const container = document.createElement('div')
+        container.className = 'happy-thread-messages'
+        viewport.append(container)
+
+        const hoistedTitle = document.createElement('div')
+        hoistedTitle.id = 'hapi-message-sys-1'
+        hoistedTitle.setAttribute('data-hapi-message-role', 'system')
+
+        const assistant1 = document.createElement('div')
+        assistant1.id = 'hapi-message-assistant-1'
+        assistant1.setAttribute('data-hapi-message-role', 'assistant')
+
+        container.append(hoistedTitle, assistant1)
+        expect(getVisibleTurnBoundaryId(viewport)).toBe('hapi-message-assistant-1')
+
+        // Prepending the split turn's own user prompt keeps the same turn boundary id.
+        const user1 = document.createElement('div')
+        user1.id = 'hapi-message-user-1'
+        user1.setAttribute('data-hapi-message-role', 'user')
+        container.insertBefore(user1, assistant1)
+        expect(getVisibleTurnBoundaryId(viewport)).toBe('hapi-message-assistant-1')
+
+        // Prepending an earlier turn changes the boundary id to the earlier turn's assistant anchor.
+        const assistant0 = document.createElement('div')
+        assistant0.id = 'hapi-message-assistant-0'
+        assistant0.setAttribute('data-hapi-message-role', 'assistant')
+        container.insertBefore(assistant0, user1)
+        expect(getVisibleTurnBoundaryId(viewport)).toBe('hapi-message-assistant-0')
+    })
+
+    it('continues chaining when a newly prepended older turn is still a headless split assistant turn', async () => {
+        const viewport = document.createElement('div')
+        const container = document.createElement('div')
+        container.className = 'happy-thread-messages'
+        viewport.append(container)
+
+        const user1 = document.createElement('div')
+        user1.id = 'hapi-message-user-1'
+        user1.setAttribute('data-hapi-message-role', 'user')
+        const assistant1 = document.createElement('div')
+        assistant1.id = 'hapi-message-assistant-1'
+        assistant1.setAttribute('data-hapi-message-role', 'assistant')
+        container.append(user1, assistant1)
+
+        let page = 0
+        const assistant0 = document.createElement('div')
+        assistant0.id = 'hapi-message-assistant-0'
+        assistant0.setAttribute('data-hapi-message-role', 'assistant')
+        const user0 = document.createElement('div')
+        user0.id = 'hapi-message-user-0'
+        user0.setAttribute('data-hapi-message-role', 'user')
+
+        const loadOlder = vi.fn(async () => {
+            page += 1
+            if (page === 1) {
+                container.insertBefore(assistant0, user1)
+            } else if (page === 3) {
+                container.insertBefore(user0, assistant0)
+            }
+            return true
+        })
+
+        await expect(loadUntilVisibleBoundaryChanges({
+            getVisibleBoundary: () => getVisibleTurnBoundaryId(viewport),
+            isTopTurnIncomplete: () => isTopTurnHeadlessAssistant(viewport),
+            hasMoreMessages: () => true,
+            loadOlder
+        })).resolves.toBe(true)
+        expect(loadOlder).toHaveBeenCalledTimes(3)
+        expect(isTopTurnHeadlessAssistant(viewport)).toBe(false)
     })
 })

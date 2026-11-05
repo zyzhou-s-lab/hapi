@@ -574,4 +574,133 @@ describe('HappyThread older-history pagination lifecycle', () => {
         expect(viewport.scrollTop).toBe(0)
         await waitFor(() => expect(onRequest).toHaveBeenCalledTimes(1))
     })
+
+    it('chains multi-page split-turn loads on a single upward wheel gesture and does not cancel in-flight loads on minor downward scroll', async () => {
+        const onRequest = vi.fn()
+        const onCancel = vi.fn()
+        const controls: {
+            resolvePage: ((outcome: OlderLoadOutcome) => void) | null
+        } = {
+            resolvePage: null,
+        }
+
+        function SplitTurnChainingHarness() {
+            const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+            const [page, setPage] = useState(1)
+            const [isLoadingMore, setIsLoadingMore] = useState(false)
+            const onLoadMore = useCallback((onBeforeApply?: (historyVersion: number) => boolean) => {
+                onRequest()
+                setIsLoadingMore(true)
+                const { promise, resolve } = Promise.withResolvers<OlderLoadOutcome>()
+                controls.resolvePage = (outcome) => {
+                    if (outcome.kind === 'applied') {
+                        onBeforeApply?.(outcome.historyVersion)
+                        setPage(outcome.historyVersion)
+                    }
+                    setIsLoadingMore(false)
+                    resolve(outcome)
+                }
+                return promise
+            }, [])
+
+            return (
+                <QueryClientProvider client={queryClient}>
+                    <I18nProvider>
+                        <output data-testid="chained-page">{page}</output>
+                        <HappyThread
+                            api={api}
+                            session={session}
+                            sessionId="pagination-session"
+                            metadata={null}
+                            disabled={false}
+                            onRefresh={() => undefined}
+                            messagesWarning={null}
+                            hasMoreMessages={page < 4}
+                            isLoadingMoreMessages={isLoadingMore}
+                            onLoadMore={onLoadMore}
+                            onCancelLoadMore={onCancel}
+                            onViewModeChange={() => undefined}
+                            isSyncingTail={false}
+                            unseenCount={0}
+                            rawMessagesCount={1}
+                            normalizedMessagesCount={1}
+                            messagesVersion={page}
+                            historyVersion={page}
+                            forceScrollToken={0}
+                            outlineOpen={false}
+                            outlineItems={[]}
+                            onOutlineOpenChange={() => undefined}
+                        />
+                    </I18nProvider>
+                </QueryClientProvider>
+            )
+        }
+
+        render(<SplitTurnChainingHarness />)
+        const viewport = document.querySelector<HTMLElement>('.app-scroll-y')!
+        const anchor = screen.getByTestId('stable-visible-message')
+        const pageOut = screen.getByTestId('chained-page')
+        anchor.setAttribute('data-hapi-message-role', 'assistant')
+        const turnHeader = document.createElement('div')
+        turnHeader.dataset.testid = 'turn-level0-header'
+        turnHeader.textContent = 'Ran 32 commands'
+        anchor.append(turnHeader)
+
+        Object.defineProperty(viewport, 'clientHeight', { configurable: true, value: 900 })
+        Object.defineProperty(viewport, 'scrollHeight', { configurable: true, value: 2_400 })
+        viewport.getBoundingClientRect = () => DOMRect.fromRect({ y: 0, height: 900, width: 800 })
+        anchor.getBoundingClientRect = () => DOMRect.fromRect({ y: -viewport.scrollTop, height: 1_200, width: 600 })
+
+        viewport.scrollTop = 0
+        fireEvent.wheel(viewport, { deltaY: -120 })
+        await waitFor(() => expect(onRequest).toHaveBeenCalledTimes(1))
+
+        // A minor downward scroll out of the preload margin while browsing history must not cancel the in-flight page.
+        viewport.scrollTop = 360
+        fireEvent.scroll(viewport)
+        expect(onCancel).not.toHaveBeenCalled()
+        viewport.scrollTop = 0
+        fireEvent.scroll(viewport)
+
+        // Page 2 folds middle-of-turn steps into the same headless assistant card (updating its header text, 0px above).
+        turnHeader.textContent = 'Ran 50 commands'
+        controls.resolvePage?.({
+            kind: 'applied',
+            historyVersion: 2,
+            hasMore: true,
+            addedRenderableCount: 0,
+        })
+        await waitFor(() => expect(pageOut.textContent).toBe('2'))
+        await waitFor(() => expect(onRequest).toHaveBeenCalledTimes(2))
+
+        // Page 3 prepends the split turn's short 88px user prompt above the assistant card (still inside preload margin).
+        const userPrompt = document.createElement('div')
+        userPrompt.id = 'hapi-message-user-split'
+        userPrompt.setAttribute('data-hapi-message-anchor', '')
+        userPrompt.setAttribute('data-hapi-message-role', 'user')
+        anchor.parentElement?.insertBefore(userPrompt, anchor)
+        controls.resolvePage?.({
+            kind: 'applied',
+            historyVersion: 3,
+            hasMore: true,
+            addedRenderableCount: 1,
+        })
+        await waitFor(() => expect(pageOut.textContent).toBe('3'))
+        await waitFor(() => expect(onRequest).toHaveBeenCalledTimes(3))
+
+        // Page 4 prepends the previous assistant turn above the user prompt, changing the turn boundary and stopping.
+        const previousAssistant = document.createElement('div')
+        previousAssistant.id = 'hapi-message-assistant-prev'
+        previousAssistant.setAttribute('data-hapi-message-anchor', '')
+        previousAssistant.setAttribute('data-hapi-message-role', 'assistant')
+        anchor.parentElement?.insertBefore(previousAssistant, userPrompt)
+        controls.resolvePage?.({
+            kind: 'applied',
+            historyVersion: 4,
+            hasMore: true,
+            addedRenderableCount: 1,
+        })
+        await waitFor(() => expect(pageOut.textContent).toBe('4'))
+        expect(onRequest).toHaveBeenCalledTimes(3)
+    })
 })

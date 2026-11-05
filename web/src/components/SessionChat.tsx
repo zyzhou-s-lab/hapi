@@ -1394,13 +1394,30 @@ function SessionChatInner(props: SessionChatProps) {
     )
 
     const normalizedGoalStateMessages: NormalizedMessage[] = useMemo(() => {
+        if (
+            visibleMessages.length === props.messages.length
+            && goalStateSourceMessages.length === props.messages.length
+        ) {
+            return normalizedMessages
+        }
+        const cache = normalizedCacheRef.current
         const normalized: NormalizedMessage[] = []
+        const seen = new Set<string>()
         for (const message of goalStateSourceMessages) {
+            if (seen.has(message.id)) {
+                continue
+            }
+            seen.add(message.id)
+            const cached = cache.get(message.id)
+            if (cached && cached.source === message) {
+                if (cached.normalized) normalized.push(cached.normalized)
+                continue
+            }
             const next = normalizeDecryptedMessage(message)
             if (next) normalized.push(next)
         }
         return normalized
-    }, [goalStateSourceMessages])
+    }, [goalStateSourceMessages, normalizedMessages, props.messages.length, visibleMessages.length])
 
     const reduced = useMemo(
         () => reduceChatBlocks(normalizedMessages, props.session.agentState, {

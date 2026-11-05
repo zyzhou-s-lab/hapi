@@ -583,8 +583,36 @@ export function getHistoryCoverageRetryDelay(deadline: number, now: number): num
 
 const MAX_VISIBLE_BOUNDARY_LOAD_PAGES = 4
 
+export function getVisibleTurnBoundaryId(viewport: HTMLElement): string | null {
+    const messages = Array.from(viewport.querySelectorAll<HTMLElement>(MESSAGE_ANCHOR_SELECTOR))
+    const nonSystemMessages = messages.filter(
+        (element) => element.getAttribute('data-hapi-message-role') !== 'system'
+    )
+    const firstMessage = nonSystemMessages[0] ?? messages[0]
+    if (!firstMessage) {
+        return null
+    }
+    const secondMessage = nonSystemMessages[1]
+    if (
+        firstMessage.getAttribute('data-hapi-message-role') === 'user'
+        && secondMessage?.getAttribute('data-hapi-message-role') === 'assistant'
+    ) {
+        return secondMessage.id
+    }
+    return firstMessage.id
+}
+
+export function isTopTurnHeadlessAssistant(viewport: HTMLElement): boolean {
+    const messages = Array.from(viewport.querySelectorAll<HTMLElement>(MESSAGE_ANCHOR_SELECTOR))
+    const firstNonSystem = messages.find(
+        (element) => element.getAttribute('data-hapi-message-role') !== 'system'
+    )
+    return firstNonSystem?.getAttribute('data-hapi-message-role') === 'assistant'
+}
+
 export async function loadUntilVisibleBoundaryChanges(options: {
     getVisibleBoundary: () => string | null
+    isTopTurnIncomplete?: () => boolean
     hasMoreMessages: () => boolean
     loadOlder: () => Promise<boolean>
     maxPages?: number
@@ -596,7 +624,10 @@ export async function loadUntilVisibleBoundaryChanges(options: {
     while (
         pagesLoaded < maxPages
         && options.hasMoreMessages()
-        && options.getVisibleBoundary() === initialBoundary
+        && (
+            options.getVisibleBoundary() === initialBoundary
+            || (loadedAny && options.isTopTurnIncomplete?.() === true)
+        )
     ) {
         const loaded = await options.loadOlder()
         if (!loaded) {
@@ -979,6 +1010,7 @@ export function HappyThread(props: {
     const requestOlderRef = useRef<(source: HistoryLoadSource) => Promise<OlderHistoryLoadResult>>(
         () => Promise.resolve('transient-stop')
     )
+    const loadOlderFromUserGestureRef = useRef<() => Promise<void>>(() => Promise.resolve())
     const startHistoryLoadAttemptRef = useRef<(runId: number) => void>(() => {})
     const needsViewportCoverageRef = useRef<() => boolean>(() => false)
     const atBottomRef = useRef(true)
@@ -1173,13 +1205,6 @@ export function HappyThread(props: {
             }
 
             const needsCoverage = needsViewportCoverageRef.current()
-            if (!needsCoverage) {
-                // Older pages retain the oldest side of the bounded window.
-                // Once the user reverses toward newer history, applying this
-                // request could evict their new anchor. Invalidate it instead;
-                // a later fresh approach can request the page again.
-                cancelActiveHistoryLoad()
-            }
             // Keep the keyboard/pointer intent armed while the user moves
             // through ordinary history. Consume it only when the viewport
             // actually reaches the preload area.
@@ -1193,7 +1218,7 @@ export function HappyThread(props: {
                     setAutoScrollMode(false)
                     setAtBottomMode(false)
                     if (explicitUpwardIntent) {
-                        void requestOlderRef.current('user')
+                        void loadOlderFromUserGestureRef.current()
                     }
                 }
                 return
@@ -1203,7 +1228,20 @@ export function HappyThread(props: {
             // decides whether this demand may start a request; programmatic
             // scroll events cannot bypass backoff or a paused coverage run.
             if (needsCoverage) {
-                void requestOlderRef.current(explicitUpwardIntent ? 'user' : 'coverage')
+                if (explicitUpwardIntent) {
+                    void loadOlderFromUserGestureRef.current()
+                } else {
+                    void requestOlderRef.current('coverage')
+                }
+            } else {
+                wheelLatched = false
+                pointerResumeLatched = false
+                if (historyLoaderRef.current.autoPaused) {
+                    historyLoaderRef.current = {
+                        ...historyLoaderRef.current,
+                        autoPaused: false
+                    }
+                }
             }
 
             if (intent.isScrollingUp && intent.distanceFromBottom > MANUAL_SCROLL_EPSILON_PX) {
@@ -1214,6 +1252,9 @@ export function HappyThread(props: {
             }
 
             if (intent.isNearBottom) {
+                if (!needsCoverage) {
+                    cancelActiveHistoryLoad()
+                }
                 tailScrollInProgressRef.current = false
                 setAutoScrollMode(true)
                 setAtBottomMode(true)
@@ -1309,7 +1350,7 @@ export function HappyThread(props: {
             keyboardResumeUntil = Date.now() + KEYBOARD_SCROLL_INTENT_WINDOW_MS
             if (needsViewportCoverageRef.current()) {
                 keyboardResumeUntil = 0
-                void requestOlderRef.current('user')
+                void loadOlderFromUserGestureRef.current()
             }
         }
 
@@ -1500,9 +1541,6 @@ export function HappyThread(props: {
                 }
             }
             if (event.deltaY >= 0) {
-                if (event.deltaY > 0 && !needsViewportCoverageRef.current()) {
-                    cancelActiveHistoryLoad()
-                }
                 return
             }
             // One trigger per gesture: a trackpad swipe is a burst of wheel
@@ -1522,7 +1560,7 @@ export function HappyThread(props: {
                 return
             }
             wheelLatched = true
-            void requestOlderRef.current('user')
+            void loadOlderFromUserGestureRef.current()
         }
 
         const handleTouchStart = (event: TouchEvent) => {
@@ -1577,7 +1615,7 @@ export function HappyThread(props: {
             pullStartY = null
             updatePullToLoadState('idle')
             if (shouldLoad) {
-                void requestOlderRef.current('user')
+                void loadOlderFromUserGestureRef.current()
             }
         }
 
@@ -1813,7 +1851,16 @@ export function HappyThread(props: {
             }
         }
 
-        if (state.source !== 'consumer' && !needsViewportCoverage()) {
+        const viewport = viewportRef.current
+        if (!viewport) {
+            finishStoppedAttempt(state, 'transient-stop')
+            return
+        }
+        if (
+            state.source !== 'consumer'
+            && !needsViewportCoverage()
+            && !(state.source === 'user' && isTopTurnHeadlessAssistant(viewport))
+        ) {
             finishStoppedAttempt(state, 'transient-stop')
             return
         }
@@ -1823,12 +1870,6 @@ export function HappyThread(props: {
         }
         if (!hasMoreMessagesRef.current) {
             finishStoppedAttempt(state, 'terminal-stop', true)
-            return
-        }
-
-        const viewport = viewportRef.current
-        if (!viewport) {
-            finishStoppedAttempt(state, 'transient-stop')
             return
         }
 
@@ -1856,9 +1897,6 @@ export function HappyThread(props: {
                         || !pending
                         || pending.runId !== runId
                     ) {
-                        return false
-                    }
-                    if (current.source !== 'consumer' && !needsViewportCoverage()) {
                         return false
                     }
                     pending.targetHistoryVersion = historyVersion
@@ -2007,24 +2045,25 @@ export function HappyThread(props: {
             return false
         }
         return loadUntilVisibleBoundaryChanges({
-            getVisibleBoundary: () => {
-                const messages = Array.from(viewport.querySelectorAll<HTMLElement>(MESSAGE_ANCHOR_SELECTOR))
-                const firstMessage = messages.find(
-                    (element) => element.getAttribute('data-hapi-message-role') !== 'system'
-                ) ?? messages[0]
-                if (!firstMessage) {
-                    return null
-                }
-                const headerText = firstMessage
-                    .querySelector<HTMLElement>('[data-testid="turn-level0-header"]')
-                    ?.textContent
-                    ?.trim() ?? ''
-                return headerText ? `${firstMessage.id}:${headerText}` : firstMessage.id
-            },
-            hasMoreMessages: () => hasMoreMessagesRef.current && needsViewportCoverageRef.current(),
+            getVisibleBoundary: () => getVisibleTurnBoundaryId(viewport),
+            isTopTurnIncomplete: () => isTopTurnHeadlessAssistant(viewport),
+            hasMoreMessages: () => (
+                hasMoreMessagesRef.current
+                && (needsViewportCoverageRef.current() || isTopTurnHeadlessAssistant(viewport))
+            ),
             loadOlder: async () => await requestOlder('user') === 'loaded'
         })
     }, [requestOlder])
+
+    const loadOlderFromUserGesture = useCallback(async (): Promise<void> => {
+        const viewport = viewportRef.current
+        if (viewport?.querySelector(`${MESSAGE_ANCHOR_SELECTOR}[data-hapi-message-role]`)) {
+            await loadOlderUntilVisible()
+            return
+        }
+        await requestOlder('user')
+    }, [loadOlderUntilVisible, requestOlder])
+    loadOlderFromUserGestureRef.current = loadOlderFromUserGesture
 
     const handleOutlineSelect = useCallback(async (item: ConversationOutlineItem) => {
         const target = await locateOutlineTargetMessage({
@@ -2139,6 +2178,8 @@ export function HappyThread(props: {
             if (
                 restoredByAnchor
                 && pending.anchor
+                && !hasMoreMessagesRef.current
+                && viewport.scrollTop > 0
                 && (pending.pinOnRestore || wheelGestureUntilRef.current > Date.now())
             ) {
                 const startedAt = Date.now()
@@ -2150,6 +2191,10 @@ export function HappyThread(props: {
                     WHEEL_GESTURE_GAP_MS,
                     ANCHOR_PIN_MAX_MS
                 )
+            } else if (restoredByAnchor) {
+                pinnedAnchorRef.current = null
+                pinnedAnchorUntilRef.current = 0
+                pinnedAnchorStartedAtRef.current = 0
             } else if (!restoredByAnchor) {
                 const delta = viewport.scrollHeight - pending.scrollHeight
                 viewport.scrollTop = pending.scrollTop + delta
@@ -2167,10 +2212,11 @@ export function HappyThread(props: {
                 phase: 'idle',
                 source: null,
                 failureCount: 0,
-                // A completed page always consumes automatic demand. The next
-                // page requires renewed wheel/touch/keyboard/scrollbar intent;
-                // render, resize, and scroll-restoration events cannot chain it.
-                autoPaused: true
+                // Only keep automatic coverage paused when the completed load
+                // still leaves the viewport inside the preload margin. Once
+                // anchor restoration places the viewport below the preload
+                // zone, scrolling back up into the preload zone may preload.
+                autoPaused: needsViewportCoverageRef.current()
             }
             settlePendingLoad('loaded')
             return
