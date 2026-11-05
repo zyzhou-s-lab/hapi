@@ -32,7 +32,7 @@ export function TeamPanel(props: { teamState: TeamState }) {
     const activeMembers = members.filter(m => m.status === 'active').length
 
     return (
-        <div className="mx-3 mt-3">
+        <div className="relative z-30 mx-3 mt-3">
             <button
                 type="button"
                 onClick={() => setExpanded(!expanded)}
@@ -66,7 +66,7 @@ export function TeamPanel(props: { teamState: TeamState }) {
             </button>
 
             {expanded && (
-                <div className="mt-1 rounded-md border border-[var(--app-border)] bg-[var(--app-bg)] px-3 py-2">
+                <div className="composer-dock-card absolute inset-x-0 top-full z-30 mt-1 rounded-md px-3 py-2">
                     {teamState.description && (
                         <p className="mb-2 text-xs text-[var(--app-hint)]">{teamState.description}</p>
                     )}

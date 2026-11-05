@@ -88,4 +88,15 @@ describe('TodoPanel', () => {
         expect(toggle).toHaveAttribute('aria-expanded', 'false')
         expect(screen.getByTestId('todo-panel-stale-done')).toHaveTextContent('Previous tasks completed')
     })
+
+    it('anchors the expandable card above a fixed-height collapsed slot so toggling does not shift the background session', () => {
+        renderPanel([
+            { id: '1', content: '固定底部高度', status: 'in_progress', priority: 'medium' }
+        ])
+        const card = screen.getByTestId('todo-panel')
+        expect(card.className).toContain('absolute')
+        expect(card.className).toContain('bottom-0')
+        expect(card.parentElement?.className).toContain('relative')
+        expect(card.parentElement?.className).toContain('h-[calc(1.75rem+2px)]')
+    })
 })

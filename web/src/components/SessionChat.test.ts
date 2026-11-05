@@ -135,6 +135,15 @@ describe('floating dock surface', () => {
         expect(composer).not.toContain('composer-floating-chrome')
         expect(composer).not.toContain('composer-dock-card')
     })
+
+    it('floats TodoPanel and SessionStatusPanel bodies over the session thread without pushing layout', () => {
+        const tasks = readFileSync('src/fork-features/task-panel/TodoPanel.tsx', 'utf8')
+        const statusPanel = readFileSync('src/components/SessionStatusPanel.tsx', 'utf8')
+        expect(tasks).toContain('h-[calc(1.75rem+2px)]')
+        expect(tasks).toContain('composer-dock-card absolute inset-x-0 bottom-0')
+        expect(statusPanel).toContain('group relative z-30')
+        expect(statusPanel).toContain('composer-dock-card absolute inset-x-0 top-full z-30')
+    })
 })
 
 describe('resolvePiContextWindow', () => {
