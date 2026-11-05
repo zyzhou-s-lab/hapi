@@ -987,7 +987,7 @@ function ComposerPreviewCard(props: {
                         <button
                             type="button"
                             title="添加图片或文件附件 (+)"
-                            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[var(--app-hint)] transition-colors hover:bg-[var(--app-subtle-bg)] hover:text-[var(--app-fg)]"
+                            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-[var(--app-border)] bg-[var(--app-bg)]/80 text-[var(--app-fg)]/75 shadow-2xs transition-colors hover:bg-[var(--app-subtle-bg)] hover:text-[var(--app-fg)]"
                         >
                             <DemoPlusIcon />
                         </button>
@@ -1002,35 +1002,35 @@ function ComposerPreviewCard(props: {
                     />
 
                     <div className="flex shrink-0 items-center gap-1.5">
-                        <button
-                            type="button"
-                            title="语音输入 (Voice)"
-                            className="flex h-7 w-7 items-center justify-center rounded-full text-[var(--app-hint)] transition-colors hover:bg-[var(--app-subtle-bg)] hover:text-[var(--app-fg)]"
-                        >
-                            <DemoVoiceWaveIcon />
-                        </button>
                         {isStreaming ? (
                             <button
                                 type="button"
                                 title="停止生成 (Esc)"
-                                className="flex h-8 w-8 items-center justify-center rounded-full bg-[var(--app-fg)] text-[var(--app-bg)] shadow-xs transition-opacity hover:opacity-90"
+                                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-[var(--app-badge-error-border)] bg-[var(--app-badge-error-bg)] text-[var(--app-badge-error-text)] shadow-2xs transition-opacity hover:opacity-90"
                             >
                                 <span className="h-2.5 w-2.5 rounded-[2px] bg-current" />
                             </button>
                         ) : (
                             <button
                                 type="button"
-                                title="发送消息 (Enter)"
-                                className={cn(
-                                    'flex h-8 w-8 items-center justify-center rounded-full transition-all',
-                                    hasText
-                                        ? 'bg-[var(--app-fg)] text-[var(--app-bg)] shadow-xs hover:opacity-90'
-                                        : 'bg-[var(--app-fg)]/85 text-[var(--app-bg)] hover:bg-[var(--app-fg)]'
-                                )}
+                                title="语音输入 (Voice)"
+                                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-[var(--app-border)] bg-[var(--app-bg)]/80 text-[var(--app-fg)]/75 shadow-2xs transition-colors hover:bg-[var(--app-subtle-bg)] hover:text-[var(--app-fg)]"
                             >
-                                <DemoSendArrowIcon />
+                                <DemoVoiceWaveIcon />
                             </button>
                         )}
+                        <button
+                            type="button"
+                            title="发送消息 (Enter)"
+                            className={cn(
+                                'flex h-8 w-8 shrink-0 items-center justify-center rounded-full transition-all',
+                                hasText
+                                    ? 'bg-[var(--app-fg)] text-[var(--app-bg)] shadow-xs hover:opacity-90'
+                                    : 'bg-[var(--app-fg)]/85 text-[var(--app-bg)] hover:bg-[var(--app-fg)]'
+                            )}
+                        >
+                            <DemoSendArrowIcon />
+                        </button>
                     </div>
                 </div>
             </div>
