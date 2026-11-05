@@ -11,6 +11,7 @@ import { SessionExportDialog } from '@/components/SessionExportDialog'
 import { RenameSessionDialog } from '@/components/RenameSessionDialog'
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
 import { CopyIcon, CheckIcon } from '@/components/icons'
+import { getMessageWindowState } from '@/lib/message-window-store'
 
 function PinnedSectionIcon(props: { className?: string }) {
     return (
@@ -1063,6 +1064,11 @@ function SessionItem(props: {
             <button
                 type="button"
                 {...longPressHandlers}
+                onPointerDown={() => {
+                    if (!selected) {
+                        getMessageWindowState(s.id)
+                    }
+                }}
                 data-session-id={s.id}
                 className={`session-list-item group/session-row flex w-full flex-col gap-1 py-2 pl-2.5 pr-2 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-link)] select-none rounded-lg ${selected ? 'bg-[var(--app-secondary-bg)]' : ''}`}
                 style={{ WebkitTouchCallout: 'none' }}

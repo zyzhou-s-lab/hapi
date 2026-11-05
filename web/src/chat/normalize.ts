@@ -5,7 +5,18 @@ import type { NormalizedMessage } from '@/chat/types'
 import { isCodexContent, isSkippableAgentContent, normalizeAgentRecord } from '@/chat/normalizeAgent'
 import { normalizeUserRecord } from '@/chat/normalizeUser'
 
+const normalizedMessageCache = new WeakMap<DecryptedMessage, NormalizedMessage | null>()
+
 export function normalizeDecryptedMessage(message: DecryptedMessage): NormalizedMessage | null {
+    if (normalizedMessageCache.has(message)) {
+        return normalizedMessageCache.get(message) ?? null
+    }
+    const result = normalizeDecryptedMessageUncached(message)
+    normalizedMessageCache.set(message, result)
+    return result
+}
+
+function normalizeDecryptedMessageUncached(message: DecryptedMessage): NormalizedMessage | null {
     const record = unwrapRoleWrappedRecordEnvelope(message.content)
     if (!record) {
         return {

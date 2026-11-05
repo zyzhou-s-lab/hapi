@@ -571,6 +571,13 @@ html:has(.chat-scroll-y) #root {
     contain-intrinsic-size: auto 90px;
 }
 
+.happy-thread-messages > :nth-last-child(-n+6),
+.happy-thread-messages > .happy-message:nth-last-child(-n+6) > *,
+.happy-thread-messages > :nth-last-child(-n+6) .happy-message > * {
+    content-visibility: visible;
+    contain-intrinsic-size: none;
+}
+
 /* Markdown styles */
 .markdown-content a { color: var(--app-link); text-decoration: underline; }
 .markdown-content code { background-color: var(--app-inline-code-bg); padding: 0.1em 0.3em; border-radius: 4px; }

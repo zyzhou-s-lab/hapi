@@ -899,6 +899,8 @@ export function HappyThread(props: {
     const runtimeExtras = useAuiState((s) => s.thread.extras) as HappyRuntimeExtras | undefined
     const appliedMessagesVersion = runtimeExtras?.messagesVersion ?? props.messagesVersion
     const appliedHistoryVersion = runtimeExtras?.historyVersion ?? props.historyVersion
+    const isAwaitingMessagesRender = appliedMessagesVersion < props.messagesVersion
+    const isAwaitingHistoryRender = appliedHistoryVersion < props.historyVersion
     const viewportRef = useRef<HTMLDivElement | null>(null)
     const contentRef = useRef<HTMLDivElement | null>(null)
     const [pullToLoadState, setPullToLoadState] = useState<PullToLoadState>('idle')
@@ -1605,6 +1607,13 @@ export function HappyThread(props: {
         const viewport = viewportRef.current
         if (viewport) {
             viewport.scrollTo({ top: viewport.scrollHeight, behavior: 'instant' })
+            for (let pass = 0; pass < 2; pass += 1) {
+                const targetTop = Math.max(0, viewport.scrollHeight - viewport.clientHeight)
+                if (targetTop - viewport.scrollTop <= 1) {
+                    break
+                }
+                viewport.scrollTo({ top: viewport.scrollHeight, behavior: 'instant' })
+            }
             lastScrollTopRef.current = viewport.scrollTop
         }
     }, [])
@@ -1666,8 +1675,8 @@ export function HappyThread(props: {
     useLayoutEffect(() => {
         if (
             initialScrollSessionRef.current === props.sessionId
-            || props.isSyncingTail
             || props.rawMessagesCount === 0
+            || isAwaitingMessagesRender
             || pendingScrollRef.current
         ) {
             return
@@ -1693,9 +1702,10 @@ export function HappyThread(props: {
         }, delay))
     }, [
         props.sessionId,
-        props.isSyncingTail,
         props.rawMessagesCount,
         props.messagesVersion,
+        appliedMessagesVersion,
+        isAwaitingMessagesRender,
         scrollToBottomInstant,
         clearInitialScrollTimers
     ])
@@ -2000,6 +2010,8 @@ export function HappyThread(props: {
             !props.hasMoreMessages
             || props.isSyncingTail
             || props.isLoadingMoreMessages
+            || isAwaitingMessagesRender
+            || isAwaitingHistoryRender
         ) {
             clearCoverageCheckTimer()
             return
@@ -2017,6 +2029,9 @@ export function HappyThread(props: {
         props.isSyncingTail,
         props.isLoadingMoreMessages,
         props.messagesVersion,
+        appliedMessagesVersion,
+        isAwaitingMessagesRender,
+        isAwaitingHistoryRender,
         isInitialScrollSettling,
         needsViewportCoverage,
         scheduleCoverageAfterSettling,
@@ -2124,12 +2139,19 @@ export function HappyThread(props: {
             settlePendingLoad('loaded')
             return
         }
-        if (atBottomRef.current && autoScrollEnabledRef.current) {
+        if (
+            !isAwaitingMessagesRender
+            && props.rawMessagesCount > 0
+            && atBottomRef.current
+            && autoScrollEnabledRef.current
+        ) {
             scrollToBottomInstant()
         }
     }, [
         appliedMessagesVersion,
         appliedHistoryVersion,
+        isAwaitingMessagesRender,
+        props.rawMessagesCount,
         scrollToBottomInstant,
         settlePendingLoad,
         clearFailureRetryTimer
@@ -2144,10 +2166,12 @@ export function HappyThread(props: {
     }, [bottomInsetPx, scrollToBottomInstant])
 
 
-    const isAwaitingHistoryRender = appliedHistoryVersion < props.historyVersion
     const isLoadingMoreOrApplying = props.isLoadingMoreMessages || isAwaitingHistoryRender
-    const showLoadEarlierButton = (props.hasMoreMessages || isAwaitingHistoryRender) && !props.isSyncingTail
-    const showSkeleton = props.isSyncingTail && props.rawMessagesCount === 0
+    const showSkeleton = (props.isSyncingTail && props.rawMessagesCount === 0)
+        || (isAwaitingMessagesRender && appliedMessagesVersion === 0)
+    const showLoadEarlierButton = (props.hasMoreMessages || isAwaitingHistoryRender)
+        && !props.isSyncingTail
+        && !showSkeleton
     const handleShareTurn = useCallback((
         messageTarget: HTMLElement | string | null,
         clientY?: number,

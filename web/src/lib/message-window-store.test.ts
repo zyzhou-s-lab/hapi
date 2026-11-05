@@ -2080,4 +2080,32 @@ describe('canonical assistant snapshot compaction', () => {
         ingestIncomingMessages(id, [makeCanonicalSnapshot('late-live', 'assistant', 21, true)])
         expect(getMessageWindowState(id).messages).toEqual([context, final])
     })
+
+    it('preserves message references and messagesVersion when re-entry latest sync returns unchanged rows', async () => {
+        const id = sessionId('reentry-reference-stability')
+        const first = makeUserMessage({ id: 'u1', seq: 1, createdAt: 1_000, invokedAt: 1_000 })
+        const second = makeAgentMessage({ id: 'a1', seq: 2, at: 2_000 })
+        const getMessages = vi.fn()
+            .mockResolvedValueOnce(latestResponse([first, second], { hasMore: false, nextBeforeAt: null, nextBeforeSeq: null }))
+            .mockResolvedValueOnce(latestResponse([
+                { ...first, content: JSON.parse(JSON.stringify(first.content)) },
+                { ...second, content: JSON.parse(JSON.stringify(second.content)) },
+            ], { hasMore: false, nextBeforeAt: null, nextBeforeSeq: null }))
+        const api = createApi(getMessages)
+
+        await syncTailMessages(api, id)
+        const beforeReentry = getMessageWindowState(id)
+        const firstRef = beforeReentry.messages[0]
+        const secondRef = beforeReentry.messages[1]
+        const versionBefore = beforeReentry.messagesVersion
+
+        activateMessageWindow(id)
+        await syncTailMessages(api, id)
+
+        const afterReentry = getMessageWindowState(id)
+        expect(afterReentry.messages).toBe(beforeReentry.messages)
+        expect(afterReentry.messages[0]).toBe(firstRef)
+        expect(afterReentry.messages[1]).toBe(secondRef)
+        expect(afterReentry.messagesVersion).toBe(versionBefore)
+    })
 })

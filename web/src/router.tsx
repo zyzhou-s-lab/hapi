@@ -893,7 +893,7 @@ function SessionDetailRoute() {
     const pathname = useLocation({ select: location => location.pathname })
     const { sessionId } = useParams({ from: '/sessions/$sessionId' })
     const navigate = useNavigate()
-    const { session, notFound: sessionNotFound } = useSession(api, sessionId)
+    const { session, isPlaceholderData: isSessionPlaceholder, notFound: sessionNotFound } = useSession(api, sessionId)
     useSessionBrowserTitle(session)
     const basePath = `/sessions/${sessionId}`
     const isChat = pathname === basePath || pathname === `${basePath}/`
@@ -904,7 +904,7 @@ function SessionDetailRoute() {
     } | null>(null)
 
     useEffect(() => {
-        if (!session) {
+        if (!session || isSessionPlaceholder) {
             return
         }
         const shouldFollow = shouldFollowSupersedingSession(
@@ -921,7 +921,7 @@ function SessionDetailRoute() {
             replace: true,
             ...PRESERVE_SESSION_SIDEBAR_SCROLL,
         })
-    }, [navigate, session, sessionId, supersedingSessionId])
+    }, [isSessionPlaceholder, navigate, session, sessionId, supersedingSessionId])
 
     useEffect(() => {
         if (!sessionNotFound) {

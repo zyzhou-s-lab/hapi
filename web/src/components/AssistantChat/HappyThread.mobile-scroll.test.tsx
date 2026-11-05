@@ -8,12 +8,14 @@ vi.mock('@/hooks/queries/useMachines', () => ({
     useMachines: () => ({ machines: [] })
 }))
 
+let mockRuntimeExtras: { messagesVersion: number; historyVersion: number } | undefined
+
 vi.mock('@assistant-ui/react', async (importOriginal) => {
     const actual = await importOriginal<typeof import('@assistant-ui/react')>()
     return {
         ...actual,
         useAuiState: (selector: (state: unknown) => unknown) => selector({
-            thread: { extras: undefined }
+            thread: { extras: mockRuntimeExtras }
         }),
         unstable_useThreadMessageIds: () => [],
         ThreadPrimitive: {
@@ -235,5 +237,84 @@ describe('explicit tail scrolling', () => {
         viewport.scrollTop = 870
         fireEvent.scroll(viewport)
         expect(onViewModeChange).not.toHaveBeenCalledWith('history')
+    })
+})
+
+describe('initial scroll synchronization with assistant-ui store commit', () => {
+    afterEach(() => {
+        mockRuntimeExtras = undefined
+    })
+
+    it('waits for appliedMessagesVersion to match messagesVersion and compensates for content-visibility height growth', () => {
+        mockRuntimeExtras = { messagesVersion: 0, historyVersion: 0 }
+        const queryClient = new QueryClient({
+            defaultOptions: { queries: { retry: false } }
+        })
+        const onViewModeChange = vi.fn()
+        const onLoadMore = vi.fn().mockResolvedValue({ status: 'exhausted' })
+        const renderWithVersion = (messagesVersion: number) => (
+            <QueryClientProvider client={queryClient}>
+                <I18nProvider>
+                    <HappyThread
+                        api={{ getHubSettings: vi.fn().mockResolvedValue({ sessionSummaryContract: false, sessionSummaryInChat: false }) } as unknown as ApiClient}
+                        session={{ metadata: {} } as Session}
+                        sessionId="sync-commit-session"
+                        metadata={null}
+                        disabled={false}
+                        onRefresh={vi.fn()}
+                        onViewModeChange={onViewModeChange}
+                        isSyncingTail={false}
+                        messagesWarning={null}
+                        hasMoreMessages={true}
+                        isLoadingMoreMessages={false}
+                        onLoadMore={onLoadMore}
+                        onCancelLoadMore={vi.fn()}
+                        unseenCount={0}
+                        rawMessagesCount={5}
+                        normalizedMessagesCount={5}
+                        messagesVersion={messagesVersion}
+                        historyVersion={0}
+                        forceScrollToken={0}
+                        outlineOpen={false}
+                        outlineItems={[]}
+                        onOutlineOpenChange={vi.fn()}
+                    />
+                </I18nProvider>
+            </QueryClientProvider>
+        )
+
+        const result = render(renderWithVersion(1))
+        const viewport = result.container.querySelector<HTMLElement>('.chat-scroll-y')
+        if (!viewport) {
+            throw new Error('Chat viewport was not rendered')
+        }
+        let dynamicScrollHeight = 800
+        Object.defineProperties(viewport, {
+            scrollHeight: {
+                configurable: true,
+                get: () => dynamicScrollHeight
+            },
+            clientHeight: { configurable: true, value: 400 }
+        })
+        Object.defineProperty(viewport, 'scrollTo', {
+            configurable: true,
+            value: ({ top }: { top?: number }) => {
+                const target = Math.max(0, Math.min(top ?? 0, dynamicScrollHeight - 400))
+                viewport.scrollTop = target
+                if (dynamicScrollHeight === 800) {
+                    dynamicScrollHeight = 1_400
+                }
+            }
+        })
+
+        // While appliedMessagesVersion (0) < messagesVersion (1), initial scroll must not fire yet.
+        expect(viewport.scrollTop).toBe(0)
+        expect(onLoadMore).not.toHaveBeenCalled()
+
+        // Once assistant-ui commits messagesVersion = 1, initial scroll fires and multi-pass reaches 1400 - 400 = 1000.
+        mockRuntimeExtras = { messagesVersion: 1, historyVersion: 0 }
+        result.rerender(renderWithVersion(1))
+
+        expect(viewport.scrollTop).toBe(1_000)
     })
 })

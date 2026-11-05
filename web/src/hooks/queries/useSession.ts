@@ -1,6 +1,6 @@
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import type { ApiClient } from '@/api/client'
-import type { Session } from '@/types/api'
+import type { Session, SessionSummary } from '@/types/api'
 import { queryKeys } from '@/lib/query-keys'
 
 export function isSessionNotFoundError(error: unknown): boolean {
@@ -21,11 +21,13 @@ export const SESSION_DETAIL_STALE_TIME_MS = 30_000
 
 export function useSession(api: ApiClient | null, sessionId: string | null): {
     session: Session | null
+    isPlaceholderData: boolean
     isLoading: boolean
     error: string | null
     notFound: boolean
     refetch: () => Promise<unknown>
 } {
+    const queryClient = useQueryClient()
     const resolvedSessionId = sessionId ?? 'unknown'
     const query = useQuery({
         queryKey: queryKeys.session(resolvedSessionId),
@@ -34,6 +36,57 @@ export function useSession(api: ApiClient | null, sessionId: string | null): {
                 throw new Error('Session unavailable')
             }
             return await api.getSession(sessionId)
+        },
+        placeholderData: () => {
+            if (!sessionId) {
+                return undefined
+            }
+            const cachedSessions = queryClient.getQueryData<{ sessions: SessionSummary[] }>(queryKeys.sessions)
+            const summary = cachedSessions?.sessions.find((item) => item.id === sessionId)
+            if (!summary) {
+                return undefined
+            }
+            return {
+                session: {
+                    id: summary.id,
+                    namespace: 'default',
+                    seq: 0,
+                    createdAt: summary.updatedAt,
+                    updatedAt: summary.updatedAt,
+                    pinned: summary.pinned,
+                    globalPinned: summary.globalPinned,
+                    active: summary.active,
+                    activeAt: summary.activeAt,
+                    metadata: summary.metadata
+                        ? {
+                            path: summary.metadata.path,
+                            host: summary.metadata.host ?? '',
+                            name: summary.metadata.name,
+                            summary: summary.metadata.summary
+                                ? { text: summary.metadata.summary.text, updatedAt: summary.updatedAt }
+                                : undefined,
+                            machineId: summary.metadata.machineId,
+                            flavor: summary.metadata.flavor,
+                            worktree: summary.metadata.worktree,
+                            lifecycleState: summary.metadata.lifecycleState,
+                            hapiMcpUrl: summary.metadata.hapiMcpUrl,
+                            archivedAt: summary.metadata.archivedAt,
+                        }
+                        : null,
+                    metadataVersion: summary.metadataVersion,
+                    agentState: null,
+                    agentStateVersion: summary.agentStateVersion,
+                    thinking: summary.thinking,
+                    thinkingAt: 0,
+                    backgroundTaskCount: summary.backgroundTaskCount,
+                    todosUpdatedAt: summary.todosUpdatedAt,
+                    model: summary.model,
+                    modelReasoningEffort: summary.modelReasoningEffort ?? null,
+                    effort: summary.effort,
+                    serviceTier: null,
+                    resumeWithSessionModel: false,
+                },
+            }
         },
         enabled: Boolean(api && sessionId),
         staleTime: SESSION_DETAIL_STALE_TIME_MS,
@@ -47,6 +100,7 @@ export function useSession(api: ApiClient | null, sessionId: string | null): {
 
     return {
         session: query.data?.session ?? null,
+        isPlaceholderData: query.isPlaceholderData,
         isLoading: query.isLoading,
         error: query.error instanceof Error ? query.error.message : query.error ? 'Failed to load session' : null,
         notFound: isSessionNotFoundError(query.error) && !query.isFetching,

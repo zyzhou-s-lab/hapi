@@ -713,7 +713,27 @@ function applyLatestResponse(
         requestBaseline: Map<string, DecryptedMessage>
     }
 ): InternalState {
-    const retainedResponseMessages = response.messages.filter(shouldRetainWindowMessage)
+    const previousById = new Map(previous.messages.map((message) => [message.id, message]))
+    const retainedResponseMessages = response.messages
+        .filter(shouldRetainWindowMessage)
+        .map((message) => {
+            const existing = previousById.get(message.id)
+            if (
+                existing
+                && existing.seq === message.seq
+                && existing.createdAt === message.createdAt
+                && existing.localId === message.localId
+                && existing.status === undefined
+                && existing.invokedAt === message.invokedAt
+                && existing.scheduledAt === message.scheduledAt
+                && existing.deliveryState === message.deliveryState
+                && existing.steered === message.steered
+                && JSON.stringify(existing.content) === JSON.stringify(message.content)
+            ) {
+                return existing
+            }
+            return message
+        })
     const concurrentServerRows = previous.messages.filter((message) => (
         !optimisticMessage(message)
         && options.requestBaseline.get(message.id) !== message
@@ -726,13 +746,17 @@ function applyLatestResponse(
         : previous.messages
     const authoritative = mergeMessages(preserved, retainedResponseMessages)
     const incoming = mergeMessages(authoritative, concurrentServerRows)
-    const { kept, dropped } = trimConversation(
+    const { kept: rawKept, dropped } = trimConversation(
         incoming,
         VISIBLE_WINDOW_SIZE,
         'append',
         previous.finalizedStreamIds,
         TURN_PAGE_SIZE
     )
+    const kept = rawKept.length === previous.messages.length
+        && rawKept.every((message, index) => message === previous.messages[index])
+        ? previous.messages
+        : rawKept
     const snapshotHead = pagePosition(response.page.snapshotHeadAt, response.page.snapshotHeadSeq)
         ?? derivePosition(response.messages, 'newest')
     const newestKept = derivePosition(kept, 'newest')
@@ -767,6 +791,7 @@ function applyLatestResponse(
 
 function beginTailSync(sessionId: string): number {
     let generation = 0
+    const immediate = getState(sessionId).messages.length === 0
     updateState(sessionId, (previous) => {
         generation = previous.syncGeneration + 1
         return buildState(previous, {
@@ -779,7 +804,7 @@ function beginTailSync(sessionId: string): number {
             isLoadingMore: false,
             warning: null
         })
-    })
+    }, immediate)
     return generation
 }
 
