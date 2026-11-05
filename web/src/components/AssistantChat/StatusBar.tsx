@@ -8,7 +8,7 @@ import {
 import type { PermissionModeTone } from '@hapi/protocol'
 import * as Popover from '@radix-ui/react-popover'
 import { useEffect, useMemo, useState } from 'react'
-import type { AgentState, CodexCollaborationMode, OmpThinkingState, PermissionMode, ThreadGoal } from '@/types/api'
+import type { AgentState, CodexCollaborationMode, GitStatusFiles, OmpThinkingState, PermissionMode, ThreadGoal } from '@/types/api'
 import type { ConversationStatus } from '@/realtime/types'
 import { getContextBudgetTokens } from '@/chat/modelConfig'
 import {
@@ -243,6 +243,11 @@ export function StatusBar(props: {
     copilotAgentMode?: import('@hapi/protocol').CopilotAgentMode
     agentFlavor?: string | null
     voiceStatus?: ConversationStatus
+    gitBranch?: string | null
+    gitStatus?: GitStatusFiles | null
+    onViewFiles?: () => void
+    hideContextUsage?: boolean
+    hideRightStatus?: boolean
 }) {
     const { t } = useTranslation()
     const { preferences: headerMetadata } = useSessionHeaderMetadata()
@@ -330,7 +335,27 @@ export function StatusBar(props: {
             : `goal ${props.threadGoal.status === 'budgetLimited' ? 'limited' : props.threadGoal.status}`
         : null
     const codexFastMode = shouldShowCodexFastBadge(props.agentFlavor, props.serviceTier)
-
+    const gitSummary = useMemo(() => {
+        const branch = props.gitStatus?.branch?.trim() || props.gitBranch?.trim() || null
+        const stagedFiles = props.gitStatus?.stagedFiles ?? []
+        const unstagedFiles = props.gitStatus?.unstagedFiles ?? []
+        const allFiles = [...stagedFiles, ...unstagedFiles]
+        const totalAdded = allFiles.reduce((sum, file) => sum + (file.linesAdded || 0), 0)
+        const totalRemoved = allFiles.reduce((sum, file) => sum + (file.linesRemoved || 0), 0)
+        const totalStaged = props.gitStatus?.totalStaged ?? stagedFiles.length
+        const totalUnstaged = props.gitStatus?.totalUnstaged ?? unstagedFiles.length
+        const changedCount = totalStaged + totalUnstaged
+        if (!branch && changedCount === 0) return null
+        return {
+            branch,
+            allFiles,
+            totalAdded,
+            totalRemoved,
+            totalStaged,
+            totalUnstaged,
+            changedCount
+        }
+    }, [props.gitBranch, props.gitStatus])
     return (
         <div className="flex min-w-0 items-baseline justify-between gap-2 px-2 pb-1">
             <div className="flex min-w-0 items-baseline gap-2">
@@ -344,7 +369,106 @@ export function StatusBar(props: {
                             : connectionStatus.text}
                     </span>
                 </div>
-                {contextUsageLabel ? (
+                {gitSummary ? (
+                    <>
+                        <span aria-hidden="true" className="text-[10px] text-[var(--app-hint)]/50">·</span>
+                        <Popover.Root>
+                            <Popover.Trigger asChild>
+                                <button
+                                    type="button"
+                                    data-testid="statusbar-git-trigger"
+                                    className="inline-flex min-w-0 cursor-pointer items-center gap-1.5 rounded-md bg-transparent px-1 py-0.5 text-[11px] leading-4 text-[var(--app-hint)] outline-none transition-colors hover:bg-[var(--app-subtle-bg)] hover:text-[var(--app-fg)] focus-visible:ring-1 focus-visible:ring-[var(--app-link)]"
+                                >
+                                    <svg className="h-3 w-3 shrink-0 opacity-75" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                                        <circle cx="5" cy="4" r="1.75" />
+                                        <circle cx="5" cy="12" r="1.75" />
+                                        <circle cx="11" cy="6" r="1.75" />
+                                        <path d="M5 5.75v4.5M11 7.75c0 2-1.5 2.5-6 2.5" />
+                                    </svg>
+                                    <span className="max-w-[140px] truncate font-mono text-[11px]">
+                                        {gitSummary.branch ?? 'git'}
+                                    </span>
+                                    {gitSummary.totalAdded > 0 || gitSummary.totalRemoved > 0 ? (
+                                        <span className="inline-flex items-center gap-1 font-mono text-[10px]">
+                                            {gitSummary.totalAdded > 0 ? (
+                                                <span className="text-emerald-500">+{gitSummary.totalAdded}</span>
+                                            ) : null}
+                                            {gitSummary.totalRemoved > 0 ? (
+                                                <span className="text-rose-500">-{gitSummary.totalRemoved}</span>
+                                            ) : null}
+                                        </span>
+                                    ) : gitSummary.changedCount > 0 ? (
+                                        <span className="font-mono text-[10px] text-amber-500">
+                                            {gitSummary.changedCount}
+                                        </span>
+                                    ) : (
+                                        <span className="text-[10px] opacity-70">clean</span>
+                                    )}
+                                </button>
+                            </Popover.Trigger>
+                            <Popover.Portal>
+                                <Popover.Content
+                                    side="top"
+                                    align="start"
+                                    sideOffset={6}
+                                    collisionPadding={8}
+                                    className="z-50 w-64 rounded-xl border border-[var(--app-border)] bg-[var(--app-bg)] p-2.5 shadow-lg"
+                                >
+                                    <div className="flex flex-col gap-2 text-xs text-[var(--app-fg)]">
+                                        <div className="flex items-center justify-between gap-2 border-b border-[var(--app-divider)] pb-1.5">
+                                            <span className="truncate font-mono text-[11px] font-semibold">
+                                                {gitSummary.branch ?? 'working tree'}
+                                            </span>
+                                            <span className="shrink-0 font-mono text-[10px] text-[var(--app-hint)]">
+                                                {gitSummary.changedCount > 0
+                                                    ? `${gitSummary.changedCount} changed`
+                                                    : 'clean'}
+                                            </span>
+                                        </div>
+                                        {gitSummary.allFiles.length > 0 ? (
+                                            <div className="flex max-h-40 flex-col gap-1 overflow-y-auto">
+                                                {gitSummary.allFiles.slice(0, 6).map((file) => (
+                                                    <div key={`${file.isStaged ? 's' : 'u'}:${file.fullPath}`} className="flex items-center justify-between gap-2 text-[11px]">
+                                                        <span className="min-w-0 truncate font-mono text-[var(--app-fg)]">
+                                                            {file.fullPath || file.fileName}
+                                                        </span>
+                                                        <span className="inline-flex shrink-0 items-center gap-1 font-mono text-[10px]">
+                                                            {file.linesAdded > 0 ? (
+                                                                <span className="text-emerald-500">+{file.linesAdded}</span>
+                                                            ) : null}
+                                                            {file.linesRemoved > 0 ? (
+                                                                <span className="text-rose-500">-{file.linesRemoved}</span>
+                                                            ) : null}
+                                                        </span>
+                                                    </div>
+                                                ))}
+                                                {gitSummary.allFiles.length > 6 ? (
+                                                    <span className="text-[10px] text-[var(--app-hint)]">
+                                                        +{gitSummary.allFiles.length - 6} more…
+                                                    </span>
+                                                ) : null}
+                                            </div>
+                                        ) : (
+                                            <span className="text-[11px] text-[var(--app-hint)]">
+                                                Working tree clean
+                                            </span>
+                                        )}
+                                        {props.onViewFiles ? (
+                                            <button
+                                                type="button"
+                                                onClick={props.onViewFiles}
+                                                className="mt-0.5 inline-flex items-center justify-center rounded-lg bg-[var(--app-subtle-bg)] px-2.5 py-1 text-[11px] font-medium text-[var(--app-fg)] transition-colors hover:bg-[var(--app-border)]"
+                                            >
+                                                {t('files.title')}
+                                            </button>
+                                        ) : null}
+                                    </div>
+                                </Popover.Content>
+                            </Popover.Portal>
+                        </Popover.Root>
+                    </>
+                ) : null}
+                {!props.hideContextUsage && contextUsageLabel ? (
                     <Popover.Root>
                         <Popover.Trigger asChild>
                             <button
@@ -407,41 +531,45 @@ export function StatusBar(props: {
             </div>
 
             <div className="flex min-w-0 shrink-0 items-baseline gap-2">
-                {reasoningLabel ? (
-                    <span className="whitespace-nowrap text-xs text-[var(--app-hint)]">
-                        <span className="sm:hidden">{compactReasoningLabel}</span>
-                        <span className="hidden sm:inline">{reasoningLabel}</span>
-                    </span>
-                ) : null}
-                {ompThinkingLabel ? (
-                    <span className="whitespace-nowrap text-xs text-[var(--app-hint)]">
-                        {ompThinkingLabel}
-                    </span>
-                ) : null}
-                {goalLabel ? (
-                    <span className="whitespace-nowrap text-xs text-[var(--app-hint)]">
-                        {goalLabel}
-                    </span>
-                ) : null}
-                {codexFastMode ? (
-                    <span className="whitespace-nowrap text-xs text-[var(--app-badge-success-text)]">
-                        fast
-                    </span>
-                ) : null}
-                {collaborationModeLabel ? (
-                    <span className="whitespace-nowrap text-xs text-[var(--app-link)]">
-                        {collaborationModeLabel}
-                    </span>
-                ) : null}
-                {copilotAgentModeLabel ? (
-                    <span className="whitespace-nowrap text-xs text-[var(--app-link)]">
-                        {copilotAgentModeLabel}
-                    </span>
-                ) : null}
-                {displayPermissionMode ? (
-                    <span className={`whitespace-nowrap text-xs ${permissionModeColor}`}>
-                        {permissionModeLabel}
-                    </span>
+                {!props.hideRightStatus ? (
+                    <>
+                        {reasoningLabel ? (
+                            <span className="whitespace-nowrap text-xs text-[var(--app-hint)]">
+                                <span className="sm:hidden">{compactReasoningLabel}</span>
+                                <span className="hidden sm:inline">{reasoningLabel}</span>
+                            </span>
+                        ) : null}
+                        {ompThinkingLabel ? (
+                            <span className="whitespace-nowrap text-xs text-[var(--app-hint)]">
+                                {ompThinkingLabel}
+                            </span>
+                        ) : null}
+                        {goalLabel ? (
+                            <span className="whitespace-nowrap text-xs text-[var(--app-hint)]">
+                                {goalLabel}
+                            </span>
+                        ) : null}
+                        {codexFastMode ? (
+                            <span className="whitespace-nowrap text-xs text-[var(--app-badge-success-text)]">
+                                fast
+                            </span>
+                        ) : null}
+                        {collaborationModeLabel ? (
+                            <span className="whitespace-nowrap text-xs text-[var(--app-link)]">
+                                {collaborationModeLabel}
+                            </span>
+                        ) : null}
+                        {copilotAgentModeLabel ? (
+                            <span className="whitespace-nowrap text-xs text-[var(--app-link)]">
+                                {copilotAgentModeLabel}
+                            </span>
+                        ) : null}
+                        {displayPermissionMode ? (
+                            <span className={`whitespace-nowrap text-xs ${permissionModeColor}`}>
+                                {permissionModeLabel}
+                            </span>
+                        ) : null}
+                    </>
                 ) : null}
             </div>
         </div>

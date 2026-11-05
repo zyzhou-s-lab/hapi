@@ -42,6 +42,7 @@ import { TodoPanel } from '@/fork-features/task-panel/TodoPanel'
 import { ScratchlistDrawer } from '@/components/AssistantChat/ScratchlistPanel'
 import { useHubScratchlist } from '@/lib/use-hub-scratchlist'
 import { useSessions } from '@/hooks/queries/useSessions'
+import { useGitStatusFiles } from '@/hooks/queries/useGitStatusFiles'
 import { getSessionTitle } from '@/lib/sessionTitle'
 import { formatSessionMentionTooltip } from '@/lib/sessionReference'
 import { classifySessionAttention, getSessionAttentionLabelKey } from '@/lib/sessionAttention'
@@ -1754,6 +1755,10 @@ function SessionChatInner(props: SessionChatProps) {
             ...PRESERVE_SESSION_SIDEBAR_SCROLL,
         })
     }, [navigate, props.session.id])
+    const { status: composerGitStatus } = useGitStatusFiles(
+        props.api,
+        props.session.active ? props.session.id : null
+    )
 
     const handleToggleConfig = useCallback(() => {
         setOutlineOpen(false)
@@ -2407,6 +2412,9 @@ function SessionChatInner(props: SessionChatProps) {
                         onClearSendError={handleClearSendError}
                         onSuppressSendErrorRestore={props.onSuppressSendErrorRestore}
                         pendingSendIntentRef={pendingSendIntentRef}
+                        gitBranch={props.session.metadata?.worktree?.branch ?? null}
+                        gitStatus={composerGitStatus}
+                        onViewFiles={props.session.active ? handleToggleFiles : undefined}
                         />
                     </div>
                     </div>

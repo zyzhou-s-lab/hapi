@@ -274,4 +274,69 @@ describe('ComposerButtons responsive toolbar', () => {
         expect(getComposerToolbarJustifyContent('left')).toBe('flex-start')
         expect(getComposerToolbarJustifyContent('split')).toBe('flex-start')
     })
+
+    it('portals attachment plus and send button into inline frame slots and renders external bottom bar with context ring in Scheme 2 mode', () => {
+        const noop = () => {}
+        const leadingSlot = document.createElement('div')
+        const trailingSlot = document.createElement('div')
+        document.body.appendChild(leadingSlot)
+        document.body.appendChild(trailingSlot)
+
+        try {
+            render(
+                <RuntimeProviders>
+                    <div style={{ width: 760 }}>
+                        <ComposerButtons
+                            canSend
+                            controlsDisabled={false}
+                            showSettingsButton
+                            onSettingsToggle={noop}
+                            modelValueLabel="GPT-5.4"
+                            onModelValueToggle={noop}
+                            effortValueLabel="High"
+                            onEffortValueToggle={noop}
+                            expanded={false}
+                            onExpandedToggle={noop}
+                            showTerminalButton
+                            terminalDisabled={false}
+                            terminalLabel="Terminal"
+                            onTerminal={noop}
+                            showAbortButton={false}
+                            abortDisabled={false}
+                            isAborting={false}
+                            onAbort={noop}
+                            showSwitchButton={false}
+                            switchDisabled={false}
+                            isSwitching={false}
+                            onSwitch={noop}
+                            voiceEnabled={false}
+                            dictationEnabled
+                            voiceStatus="disconnected"
+                            onVoiceToggle={noop}
+                            onSend={noop}
+                            onSchedule={noop}
+                            onScratchlistToggle={noop}
+                            inlineLeadingSlot={leadingSlot}
+                            inlineTrailingSlot={trailingSlot}
+                            contextSize={137_500}
+                            contextCacheRead={94_200}
+                            contextWindow={250_000}
+                        />
+                    </div>
+                </RuntimeProviders>,
+            )
+
+            expect(within(leadingSlot).getByTestId('composer-attach-plus')).toBeInTheDocument()
+            expect(within(trailingSlot).getByRole('button', { name: 'Send' })).toBeInTheDocument()
+            const externalBar = screen.getByTestId('composer-external-bar')
+            expect(within(externalBar).getByTestId('composer-toolbar-items')).toBeInTheDocument()
+            expect(within(externalBar).getByText('GPT-5.4')).toBeInTheDocument()
+            expect(within(externalBar).getByText('High')).toBeInTheDocument()
+            const contextRing = within(externalBar).getByTestId('composer-context-ring')
+            expect(contextRing.textContent).toContain('55%')
+        } finally {
+            leadingSlot.remove()
+            trailingSlot.remove()
+        }
+    })
 })
