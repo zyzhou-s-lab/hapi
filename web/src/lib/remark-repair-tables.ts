@@ -17,13 +17,113 @@ import type { VFile } from 'vfile'
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
+/** Escape unescaped pipe characters (`|` preceded by an even number of `\`)
+ *  inside a backtick code span body so `remark-gfm` does not split the cell
+ *  at `|` before inline code spans are parsed (GFM §4.10). `mdast-util-gfm-table`
+ *  automatically strips the `\` when constructing the `inlineCode` node value. */
+function escapePipesInCodeSpanContent(content: string): string {
+    let out = ''
+    let backslashes = 0
+    for (let i = 0; i < content.length; i++) {
+        const ch = content[i]
+        if (ch === '\\') {
+            backslashes++
+            out += ch
+            continue
+        }
+        if (ch === '|' && backslashes % 2 === 0) {
+            out += '\\|'
+        } else {
+            out += ch
+        }
+        backslashes = 0
+    }
+    return out
+}
+
+/** Walk single-line backtick code spans per CommonMark §6.1 and apply `transformInner`. */
+function transformInlineCodeSpans(
+    line: string,
+    transformInner: (openTicks: string, inner: string, closeTicks: string) => string,
+): string {
+    if (!line.includes('`')) return line
+    let out = ''
+    let i = 0
+    while (i < line.length) {
+        const ch = line[i]
+        if (ch === '\\' && i + 1 < line.length) {
+            out += line.slice(i, i + 2)
+            i += 2
+            continue
+        }
+        if (ch === '`') {
+            let openEnd = i
+            while (openEnd < line.length && line[openEnd] === '`') {
+                openEnd++
+            }
+            const tickLen = openEnd - i
+            let closeStart = -1
+            let search = openEnd
+            while (search < line.length) {
+                if (line[search] !== '`') {
+                    search++
+                    continue
+                }
+                let runEnd = search
+                while (runEnd < line.length && line[runEnd] === '`') {
+                    runEnd++
+                }
+                if (runEnd - search === tickLen) {
+                    closeStart = search
+                    break
+                }
+                search = runEnd
+            }
+            if (closeStart !== -1) {
+                const inner = line.slice(openEnd, closeStart)
+                out += transformInner(
+                    line.slice(i, openEnd),
+                    inner,
+                    line.slice(closeStart, closeStart + tickLen),
+                )
+                i = closeStart + tickLen
+                continue
+            }
+            out += line.slice(i, openEnd)
+            i = openEnd
+            continue
+        }
+        out += ch
+        i++
+    }
+    return out
+}
+
+/** Escape unescaped `|` inside inline backtick code spans on a single table row line. */
+function escapeCodeSpanPipes(line: string): string {
+    if (!line.includes('`') || !line.includes('|')) return line
+    return transformInlineCodeSpans(
+        line,
+        (open, inner, close) => open + escapePipesInCodeSpanContent(inner) + close,
+    )
+}
+
+/** Strip inline math spans (`\[..\]`, `\(..\)`, `$$..$$`, `$..$`) so `|` inside
+ *  math (e.g. `$|\Delta|$`) is not counted as a table column delimiter before
+ *  `remarkLatexBracketMath` masks it. */
+function stripInlineMathSpans(line: string): string {
+    return line
+        .replace(/\\\[[\s\S]+?\\\]|\\\([\s\S]+?\\\)|(?<!\\)\$\$[^$\n]+?(?<!\\)\$\$/g, '\x00')
+        .replace(/(?<!\\)\$(?!\s)(?![0-9]+(?:\.[0-9]+)?(?:\s|$|\|))([^$\n]*?\S)(?<!\\)\$(?![0-9A-Za-z])/g, '\x00')
+}
+
 /** Count pipe-delimited cells in one table row line of raw source.
- *  Strips backtick code spans first so pipes inside them are not counted.
- *  Skips escaped pipes (\|) which are literal characters, not cell boundaries. */
+ *  Strips backtick code spans and inline math spans first so pipes inside them
+ *  are not counted. Skips escaped pipes (\|) which are literal characters, not cell boundaries. */
 function countSourceCells(line: string): number {
-    // Replace code spans with a placeholder so any | inside them is invisible
-    const trimmed = line.trim().replace(/`+[^`]*?`+/g, '\x00')
-    const inner = trimmed.startsWith('|') ? trimmed.slice(1) : trimmed
+    const withoutCode = transformInlineCodeSpans(line.trim(), () => '\x00')
+    const withoutMath = stripInlineMathSpans(withoutCode)
+    const inner = withoutMath.startsWith('|') ? withoutMath.slice(1) : withoutMath
     const stripped = inner.endsWith('|') ? inner.slice(0, -1) : inner
     let cells = 1
     let escaped = false
@@ -123,18 +223,36 @@ export function repairMarkdownTables(source: string): string {
 
         const hdr = lines[i - 1]
         // Only repair when the header row starts with | (the common LLM output form)
-        if (!hdr.trim().startsWith('|')) continue
+        if (!hdr.trim().startsWith('|') || isSeparatorLine(hdr)) continue
 
-        const headerCols = countSourceCells(hdr)
-        const sepCols = countSeparatorCells(sep)
-        if (sepCols === null || sepCols >= headerCols) continue
-
-        const repaired = padSeparatorLine(sep, headerCols)
-        if (repaired !== null) {
-            // Preserve original leading whitespace so indented tables are unchanged
-            const prefix = sep.match(/^\s*/)?.[0] ?? ''
-            lines[i] = prefix + repaired
+        const repairedHdr = escapeCodeSpanPipes(hdr)
+        if (repairedHdr !== hdr) {
+            lines[i - 1] = repairedHdr
             changed = true
+        }
+
+        const headerCols = countSourceCells(repairedHdr)
+        const sepCols = countSeparatorCells(sep)
+        if (sepCols !== null && sepCols < headerCols) {
+            const repaired = padSeparatorLine(sep, headerCols)
+            if (repaired !== null) {
+                // Preserve original leading whitespace so indented tables are unchanged
+                const prefix = sep.match(/^\s*/)?.[0] ?? ''
+                lines[i] = prefix + repaired
+                changed = true
+            }
+        }
+
+        // Also escape unescaped pipes inside backtick code spans in contiguous body rows
+        for (let j = i + 1; j < lines.length; j++) {
+            if (/^ {0,3}(`{3,}|~{3,})/.test(lines[j])) break
+            const row = lines[j]
+            if (!row.trim().startsWith('|') || isSeparatorLine(row)) break
+            const repairedRow = escapeCodeSpanPipes(row)
+            if (repairedRow !== row) {
+                lines[j] = repairedRow
+                changed = true
+            }
         }
     }
 

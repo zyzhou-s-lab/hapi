@@ -3,6 +3,8 @@ import remarkParse from 'remark-parse'
 import remarkGfm from 'remark-gfm'
 import remarkStringify from 'remark-stringify'
 import { unified } from 'unified'
+import type { Root, Table, TableCell, InlineCode } from 'mdast'
+import remarkLatexBracketMath from './remark-latex-bracket-math'
 import remarkRepairTables, { repairMarkdownTables } from './remark-repair-tables'
 
 function process(md: string): string {
@@ -73,10 +75,11 @@ describe('repairMarkdownTables (string)', () => {
         expect(repairMarkdownTables(input)).toBe(input)
     })
 
-    it('does not pad a valid table whose header contains a code span with a pipe', () => {
-        // | `a | b` | c |  is a 2-column header; separator has 2 cells — valid
+    it('escapes unescaped pipes inside header code spans without padding a matching separator', () => {
+        // | `a | b` | c | is a 2-column header; GFM §4.10 splits cells before code spans,
+        // so the pipe inside `a | b` must be escaped as \| while keeping the 2-cell separator intact.
         const input = '| `a | b` | c |\n|---|---|\n| x | y |\n'
-        expect(repairMarkdownTables(input)).toBe(input)
+        expect(repairMarkdownTables(input)).toBe('| `a \\| b` | c |\n|---|---|\n| x | y |\n')
     })
 
     it('does not close a ```` fence on a ``` line (closer must be >= opener length)', () => {
@@ -241,5 +244,54 @@ describe('remarkRepairTables (plugin)', () => {
         const md = 'Run: `jq \'.[] | select(.active)\'`\n'
         const out = process(md)
         expect(out).toContain('jq')
+    })
+
+    it('renders a table whose header or body contains backtick code spans with unescaped pipes', () => {
+        const md = [
+            '| 数据集 | 靶点数 $P$ | Gate 0a: vs. `v1` `|\\Delta \\text{WMSE}|` | Gate 0a: vs. `v1` `|\\Delta \\text{NIR}|` | Gate 0a 结论 | Gate 0b: `noPRESAGE` vs. `Full` WMSE | Gate 0b: `|\\Delta \\text{WMSE}|` |',
+            '| --- | ---: | ---: | ---: | --- | ---: | ---: |',
+            '| `k562` | 2,044 | `2.65e-07` | `4.89e-05` | **PASS** (`< 1e-4`) | `0.019378` vs. `0.019363` | `a | b` |',
+            '',
+        ].join('\n')
+
+        const processor = unified()
+            .use(remarkParse)
+            .use(remarkGfm)
+            .use(remarkRepairTables)
+            .use(remarkLatexBracketMath)
+        const file = { value: md }
+        const tree = processor.runSync(processor.parse(file), file) as Root
+        const table = tree.children[0] as Table
+        expect(table?.type).toBe('table')
+        expect(table.children).toHaveLength(2)
+        expect(table.children[0].children).toHaveLength(7)
+
+        const gate0aWmseCell = table.children[0].children[2] as TableCell
+        const inlineCodes = gate0aWmseCell.children.filter((n): n is InlineCode => n.type === 'inlineCode')
+        expect(inlineCodes.map(c => c.value)).toEqual(['v1', '|\\Delta \\text{WMSE}|'])
+
+        const bodyLastCell = table.children[1].children[6] as TableCell
+        const bodyCode = bodyLastCell.children.find((n): n is InlineCode => n.type === 'inlineCode')
+        expect(bodyCode?.value).toBe('a | b')
+    })
+
+    it('does not pad a valid separator when the header contains pipes inside inline $...$ math', () => {
+        const md = [
+            '| 数据集 | Gate 0a: $|\\Delta \\text{WMSE}|$ |',
+            '| --- | ---: |',
+            '| k562 | 0.01 |',
+            '',
+        ].join('\n')
+
+        const processor = unified()
+            .use(remarkParse)
+            .use(remarkGfm)
+            .use(remarkRepairTables)
+            .use(remarkLatexBracketMath)
+        const file = { value: md }
+        const tree = processor.runSync(processor.parse(file), file) as Root
+        const table = tree.children[0] as Table
+        expect(table?.type).toBe('table')
+        expect(table.children[0].children).toHaveLength(2)
     })
 })
