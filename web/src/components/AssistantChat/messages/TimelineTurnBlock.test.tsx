@@ -890,4 +890,96 @@ describe('TimelineTurnBlock & summarizeTurnActivity', () => {
         fireEvent.click(readBatch.querySelector('button')!)
         expect(screen.getAllByText('OmpRpcEventAdapter.ts').length).toBeGreaterThanOrEqual(2)
     })
+
+    it('renders TodoWrite and OMP todo updates as a rounded task checklist card with spinner while in progress and checkmark when completed', () => {
+        const runningPartition = partitionTurn(
+            [
+                call(tool('todo-1', 'todo', {
+                    state: 'completed',
+                    input: { i: 'Starting deployment check' },
+                    result: {
+                        details: {
+                            phases: [{
+                                id: 'p1',
+                                name: 'Tasks',
+                                tasks: [
+                                    { id: '1', content: '检查当前部署状态与未上线改动', status: 'in_progress' },
+                                    { id: '2', content: '暴露 Demo 页面到 Mac', status: 'pending' },
+                                ],
+                            }],
+                        },
+                    },
+                })),
+            ],
+            null
+        )
+
+        const { rerender } = render(
+            <I18nProvider>
+                <TimelineTurnBlockView
+                    partition={runningPartition}
+                    streaming={true}
+                    durationMs={2000}
+                    initiallyOpen={true}
+                />
+            </I18nProvider>
+        )
+
+        expect(screen.getByTestId('turn-todo-checklist-card')).toBeInTheDocument()
+        expect(screen.getByTestId('turn-todo-item-spinner')).toBeInTheDocument()
+        expect(screen.getByTestId('turn-todo-item-pending')).toBeInTheDocument()
+        expect(screen.getByText('检查当前部署状态与未上线改动')).toBeInTheDocument()
+
+        const completedPartition = partitionTurn(
+            [
+                call(tool('todo-1', 'todo', {
+                    state: 'completed',
+                    input: { i: 'Starting deployment check' },
+                    result: {
+                        details: {
+                            phases: [{
+                                id: 'p1',
+                                name: 'Tasks',
+                                tasks: [
+                                    { id: '1', content: '检查当前部署状态与未上线改动', status: 'in_progress' },
+                                ],
+                            }],
+                        },
+                    },
+                })),
+                call(tool('todo-2', 'todo', {
+                    state: 'completed',
+                    input: { i: 'Completing deployment check' },
+                    result: {
+                        details: {
+                            phases: [{
+                                id: 'p1',
+                                name: 'Tasks',
+                                tasks: [
+                                    { id: '1', content: '检查当前部署状态与未上线改动', status: 'completed' },
+                                ],
+                            }],
+                        },
+                    },
+                })),
+                { type: 'text', text: '所有改动均已部署上线。' },
+            ],
+            null
+        )
+
+        rerender(
+            <I18nProvider>
+                <TimelineTurnBlockView
+                    partition={completedPartition}
+                    streaming={false}
+                    durationMs={4000}
+                    initiallyOpen={false}
+                />
+            </I18nProvider>
+        )
+
+        expect(screen.getAllByTestId('turn-todo-checklist-card')).toHaveLength(1)
+        expect(screen.getByTestId('turn-todo-item-check')).toBeInTheDocument()
+        expect(screen.queryByTestId('turn-todo-item-spinner')).not.toBeInTheDocument()
+    })
 })

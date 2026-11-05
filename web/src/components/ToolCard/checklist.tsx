@@ -43,6 +43,28 @@ function parseChecklistEntries(
     return items
 }
 
+function parseOmpTodoDocument(doc: string): ChecklistItem[] {
+    const byTitle = new Map<string, ChecklistItem>()
+    for (const rawLine of doc.split('\n')) {
+        const line = rawLine.trim()
+        const match = /^(ADD|START|DONE)\s+"((?:\\.|[^"\\])+)"/.exec(line)
+        if (!match) continue
+        const [, op, rawTitle] = match
+        const text = rawTitle.replace(/\\"/g, '"').trim()
+        if (!text) continue
+        if (op === 'ADD') {
+            if (!byTitle.has(text)) {
+                byTitle.set(text, { text, status: 'pending' })
+            }
+        } else if (op === 'START') {
+            byTitle.set(text, { text, status: 'in_progress' })
+        } else if (op === 'DONE') {
+            byTitle.set(text, { text, status: 'completed' })
+        }
+    }
+    return Array.from(byTitle.values())
+}
+
 export function extractTodoChecklist(input: unknown, result: unknown): ChecklistItem[] {
     if (isObject(input) && Array.isArray(input.todos)) {
         const items = parseChecklistEntries(input.todos, {
@@ -84,6 +106,10 @@ export function extractTodoChecklist(input: unknown, result: unknown): Checklist
             textKey: 'content',
             idKey: 'id'
         })
+    }
+
+    if (isObject(input) && typeof input.input === 'string' && input.input.includes('*** Begin Todo')) {
+        return parseOmpTodoDocument(input.input)
     }
 
     return []

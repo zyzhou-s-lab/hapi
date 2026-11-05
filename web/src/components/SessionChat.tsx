@@ -1415,14 +1415,13 @@ function SessionChatInner(props: SessionChatProps) {
     const sessionStatus = useMemo(
         () => buildSessionStatusData({
             goal: reduced.latestGoal,
-            tasks: props.session.todos,
             blocks: reconciled.blocks,
             messages: normalizedMessages,
-            backgroundTaskCount: props.session.backgroundTaskCount
+            backgroundTaskCount: props.session.backgroundTaskCount,
+            includeSubagents: false,
         }),
         [
             reduced.latestGoal,
-            props.session.todos,
             props.session.backgroundTaskCount,
             reconciled.blocks,
             normalizedMessages

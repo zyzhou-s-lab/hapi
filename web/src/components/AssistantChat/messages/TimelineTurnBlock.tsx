@@ -20,6 +20,13 @@ import { RequestUserInputFooter } from '@/components/ToolCard/RequestUserInputFo
 import { isAskUserQuestionToolName } from '@/components/ToolCard/askUserQuestion'
 import { isRequestUserInputToolName } from '@/components/ToolCard/requestUserInput'
 import { PermissionFooter } from '@/components/ToolCard/PermissionFooter'
+import {
+    extractTodoChecklist,
+    extractUpdatePlanChecklist,
+    type ChecklistItem,
+} from '@/components/ToolCard/checklist'
+import { resolveToolViewName } from '@/components/ToolCard/toolNameAliases'
+import type { ToolCallBlock } from '@/chat/types'
 import { useOptionalHappyChatContext } from '@/components/AssistantChat/context'
 import { cn } from '@/lib/utils'
 
@@ -504,9 +511,157 @@ function StepInlinePreviewCard(props: { preview: TurnStepPreview }) {
         )
     }
 
+    const checklistItems = extractToolChecklistItems(preview.block)
+    if (checklistItems.length > 0) {
+        return (
+            <div className="mt-1.5 mb-2">
+                <TimelineTodoChecklistCard items={checklistItems} />
+            </div>
+        )
+    }
+
     return (
         <div className="mt-1.5 mb-2 rounded-lg border border-[var(--app-border)] bg-[var(--app-subtle-bg)]/45 p-2.5">
             <ToolDetailDialogContent block={preview.block} metadata={ctx?.metadata ?? null} hideTiming />
+        </div>
+    )
+}
+
+function extractToolChecklistItems(block: ToolCallBlock, allRows?: readonly TurnRow[]): ChecklistItem[] {
+    const resolved = resolveToolViewName(block.tool.name)
+    if (resolved !== 'TodoWrite' && resolved !== 'UpdatePlan') return []
+    const rawItems = resolved === 'TodoWrite'
+        ? extractTodoChecklist(block.tool.input, block.tool.result)
+        : extractUpdatePlanChecklist(block.tool.input, block.tool.result)
+
+    let items = rawItems
+    if (allRows && block.tool.result == null) {
+        let baseItems: ChecklistItem[] = []
+        for (const row of allRows) {
+            if (row.kind !== 'tool') continue
+            if (row.block.id === block.id) break
+            if (resolveToolViewName(row.block.tool.name) !== resolved) continue
+            const prior = resolved === 'TodoWrite'
+                ? extractTodoChecklist(row.block.tool.input, row.block.tool.result)
+                : extractUpdatePlanChecklist(row.block.tool.input, row.block.tool.result)
+            if (prior.length > 0) baseItems = prior
+        }
+        if (baseItems.length > 0) {
+            const merged = baseItems.map((item) => ({ ...item }))
+            for (const update of rawItems) {
+                const existing = merged.find((item) => item.text === update.text)
+                if (existing) {
+                    existing.status = update.status
+                } else {
+                    merged.push({ ...update })
+                }
+            }
+            items = merged
+        }
+    }
+
+    if (
+        block.tool.state === 'running'
+        && items.length > 0
+        && !items.some((item) => item.status === 'in_progress')
+    ) {
+        const firstPendingIdx = items.findIndex((item) => item.status === 'pending')
+        if (firstPendingIdx >= 0) {
+            items = items.map((item, idx) => (idx === firstPendingIdx ? { ...item, status: 'in_progress' } : item))
+        }
+    }
+
+    return items
+}
+
+export function TimelineTodoChecklistCard(props: { items: readonly ChecklistItem[]; className?: string }) {
+    return (
+        <div
+            className={cn(
+                'rounded-xl border border-[var(--app-border)] bg-[var(--app-bg)] px-3.5 py-2.5 shadow-2xs',
+                props.className
+            )}
+            data-testid="turn-todo-checklist-card"
+        >
+            <div className="space-y-1">
+                {props.items.map((item, index) => {
+                    const isRunning = item.status === 'in_progress'
+                    const isCompleted = item.status === 'completed'
+                    const isBlocked = item.status === 'blocked'
+                    return (
+                        <div
+                            key={item.id ?? `${index}:${item.text}`}
+                            className="flex items-center gap-2.5 py-0.5 text-[13.5px] leading-5"
+                            data-testid="turn-todo-card-item"
+                            data-todo-status={item.status}
+                        >
+                            {isRunning ? (
+                                <span
+                                    className="inline-flex h-4 w-4 shrink-0 items-center justify-center text-[var(--app-fg)]"
+                                    data-testid="turn-todo-item-spinner"
+                                >
+                                    <svg className="h-4 w-4 animate-spin" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                                        <circle
+                                            cx="8"
+                                            cy="8"
+                                            r="6.25"
+                                            stroke="currentColor"
+                                            strokeOpacity="0.2"
+                                            strokeWidth="1.6"
+                                        />
+                                        <path
+                                            d="M14.25 8a6.25 6.25 0 0 0-6.25-6.25"
+                                            stroke="currentColor"
+                                            strokeWidth="1.6"
+                                            strokeLinecap="round"
+                                        />
+                                    </svg>
+                                </span>
+                            ) : isCompleted ? (
+                                <span
+                                    className="inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-[var(--app-fg)] text-[var(--app-bg)]"
+                                    data-testid="turn-todo-item-check"
+                                >
+                                    <svg className="h-2.5 w-2.5" viewBox="0 0 12 12" fill="none" aria-hidden="true">
+                                        <path
+                                            d="M2.4 6.2L4.9 8.6L9.6 3.5"
+                                            stroke="currentColor"
+                                            strokeWidth="1.8"
+                                            strokeLinecap="round"
+                                            strokeLinejoin="round"
+                                        />
+                                    </svg>
+                                </span>
+                            ) : isBlocked ? (
+                                <span
+                                    className="inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full border border-[var(--app-badge-error-border)] bg-[var(--app-badge-error-bg)] text-[10px] font-bold text-[var(--app-badge-error-text)]"
+                                    data-testid="turn-todo-item-blocked"
+                                >
+                                    !
+                                </span>
+                            ) : (
+                                <span
+                                    className="inline-flex h-4 w-4 shrink-0 items-center justify-center"
+                                    data-testid="turn-todo-item-pending"
+                                >
+                                    <span className="h-3.5 w-3.5 rounded-full border border-[var(--app-hint)]/45" />
+                                </span>
+                            )}
+                            <span
+                                className={cn(
+                                    'min-w-0 flex-1 break-words',
+                                    isRunning && 'font-medium text-[var(--app-fg)]',
+                                    isCompleted && 'text-[var(--app-fg)]/85',
+                                    isBlocked && 'text-[var(--app-badge-error-text)]',
+                                    !isRunning && !isCompleted && !isBlocked && 'text-[var(--app-hint)]'
+                                )}
+                            >
+                                {item.text}
+                            </span>
+                        </div>
+                    )
+                })}
+            </div>
         </div>
     )
 }
@@ -1054,6 +1209,19 @@ export function TimelineTurnBlockView(props: {
         ),
         [stepRows]
     )
+    const pinnedChecklistByKey = useMemo(() => {
+        const map = new Map<string, ChecklistItem[]>()
+        for (const row of pinnedToolRows) {
+            if (row.kind !== 'tool') continue
+            const items = extractToolChecklistItems(row.block, rawStepRows)
+            if (items.length > 0) {
+                map.set(row.key, items)
+            }
+        }
+        return map
+    }, [pinnedToolRows, rawStepRows])
+    const everyPinnedIsChecklistCard =
+        pinnedToolRows.length > 0 && pinnedToolRows.every((row) => pinnedChecklistByKey.has(row.key))
     const isInitialStreamingWait = props.streaming && stepRows.length === 0 && mediaRows.length === 0 && trailing.length === 0
     const hasSteps = stepRows.some((row) => row.kind === 'reasoning' || row.kind === 'tool' || row.kind === 'coalesced') || isInitialStreamingWait
     const headerText = props.streaming ? summary.workingHeader : summary.completedHeader
@@ -1438,6 +1606,14 @@ export function TimelineTurnBlockView(props: {
                         </div>
                     </div>
 
+                    {open && pinnedChecklistByKey.size > 0 ? (
+                        <div className="mt-2 space-y-2" data-testid="turn-live-todo-cards">
+                            {Array.from(pinnedChecklistByKey.entries()).map(([key, items]) => (
+                                <TimelineTodoChecklistCard key={key} items={items} />
+                            ))}
+                        </div>
+                    ) : null}
+
                     {!open ? (
                         <>
                             {viewMode === 'thinking' ? (
@@ -1457,11 +1633,19 @@ export function TimelineTurnBlockView(props: {
                             ) : null}
                             {pinnedToolRows.length > 0 ? (
                                 <div
-                                    className="relative ml-2.5 mt-1 border-l border-[var(--app-border)] pl-3.5 space-y-0.5"
+                                    className={cn(
+                                        everyPinnedIsChecklistCard
+                                            ? 'mt-2 space-y-2'
+                                            : 'relative ml-2.5 mt-1 border-l border-[var(--app-border)] pl-3.5 space-y-1'
+                                    )}
                                     data-testid="turn-collapsed-pinned-rail"
                                 >
-                                    {pinnedToolRows.map((row, idx) =>
-                                        row.kind === 'coalesced' ? (
+                                    {pinnedToolRows.map((row, idx) => {
+                                        const checklistItems = pinnedChecklistByKey.get(row.key)
+                                        if (checklistItems) {
+                                            return <TimelineTodoChecklistCard key={row.key} items={checklistItems} />
+                                        }
+                                        return row.kind === 'coalesced' ? (
                                             <TimelineCoalescedStepRow
                                                 key={row.key}
                                                 row={row}
@@ -1479,7 +1663,7 @@ export function TimelineTurnBlockView(props: {
                                                 showInlineRailSpinner={true}
                                             />
                                         )
-                                    )}
+                                    })}
                                 </div>
                             ) : null}
                             {nonTrailingRows.map((row, idx) => {
