@@ -1228,8 +1228,10 @@ export function TimelineTurnBlockView(props: {
         }
         return map
     }, [pinnedToolRows, rawStepRows])
-    const everyPinnedIsChecklistCard =
-        pinnedToolRows.length > 0 && pinnedToolRows.every((row) => pinnedChecklistByKey.has(row.key))
+    const pinnedRailRows = useMemo(
+        () => pinnedToolRows.filter((row) => !pinnedChecklistByKey.has(row.key)),
+        [pinnedToolRows, pinnedChecklistByKey]
+    )
     const isInitialStreamingWait = props.streaming && stepRows.length === 0 && mediaRows.length === 0 && trailing.length === 0
     const hasSteps = stepRows.some((row) => row.kind === 'reasoning' || row.kind === 'tool' || row.kind === 'coalesced') || isInitialStreamingWait
     const headerText = props.streaming ? summary.workingHeader : summary.completedHeader
@@ -1614,14 +1616,6 @@ export function TimelineTurnBlockView(props: {
                         </div>
                     </div>
 
-                    {open && pinnedChecklistByKey.size > 0 ? (
-                        <div className="mt-2 space-y-2" data-testid="turn-live-todo-cards">
-                            {Array.from(pinnedChecklistByKey.entries()).map(([key, items]) => (
-                                <TimelineTodoChecklistCard key={key} items={items} />
-                            ))}
-                        </div>
-                    ) : null}
-
                     {!open ? (
                         <>
                             {viewMode === 'thinking' ? (
@@ -1639,21 +1633,13 @@ export function TimelineTurnBlockView(props: {
                                         ))}
                                 </div>
                             ) : null}
-                            {pinnedToolRows.length > 0 ? (
+                            {pinnedRailRows.length > 0 ? (
                                 <div
-                                    className={cn(
-                                        everyPinnedIsChecklistCard
-                                            ? 'mt-2 space-y-2'
-                                            : 'relative ml-2.5 mt-1 border-l border-[var(--app-border)] pl-3.5 space-y-1'
-                                    )}
+                                    className="relative ml-2.5 mt-1 border-l border-[var(--app-border)] pl-3.5 space-y-1"
                                     data-testid="turn-collapsed-pinned-rail"
                                 >
-                                    {pinnedToolRows.map((row, idx) => {
-                                        const checklistItems = pinnedChecklistByKey.get(row.key)
-                                        if (checklistItems) {
-                                            return <TimelineTodoChecklistCard key={row.key} items={checklistItems} />
-                                        }
-                                        return row.kind === 'coalesced' ? (
+                                    {pinnedRailRows.map((row, idx) =>
+                                        row.kind === 'coalesced' ? (
                                             <TimelineCoalescedStepRow
                                                 key={row.key}
                                                 row={row}
@@ -1671,9 +1657,22 @@ export function TimelineTurnBlockView(props: {
                                                 showInlineRailSpinner={true}
                                             />
                                         )
-                                    })}
+                                    )}
                                 </div>
                             ) : null}
+                        </>
+                    ) : null}
+
+                    {pinnedChecklistByKey.size > 0 ? (
+                        <div className="mt-2 space-y-2" data-testid="turn-live-todo-cards">
+                            {Array.from(pinnedChecklistByKey.entries()).map(([key, items]) => (
+                                <TimelineTodoChecklistCard key={key} items={items} />
+                            ))}
+                        </div>
+                    ) : null}
+
+                    {!open ? (
+                        <>
                             {nonTrailingRows.map((row, idx) => {
                                 if (row.kind !== 'text') return null
                                 const laterRows = nonTrailingRows.slice(idx + 1)

@@ -982,4 +982,84 @@ describe('TimelineTurnBlock & summarizeTurnActivity', () => {
         expect(screen.getByTestId('turn-todo-item-check')).toBeInTheDocument()
         expect(screen.queryByTestId('turn-todo-item-spinner')).not.toBeInTheDocument()
     })
+
+    it('renders TimelineTodoChecklistCard outside turn-collapsed-pinned-rail when collapsed alongside pinned subagent steps', () => {
+        const collapsedWithSubagentsAndTodo = partitionTurn(
+            [
+                call(tool('agent-1', 'Agent', {
+                    state: 'completed',
+                    input: { name: 'SteadyTodoFix', description: 'Review todo fix' },
+                    result: 'Looks good',
+                })),
+                call(tool('agent-2', 'Agent', {
+                    state: 'completed',
+                    input: { name: 'DivergentTodoFix', description: 'Explore alternatives' },
+                    result: 'Alternative checked',
+                })),
+                call(tool('todo-done', 'todo', {
+                    state: 'completed',
+                    input: {
+                        input: [
+                            '*** Begin Todo',
+                            'DONE "Clear completed OMP todoPhases" "fix(todo): reset phases"',
+                            '*** End Todo',
+                        ].join('\n'),
+                    },
+                    result: {
+                        details: {
+                            op: 'done',
+                            operations: ['done'],
+                            completedTasks: [
+                                {
+                                    phase: 'Stale Todo Inheritance Fix',
+                                    content: 'Clear completed OMP todoPhases',
+                                },
+                            ],
+                            changes: [
+                                {
+                                    op: 'done',
+                                    task: 'Clear completed OMP todoPhases',
+                                },
+                            ],
+                            phases: [
+                                {
+                                    name: 'Tasks',
+                                    tasks: [
+                                        { content: 'Deduplicate SessionStatusPanel', status: 'completed' },
+                                    ],
+                                },
+                                {
+                                    name: 'Stale Todo Inheritance Fix',
+                                    tasks: [
+                                        { content: 'Clear completed OMP todoPhases', status: 'completed' },
+                                    ],
+                                },
+                            ],
+                        },
+                    },
+                })),
+                { type: 'text', text: '已完成修复。' },
+            ],
+            null
+        )
+
+        render(
+            <I18nProvider>
+                <TimelineTurnBlockView
+                    partition={collapsedWithSubagentsAndTodo}
+                    streaming={false}
+                    durationMs={5000}
+                    initiallyOpen={false}
+                />
+            </I18nProvider>
+        )
+
+        const collapsedRail = screen.getByTestId('turn-collapsed-pinned-rail')
+        const todoCard = screen.getByTestId('turn-todo-checklist-card')
+        expect(collapsedRail).toBeInTheDocument()
+        expect(todoCard).toBeInTheDocument()
+        expect(collapsedRail.contains(todoCard)).toBe(false)
+        expect(screen.getByText('Clear completed OMP todoPhases')).toBeInTheDocument()
+        expect(screen.queryByText('Deduplicate SessionStatusPanel')).not.toBeInTheDocument()
+    })
 })
