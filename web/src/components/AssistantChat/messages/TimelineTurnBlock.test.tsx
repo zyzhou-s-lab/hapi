@@ -1094,4 +1094,96 @@ describe('TimelineTurnBlock & summarizeTurnActivity', () => {
         expect(screen.getByText('Anchor viewport during prepend')).toBeInTheDocument()
         expect(screen.queryByText('Old completed task')).not.toBeInTheDocument()
     })
+
+    it('keeps pre-compaction final answer outside the timeline rail when ContextCompaction and post-compaction continuation follow', () => {
+        const midCompactionStreaming = partitionTurn(
+            [
+                call(tool('r1', 'Read', {
+                    state: 'completed',
+                    input: { file_path: '/repo/docs/spec.md', i: 'Reading spec' },
+                })),
+                { type: 'text', text: '这是压缩前的完整长篇技术方案回答。' },
+                call(tool('c1', 'ContextCompaction', {
+                    state: 'completed',
+                    input: {
+                        type: 'omp-compaction',
+                        phase: 'finished',
+                        action: 'context-full',
+                        outcome: 'completed',
+                        result: { tokensBefore: 168908, shortSummary: 'Compacted earlier turns.' },
+                    },
+                })),
+                { type: 'reasoning', text: 'Continuing from post-compaction context.' },
+            ],
+            null
+        )
+
+        const { rerender } = render(
+            <I18nProvider>
+                <TimelineTurnBlockView
+                    partition={midCompactionStreaming}
+                    streaming={true}
+                    durationMs={3200}
+                    initiallyOpen={true}
+                    renderTrailingText={(text, isStreaming) => (
+                        <span data-streaming={String(isStreaming)}>{text}</span>
+                    )}
+                />
+            </I18nProvider>
+        )
+
+        // While post-compaction reasoning is active at the tail, pre-compaction answer is rendered in trailing (outside the rail) with isStreaming=false
+        const trailingAnswersWhileStreaming = screen.getAllByTestId('turn-trailing-answer')
+        expect(trailingAnswersWhileStreaming).toHaveLength(1)
+        expect(trailingAnswersWhileStreaming[0]).toHaveTextContent('这是压缩前的完整长篇技术方案回答。')
+        expect(trailingAnswersWhileStreaming[0]?.querySelector('[data-streaming]')).toHaveAttribute('data-streaming', 'false')
+        expect(screen.getByTestId('turn-level1-rail')).not.toHaveTextContent('这是压缩前的完整长篇技术方案回答。')
+        expect(screen.getByTestId('rail-step-spinner')).toHaveAttribute('data-active-row-index', '2')
+
+        // Once post-compaction continuation text finishes and the turn completes, the rail auto-collapses while both answers remain visible outside the rail
+        const completedTurn = partitionTurn(
+            [
+                call(tool('r1', 'Read', {
+                    state: 'completed',
+                    input: { file_path: '/repo/docs/spec.md', i: 'Reading spec' },
+                })),
+                { type: 'text', text: '这是压缩前的完整长篇技术方案回答。' },
+                call(tool('c1', 'ContextCompaction', {
+                    state: 'completed',
+                    input: {
+                        type: 'omp-compaction',
+                        phase: 'finished',
+                        action: 'context-full',
+                        outcome: 'completed',
+                        result: { tokensBefore: 168908, shortSummary: 'Compacted earlier turns.' },
+                    },
+                })),
+                { type: 'reasoning', text: 'Continuing from post-compaction context.' },
+                { type: 'text', text: '方案已在上文完整呈现，请确认优先级。' },
+            ],
+            null
+        )
+
+        rerender(
+            <I18nProvider>
+                <TimelineTurnBlockView
+                    partition={completedTurn}
+                    streaming={false}
+                    durationMs={5400}
+                    initiallyOpen={true}
+                    renderTrailingText={(text, isStreaming) => (
+                        <span data-streaming={String(isStreaming)}>{text}</span>
+                    )}
+                />
+            </I18nProvider>
+        )
+
+        expect(screen.getByTestId('turn-level0-header')).toHaveAttribute('aria-expanded', 'false')
+        const trailingAnswersAfterComplete = screen.getAllByTestId('turn-trailing-answer')
+        expect(trailingAnswersAfterComplete).toHaveLength(2)
+        expect(trailingAnswersAfterComplete[0]).toHaveTextContent('这是压缩前的完整长篇技术方案回答。')
+        expect(trailingAnswersAfterComplete[0]?.querySelector('[data-streaming]')).toHaveAttribute('data-streaming', 'false')
+        expect(trailingAnswersAfterComplete[1]).toHaveTextContent('方案已在上文完整呈现，请确认优先级。')
+        expect(trailingAnswersAfterComplete[1]?.querySelector('[data-streaming]')).toHaveAttribute('data-streaming', 'false')
+    })
 })

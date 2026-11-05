@@ -254,6 +254,7 @@ export function TurnBlockView(props: {
             />
         )
     }
+    const lastRow = props.partition.rows[props.partition.rows.length - 1]
     const trailing = props.partition.rows.filter((row): row is Extract<TurnRow, { kind: 'text' }> => row.kind === 'text' && row.trailing)
     if (!props.partition.hasActivity) {
         if (trailing.length === 0) return null
@@ -261,7 +262,7 @@ export function TurnBlockView(props: {
             <>
                 {trailing.map((row) => (
                     <div key={row.key} className="mt-3">
-                        <TurnText text={row.text} streaming={props.streaming} />
+                        <TurnText text={row.text} streaming={props.streaming && row === lastRow} />
                     </div>
                 ))}
             </>
@@ -292,7 +293,7 @@ export function TurnBlockView(props: {
                 {steps}
                 {trailing.map((row) => (
                     <div key={row.key} className="mt-3">
-                        <TurnText text={row.text} streaming={props.streaming} />
+                        <TurnText text={row.text} streaming={props.streaming && row === lastRow} />
                     </div>
                 ))}
             </div>
@@ -317,7 +318,7 @@ export function TurnBlockView(props: {
             </div>
             {trailing.map((row) => (
                 <div key={row.key} className="mt-3">
-                    <TurnText text={row.text} streaming={props.streaming} />
+                    <TurnText text={row.text} streaming={props.streaming && row === lastRow} />
                 </div>
             ))}
         </div>
