@@ -21,6 +21,7 @@ import { isAskUserQuestionToolName } from '@/components/ToolCard/askUserQuestion
 import { isRequestUserInputToolName } from '@/components/ToolCard/requestUserInput'
 import { PermissionFooter } from '@/components/ToolCard/PermissionFooter'
 import {
+    collectOmpTodoTurnContext,
     extractTodoChecklist,
     extractUpdatePlanChecklist,
     type ChecklistItem,
@@ -530,8 +531,15 @@ function StepInlinePreviewCard(props: { preview: TurnStepPreview }) {
 function extractToolChecklistItems(block: ToolCallBlock, allRows?: readonly TurnRow[]): ChecklistItem[] {
     const resolved = resolveToolViewName(block.tool.name)
     if (resolved !== 'TodoWrite' && resolved !== 'UpdatePlan') return []
+    const turnContext = resolved === 'TodoWrite' && allRows
+        ? collectOmpTodoTurnContext(
+            allRows
+                .filter((row): row is TurnToolRow => row.kind === 'tool' && resolveToolViewName(row.block.tool.name) === 'TodoWrite')
+                .map((row) => ({ input: row.block.tool.input, result: row.block.tool.result }))
+        )
+        : undefined
     const rawItems = resolved === 'TodoWrite'
-        ? extractTodoChecklist(block.tool.input, block.tool.result)
+        ? extractTodoChecklist(block.tool.input, block.tool.result, turnContext)
         : extractUpdatePlanChecklist(block.tool.input, block.tool.result)
 
     let items = rawItems
@@ -542,7 +550,7 @@ function extractToolChecklistItems(block: ToolCallBlock, allRows?: readonly Turn
             if (row.block.id === block.id) break
             if (resolveToolViewName(row.block.tool.name) !== resolved) continue
             const prior = resolved === 'TodoWrite'
-                ? extractTodoChecklist(row.block.tool.input, row.block.tool.result)
+                ? extractTodoChecklist(row.block.tool.input, row.block.tool.result, turnContext)
                 : extractUpdatePlanChecklist(row.block.tool.input, row.block.tool.result)
             if (prior.length > 0) baseItems = prior
         }

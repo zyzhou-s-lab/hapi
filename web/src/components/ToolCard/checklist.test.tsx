@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { render, screen } from '@testing-library/react'
 import type { ToolCallBlock } from '@/chat/types'
-import { ChecklistList, extractTodoChecklist, extractUpdatePlanChecklist } from '@/components/ToolCard/checklist'
+import { ChecklistList, collectOmpTodoTurnContext, extractTodoChecklist, extractUpdatePlanChecklist } from '@/components/ToolCard/checklist'
 import { getToolPresentation } from '@/components/ToolCard/knownTools'
 import { getToolViewComponent } from '@/components/ToolCard/views/_all'
 import { UpdatePlanView } from '@/components/ToolCard/views/UpdatePlanView'
@@ -112,6 +112,96 @@ describe('extractTodoChecklist', () => {
             phases: [{ name: 'Ship', tasks: [{ content: 'wait', status: 'blocked', id: 'b' }] }]
         })).toEqual([
             { id: 'b', text: 'wait', status: 'blocked' }
+        ])
+    })
+
+    it('excludes earlier completed phases when a subsequent turn appends and completes a new phase', () => {
+        const priorPhase = {
+            name: 'Tasks',
+            tasks: [
+                { id: 'task-1', content: 'Deduplicate SessionStatusPanel', status: 'completed' },
+                { id: 'task-2', content: 'Implement TimelineTodoChecklistCard', status: 'completed' },
+            ],
+        }
+        const startInput = {
+            input: [
+                '*** Begin Todo',
+                'PHASE "Markdown Table Pipe Repair"',
+                'ADD "Escape pipes in table code spans" "Fix remark-repair-tables" 10',
+                'START "Escape pipes in table code spans"',
+                '*** End Todo',
+            ].join('\n'),
+        }
+        const startResult = {
+            details: {
+                op: 'batch',
+                operations: ['append', 'start'],
+                changes: [
+                    {
+                        op: 'append',
+                        phase: 'Markdown Table Pipe Repair',
+                        items: [{ id: 'task-5', title: 'Escape pipes in table code spans' }],
+                    },
+                    {
+                        op: 'start',
+                        task: 'Escape pipes in table code spans',
+                    },
+                ],
+                phases: [
+                    priorPhase,
+                    {
+                        name: 'Markdown Table Pipe Repair',
+                        tasks: [
+                            { id: 'task-5', content: 'Escape pipes in table code spans', status: 'in_progress' },
+                        ],
+                    },
+                ],
+            },
+        }
+        expect(extractTodoChecklist(startInput, startResult)).toEqual([
+            { id: 'task-5', text: 'Escape pipes in table code spans', status: 'in_progress' },
+        ])
+
+        const doneInput = {
+            input: [
+                '*** Begin Todo',
+                'DONE "Escape pipes in table code spans" "fix(web): escape pipes"',
+                '*** End Todo',
+            ].join('\n'),
+        }
+        const doneResult = {
+            details: {
+                op: 'done',
+                operations: ['done'],
+                changes: [
+                    {
+                        op: 'done',
+                        task: 'Escape pipes in table code spans',
+                    },
+                ],
+                completedTasks: [
+                    {
+                        task: 'Escape pipes in table code spans',
+                        commit: '848b095',
+                    },
+                ],
+                phases: [
+                    priorPhase,
+                    {
+                        name: 'Markdown Table Pipe Repair',
+                        tasks: [
+                            { id: 'task-5', content: 'Escape pipes in table code spans', status: 'completed' },
+                        ],
+                    },
+                ],
+            },
+        }
+        const turnContext = collectOmpTodoTurnContext([
+            { input: startInput, result: startResult },
+            { input: doneInput, result: doneResult },
+        ])
+        expect(extractTodoChecklist(doneInput, doneResult, turnContext)).toEqual([
+            { id: 'task-5', text: 'Escape pipes in table code spans', status: 'completed' },
         ])
     })
 })

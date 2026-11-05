@@ -23,7 +23,8 @@ import type {
     OmpModel,
     OmpRpcSpawnConfig,
     OmpSubagentSnapshot,
-    OmpSessionState
+    OmpSessionState,
+    OmpTodoPhase
 } from './rpc/types';
 import type { AgentMessage } from '@/agent/types';
 import type {
@@ -57,6 +58,20 @@ type PromptLifecycle = {
     ignoreAgentEnds: number;
 };
 
+function areAllOmpTodoPhasesTerminal(phases: readonly OmpTodoPhase[]): boolean {
+    if (phases.length === 0) return false;
+    let hasTask = false;
+    for (const phase of phases) {
+        for (const task of phase.tasks) {
+            hasTask = true;
+            if (task.status !== 'completed' && task.status !== 'abandoned') {
+                return false;
+            }
+        }
+    }
+    return hasTask;
+}
+
 class OmpRemoteLauncher extends RemoteLauncherBase {
     private readonly session: OmpSession;
     private client: OmpRpcClient | null = null;
@@ -75,6 +90,7 @@ class OmpRemoteLauncher extends RemoteLauncherBase {
     private defaultModel: OmpModel | null = null;
     private availableModels: OmpModel[] = [];
     private contextUsage: OmpContextUsage | null = null;
+    private todoPhases: OmpTodoPhase[] = [];
     private thinkingState: OmpThinkingState = {
         thinkingLevel: null,
         configured: null,
@@ -206,7 +222,9 @@ class OmpRemoteLauncher extends RemoteLauncherBase {
                     this.clearCurrentPrompt();
                 }
                 this.signalChange();
-                void sessionReconciler.reconcile().catch((error) => {
+                void sessionReconciler.reconcile().then(({ state }) => {
+                    this.persistRuntimeState(state);
+                }).catch((error) => {
                     this.handleTransportFailure(error);
                 });
                 void this.sendReadyIfIdle();
@@ -215,7 +233,9 @@ class OmpRemoteLauncher extends RemoteLauncherBase {
                 if (!agentInvoked) {
                     this.clearCurrentPrompt();
                     this.signalChange();
-                    void sessionReconciler.reconcile().catch((error) => {
+                    void sessionReconciler.reconcile().then(({ state }) => {
+                        this.persistRuntimeState(state);
+                    }).catch((error) => {
                         this.handleTransportFailure(error);
                     });
                     void this.sendReadyIfIdle();
@@ -468,6 +488,8 @@ class OmpRemoteLauncher extends RemoteLauncherBase {
         let queuedFollowUp = false;
         try {
             if (!wasBusy) {
+                await this.sessionReconciler?.drain();
+                await this.clearCompletedTodosIfNeeded(client);
                 await this.applyRequestedModel(input.mode.model);
                 await this.applyRequestedThinking(input.mode.effort);
             }
@@ -666,6 +688,7 @@ class OmpRemoteLauncher extends RemoteLauncherBase {
         this.currentModel = state.model ?? null;
         this.contextUsage = state.contextUsage ?? null;
         this.isStreaming = state.isStreaming;
+        this.todoPhases = state.todoPhases ?? [];
         if (state.systemPrompt) {
             setSessionPromptLive(this.session.client.sessionId, { omp: { systemPrompt: state.systemPrompt } })
         }
@@ -1014,10 +1037,23 @@ class OmpRemoteLauncher extends RemoteLauncherBase {
                 && state.queuedMessageCount === 0
                 && !this.hasLocalPendingInput()
             ) {
+                await this.clearCompletedTodosIfNeeded(client);
                 this.session.sendSessionEvent({ type: 'ready' });
             }
         } catch (error) {
             logger.debug('[omp-remote] failed checking ready state', error);
+        }
+    }
+
+    private async clearCompletedTodosIfNeeded(client: OmpRpcClient): Promise<void> {
+        if (!areAllOmpTodoPhasesTerminal(this.todoPhases)) {
+            return;
+        }
+        try {
+            const result = await client.request({ type: 'set_todos', phases: [] });
+            this.todoPhases = result.todoPhases ?? [];
+        } catch (error) {
+            logger.debug('[omp-remote] failed clearing completed todos', error);
         }
     }
 
