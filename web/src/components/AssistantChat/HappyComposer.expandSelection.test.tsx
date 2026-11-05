@@ -230,4 +230,14 @@ describe('HappyComposer plain-text expansion', () => {
         fireEvent.pointerDown(screen.getByRole('button', { name: 'Outside action' }))
         expect(screen.queryByText('misc.permissionMode')).not.toBeInTheDocument()
     })
+
+    it('places default :focus-visible outline inside @layer base so composer outline-none utilities win', () => {
+        const css = readFileSync('src/index.css', 'utf8')
+        expect(css).toMatch(/@layer base\s*\{\s*:focus-visible\s*\{/)
+
+        render(<TestRuntime />)
+        const textbox = screen.getByRole('textbox')
+        expect(textbox.className).toContain('outline-none')
+        expect(textbox.className).toContain('focus-visible:outline-none')
+    })
 })
