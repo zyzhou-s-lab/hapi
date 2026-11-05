@@ -553,6 +553,47 @@ describe('scroll anchor helpers', () => {
 
         viewport.remove()
     })
+
+    it('anchors on the split turn instead of a hoisted leading system event so prepended steps offset scrollTop', () => {
+        const viewport = document.createElement('div')
+        const messages = document.createElement('div')
+        messages.className = 'happy-thread-messages'
+        const hoistedSystemEvent = document.createElement('div')
+        hoistedSystemEvent.id = 'hapi-message-agent-event:title-1'
+        hoistedSystemEvent.setAttribute('data-hapi-message-role', 'system')
+        const splitTurn = document.createElement('div')
+        splitTurn.id = 'hapi-message-split-turn'
+        splitTurn.setAttribute('data-hapi-message-role', 'assistant')
+        messages.append(hoistedSystemEvent, splitTurn)
+        viewport.append(messages)
+        document.body.append(viewport)
+        viewport.scrollTop = 0
+
+        let currentHeight = 500
+        vi.spyOn(viewport, 'getBoundingClientRect').mockReturnValue(rect({ top: 100, bottom: 700 }))
+        vi.spyOn(hoistedSystemEvent, 'getBoundingClientRect').mockImplementation(() => rect({
+            top: 100 - viewport.scrollTop,
+            bottom: 124 - viewport.scrollTop
+        }))
+        vi.spyOn(splitTurn, 'getBoundingClientRect').mockImplementation(() => rect({
+            top: 124 - viewport.scrollTop,
+            bottom: 124 + currentHeight - viewport.scrollTop
+        }))
+
+        const anchor = captureScrollAnchor(viewport)
+        expect(anchor).toEqual({
+            id: 'hapi-message-split-turn',
+            topOffset: 24
+        })
+
+        // Prepending earlier blocks inside the split turn grows its height by 900px while
+        // the hoisted system event remains at index 0 with height 24px.
+        currentHeight = 1_400
+        expect(restoreScrollAnchor(viewport, anchor!)).toBe(true)
+        expect(viewport.scrollTop).toBe(900)
+
+        viewport.remove()
+    })
     it('does not recapture the anchor once the older page is applied', () => {
         expect(shouldRecapturePendingHistoryAnchor('loading')).toBe(true)
         expect(shouldRecapturePendingHistoryAnchor('awaiting-render')).toBe(false)

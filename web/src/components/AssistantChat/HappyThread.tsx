@@ -456,10 +456,25 @@ const capturedAnchorState = new WeakMap<ScrollAnchor, CapturedAnchorState>()
 export function captureScrollAnchor(viewport: HTMLElement): ScrollAnchor | null {
     const viewportRect = viewport.getBoundingClientRect()
     const messages = Array.from(viewport.querySelectorAll<HTMLElement>(MESSAGE_ANCHOR_SELECTOR))
+    const firstNonSystemIndex = messages.findIndex(
+        (element) => element.getAttribute('data-hapi-message-role') !== 'system'
+    )
     for (let index = 0; index < messages.length; index += 1) {
         const message = messages[index]!
         const rect = message.getBoundingClientRect()
         if (rect.bottom > viewportRect.top && rect.top < viewportRect.bottom) {
+            if (index < firstNonSystemIndex) {
+                const firstNonSystem = messages[firstNonSystemIndex]
+                const nonSystemRect = firstNonSystem?.getBoundingClientRect()
+                if (
+                    firstNonSystem
+                    && nonSystemRect
+                    && nonSystemRect.bottom > viewportRect.top
+                    && nonSystemRect.top < viewportRect.bottom
+                ) {
+                    continue
+                }
+            }
             const topOffset = rect.top - viewportRect.top
             const anchor: ScrollAnchor = {
                 id: message.id,
@@ -469,7 +484,7 @@ export function captureScrollAnchor(viewport: HTMLElement): ScrollAnchor | null 
             if (height > 0) {
                 capturedAnchorState.set(anchor, {
                     height,
-                    wasFirstMessage: index === 0,
+                    wasFirstMessage: index === 0 || index === firstNonSystemIndex,
                     topOffset,
                     consumedPrepend: false
                 })
@@ -1140,9 +1155,12 @@ export function HappyThread(props: {
                 && pinnedAnchorRef.current
                 && historyLoaderRef.current.phase !== 'loading'
             ) {
-                restoreScrollAnchor(viewport, pinnedAnchorRef.current)
-                lastScrollTopRef.current = viewport.scrollTop
-                return
+                if (intent.isScrollingUp) {
+                    restoreScrollAnchor(viewport, pinnedAnchorRef.current)
+                    lastScrollTopRef.current = viewport.scrollTop
+                    return
+                }
+                clearPinnedAnchor()
             }
             if (
                 pending
@@ -1447,6 +1465,11 @@ export function HappyThread(props: {
                 wheelGestureUntilRef.current = pinnedAnchorUntilRef.current
                 return
             }
+            if (event.deltaY >= 0) {
+                wheelIntentUntil = 0
+                wheelGestureUntilRef.current = 0
+                clearPinnedAnchor()
+            }
             const shouldForwardVerticalWheel =
                 !event.ctrlKey
                 && !event.shiftKey
@@ -1477,9 +1500,9 @@ export function HappyThread(props: {
                 }
             }
             if (event.deltaY >= 0) {
-                wheelIntentUntil = 0
-                wheelGestureUntilRef.current = 0
-                clearPinnedAnchor()
+                if (event.deltaY > 0 && !needsViewportCoverageRef.current()) {
+                    cancelActiveHistoryLoad()
+                }
                 return
             }
             // One trigger per gesture: a trackpad swipe is a burst of wheel
@@ -1984,11 +2007,24 @@ export function HappyThread(props: {
             return false
         }
         return loadUntilVisibleBoundaryChanges({
-            getVisibleBoundary: () => viewport.querySelector<HTMLElement>(MESSAGE_ANCHOR_SELECTOR)?.id ?? null,
-            hasMoreMessages: () => hasMoreMessagesRef.current,
-            loadOlder: loadOlderForOutline
+            getVisibleBoundary: () => {
+                const messages = Array.from(viewport.querySelectorAll<HTMLElement>(MESSAGE_ANCHOR_SELECTOR))
+                const firstMessage = messages.find(
+                    (element) => element.getAttribute('data-hapi-message-role') !== 'system'
+                ) ?? messages[0]
+                if (!firstMessage) {
+                    return null
+                }
+                const headerText = firstMessage
+                    .querySelector<HTMLElement>('[data-testid="turn-level0-header"]')
+                    ?.textContent
+                    ?.trim() ?? ''
+                return headerText ? `${firstMessage.id}:${headerText}` : firstMessage.id
+            },
+            hasMoreMessages: () => hasMoreMessagesRef.current && needsViewportCoverageRef.current(),
+            loadOlder: async () => await requestOlder('user') === 'loaded'
         })
-    }, [loadOlderForOutline])
+    }, [requestOlder])
 
     const handleOutlineSelect = useCallback(async (item: ConversationOutlineItem) => {
         const target = await locateOutlineTargetMessage({
