@@ -1,7 +1,8 @@
 import { act, fireEvent, render, screen } from '@testing-library/react'
 import { useEffect, useState } from 'react'
 import { describe, expect, it, vi } from 'vitest'
-import { getComposerEscapeAction, type TextInputState, useRichComposerBridge } from './HappyComposer'
+import { getComposerEscapeAction, useRichComposerBridge } from './composer/composerInputHelpers'
+import type { TextInputState } from './composer/types'
 
 const events = vi.hoisted(() => [] as string[])
 

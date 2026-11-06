@@ -442,4 +442,48 @@ describe('HappyComposer generic model/effort value buttons', () => {
         fireEvent.click(effortButton)
         expect(screen.queryByText('Effort')).toBeNull()
     })
+
+    it('normalizes flavorController props at the composer boundary and lets explicit flat props override', () => {
+        const onModelChange = vi.fn()
+        const onEffortChange = vi.fn()
+        render(
+            <I18nProvider>
+                <HappyComposer
+                    sessionId="composer-flavor-controller-test"
+                    flavorController={{
+                        agentFlavor: 'claude',
+                        active: true,
+                        controlledByUser: false,
+                        permissionMode: 'default',
+                        codexCollaborationModeSupported: false,
+                        model: 'claude-sonnet-4-20250514',
+                        modelReasoningEffort: null,
+                        effort: 'high',
+                        resumeWithSessionModel: false,
+                        codexModelsError: null,
+                        effectiveCodexServiceTier: null,
+                        piContextWindow: undefined,
+                        handleAbort: vi.fn(),
+                        handleSwitchToRemote: vi.fn(),
+                        availableModelOptions: [
+                            { value: 'claude-sonnet-4-20250514', label: 'Sonnet 4' },
+                            { value: 'claude-opus-4-20250514', label: 'Opus 4' },
+                        ],
+                        availableEffortOptions: [
+                            { value: 'low', name: 'Low' },
+                            { value: 'high', name: 'High' },
+                        ],
+                        onModelChange,
+                        onEffortChange,
+                    }}
+                />
+            </I18nProvider>,
+        )
+
+        fireEvent.click(screen.getAllByRole('button', { name: 'Sonnet 4' })[0])
+        const opusRow = screen.getAllByRole('button', { name: 'Opus 4' })
+            .find((btn) => btn.className.includes('w-full'))!
+        fireEvent.click(opusRow)
+        expect(onModelChange).toHaveBeenCalledWith('claude-opus-4-20250514')
+    })
 })

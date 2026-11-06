@@ -5,7 +5,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { I18nProvider } from '@/lib/i18n-context'
 import type { PendingSchedule } from '@/components/AssistantChat/ScheduleTimePicker'
 import type { ComposerSendIntent } from '@/lib/messageDelivery'
-import { HappyComposer, type ComposerSendError } from './HappyComposer'
+import type { ComposerSendError } from './composer/types'
+import { HappyComposer } from './HappyComposer'
 
 /**
  * HappyComposer owns the recovery guard, while assistant-ui owns the live

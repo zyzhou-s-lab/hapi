@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { composerParkSnapshotUnchanged } from './HappyComposer'
+import { composerParkSnapshotUnchanged } from './composer/composerInputHelpers'
 
 describe('composerParkSnapshotUnchanged', () => {
     it('returns true when text and attachment ids match', () => {

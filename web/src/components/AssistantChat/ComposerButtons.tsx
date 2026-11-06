@@ -821,6 +821,7 @@ export function ComposerButtons(props: {
                         ref={props.settingsButtonRef}
                         type="button"
                         aria-label={t('composer.settings')}
+                        data-testid="composer-settings-button"
                         title={t('composer.settings')}
                         className="settings-button flex h-8 w-8 items-center justify-center rounded-full text-[var(--app-fg)]/60 transition-colors hover:bg-[var(--app-bg)] hover:text-[var(--app-fg)]"
                         onClick={props.onSettingsToggle}
@@ -844,6 +845,7 @@ export function ComposerButtons(props: {
                         ref={props.modelValueButtonRef}
                         type="button"
                         aria-label={props.modelValueLabel}
+                        data-testid="composer-model-value-button"
                         title={props.modelValueLabel}
                         className={`flex h-8 items-center gap-1 rounded-full px-3 text-xs font-medium transition-colors ${
                             props.modelValueOpen
@@ -865,6 +867,7 @@ export function ComposerButtons(props: {
                         ref={props.effortValueButtonRef}
                         type="button"
                         aria-label={props.effortValueLabel}
+                        data-testid="composer-effort-value-button"
                         title={props.effortValueLabel}
                         className={`flex h-8 items-center gap-1 rounded-full px-3 text-xs font-medium transition-colors ${
                             props.effortValueOpen
