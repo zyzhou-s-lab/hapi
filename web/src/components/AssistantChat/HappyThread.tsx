@@ -10,6 +10,7 @@ import { getConversationMessageAnchorId } from '@/chat/outline'
 import { formatMessageTimestampTitle, formatOutlineTimestamp } from '@/chat/presentation'
 import {
     HappyChatProvider,
+    useStableSessionMetadata,
     type OlderHistoryLoadResult
 } from '@/components/AssistantChat/context'
 import { HappyAssistantMessage } from '@/components/AssistantChat/messages/AssistantMessage'
@@ -2350,13 +2351,14 @@ export function HappyThread(props: {
             snapshots: completeSnapshots,
             sourceContentWidth: sourceContentWidth > 0 ? sourceContentWidth : null,
         })
-    }, [props.session])
+    }, [])
+    const stableMetadata = useStableSessionMetadata(props.metadata)
 
     return (
         <HappyChatProvider value={{
             api: props.api,
             sessionId: props.sessionId,
-            metadata: props.metadata,
+            metadata: stableMetadata,
             todos: props.session?.todos,
             sessionThinking: props.session?.thinking,
             activeTurnStartedAt: props.session?.activeTurnStartedAt ?? null,
