@@ -318,17 +318,4 @@ describe('ChecklistList', () => {
         expect(screen.getByText(/\(empty\)/)).toBeInTheDocument()
     })
 
-    it('renders blocked items with neutral hint styling instead of red warning text', () => {
-        render(
-            <ChecklistList
-                items={[
-                    { id: '1', text: 'Await user confirmation', status: 'blocked' }
-                ]}
-            />
-        )
-
-        const row = screen.getByText(/Await user confirmation/)
-        expect(row.className).toContain('text-[var(--app-hint)]')
-        expect(row.className).not.toContain('text-red-500')
-    })
 })

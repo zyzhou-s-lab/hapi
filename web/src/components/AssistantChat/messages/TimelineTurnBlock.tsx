@@ -1261,7 +1261,7 @@ export function TimelineTurnBlockView(props: {
         if (!props.streaming) return []
         if (pinnedChecklistByKey.size > 0) return []
         if (fallbackChecklistItems.length === 0) return []
-        if (!fallbackChecklistItems.some((item) => item.status === 'in_progress')) return []
+        if (!fallbackChecklistItems.some((item) => item.status === 'in_progress' || item.status === 'pending')) return []
         return fallbackChecklistItems
     }, [props.streaming, pinnedChecklistByKey.size, fallbackChecklistItems])
     const isInitialStreamingWait = props.streaming && stepRows.length === 0 && mediaRows.length === 0 && trailing.length === 0

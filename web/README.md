@@ -66,6 +66,11 @@ See `src/router.tsx` for route definitions.
   - Persists across reloads via `localStorage` keyed per session.
   - Keyboard shortcut: Ctrl/Cmd+Shift+S to focus the add-input.
 
+- Task checklists preserve blocked task state without treating a pause as an error.
+  - The floating task panel hides when every unfinished task is blocked and returns when a task becomes pending or active. Completed-only panels retain their normal lifecycle.
+  - A finished, collapsed turn hides its blocked-only checklist; expanding the turn restores the recorded checklist.
+  - Session-level fallback checklists appear only while a reply is streaming and a task is pending or in progress, so paused tasks do not repeat in later idle replies.
+
 ### File browser (`src/routes/sessions/files.tsx`)
 
 - Git status view (staged/unstaged files).

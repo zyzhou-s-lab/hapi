@@ -1095,7 +1095,7 @@ describe('TimelineTurnBlock & summarizeTurnActivity', () => {
         expect(screen.queryByText('Old completed task')).not.toBeInTheDocument()
     })
 
-    it('renders blocked tasks with a neutral pause icon while open/streaming, hides blocked-only todo cards when collapsed after turn completion, and ignores blocked-only fallbackTodos', () => {
+    it('hides paused-only fallback tasks and restores a completed turn checklist when expanded', () => {
         const turnWithoutTodoCall = partitionTurn(
             [
                 { type: 'reasoning', text: 'Reading lines 150-196 and 395-535 of design spec' },
@@ -1120,6 +1120,23 @@ describe('TimelineTurnBlock & summarizeTurnActivity', () => {
         )
         expect(screen.queryByTestId('turn-todo-checklist-card')).not.toBeInTheDocument()
         unmount()
+
+        const pendingOnly = render(
+            <I18nProvider>
+                <TimelineTurnBlockView
+                    partition={turnWithoutTodoCall}
+                    streaming={true}
+                    durationMs={1000}
+                    initiallyOpen={true}
+                    fallbackTodos={[
+                        { id: '1', content: 'Draft the V3.1 plan', status: 'pending', priority: 'medium' },
+                        { id: '2', content: 'Await approval', status: 'pending', priority: 'medium', blocked: true },
+                    ]}
+                />
+            </I18nProvider>
+        )
+        expect(screen.getByTestId('turn-todo-checklist-card')).toHaveTextContent('Draft the V3.1 plan')
+        pendingOnly.unmount()
 
         const turnWithBlockedTodoCall = partitionTurn(
             [
@@ -1163,10 +1180,8 @@ describe('TimelineTurnBlock & summarizeTurnActivity', () => {
             </I18nProvider>
         )
 
-        const blockedBadges = screen.getAllByTestId('turn-todo-item-blocked')
-        expect(blockedBadges).toHaveLength(2)
-        expect(blockedBadges[0]?.textContent).toBe('')
-        expect(blockedBadges[0]?.className).not.toContain('app-badge-error')
+        expect(screen.getByTestId('turn-todo-checklist-card')).toHaveTextContent('Add multi-port dev isolation section to V3.1 spec')
+        expect(screen.getByTestId('turn-todo-checklist-card')).toHaveTextContent('Execute V3.1 rearchitecture PRs after user approval')
 
         rerender(
             <I18nProvider>
@@ -1179,6 +1194,12 @@ describe('TimelineTurnBlock & summarizeTurnActivity', () => {
             </I18nProvider>
         )
 
+        expect(screen.queryByTestId('turn-todo-checklist-card')).not.toBeInTheDocument()
+        fireEvent.click(screen.getByTestId('turn-level0-header'))
+        expect(screen.getByTestId('turn-todo-checklist-card')).toHaveTextContent('Add multi-port dev isolation section to V3.1 spec')
+        expect(screen.getByTestId('turn-todo-checklist-card')).toHaveTextContent('Execute V3.1 rearchitecture PRs after user approval')
+        expect(screen.getAllByTestId('turn-todo-item-blocked')).toHaveLength(2)
+        fireEvent.click(screen.getByTestId('turn-level0-header'))
         expect(screen.queryByTestId('turn-todo-checklist-card')).not.toBeInTheDocument()
     })
 

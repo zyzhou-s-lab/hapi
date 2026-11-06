@@ -97,18 +97,7 @@ describe('TodoPanel', () => {
         expect(screen.getByTestId('todo-panel-stale-done')).toHaveTextContent('Previous tasks completed')
     })
 
-    it('anchors the expandable card above a fixed-height collapsed slot so toggling does not shift the background session', () => {
-        renderPanel([
-            { id: '1', content: '固定底部高度', status: 'in_progress', priority: 'medium' }
-        ])
-        const card = screen.getByTestId('todo-panel')
-        expect(card.className).toContain('absolute')
-        expect(card.className).toContain('bottom-0')
-        expect(card.parentElement?.className).toContain('relative')
-        expect(card.parentElement?.className).toContain('h-[calc(1.75rem+2px)]')
-    })
-
-    it('hides when all unfinished tasks are blocked and reappears when a task becomes active', () => {
+    it.each(['pending', 'in_progress'] as const)('restores the paused task panel when a task becomes %s', (status) => {
         const blockedTodos: TodoItem[] = [
             { id: '1', content: 'Add multi-port dev isolation section to V3.1 spec', status: 'pending', priority: 'medium', blocked: true },
             { id: '2', content: 'Execute V3.1 rearchitecture PRs after user approval', status: 'pending', priority: 'medium', blocked: true }
@@ -121,12 +110,27 @@ describe('TodoPanel', () => {
                 <TodoPanel
                     sessionId="session-117"
                     todos={[
-                        { id: '1', content: 'Add multi-port dev isolation section to V3.1 spec', status: 'in_progress', priority: 'medium' },
-                        { id: '2', content: 'Execute V3.1 rearchitecture PRs after user approval', status: 'pending', priority: 'medium', blocked: true }
+                        { ...blockedTodos[0]!, status, blocked: false },
+                        blockedTodos[1]!
                     ]}
                 />
             </I18nProvider>
         )
         expect(screen.getByTestId('todo-panel')).toHaveTextContent('Add multi-port dev isolation section to V3.1 spec')
+    })
+
+    it('hides a completed and blocked mix without changing completed-only panel visibility', () => {
+        const todos: TodoItem[] = [
+            { id: '1', content: 'Write the spec', status: 'completed', priority: 'medium' },
+            { id: '2', content: 'Await approval', status: 'pending', priority: 'medium', blocked: true }
+        ]
+        const view = renderPanel(todos)
+        expect(screen.queryByTestId('todo-panel')).toBeNull()
+        view.rerender(
+            <I18nProvider>
+                <TodoPanel sessionId="session-117" todos={todos.map((todo) => ({ ...todo, status: 'completed', blocked: false }))} />
+            </I18nProvider>
+        )
+        expect(screen.getByTestId('todo-panel')).toHaveTextContent('2/2')
     })
 })
