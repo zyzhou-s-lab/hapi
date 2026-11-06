@@ -94,4 +94,34 @@ describe('architecture & CSS cascade boundaries', () => {
         }
         expect(violations).toEqual([])
     })
+
+    it('enforces web/src/chat/projections/todoProjection.ts as the single Todo parsing/projection entry point', () => {
+        const requiredConsumers = [
+            'chat/sessionStatus.ts',
+            'components/SessionStatusPanel.tsx',
+            'components/ToolCard/checklist.tsx',
+            'components/AssistantChat/messages/TimelineTurnBlock.tsx',
+            'components/AssistantChat/messages/TurnBlock.tsx',
+            'fork-features/task-panel/TodoPanel.tsx',
+        ]
+        for (const relPath of requiredConsumers) {
+            const fullPath = path.join(WEB_SRC_DIR, relPath)
+            const specifiers = parseModuleSpecifiers(fullPath)
+            expect(
+                specifiers.includes('@/chat/projections/todoProjection'),
+                `${relPath} must import from @/chat/projections/todoProjection`,
+            ).toBe(true)
+        }
+
+        const duplicateParserFiles: string[] = []
+        for (const filePath of collectSourceFiles(WEB_SRC_DIR)) {
+            const relFile = path.relative(WEB_SRC_DIR, filePath).split(path.sep).join('/')
+            if (relFile === 'chat/projections/todoProjection.ts') continue
+            const src = readFileSync(filePath, 'utf8')
+            if (/\bfunction\s+(?:selectRelevantOmpPhases|scopeChecklistItemsByOmpPhaseId|parseOmpTodoDocument|parseOmpTodoResultText)\b/.test(src)) {
+                duplicateParserFiles.push(relFile)
+            }
+        }
+        expect(duplicateParserFiles).toEqual([])
+    })
 })

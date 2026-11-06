@@ -100,27 +100,26 @@ describe('TurnBlockView', () => {
             <TurnBlockView partition={partition} streaming={false} durationMs={151_000} initiallyOpen={false} />
         )
 
-        const header = screen.getByRole('button', { name: /home\.tsx 2m 31s/ })
+        const header = screen.getByTestId('turn-level0-header')
         expect(header).toHaveAttribute('aria-expanded', 'false')
         expect(header.className).not.toContain('app-reasoning-bg')
-        expect(header.parentElement).toHaveAttribute('data-hapi-turn-block-list', 'true')
-        expect(header.parentElement?.className).toContain('border')
+        expect(screen.getByTestId('turn-level1-shell')).toHaveAttribute('data-open', 'false')
         expect(screen.getByText('2m 31s')).toBeInTheDocument()
-        const reasoning = screen.getAllByText('先看页面').find((node) => node.getAttribute('data-hapi-share-exclude') === 'true')
-        expect(reasoning?.closest('[data-hapi-turn-quiet]')).toHaveClass('hidden')
-        const note = screen.getByText('夹在工具之间的说明')
-        expect(note.closest('[data-hapi-turn-quiet]')).toHaveClass('hidden')
-        expect(note.closest('[data-hapi-share-exclude]')).toBeNull()
-        expect(screen.getByText('Locate a Chromium binary').closest('[data-hapi-turn-quiet]')).toBeNull()
-        expect(container.querySelector('[data-hapi-share-exclude] .bg-\\[var\\(--app-badge-error-text\\)\\]')).not.toBeNull()
-        expect(screen.getByRole('button', { name: 'Allow' })).toBeInTheDocument()
-        expect(screen.getByRole('button', { name: 'Deny' })).toBeInTheDocument()
+        const note = container.querySelector('[data-hapi-turn-quiet]')
+        expect(note).not.toBeNull()
+        expect(note).toHaveTextContent('夹在工具之间的说明')
+        expect(note).toHaveClass('hidden')
+        expect(note?.closest('[data-hapi-share-exclude]')).toBeNull()
+        const pinnedRail = screen.getByTestId('turn-collapsed-pinned-rail')
+        expect(pinnedRail).toHaveTextContent('which chrome')
+        expect(pinnedRail).toHaveTextContent('home.tsx')
+        expect(pinnedRail).toHaveTextContent('permission options')
         expect(screen.getByText('这是回答。')).toBeInTheDocument()
 
         for (const row of container.querySelectorAll<HTMLElement>('[data-hapi-turn-quiet]')) {
             row.classList.remove('hidden')
         }
-        expect(screen.getByText('夹在工具之间的说明').closest('[data-hapi-turn-quiet]')?.classList.contains('hidden')).toBe(false)
+        expect(note?.classList.contains('hidden')).toBe(false)
     })
 
     it('folds recovered mid-turn OMP tool errors and keeps the turn header dot neutral', () => {
@@ -155,11 +154,10 @@ describe('TurnBlockView', () => {
             <TurnBlockView partition={partition} streaming={false} durationMs={134_000} initiallyOpen={false} />
         )
 
-        const header = screen.getByRole('button', { name: /Capturing surface text of HAPI blocks in Tern 2m 14s/ })
-        const headerDot = header.querySelector('span.rounded-full')
-        expect(headerDot?.className).toContain('bg-current')
-        expect(headerDot?.className).not.toContain('bg-[var(--app-badge-error-text)]')
-        expect(screen.getByText('Reading timeline of PAGING session 01a1a178').closest('[data-hapi-turn-quiet]')).toHaveClass('hidden')
+        const header = screen.getByTestId('turn-level0-header')
+        expect(header).toHaveTextContent('2m 14s')
+        expect(header.querySelector('.bg-\\[var\\(--app-badge-error-text\\)\\]')).toBeNull()
+        expect(screen.queryByTestId('turn-collapsed-pinned-rail')).toBeNull()
         expect(screen.getByText('全部整理完毕。')).toBeInTheDocument()
     })
 
@@ -182,11 +180,10 @@ describe('TurnBlockView', () => {
             <TurnBlockView partition={partition} streaming={false} durationMs={12_000} initiallyOpen={false} />
         )
 
-        const header = screen.getByRole('button', { name: /Run database migration 12\.0s/ })
-        const headerDot = header.querySelector('span.rounded-full')
-        expect(headerDot?.className).toContain('bg-[var(--app-badge-error-text)]')
-        const errorRow = screen.getAllByText('Run database migration').find((node) => !header.contains(node))
-        expect(errorRow?.closest('[data-hapi-turn-quiet]')).toBeNull()
+        const header = screen.getByTestId('turn-level0-header')
+        expect(header).toHaveTextContent('12.0s')
+        expect(header.querySelector('.bg-\\[var\\(--app-badge-error-text\\)\\]')).not.toBeNull()
+        expect(screen.getByTestId('turn-collapsed-pinned-rail')).toHaveTextContent('bun run migrate')
         expect(screen.getByText('没能跑迁移。')).toBeInTheDocument()
     })
 
@@ -272,13 +269,12 @@ describe('TurnBlockView', () => {
             },
         ], null)
         renderBlock(<TurnBlockView partition={partition} streaming={false} durationMs={null} initiallyOpen={false} />)
-        expect(screen.getByRole('button', { name: 'Allow' })).toBeInTheDocument()
-        expect(screen.getByRole('button', { name: 'Deny' })).toBeInTheDocument()
-        expect(screen.queryByText('permission options')).toBeNull()
-        fireEvent.click(screen.getByRole('button', { name: /Ran/ }))
-        expect(screen.getByText('permission options')).toBeInTheDocument()
-        expect(screen.queryByRole('button', { name: 'Allow' })).toBeNull()
-        expect(screen.queryByRole('button', { name: 'Deny' })).toBeNull()
+        const pinnedRail = screen.getByTestId('turn-collapsed-pinned-rail')
+        expect(pinnedRail).toHaveTextContent('permission options')
+        const rowToggle = pinnedRail.querySelector('button[aria-expanded="false"]')
+        expect(rowToggle).not.toBeNull()
+        fireEvent.click(rowToggle!)
+        expect(pinnedRail.querySelector('button[aria-expanded="true"]')).not.toBeNull()
     })
 
     it('shows the question and its options instead of allow and deny', () => {
@@ -299,8 +295,10 @@ describe('TurnBlockView', () => {
             },
         ], null)
         renderBlock(<TurnBlockView partition={partition} streaming={false} durationMs={null} initiallyOpen={false} />)
-        expect(screen.getByText('用哪种布局？')).toBeInTheDocument()
-        expect(screen.getByRole('radio', { name: '单列' })).toBeInTheDocument()
+        const pinnedRail = screen.getByTestId('turn-collapsed-pinned-rail')
+        expect(pinnedRail).toHaveTextContent('用哪种布局？')
+        expect(pinnedRail).toHaveTextContent('单列')
+        expect(pinnedRail).toHaveTextContent('双列')
         expect(screen.queryByRole('button', { name: 'Allow' })).toBeNull()
         expect(screen.queryByRole('button', { name: 'Deny' })).toBeNull()
     })
@@ -343,7 +341,6 @@ describe('TurnBlockView', () => {
 
         renderBlock(
             <TurnBlockView
-                variant="timeline"
                 partition={partition}
                 streaming={false}
                 durationMs={5000}

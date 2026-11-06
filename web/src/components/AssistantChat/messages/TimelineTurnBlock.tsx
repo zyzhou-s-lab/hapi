@@ -21,12 +21,17 @@ import { isAskUserQuestionToolName } from '@/components/ToolCard/askUserQuestion
 import { isRequestUserInputToolName } from '@/components/ToolCard/requestUserInput'
 import { PermissionFooter } from '@/components/ToolCard/PermissionFooter'
 import {
-    collectOmpTodoTurnContext,
-    extractTodoChecklist,
-    extractUpdatePlanChecklist,
-    type ChecklistItem,
-} from '@/components/ToolCard/checklist'
-import { resolveToolViewName } from '@/components/ToolCard/toolNameAliases'
+    projectSessionTodoSnapshot,
+    projectToolTodoSnapshot,
+} from '@/chat/projections/todoProjection'
+import { type ChecklistItem } from '@/components/ToolCard/checklist'
+import {
+    DockedQuestionWizard,
+    DockedTodoProgressBar,
+    SubmittedQuestionSummaryBubble,
+    type DockedQuestionItem,
+    type DockedTodoItem,
+} from '@/components/AssistantChat/messages/TurnDockedWidgets'
 import type { ToolCallBlock } from '@/chat/types'
 import { useOptionalHappyChatContext } from '@/components/AssistantChat/context'
 import type { TodoItem } from '@/types/api'
@@ -45,17 +50,12 @@ export type TurnActivityIndicatorVariant =
     | 'terminal-cursor'
     | 'wave-dots'
     | 'sparkle'
-export type DockedTodoItem = {
-    id: string
-    content: string
-    activeForm?: string
-    status: 'pending' | 'in_progress' | 'completed'
-}
-
-export type DockedQuestionItem = {
-    id: string
-    question: string
-    options: Array<{ label: string; description?: string }>
+export {
+    DockedQuestionWizard,
+    DockedTodoProgressBar,
+    SubmittedQuestionSummaryBubble,
+    type DockedQuestionItem,
+    type DockedTodoItem,
 }
 
 function SmallChevron(props: { open: boolean; direction?: 'right' | 'up'; className?: string }) {
@@ -534,57 +534,10 @@ function extractToolChecklistItems(
     allRows?: readonly TurnRow[],
     fallbackItems?: readonly ChecklistItem[]
 ): ChecklistItem[] {
-    const resolved = resolveToolViewName(block.tool.name)
-    if (resolved !== 'TodoWrite' && resolved !== 'UpdatePlan') return []
-    const turnContext = resolved === 'TodoWrite' && allRows
-        ? collectOmpTodoTurnContext(
-            allRows
-                .filter((row): row is TurnToolRow => row.kind === 'tool' && resolveToolViewName(row.block.tool.name) === 'TodoWrite')
-                .map((row) => ({ input: row.block.tool.input, result: row.block.tool.result }))
-        )
+    const allToolBlocks = allRows
+        ? allRows.filter((row): row is TurnToolRow => row.kind === 'tool').map((row) => row.block)
         : undefined
-    const rawItems = resolved === 'TodoWrite'
-        ? extractTodoChecklist(block.tool.input, block.tool.result, turnContext)
-        : extractUpdatePlanChecklist(block.tool.input, block.tool.result)
-
-    let items = rawItems
-    if (allRows && block.tool.result == null) {
-        let baseItems: ChecklistItem[] = fallbackItems ? [...fallbackItems] : []
-        for (const row of allRows) {
-            if (row.kind !== 'tool') continue
-            if (row.block.id === block.id) break
-            if (resolveToolViewName(row.block.tool.name) !== resolved) continue
-            const prior = resolved === 'TodoWrite'
-                ? extractTodoChecklist(row.block.tool.input, row.block.tool.result, turnContext)
-                : extractUpdatePlanChecklist(row.block.tool.input, row.block.tool.result)
-            if (prior.length > 0) baseItems = prior
-        }
-        if (baseItems.length > 0) {
-            const merged = baseItems.map((item) => ({ ...item }))
-            for (const update of rawItems) {
-                const existing = merged.find((item) => item.text === update.text)
-                if (existing) {
-                    existing.status = update.status
-                } else {
-                    merged.push({ ...update })
-                }
-            }
-            items = merged
-        }
-    }
-
-    if (
-        block.tool.state === 'running'
-        && items.length > 0
-        && !items.some((item) => item.status === 'in_progress')
-    ) {
-        const firstPendingIdx = items.findIndex((item) => item.status === 'pending')
-        if (firstPendingIdx >= 0) {
-            items = items.map((item, idx) => (idx === firstPendingIdx ? { ...item, status: 'in_progress' } : item))
-        }
-    }
-
-    return items
+    return [...projectToolTodoSnapshot(block, allToolBlocks, fallbackItems).items]
 }
 
 export function TimelineTodoChecklistCard(props: { items: readonly ChecklistItem[]; className?: string }) {
@@ -1225,7 +1178,7 @@ export function TimelineTurnBlockView(props: {
     )
     const fallbackChecklistItems = useMemo(() => {
         if (!props.fallbackTodos || props.fallbackTodos.length === 0) return []
-        return extractTodoChecklist({ todos: props.fallbackTodos }, undefined)
+        return [...projectSessionTodoSnapshot(props.fallbackTodos).items]
     }, [props.fallbackTodos])
     const pinnedChecklistByKey = useMemo(() => {
         const map = new Map<string, ChecklistItem[]>()
@@ -1769,266 +1722,6 @@ export function TimelineTurnBlockView(props: {
                     </div>
                 )
             })}
-        </div>
-    )
-}
-
-export function DockedTodoProgressBar(props: {
-    todos: DockedTodoItem[]
-    defaultExpanded?: boolean
-    lang?: 'en' | 'zh-CN'
-}) {
-    const [expanded, setExpanded] = useState(props.defaultExpanded ?? false)
-    const lang = props.lang ?? 'en'
-    if (props.todos.length === 0) return null
-
-    const total = props.todos.length
-    const completedCount = props.todos.filter((t) => t.status === 'completed').length
-    const activeIndex = props.todos.findIndex((t) => t.status === 'in_progress')
-    const activeItem = activeIndex >= 0 ? props.todos[activeIndex] : null
-    const allDone = completedCount === total
-
-    const progressCounter = allDone
-        ? (lang === 'zh-CN' ? `${total} / ${total}` : `${total} of ${total}`)
-        : activeIndex >= 0
-            ? (lang === 'zh-CN' ? `${activeIndex + 1} / ${total}` : `${activeIndex + 1} of ${total}`)
-            : (lang === 'zh-CN' ? `${completedCount} / ${total}` : `${completedCount} of ${total}`)
-
-    const summaryLabel = allDone
-        ? (lang === 'zh-CN' ? '已完成' : 'Done')
-        : (activeItem?.activeForm || activeItem?.content || props.todos[0]?.content || '')
-
-    return (
-        <div
-            className="composer-dock-card overflow-hidden rounded-t-xl border border-b-0 border-[var(--app-border)] bg-[var(--app-subtle-bg)]/70"
-            data-testid="docked-todo-bar"
-        >
-            <button
-                type="button"
-                aria-expanded={expanded}
-                onClick={() => setExpanded((v) => !v)}
-                className="flex w-full items-center gap-3 px-3.5 py-2 text-left text-[13px] transition-colors hover:bg-[var(--app-subtle-bg)]"
-            >
-                <span className="shrink-0 tabular-nums text-[12px] font-medium text-[var(--app-hint)]">
-                    {progressCounter}
-                </span>
-                <span className="flex min-w-0 flex-1 items-center gap-1.5 truncate font-medium text-[var(--app-fg)]">
-                    {allDone ? (
-                        <span className="inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-emerald-500/15 text-emerald-600 dark:text-emerald-400">
-                            ✓
-                        </span>
-                    ) : null}
-                    <span className="truncate">{summaryLabel}</span>
-                </span>
-                <SmallChevron open={expanded} direction="up" className="text-[var(--app-hint)]" />
-            </button>
-
-            <div
-                className="turn-collapsible-shell"
-                data-open={expanded ? 'true' : 'false'}
-                aria-hidden={!expanded}
-            >
-                <div className="turn-collapsible-body">
-                    <div className="border-t border-[var(--app-border)]/70 px-3.5 py-2.5 space-y-2">
-                        {props.todos.map((item, idx) => {
-                            const isDone = item.status === 'completed'
-                            const isRunning = item.status === 'in_progress'
-                            return (
-                                <div
-                                    key={item.id}
-                                    className="flex items-start gap-2.5 text-[13px] leading-5"
-                                >
-                                    <span className="mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center">
-                                        {isDone ? (
-                                            <span className="inline-flex h-4 w-4 items-center justify-center rounded-full bg-emerald-500/20 text-[10px] font-bold text-emerald-600 dark:text-emerald-400">
-                                                ✓
-                                            </span>
-                                        ) : isRunning ? (
-                                            <span className="inline-block h-3.5 w-3.5 animate-spin rounded-full border-2 border-[#da7756] border-t-transparent" />
-                                        ) : (
-                                            <span className="inline-block h-3.5 w-3.5 rounded-full border border-[var(--app-hint)]/50" />
-                                        )}
-                                    </span>
-                                    <span className="shrink-0 tabular-nums text-[12px] text-[var(--app-hint)]">
-                                        {idx + 1}.
-                                    </span>
-                                    <span
-                                        className={cn(
-                                            'min-w-0 flex-1',
-                                            isDone && 'text-[var(--app-hint)] line-through decoration-[var(--app-hint)]/50',
-                                            isRunning && 'font-medium text-[var(--app-fg)]',
-                                            !isDone && !isRunning && 'text-[var(--app-hint)]'
-                                        )}
-                                    >
-                                        {isRunning && item.activeForm ? item.activeForm : item.content}
-                                    </span>
-                                </div>
-                            )
-                        })}
-                    </div>
-                </div>
-            </div>
-        </div>
-    )
-}
-
-export function DockedQuestionWizard(props: {
-    questions: DockedQuestionItem[]
-    onSubmit: (answers: Record<string, string>) => void
-    onSkip?: () => void
-}) {
-    const [stepIndex, setStepIndex] = useState(0)
-    const [answers, setAnswers] = useState<Record<string, string>>({})
-    const [customText, setCustomText] = useState('')
-    const [editingCustom, setEditingCustom] = useState(false)
-
-    const total = props.questions.length
-    const current = props.questions[stepIndex]
-    if (!current) return null
-
-    const selectOption = (value: string) => {
-        const nextAnswers = { ...answers, [current.id]: value }
-        setAnswers(nextAnswers)
-        setEditingCustom(false)
-        setCustomText('')
-        if (stepIndex < total - 1) {
-            setStepIndex(stepIndex + 1)
-        } else {
-            props.onSubmit(nextAnswers)
-        }
-    }
-
-    return (
-        <div
-            className="composer-dock-card overflow-hidden rounded-xl border border-[var(--app-border)] bg-[var(--app-bg)] p-3.5 shadow-sm"
-            data-testid="docked-question-wizard"
-        >
-            <div className="flex items-start justify-between gap-3">
-                <div className="text-[14px] font-medium leading-5 text-[var(--app-fg)]">
-                    {current.question}
-                </div>
-                <div className="flex shrink-0 items-center gap-1 text-[12px] tabular-nums text-[var(--app-hint)]">
-                    <button
-                        type="button"
-                        disabled={stepIndex === 0}
-                        onClick={() => setStepIndex((i) => Math.max(0, i - 1))}
-                        className="rounded p-1 hover:bg-[var(--app-subtle-bg)] disabled:opacity-30"
-                        aria-label="Previous question"
-                    >
-                        ‹
-                    </button>
-                    <span>
-                        {stepIndex + 1} of {total}
-                    </span>
-                    <button
-                        type="button"
-                        disabled={stepIndex >= total - 1}
-                        onClick={() => setStepIndex((i) => Math.min(total - 1, i + 1))}
-                        className="rounded p-1 hover:bg-[var(--app-subtle-bg)] disabled:opacity-30"
-                        aria-label="Next question"
-                    >
-                        ›
-                    </button>
-                </div>
-            </div>
-
-            <div className="mt-2.5 space-y-1.5">
-                {current.options.map((opt, idx) => {
-                    const selected = answers[current.id] === opt.label
-                    return (
-                        <button
-                            key={opt.label}
-                            type="button"
-                            data-testid={`question-option-${idx + 1}`}
-                            onClick={() => selectOption(opt.label)}
-                            className={cn(
-                                'flex w-full items-center gap-2.5 rounded-lg border px-3 py-2 text-left text-[13px] transition-colors',
-                                selected
-                                    ? 'border-[#da7756] bg-[#da7756]/10 text-[var(--app-fg)]'
-                                    : 'border-[var(--app-border)]/70 bg-[var(--app-subtle-bg)]/40 text-[var(--app-fg)] hover:bg-[var(--app-subtle-bg)]'
-                            )}
-                        >
-                            <span className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded border border-[var(--app-border)] bg-[var(--app-bg)] text-[11px] font-medium tabular-nums text-[var(--app-hint)]">
-                                {idx + 1}
-                            </span>
-                            <div className="min-w-0 flex-1">
-                                <div className="font-medium">{opt.label}</div>
-                                {opt.description ? (
-                                    <div className="text-[11.5px] text-[var(--app-hint)]">{opt.description}</div>
-                                ) : null}
-                            </div>
-                        </button>
-                    )
-                })}
-
-                <div className="flex items-center gap-2">
-                    {editingCustom ? (
-                        <form
-                            className="flex flex-1 items-center gap-2"
-                            onSubmit={(e) => {
-                                e.preventDefault()
-                                if (customText.trim()) selectOption(customText.trim())
-                            }}
-                        >
-                            <input
-                                type="text"
-                                value={customText}
-                                onChange={(e) => setCustomText(e.target.value)}
-                                placeholder="Type something else..."
-                                className="flex-1 rounded-lg border border-[var(--app-border)] bg-[var(--app-subtle-bg)]/50 px-3 py-1.5 text-[13px] text-[var(--app-fg)] outline-none focus:border-[#da7756]"
-                                autoFocus
-                            />
-                            <button
-                                type="submit"
-                                className="rounded-lg bg-[#da7756] px-3 py-1.5 text-[12px] font-medium text-white"
-                            >
-                                Submit
-                            </button>
-                        </form>
-                    ) : (
-                        <button
-                            type="button"
-                            onClick={() => setEditingCustom(true)}
-                            className="flex flex-1 items-center gap-2.5 rounded-lg border border-dashed border-[var(--app-border)] px-3 py-2 text-left text-[13px] text-[var(--app-hint)] transition-colors hover:bg-[var(--app-subtle-bg)]/50 hover:text-[var(--app-fg)]"
-                        >
-                            <span aria-hidden="true" className="inline-flex h-5 w-5 items-center justify-center text-xs">
-                                ✎
-                            </span>
-                            <span>Something else</span>
-                        </button>
-                    )}
-
-                    {props.onSkip ? (
-                        <button
-                            type="button"
-                            onClick={props.onSkip}
-                            className="shrink-0 rounded-lg border border-[var(--app-border)] px-3 py-2 text-[12.5px] text-[var(--app-hint)] hover:bg-[var(--app-subtle-bg)] hover:text-[var(--app-fg)]"
-                        >
-                            Skip
-                        </button>
-                    ) : null}
-                </div>
-            </div>
-        </div>
-    )
-}
-
-export function SubmittedQuestionSummaryBubble(props: {
-    questions: DockedQuestionItem[]
-    answers: Record<string, string>
-}) {
-    return (
-        <div className="my-3 flex justify-end" data-testid="submitted-qa-bubble">
-            <div className="max-w-lg space-y-2.5 rounded-2xl border border-[var(--app-border)] bg-[var(--app-subtle-bg)] px-4 py-3 text-[13.5px]">
-                {props.questions.map((q) => (
-                    <div key={q.id} className="space-y-0.5">
-                        <div className="text-[12px] text-[var(--app-hint)]">{q.question}</div>
-                        <div className="font-medium text-[var(--app-fg)]">
-                            {props.answers[q.id] ?? 'Skipped'}
-                        </div>
-                    </div>
-                ))}
-            </div>
         </div>
     )
 }

@@ -1,6 +1,7 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import { formatDuration } from '@/chat/presentation'
 import type { SessionStatusData, SessionStatusSubagent } from '@/chat/sessionStatus'
+import { projectSessionTodoSnapshot } from '@/chat/projections/todoProjection'
 import { ChecklistList } from '@/components/ToolCard/checklist'
 import { useTranslation } from '@/lib/use-translation'
 
@@ -28,7 +29,7 @@ function elapsedSince(startedAt: number | null, now: number): string | null {
 
 export function SessionStatusPanel({ data }: { data: SessionStatusData }) {
     const { t } = useTranslation()
-    const completedTasks = data.tasks.filter((task) => task.status === 'completed').length
+    const todoSnapshot = projectSessionTodoSnapshot(data.tasks)
     const hasLiveElapsed = data.terminals.length > 0
         || data.subagents.some((subagent) => subagent.endedAt === null && subagent.startedAt !== null)
     const [now, setNow] = useState(() => Date.now())
@@ -56,13 +57,9 @@ export function SessionStatusPanel({ data }: { data: SessionStatusData }) {
                     </Section>
                 ) : null}
 
-                {data.tasks.length > 0 ? (
-                    <Section title={`${t('session.status.tasks')} · ${completedTasks}/${data.tasks.length}`}>
-                        <ChecklistList items={data.tasks.map((task) => ({
-                            id: task.id || undefined,
-                            text: task.content,
-                            status: task.status
-                        }))} />
+                {todoSnapshot.totalCount > 0 ? (
+                    <Section title={`${t('session.status.tasks')} · ${todoSnapshot.completedCount}/${todoSnapshot.totalCount}`}>
+                        <ChecklistList items={todoSnapshot.items} />
                     </Section>
                 ) : null}
 

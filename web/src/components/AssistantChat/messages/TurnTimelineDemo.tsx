@@ -6,17 +6,19 @@ import {
 } from '@/components/AssistantChat/messages/turnBlockModel'
 import { TurnBlockView } from '@/components/AssistantChat/messages/TurnBlock'
 import {
-    DockedQuestionWizard,
-    DockedTodoProgressBar,
-    SubmittedQuestionSummaryBubble,
     TimelineTurnBlockView,
     TurnActivityIndicator,
     TurnActivitySparkleIcon,
-    type DockedQuestionItem,
-    type DockedTodoItem,
     type TranscriptViewMode,
     type TurnActivityIndicatorVariant,
 } from '@/components/AssistantChat/messages/TimelineTurnBlock'
+import {
+    DockedQuestionWizard,
+    DockedTodoProgressBar,
+    SubmittedQuestionSummaryBubble,
+    type DockedQuestionItem,
+    type DockedTodoItem,
+} from '@/components/AssistantChat/messages/TurnDockedWidgets'
 import { cn } from '@/lib/utils'
 
 export type DemoLifecycleStage =
@@ -1156,7 +1158,6 @@ export function TurnTimelineDemo() {
                                     streaming={stageData.streaming}
                                     durationMs={stageData.durationMs}
                                     initiallyOpen={true}
-                                    variant="classic"
                                 />
                             </div>
 

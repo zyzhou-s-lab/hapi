@@ -2,6 +2,7 @@ import { isObject } from '@hapi/protocol'
 import type { ThreadGoal, TodoItem } from '@/types/api'
 import type { ChatBlock, NormalizedMessage, ToolCallBlock } from '@/chat/types'
 import { isSubagentToolName } from '@/chat/subagentTool'
+import { projectSessionTodoSnapshot } from '@/chat/projections/todoProjection'
 import { getCodexAgentActivity, getCodexAgentSummary } from '@/components/ToolCard/codexAgents'
 import { getInputStringAny, truncate } from '@/lib/toolInputUtils'
 
@@ -170,9 +171,17 @@ export function buildSessionStatusData(args: {
         ? detectedTerminals.uncertain.map((terminal) => terminal.command)
         : []
     const activeGoal = args.goal && args.goal.status !== 'complete' ? args.goal : null
+    const projectedTaskIds = args.tasks && args.tasks.length > 0
+        ? new Set(projectSessionTodoSnapshot(args.tasks).items.map((item) => item.id).filter(Boolean))
+        : null
+    const scopedTasks = args.tasks
+        ? (projectedTaskIds && projectedTaskIds.size > 0
+            ? args.tasks.filter((task) => !task.id || projectedTaskIds.has(task.id))
+            : [...args.tasks])
+        : []
     const data: SessionStatusData = {
         goal: activeGoal,
-        tasks: args.tasks ? [...args.tasks] : [],
+        tasks: scopedTasks,
         subagents: args.includeSubagents === false
             ? []
             : tools

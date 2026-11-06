@@ -76,6 +76,16 @@ describe('buildSessionStatusData', () => {
         })).toBeNull()
     })
 
+    it('scopes OMP multi-phase tasks via projectSessionTodoSnapshot', () => {
+        const tasks = [
+            { id: 'phase-1:0', content: 'Old phase task', priority: 'medium' as const, status: 'completed' as const },
+            { id: 'phase-2:0', content: 'Active phase task', priority: 'high' as const, status: 'in_progress' as const },
+        ]
+        expect(buildSessionStatusData({ goal: null, tasks, blocks: [], messages: [] })?.tasks).toEqual([
+            { id: 'phase-2:0', content: 'Active phase task', priority: 'high', status: 'in_progress' },
+        ])
+    })
+
     it('lists only active or failed subagents', () => {
         const blocks: ChatBlock[] = [
             toolBlock({ name: 'CodexAgent', tool: { id: 'agent-1', state: 'running', input: { summary: 'Inspect API', activity: 'Reading files' } } }),

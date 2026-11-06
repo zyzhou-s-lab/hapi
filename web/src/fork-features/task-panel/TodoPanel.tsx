@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { TodoItem } from '@hapi/protocol/types'
-import { ChecklistList, extractTodoChecklist } from '@/components/ToolCard/checklist'
+import { projectSessionTodoSnapshot } from '@/chat/projections/todoProjection'
+import { ChecklistList } from '@/components/ToolCard/checklist'
 import { useTranslation } from '@/lib/use-translation'
 
 const COLLAPSED_STORAGE_KEY = 'hapi.todo-panel.collapsed'
@@ -15,10 +16,9 @@ function ChevronIcon(props: { open: boolean }) {
 
 export function TodoPanel(props: { sessionId: string; todos: TodoItem[] | undefined; sessionThinking?: boolean }) {
     const { t } = useTranslation()
-    const items = useMemo(() => extractTodoChecklist({ todos: props.todos }, null), [props.todos])
-    const completed = items.filter((item) => item.status === 'completed').length
-    const inProgress = items.find((item) => item.status === 'in_progress') ?? null
-    const allDone = items.length > 0 && completed === items.length
+    const snapshot = useMemo(() => projectSessionTodoSnapshot(props.todos), [props.todos])
+    const { items, totalCount, completedCount: completed, activeItem: inProgress } = snapshot
+    const allDone = totalCount > 0 && completed === totalCount
     const isStaleCompleted = allDone && Boolean(props.sessionThinking)
     const [collapsed, setCollapsed] = useState(
         () => localStorage.getItem(COLLAPSED_STORAGE_KEY) === '1' || isStaleCompleted
