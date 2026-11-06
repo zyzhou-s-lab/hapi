@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { useState, type ComponentProps } from 'react'
+import { createContext, useContext, useState, type ComponentProps } from 'react'
+import { flushSync } from 'react-dom'
 import { I18nProvider } from '@/lib/i18n-context'
 import {
     ConversationOutlinePanel,
@@ -25,8 +26,11 @@ import {
     shouldCancelInitialScrollSettling,
     ThreadMessagesById,
 } from '@/components/AssistantChat/HappyThread'
-import { AssistantRuntimeProvider, useExternalStoreRuntime } from '@assistant-ui/react'
+import { AssistantRuntimeProvider, useAuiState, useExternalStoreRuntime } from '@assistant-ui/react'
 import type { ThreadMessageLike } from '@assistant-ui/react'
+import { useHappyRuntime } from '@/lib/assistant-runtime'
+import type { VisibleChatBlock } from '@/chat/toolGroups'
+import type { Session } from '@/types/api'
 import type { ConversationOutlineItem } from '@/chat/outline'
 
 const outlineItems: ConversationOutlineItem[] = [
@@ -240,6 +244,93 @@ describe('ThreadMessagesById', () => {
             expect(screen.queryByTestId('user-message')).not.toBeInTheDocument()
             expect(screen.queryByTestId('assistant-message')).not.toBeInTheDocument()
         })
+    })
+
+    it.each(['echo', 'remove', 'clear'] as const)('keeps message lookups consistent during %s and a synchronous context update', async (operation) => {
+        const ExtraContext = createContext('initial')
+        const Message = () => {
+            const extra = useContext(ExtraContext)
+            const message = useAuiState((state) => state.message)
+            const custom = message.metadata.custom as { hubMessageId?: string }
+            return (
+                <div data-testid={message.role} data-extra={extra} data-hub-id={custom.hubMessageId}>
+                    {message.id}
+                </div>
+            )
+        }
+        const components = { UserMessage: Message, AssistantMessage: Message, SystemMessage: Message }
+        const answer: VisibleChatBlock = {
+            kind: 'agent-text', id: 'turn-1', localId: null, createdAt: 100, text: 'initial reply'
+        }
+        const localId = 'local-4cdab591-f2a3-41bf-9089-b1233ff54150'
+        const optimistic: VisibleChatBlock = {
+            kind: 'user-text', id: localId, localId, createdAt: 200,
+            text: 'hello', status: 'sent', invokedAt: 200
+        }
+        const baseSession: Session = {
+            id: 'session-1', namespace: 'default', seq: 1,
+            createdAt: 1, updatedAt: 1, active: true, activeAt: 1,
+            metadata: { path: '/tmp', host: 'localhost', flavor: 'omp' }, metadataVersion: 1,
+            agentState: null, agentStateVersion: 1, thinking: true, thinkingAt: 0,
+            model: null, modelReasoningEffort: null, effort: null, serviceTier: null,
+            resumeWithSessionModel: false
+        }
+        type State = { blocks: VisibleChatBlock[]; version: number; extra: string }
+        let updateState!: React.Dispatch<React.SetStateAction<State>>
+        function ThreadHost({ extra }: { extra: string }) {
+            const extras = useAuiState((state) => state.thread.extras) as { messagesVersion: number }
+            return (
+                <ExtraContext.Provider value={`${extra}:${extras.messagesVersion}`}>
+                    <ThreadMessagesById components={components} />
+                </ExtraContext.Provider>
+            )
+        }
+        function Harness() {
+            const [state, setState] = useState<State>({ blocks: [answer], version: 1, extra: 'v1' })
+            updateState = setState
+            const runtime = useHappyRuntime({
+                session: baseSession, blocks: state.blocks, messagesVersion: state.version,
+                historyVersion: 0, viewMode: 'tail', isSending: false,
+                isRunning: state.blocks.length > 0,
+                onSendMessage: () => {}, onAbort: async () => {}
+            })
+            return (
+                <AssistantRuntimeProvider runtime={runtime}>
+                    <ThreadHost extra={state.extra} />
+                </AssistantRuntimeProvider>
+            )
+        }
+
+        render(<Harness />)
+        await act(async () => {
+            updateState({ blocks: [answer, optimistic], version: 2, extra: 'v2' })
+        })
+        const user = screen.getByTestId('user')
+        expect(user).toHaveTextContent(`user-text:${localId}`)
+
+        const nextBlocks = operation === 'echo'
+            ? [answer, { ...optimistic, id: 'server-999' }]
+            : operation === 'remove' ? [answer] : []
+        await act(async () => {
+            // Commit the repository update, then re-render a context consumer
+            // before the deferred assistant-ui message-list notification runs.
+            flushSync(() => updateState({ blocks: nextBlocks, version: 3, extra: 'v3' }))
+            flushSync(() => updateState((previous) => ({ ...previous, extra: 'v4' })))
+        })
+
+        if (operation === 'echo') {
+            expect(screen.getByTestId('user')).toBe(user)
+            expect(user).toHaveTextContent(`user-text:${localId}`)
+            expect(user).toHaveAttribute('data-hub-id', 'server-999')
+            expect(user).toHaveAttribute('data-extra', 'v4:3')
+        } else {
+            expect(screen.queryByTestId('user')).not.toBeInTheDocument()
+            if (operation === 'remove') {
+                expect(screen.getByTestId('assistant')).toHaveTextContent('agent-text:turn-1')
+            } else {
+                expect(screen.queryByTestId('assistant')).not.toBeInTheDocument()
+            }
+        }
     })
 })
 

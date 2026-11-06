@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { AgentEvent, ChatBlock } from '@/chat/types'
 import { buildConversationOutline, truncateOutlineLabel } from '@/chat/outline'
+import { assignThreadMessageIds, findLatestCompletedBoundaryId } from '@/lib/assistant-runtime'
 
 function userBlock(
     id: string,
@@ -40,6 +41,17 @@ describe('conversation outline', () => {
                 createdAt: 1000
             }
         ])
+    })
+
+    it('keeps the outline target and completed boundary on the rendered message across a server echo', () => {
+        const optimistic = userBlock('local-1', 'Sent prompt', 1000, { localId: 'local-1', invokedAt: 1000 })
+        const echo = { ...optimistic, id: 'server-1' }
+        const initialOutline = buildConversationOutline([optimistic])
+        const confirmedOutline = buildConversationOutline([echo])
+
+        expect(confirmedOutline).toEqual(initialOutline)
+        expect(confirmedOutline[0].targetMessageId).toBe(assignThreadMessageIds([echo])[0].threadMessageId)
+        expect(findLatestCompletedBoundaryId([echo], false, null)).toBe(confirmedOutline[0].targetMessageId)
     })
 
     it('ignores title and summary events', () => {

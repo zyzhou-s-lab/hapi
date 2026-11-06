@@ -55,6 +55,7 @@ See `src/router.tsx` for route definitions.
 ### Chat interface (`src/components/SessionChat.tsx`)
 
 - Message thread with infinite scroll.
+- Sent messages retain their display identity when the server confirms them, preserving message state and conversation-outline anchors. Message removal and rewind update the rendered list before removed message consumers can read stale runtime IDs.
 - Composer for sending messages.
 - Permission mode toggle (default/acceptEdits/auto/bypassPermissions/plan).
 - Model selection (default/sonnet/sonnet[1m]/opus/opus[1m]).

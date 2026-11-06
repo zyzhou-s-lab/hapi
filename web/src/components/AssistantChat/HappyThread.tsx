@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { ThreadPrimitive, unstable_useThreadMessageIds, useAuiState } from '@assistant-ui/react'
 import type { ComponentProps } from 'react'
 import { useQuery } from '@tanstack/react-query'
@@ -697,8 +697,11 @@ type ThreadMessageComponents = ComponentProps<typeof ThreadPrimitive.Unstable_Me
  * external-runtime update. Index-based providers may then ask assistant-ui
  * for message 0 while its lookup table is already empty. Stable id providers
  * unmount removed rows without consulting a stale index.
+ * Keep this list in the parent's render path: a context update can render
+ * message consumers before assistant-ui notifies this list of removed IDs.
+ * Memoizing the list would leave those consumers under stale ID providers.
  */
-export const ThreadMessagesById = memo(function ThreadMessagesById({ components }: { components: ThreadMessageComponents }) {
+export function ThreadMessagesById({ components }: { components: ThreadMessageComponents }) {
     const messageIds = unstable_useThreadMessageIds()
 
     return (
@@ -712,7 +715,7 @@ export const ThreadMessagesById = memo(function ThreadMessagesById({ components 
             ))}
         </>
     )
-})
+}
 
 export function ConversationOutlinePanel(props: {
     items: readonly ConversationOutlineItem[]

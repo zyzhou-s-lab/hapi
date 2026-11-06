@@ -51,8 +51,8 @@ export type HappyChatMessageMetadata = {
     review?: CodexReview
     /**
      * Raw hub-DB message id (unprefixed) for user-text blocks. The
-     * assistant-ui `message.id` is the composed threadMessageId
-     * `${kind}:${block.id}` (see `assignThreadMessageIdsWithStableWrappers`),
+     * assistant-ui `message.id` is a presentation key (user-text uses
+     * `localId ?? id`; see `assignThreadMessageIdsWithStableWrappers`),
      * which cannot be used against hub's `/api/sessions/:id/fork`
      * because that endpoint matches on the raw hub messageId. Callers
      * that need to talk to hub about a specific stored message (rewind
@@ -478,9 +478,9 @@ function isSameAggregate(
 
 /**
  * Stable, unique IDs for assistant-ui's linear MessageRepository.
- * Uses `${kind}:${block.id}`; suffixes `~1`, `~2`, … when the same kind+id
- * appears more than once (should be rare — indicates duplicate hub rows or
- * a reducer bug, but must not crash the thread).
+ * Uses `${kind}:${block.id}`, with `localId ?? id` for user-text so server
+ * echoes preserve optimistic identity. Suffixes `~1`, `~2`, … when the same
+ * key appears more than once, so duplicate rows cannot crash the thread.
  *
  * Reuses `{ block, threadMessageId }` objects from `wrapperCache` when the
  * reconciled `block` reference and computed id match, so
@@ -498,7 +498,8 @@ export function assignThreadMessageIdsWithStableWrappers(
 ): BlockWithThreadMessageId[] {
     const seen = new Map<string, number>()
     const rawIds = blocks.map((block) => {
-        const base = `${block.kind}:${block.id}`
+        const id = block.kind === 'user-text' ? block.localId || block.id : block.id
+        const base = `${block.kind}:${id}`
         const occurrence = seen.get(base) ?? 0
         seen.set(base, occurrence + 1)
         return occurrence === 0 ? base : `${base}~${occurrence}`
