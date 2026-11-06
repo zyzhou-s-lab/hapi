@@ -56,7 +56,7 @@ vi.mock('@/hooks/useCopyToClipboard', () => ({
 }))
 
 vi.mock('@/components/AssistantChat/context', () => ({
-    useOptionalHappyChatContext: () => ({ onShareTurn })
+    useOptionalHappyChatStaticContext: () => ({ onShareTurn })
 }))
 
 function renderActions(props: ComponentProps<typeof MessageActions>) {

@@ -3,7 +3,7 @@ import type { ToolGroupBlock } from '@/chat/toolGroups'
 import type { ToolCallBlock } from '@/chat/types'
 import { getCodexCommandActions, type CodexCommandAction } from '@/chat/codexCommandPresentation'
 import type { SessionMetadataSummary } from '@/types/api'
-import { useHappyChatContext } from '@/components/AssistantChat/context'
+import { useHappyChatHistoryContext, useHappyChatStaticContext } from '@/components/AssistantChat/context'
 import { getToolTimingDetails, ToolDetailDialogContent, ToolStatusIcon, ToolTimingSummary, toolStatusColorClass } from '@/components/ToolCard/ToolCard'
 import { extractImagesFromResult, ToolResultImages } from '@/components/ToolCard/views/_results'
 import { getToolPresentation } from '@/components/ToolCard/knownTools'
@@ -192,7 +192,8 @@ export function ToolGroupCard(props: {
     metadata: SessionMetadataSummary | null
 }) {
     const { t } = useTranslation()
-    const ctx = useHappyChatContext()
+    const { loadOlderMessagesPreservingScroll } = useHappyChatStaticContext()
+    const { hasMoreMessages, isSyncingTail, isLoadingMoreMessages } = useHappyChatHistoryContext()
     const [open, setOpen] = useState(props.block.defaultOpen)
     const [selectedToolId, setSelectedToolId] = useState<string | null>(null)
     const [isHydratingHistory, setIsHydratingHistory] = useState(false)
@@ -232,10 +233,10 @@ export function ToolGroupCard(props: {
         if (isHydratingHistory || historyExhausted) {
             return
         }
-        if (ctx.isSyncingTail || ctx.isLoadingMoreMessages) {
+        if (isSyncingTail || isLoadingMoreMessages) {
             return
         }
-        if (!ctx.hasMoreMessages) {
+        if (!hasMoreMessages) {
             hydrationRunRef.current += 1
             setIsHydratingHistory(false)
             setHistoryExhausted(true)
@@ -246,7 +247,7 @@ export function ToolGroupCard(props: {
         hydrationRunRef.current = runId
         setHistoryExhausted(false)
         setIsHydratingHistory(true)
-        void ctx.loadOlderMessagesPreservingScroll()
+        void loadOlderMessagesPreservingScroll()
             .then((result) => {
                 if (hydrationRunRef.current !== runId) return
                 setIsHydratingHistory(false)
@@ -262,10 +263,10 @@ export function ToolGroupCard(props: {
     }, [
         open,
         props.block.needsOlderHistory,
-        ctx.hasMoreMessages,
-        ctx.isSyncingTail,
-        ctx.isLoadingMoreMessages,
-        ctx.loadOlderMessagesPreservingScroll,
+        hasMoreMessages,
+        isSyncingTail,
+        isLoadingMoreMessages,
+        loadOlderMessagesPreservingScroll,
         historyExhausted,
         isHydratingHistory,
     ])

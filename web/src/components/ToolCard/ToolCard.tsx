@@ -25,7 +25,7 @@ import { cn } from '@/lib/utils'
 import { useTranslation } from '@/lib/use-translation'
 import { TraceSection } from '@/components/ToolCard/trace'
 import { isSubagentToolName } from '@/chat/subagentTool'
-import { useOptionalHappyChatContext } from '@/components/AssistantChat/context'
+import { useOptionalHappyChatStaticContext } from '@/components/AssistantChat/context'
 
 const ELAPSED_INTERVAL_MS = 1000
 const TERMINAL_RELATED_TOOL_NAMES = new Set(['Bash', 'CodexBash', 'shell_command', 'run_shell_command'])
@@ -383,7 +383,7 @@ export function ToolDetailDialogContent(props: {
     const isQuestionToolWithAnswers = isQuestionTool
         && permission?.answers
         && Object.keys(permission.answers).length > 0
-    const chatCtx = useOptionalHappyChatContext()
+    const chatCtx = useOptionalHappyChatStaticContext()
     const isPendingQuestion = isQuestionTool
         && permission?.status === 'pending'
         && chatCtx !== null

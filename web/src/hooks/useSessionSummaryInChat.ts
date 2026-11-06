@@ -1,4 +1,4 @@
-import { useOptionalHappyChatContext } from '@/components/AssistantChat/context'
+import { useOptionalHappyChatStaticContext } from '@/components/AssistantChat/context'
 
 /**
  * Hub opt-in to show compact AGENT_NOTIFY_SUMMARY in chat.
@@ -7,6 +7,6 @@ import { useOptionalHappyChatContext } from '@/components/AssistantChat/context'
  * own refetch intervals.
  */
 export function useSessionSummaryInChat(): boolean {
-    const ctx = useOptionalHappyChatContext()
+    const ctx = useOptionalHappyChatStaticContext()
     return ctx?.showSessionSummaryInChat === true
 }

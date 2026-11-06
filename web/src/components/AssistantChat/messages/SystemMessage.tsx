@@ -4,7 +4,7 @@ import { getEventPresentation } from '@/chat/presentation'
 import type { AgentEvent } from '@/chat/types'
 import type { HappyChatMessageMetadata } from '@/lib/assistant-runtime'
 import { getConversationMessageAnchorId } from '@/chat/outline'
-import { useOptionalHappyChatContext } from '@/components/AssistantChat/context'
+import { useOptionalHappyChatSessionStateContext } from '@/components/AssistantChat/context'
 import { MessageTimestamp } from '@/components/AssistantChat/messages/MessageTimestamp'
 import { MarkdownRenderer } from '@/components/MarkdownRenderer'
 import { cn } from '@/lib/utils'
@@ -25,7 +25,7 @@ function formatTokenDelta(event: AgentEvent | undefined): string | null {
 }
 
 export function HappySystemMessage() {
-    const ctx = useOptionalHappyChatContext()
+    const ctx = useOptionalHappyChatSessionStateContext()
     const role = useAuiState((s) => s.message.role)
     const messageId = useAuiState((s) => s.message.id)
     const text = useAuiState((s) => {

@@ -89,8 +89,8 @@ vi.mock('@/hooks/mutations/useSessionActions', () => ({
 }))
 
 vi.mock('@/components/AssistantChat/context', () => ({
-    useOptionalHappyChatContext: () => null,
-    useHappyChatContext: () => ({
+    useOptionalHappyChatStaticContext: () => null,
+    useHappyChatStaticContext: () => ({
         api: {} as any,
         sessionId: 'sess-src',
         metadata: { flavor: state.flavor },

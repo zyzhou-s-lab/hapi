@@ -1,6 +1,6 @@
 import { useEffect, useState, useSyncExternalStore } from 'react'
 import { SpeakerIcon, StopIcon } from '@/components/icons'
-import { useOptionalHappyChatContext } from '@/components/AssistantChat/context'
+import { useOptionalHappyChatStaticContext } from '@/components/AssistantChat/context'
 import { useTranslation } from '@/lib/use-translation'
 import {
     getSpeakerError,
@@ -12,7 +12,7 @@ import {
 } from '@/realtime/messageSummarySpeaker'
 
 export function SpeakSummaryButton(props: { messageId: string; text: string }) {
-    const ctx = useOptionalHappyChatContext()
+    const ctx = useOptionalHappyChatStaticContext()
     const { t } = useTranslation()
     const [available, setAvailable] = useState(false)
     const phase = useSyncExternalStore(subscribeSpeaker, () => getSpeakerPhase(props.messageId))

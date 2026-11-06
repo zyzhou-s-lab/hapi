@@ -14,7 +14,7 @@ vi.mock('@tanstack/react-router', () => ({
 }))
 
 vi.mock('@/components/AssistantChat/context', () => ({
-    useOptionalHappyChatContext: () => ({ sessionId: 'session-1' }),
+    useOptionalHappyChatStaticContext: () => ({ sessionId: 'session-1' }),
 }))
 
 const AnchorComponent = (defaultComponents as Record<string, unknown>).a as React.ComponentType<

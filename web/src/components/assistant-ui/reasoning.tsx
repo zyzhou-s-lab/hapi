@@ -8,7 +8,7 @@ import { MarkdownTextPrimitive } from '@assistant-ui/react-markdown'
 import { cn } from '@/lib/utils'
 import { useTranslation } from '@/lib/use-translation'
 import { useReasoningCollapse } from '@/hooks/useReasoningCollapse'
-import { useOptionalHappyChatContext } from '@/components/AssistantChat/context'
+import { useOptionalHappyChatStaticContext } from '@/components/AssistantChat/context'
 import {
     MARKDOWN_CLASSNAME,
     MARKDOWN_COMPONENTS_BY_LANGUAGE,
@@ -107,7 +107,7 @@ export const ReasoningGroup: FC<HappyReasoningGroupProps> = ({
         return parts.some((part) => part.type === 'reasoning' && part.status.type === 'running')
     })
     const { reasoningCollapsed } = useReasoningCollapse()
-    const chatContext = useOptionalHappyChatContext()
+    const chatContext = useOptionalHappyChatStaticContext()
 
     useEffect(() => {
         if (!isStreaming) return

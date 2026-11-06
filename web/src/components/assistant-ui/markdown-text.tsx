@@ -26,7 +26,7 @@ import { useCopyToClipboard } from '@/hooks/useCopyToClipboard'
 import { useCodeWrap } from '@/hooks/useCodeWrap'
 import { CopyIcon, CheckIcon, WrapIcon } from '@/components/icons'
 import { useTranslation } from '@/lib/use-translation'
-import { useOptionalHappyChatContext } from '@/components/AssistantChat/context'
+import { useOptionalHappyChatStaticContext } from '@/components/AssistantChat/context'
 import { decodeFilePathCandidateHref, decodeFilePathHref, remarkFilePathLinks } from '@/lib/remark-file-path-links'
 import { classifyNoSchemeHref } from '@/lib/markdown-href-policy'
 import { remarkSessionPathLinks } from '@/lib/remark-session-path-links'
@@ -647,7 +647,7 @@ function InertMarkdownHref(props: { href: string; children?: ReactNode; classNam
 }
 
 function A(props: ComponentPropsWithoutRef<'a'>) {
-    const chat = useOptionalHappyChatContext()
+    const chat = useOptionalHappyChatStaticContext()
     // useContext must be called unconditionally before any early return so that
     // the Rules of Hooks are satisfied regardless of whether `filePath` is set.
     // isAllowed comes exclusively from the shared context. Every call site

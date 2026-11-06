@@ -8,7 +8,7 @@ import { getAssistantCopyText } from '@/components/AssistantChat/messages/assist
 import { getConversationMessageAnchorId } from '@/chat/outline'
 import { CodexReviewCard } from '@/components/AssistantChat/messages/CodexReviewCard'
 import { MessageActions } from '@/components/AssistantChat/messages/MessageActions'
-import { useHappyChatContext } from '@/components/AssistantChat/context'
+import { useHappyChatHistoryContext, useHappyChatStaticContext } from '@/components/AssistantChat/context'
 import { NotifySummaryText } from '@/components/AssistantChat/messages/NotifySummaryText'
 import { useSessionSummaryInChat } from '@/hooks/useSessionSummaryInChat'
 import { SpeakSummaryButton } from '@/components/AssistantChat/messages/SpeakSummaryButton'
@@ -25,7 +25,8 @@ const MESSAGE_PART_COMPONENTS = {
 } as const
 
 export function HappyAssistantMessage() {
-    const ctx = useHappyChatContext()
+    const staticCtx = useHappyChatStaticContext()
+    const historyCtx = useHappyChatHistoryContext()
     const showSessionSummaryInChat = useSessionSummaryInChat()
     const messageId = useAuiState((s) => s.message.id)
     const elementId = getConversationMessageAnchorId(messageId)
@@ -70,12 +71,12 @@ export function HappyAssistantMessage() {
 
     const metadata = { durationMs, usage, model: messageModel ?? null, turnCount, roundSummary }
 
-    const history = ctx.metadata?.capabilities?.conversationHistory
+    const history = staticCtx.metadata?.capabilities?.conversationHistory
     const showForkCurrent = Boolean(
         history?.forkCurrent
-        && ctx.isLatestCompletedBoundary?.(messageId)
-        && !ctx.disabled
-        && ctx.onForkConversation
+        && staticCtx.isLatestCompletedBoundary?.(messageId)
+        && !staticCtx.disabled
+        && staticCtx.onForkConversation
     )
 
     const rootClass = toolOnly && !turnActivity
@@ -102,8 +103,8 @@ export function HappyAssistantMessage() {
                     metadata={metadata}
                     messageElementId={elementId}
                     showFork={showForkCurrent}
-                    historyActionPending={ctx.historyActionPending}
-                    onFork={showForkCurrent ? () => ctx.onForkConversation!() : undefined}
+                    historyActionPending={historyCtx.historyActionPending}
+                    onFork={showForkCurrent ? () => staticCtx.onForkConversation!() : undefined}
                 />
                 {!isCliOutput && !codexReview && copyText ? (
                     <SpeakSummaryButton messageId={messageId} text={copyText} />

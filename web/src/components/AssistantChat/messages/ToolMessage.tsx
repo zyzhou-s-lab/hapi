@@ -14,7 +14,7 @@ import { CodeBlock } from '@/components/CodeBlock'
 import { MarkdownRenderer } from '@/components/MarkdownRenderer'
 import { MessageStatusIndicator } from '@/components/AssistantChat/messages/MessageStatusIndicator'
 import { ToolCard } from '@/components/ToolCard/ToolCard'
-import { useHappyChatContext } from '@/components/AssistantChat/context'
+import { useHappyChatStaticContext } from '@/components/AssistantChat/context'
 import { CliOutputBlock } from '@/components/CliOutputBlock'
 import { UserBubbleContent, getUserBubbleClassName, shouldShowMessageStatus } from '@/components/AssistantChat/messages/user-bubble'
 import { ImagePreview } from '@/components/ImagePreview'
@@ -67,7 +67,7 @@ export function computeTinyImageScale(width: number, height: number): number {
 
 /** Exported for generated-media fetch and renderer tests. */
 export function GeneratedImageCard(props: { block: GeneratedImageBlock }) {
-    const ctx = useHappyChatContext()
+    const ctx = useHappyChatStaticContext()
     const { t } = useTranslation()
     const [objectUrl, setObjectUrl] = useState<string | null>(null)
     const [error, setError] = useState<string | null>(null)
@@ -229,7 +229,7 @@ function downloadGeneratedFile(fileName: string, blob: Blob): void {
 }
 
 export function GeneratedFileCard(props: { block: GeneratedFileBlock }) {
-    const ctx = useHappyChatContext()
+    const ctx = useHappyChatStaticContext()
     const [busy, setBusy] = useState(false)
     const [error, setError] = useState<string | null>(null)
     const mimeType = props.block.mimeType ?? 'application/octet-stream'
@@ -336,7 +336,7 @@ function splitTaskChildren(block: ToolCallBlock): { pending: ChatBlock[]; rest: 
 function HappyNestedBlockList(props: {
     blocks: ChatBlock[]
 }) {
-    const ctx = useHappyChatContext()
+    const ctx = useHappyChatStaticContext()
 
     return (
         <div className="flex flex-col gap-3">
@@ -465,7 +465,7 @@ function HappyNestedBlockList(props: {
 }
 
 export function HappyToolMessage(props: ToolCallMessagePartProps) {
-    const ctx = useHappyChatContext()
+    const ctx = useHappyChatStaticContext()
     const artifact = props.artifact
 
     if (isToolGroupBlock(artifact)) {

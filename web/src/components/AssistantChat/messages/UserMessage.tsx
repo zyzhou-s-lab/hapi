@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useNavigate } from '@tanstack/react-router'
 import { MessagePrimitive, useAuiState, type TextMessagePart } from '@assistant-ui/react'
-import { useHappyChatContext } from '@/components/AssistantChat/context'
+import { useHappyChatStaticContext } from '@/components/AssistantChat/context'
 import type { HappyChatMessageMetadata } from '@/lib/assistant-runtime'
 import { MessageStatusIndicator } from '@/components/AssistantChat/messages/MessageStatusIndicator'
 import { MessageAttachments } from '@/components/AssistantChat/messages/MessageAttachments'
@@ -39,7 +39,7 @@ function RewindIcon(props: { className?: string }) {
 }
 
 export function HappyUserMessage() {
-    const ctx = useHappyChatContext()
+    const ctx = useHappyChatStaticContext()
     const { t } = useTranslation()
     const [rewindError, setRewindError] = useState<string | null>(null)
     const navigate = useNavigate()

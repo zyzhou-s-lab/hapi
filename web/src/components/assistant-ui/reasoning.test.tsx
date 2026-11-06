@@ -42,7 +42,7 @@ vi.mock('@/components/assistant-ui/markdown-text', () => ({
 }))
 
 vi.mock('@/components/AssistantChat/context', () => ({
-    useOptionalHappyChatContext: () => ({ onNestedScrollFollowChange }),
+    useOptionalHappyChatStaticContext: () => ({ onNestedScrollFollowChange }),
 }))
 
 import { Reasoning, ReasoningGroup } from './reasoning'
