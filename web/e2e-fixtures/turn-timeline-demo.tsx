@@ -1,5 +1,7 @@
-import React, { memo, useMemo, useRef, useState } from 'react'
+import React, { memo, useCallback, useMemo, useRef, useState } from 'react'
 import ReactDOM from 'react-dom/client'
+import { AssistantRuntimeProvider } from '@assistant-ui/react'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import '../src/index.css'
 import { I18nProvider } from '../src/lib/i18n-context'
 import { TurnTimelineDemo } from '../src/components/AssistantChat/messages/TurnTimelineDemo'
@@ -13,9 +15,28 @@ import {
     useOptionalHappyChatStaticContext,
     useOptionalHappyChatTodosContext,
 } from '../src/components/AssistantChat/context'
+import { HappyComposer } from '../src/components/AssistantChat/HappyComposer'
+import { HappyThread } from '../src/components/AssistantChat/HappyThread'
+import { useSessionFlavorModelController } from '../src/components/AssistantChat/composer/useSessionFlavorModelController'
 import { projectSessionTodoSnapshot } from '../src/chat/projections/todoProjection'
-import type { TodoItem } from '../src/types/api'
-
+import { normalizeDecryptedMessage } from '../src/chat/normalize'
+import { reduceChatBlocks } from '../src/chat/reducer'
+import { reconcileChatBlocks } from '../src/chat/reconcile'
+import { buildVisibleChatBlocks } from '../src/chat/toolGroups'
+import type { ChatBlock } from '../src/chat/types'
+import { useHappyRuntime } from '../src/lib/assistant-runtime'
+import type { ApiClient } from '../src/api/client'
+import type {
+    ClaudeEffort,
+    CodexModelReasoningEffort,
+    CollaborationMode,
+    CopilotAgentMode,
+    DecryptedMessage,
+    PermissionMode,
+    ServiceTier,
+    Session,
+    TodoItem,
+} from '../src/types/api'
 const ISOLATION_SAMPLE_PARTS: TurnContentPart[] = [
     {
         type: 'reasoning',
@@ -306,11 +327,507 @@ function StreamingIsolationFixture() {
     )
 }
 
+const fixtureQueryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false, enabled: false } },
+})
+
+type DemoFlavor = 'omp' | 'cursor' | 'pi' | 'codex' | 'claude'
+
+function ComposerFlavorSettingsInner() {
+    const [flavor, setFlavor] = useState<DemoFlavor>('omp')
+    const ompModelsRefreshedRef = useRef(false)
+    const [model, setModel] = useState<string | null>(null)
+    const [effort, setEffort] = useState<ClaudeEffort | null>('medium')
+    const [modelReasoningEffort, setModelReasoningEffort] = useState<CodexModelReasoningEffort | null>('medium')
+    const [permissionMode, setPermissionMode] = useState<PermissionMode>('default')
+    const [serviceTier, setServiceTier] = useState<ServiceTier>('standard')
+    const [collaborationMode, setCollaborationMode] = useState<CollaborationMode>('default')
+    const [copilotAgentMode, setCopilotAgentMode] = useState<CopilotAgentMode>('default')
+    const [resumeWithSessionModel, setResumeWithSessionModel] = useState(false)
+    const [piSelectedModel, setPiSelectedModel] = useState<{ provider: string; modelId: string } | null>({
+        provider: 'openai',
+        modelId: 'gpt-5.4',
+    })
+
+    const isPiGenerating = flavor === 'pi'
+
+    const session = useMemo<Session>(() => ({
+        id: `session-composer-flavor-${flavor}`,
+        namespace: 'default',
+        seq: 1,
+        createdAt: 1_700_000_000_000,
+        updatedAt: 1_700_000_000_000,
+        active: flavor !== 'claude',
+        activeAt: 1_700_000_000_000,
+        model,
+        effort,
+        modelReasoningEffort,
+        permissionMode,
+        serviceTier,
+        collaborationMode,
+        copilotAgentMode,
+        resumeWithSessionModel,
+        metadata: {
+            path: '/workspace/hapi',
+            host: 'c1',
+            machineId: 'machine-c1',
+            flavor,
+            piSelectedModel: flavor === 'pi' ? piSelectedModel : undefined,
+        } as Session['metadata'],
+        metadataVersion: 1,
+        agentState: {
+            controlledByUser: false,
+        },
+        agentStateVersion: 1,
+        thinking: isPiGenerating,
+        thinkingAt: isPiGenerating ? 1_700_000_000_000 : 0,
+        todos: [],
+    }), [
+        collaborationMode,
+        copilotAgentMode,
+        effort,
+        flavor,
+        isPiGenerating,
+        model,
+        modelReasoningEffort,
+        permissionMode,
+        piSelectedModel,
+        resumeWithSessionModel,
+        serviceTier,
+    ])
+
+    const fakeApi = useMemo<ApiClient>(() => {
+        const cursorSkus = [
+            { modelId: 'sonnet-4.5', name: 'Claude 4.5 Sonnet' },
+            { modelId: 'sonnet-4.5-thinking', name: 'Claude 4.5 Sonnet Thinking' },
+            { modelId: 'gpt-5.2', name: 'GPT-5.2' },
+            { modelId: 'gpt-5.2-high', name: 'GPT-5.2 High' },
+        ]
+        const ompList = [
+            { provider: 'anthropic', modelId: 'claude-opus-4-6', name: 'claude-opus-4-6' },
+            { provider: 'openai', modelId: 'gpt-5.4', name: 'gpt-5.4' },
+        ]
+        return {
+            getSessionOmpModels: async () => ({
+                success: true,
+                availableModels: ompModelsRefreshedRef.current ? ompList : [],
+                currentModel: null,
+            }),
+            refreshSessionOmpModels: async () => {
+                ompModelsRefreshedRef.current = true
+                return {
+                    success: true,
+                    availableModels: ompList,
+                    currentModel: null,
+                }
+            },
+            getSessionOmpThinkingOptions: async () => ({
+                success: true,
+                options: [
+                    { value: 'low', label: 'Low' },
+                    { value: 'medium', label: 'Medium' },
+                    { value: 'high', label: 'High' },
+                ],
+                state: {
+                    supportedLevels: ['low', 'medium', 'high'],
+                    supportsThinking: true,
+                    configured: 'medium',
+                },
+            }),
+            getSessionCursorModels: async () => ({
+                success: true,
+                availableModels: cursorSkus,
+                cliModelSkus: cursorSkus,
+                currentModelId: 'sonnet-4.5',
+            }),
+            getMachineCursorModels: async () => ({
+                success: true,
+                availableModels: cursorSkus,
+                cliModelSkus: cursorSkus,
+                currentModelId: 'sonnet-4.5',
+            }),
+            callPiEndpoint: async () => ({
+                success: true,
+                availableModels: [
+                    {
+                        provider: 'anthropic',
+                        modelId: 'claude-sonnet-4-5',
+                        name: 'Claude Sonnet 4.5',
+                        reasoning: true,
+                        contextWindow: 200_000,
+                        thinkingLevelMap: { low: 'low', medium: 'medium', high: 'high' },
+                    },
+                    {
+                        provider: 'openai',
+                        modelId: 'gpt-5.4',
+                        name: 'GPT-5.4',
+                        reasoning: true,
+                        contextWindow: 200_000,
+                        thinkingLevelMap: { low: 'low', medium: 'medium', high: 'high' },
+                    },
+                ],
+                currentModelId: 'gpt-5.4',
+            }),
+            getMachineCodexModels: async () => ({
+                models: [
+                    {
+                        id: 'gpt-5.3-codex',
+                        model: 'gpt-5.3-codex',
+                        displayName: 'gpt-5.3-codex',
+                        description: 'Codex 5.3',
+                        isDefault: true,
+                        defaultReasoningEffort: 'medium',
+                        supportedReasoningEfforts: ['low', 'medium', 'high'],
+                    },
+                    {
+                        id: 'gpt-5.4',
+                        model: 'gpt-5.4',
+                        displayName: 'gpt-5.4',
+                        description: 'GPT-5.4',
+                        isDefault: false,
+                        defaultReasoningEffort: 'medium',
+                        supportedReasoningEfforts: ['low', 'medium', 'high'],
+                        serviceTiers: ['standard', 'fast'],
+                    },
+                ],
+            }),
+            getSessionCodexModels: async () => ({ models: [] }),
+            getMachineCcSwitchProviders: async () => ({
+                available: false,
+                providers: [],
+                currentProviderId: null,
+            }),
+            setModel: async (_sessionId: string, next: { provider: string; modelId: string } | string | null) => {
+                if (typeof next === 'object' && next !== null && 'provider' in next) {
+                    setPiSelectedModel(next)
+                    setModel(next.modelId)
+                    return
+                }
+                setModel(next)
+            },
+            setEffort: async (_sessionId: string, next: string | null) => {
+                setEffort((next as ClaudeEffort | null) ?? null)
+            },
+            setModelReasoningEffort: async (_sessionId: string, next: string | null) => {
+                setModelReasoningEffort((next as CodexModelReasoningEffort | null) ?? null)
+            },
+            setPermissionMode: async (_sessionId: string, next: PermissionMode) => {
+                setPermissionMode(next)
+            },
+            setServiceTier: async (_sessionId: string, next: string | null) => {
+                setServiceTier((next as ServiceTier | null) ?? 'standard')
+            },
+            setCollaborationMode: async (_sessionId: string, next: CollaborationMode) => {
+                setCollaborationMode(next)
+            },
+            setCopilotAgentMode: async (_sessionId: string, next: CopilotAgentMode) => {
+                setCopilotAgentMode(next)
+            },
+            setResumeWithSessionModel: async (_sessionId: string, next: boolean) => {
+                setResumeWithSessionModel(next)
+            },
+            abortSession: async () => {},
+            switchSession: async () => {},
+        } as unknown as ApiClient
+    }, [])
+
+    const flavorController = useSessionFlavorModelController({
+        api: fakeApi,
+        session,
+        onRefresh: () => {},
+    })
+
+    const runtime = useHappyRuntime({
+        session,
+        blocks: [],
+        messagesVersion: 1,
+        historyVersion: 1,
+        isSending: false,
+        onSendMessage: () => {},
+        onAbort: async () => {},
+    })
+
+    return (
+        <AssistantRuntimeProvider runtime={runtime}>
+            <div className="min-h-screen bg-[var(--app-bg)] p-6 text-[var(--app-fg)]" data-testid="composer-flavor-fixture">
+                <div className="mx-auto flex max-w-3xl flex-col gap-6 pt-64">
+                    <div className="rounded-xl border border-[var(--app-border)] bg-[var(--app-subtle-bg)] p-4">
+                        <div className="mb-3 flex flex-wrap items-center gap-2">
+                            {(['omp', 'cursor', 'pi', 'codex', 'claude'] as const).map((item) => (
+                                <button
+                                    key={item}
+                                    type="button"
+                                    data-testid={`switch-flavor-${item}`}
+                                    onClick={() => {
+                                        setFlavor(item)
+                                        if (item === 'cursor') {
+                                            setModel('sonnet-4.5')
+                                        } else if (item === 'omp') {
+                                            setModel(null)
+                                        } else if (item === 'codex') {
+                                            setModel('gpt-5.3-codex')
+                                        } else if (item === 'pi') {
+                                            setModel('gpt-5.4')
+                                        } else if (item === 'claude') {
+                                            setModel('sonnet')
+                                        }
+                                    }}
+                                    className={`rounded-md border px-3 py-1.5 text-xs font-semibold transition-colors ${
+                                        flavor === item
+                                            ? 'border-[var(--app-link)] bg-[var(--app-secondary-bg)] text-[var(--app-link)]'
+                                            : 'border-[var(--app-border)] bg-[var(--app-bg)] text-[var(--app-fg)]'
+                                    }`}
+                                >
+                                    Flavor: {item}
+                                </button>
+                            ))}
+                        </div>
+                        <div
+                            data-testid="composer-flavor-state"
+                            className="grid grid-cols-2 gap-2 font-mono text-xs text-[var(--app-hint)] sm:grid-cols-3"
+                        >
+                            <span data-testid="state-flavor">flavor={flavor}</span>
+                            <span data-testid="state-model">model={model ?? 'auto'}</span>
+                            <span data-testid="state-effort">effort={effort ?? 'auto'}</span>
+                            <span data-testid="state-variant">variant={flavorController.selectedModelVariant ?? 'none'}</span>
+                            <span data-testid="state-permission">perm={permissionMode}</span>
+                            <span data-testid="state-tier">tier={serviceTier ?? 'standard'}</span>
+                            <span data-testid="state-pi">
+                                pi={piSelectedModel ? `${piSelectedModel.provider}:${piSelectedModel.modelId}` : 'none'}
+                            </span>
+                            <span data-testid="state-resume">resume={String(resumeWithSessionModel)}</span>
+                        </div>
+                    </div>
+
+                    <HappyComposer
+                        sessionId={session.id}
+                        disabled={false}
+                        allowSendWhenInactive={!session.active}
+                        thinking={session.thinking}
+                        flavorController={flavorController}
+                    />
+                </div>
+            </div>
+        </AssistantRuntimeProvider>
+    )
+}
+
+function ComposerFlavorSettingsFixture() {
+    return (
+        <QueryClientProvider client={fixtureQueryClient}>
+            <ComposerFlavorSettingsInner />
+        </QueryClientProvider>
+    )
+}
+
+function buildTurnMessages(prefix: string, count: number, startSeq: number, startCreatedAt: number): DecryptedMessage[] {
+    const result: DecryptedMessage[] = []
+    for (let i = 0; i < count; i += 1) {
+        const turnIndex = startSeq + i
+        const userCreatedAt = startCreatedAt + i * 2000
+        const agentCreatedAt = userCreatedAt + 900
+        result.push({
+            id: `${prefix}-user-${turnIndex}`,
+            seq: turnIndex * 2,
+            localId: `${prefix}-user-${turnIndex}`,
+            createdAt: userCreatedAt,
+            content: {
+                role: 'user',
+                content: {
+                    type: 'text',
+                    text: `[${prefix} #${turnIndex}] Audit scroll anchor and turn structure for module ${turnIndex}`,
+                },
+            },
+        })
+        result.push({
+            id: `${prefix}-agent-${turnIndex}`,
+            seq: turnIndex * 2 + 1,
+            localId: `${prefix}-agent-${turnIndex}`,
+            createdAt: agentCreatedAt,
+            content: {
+                role: 'agent',
+                content: {
+                    type: 'output',
+                    data: {
+                        type: 'assistant',
+                        uuid: `${prefix}-uuid-${turnIndex}`,
+                        message: {
+                            role: 'assistant',
+                            model: 'claude-opus-4-6',
+                            content: [
+                                {
+                                    type: 'thinking',
+                                    thinking: `Checking direct-child message anchor invariant for turn ${turnIndex}.`,
+                                },
+                                {
+                                    type: 'text',
+                                    text: `Completed verification for **Turn ${turnIndex}** (${prefix}). Direct child selector \`.happy-thread-messages > [id]\` and sibling share capture remain intact.\n\n\`\`\`ts\nexport const turnId = "${prefix}-${turnIndex}"\n\`\`\``,
+                                },
+                            ],
+                        },
+                    },
+                },
+            },
+        })
+    }
+    return result
+}
+
+function ThreadScrollAnchorsFixture() {
+    const [messages, setMessages] = useState<DecryptedMessage[]>(() =>
+        buildTurnMessages('initial', 10, 10, 1_700_000_100_000)
+    )
+    const [hasMore, setHasMore] = useState(true)
+    const [historyGeneration, setHistoryGeneration] = useState(1)
+    const [messagesVersion, setMessagesVersion] = useState(1)
+
+    const blocksByIdRef = useRef<Map<string, ChatBlock>>(new Map())
+
+    const normalizedMessages = useMemo(() => {
+        const out = []
+        for (const msg of messages) {
+            const next = normalizeDecryptedMessage(msg)
+            if (next) out.push(next)
+        }
+        return out
+    }, [messages])
+
+    const reduced = useMemo(() => reduceChatBlocks(normalizedMessages, null, {}), [normalizedMessages])
+    const reconciled = useMemo(
+        () => reconcileChatBlocks(reduced.blocks, blocksByIdRef.current),
+        [reduced.blocks]
+    )
+    blocksByIdRef.current = reconciled.byId
+
+    const visibleBlocks = useMemo(
+        () => buildVisibleChatBlocks(reconciled.blocks, { hasMoreMessages: hasMore }),
+        [reconciled.blocks, hasMore]
+    )
+
+    const session = useMemo<Session>(() => ({
+        id: 'session-thread-scroll-anchors',
+        namespace: 'default',
+        seq: 1,
+        createdAt: 1_700_000_000_000,
+        updatedAt: 1_700_000_200_000,
+        active: true,
+        activeAt: 1_700_000_200_000,
+        metadata: {
+            path: '/workspace/hapi',
+            host: 'c1',
+            flavor: 'claude',
+        },
+        metadataVersion: 1,
+        agentState: null,
+        agentStateVersion: 1,
+        thinking: false,
+        thinkingAt: 0,
+        todos: [],
+    }), [])
+
+    const runtime = useHappyRuntime({
+        session,
+        blocks: visibleBlocks,
+        messagesVersion,
+        historyVersion: historyGeneration,
+        isSending: false,
+        onSendMessage: () => {},
+        onAbort: async () => {},
+    })
+
+    const handleLoadMore = useCallback(async (onBeforeApply?: (historyVersion: number) => boolean) => {
+        if (!hasMore) {
+            return {
+                kind: 'stopped' as const,
+                reason: 'exhausted' as const,
+            }
+        }
+        const nextHistoryVersion = historyGeneration + 1
+        if (onBeforeApply && !onBeforeApply(nextHistoryVersion)) {
+            return {
+                kind: 'stopped' as const,
+                reason: 'invalidated' as const,
+            }
+        }
+        const older = buildTurnMessages('older', 4, 1, 1_700_000_010_000)
+        setMessages((prev) => [...older, ...prev])
+        setHasMore(false)
+        setHistoryGeneration(nextHistoryVersion)
+        setMessagesVersion((v) => v + 1)
+        return {
+            kind: 'applied' as const,
+            historyVersion: nextHistoryVersion,
+            hasMore: false,
+            addedRenderableCount: older.length,
+        }
+    }, [hasMore, historyGeneration])
+
+    const fakeApi = useMemo(() => ({
+        getHubSettings: async () => ({ sessionSummaryInChat: false }),
+        fetchVoiceBackend: async () => ({ backend: null, backends: [] }),
+    }) as unknown as ApiClient, [])
+
+    return (
+        <QueryClientProvider client={fixtureQueryClient}>
+            <AssistantRuntimeProvider runtime={runtime}>
+                <div className="flex h-screen min-h-0 flex-col bg-[var(--app-bg)] text-[var(--app-fg)]" data-testid="thread-scroll-anchors-fixture">
+                    <div className="flex shrink-0 items-center justify-between border-b border-[var(--app-border)] bg-[var(--app-subtle-bg)] px-4 py-2 text-xs">
+                        <div className="flex items-center gap-2">
+                            <span className="font-semibold">PR 5 HappyThread Scroll and Anchor Fixture</span>
+                            <span data-testid="thread-message-count" className="font-mono text-[var(--app-hint)]">
+                                blocks={visibleBlocks.length} hasMore={String(hasMore)}
+                            </span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                            <button
+                                type="button"
+                                data-testid="prepend-older-history"
+                                onClick={() => {
+                                    void handleLoadMore()
+                                }}
+                                className="rounded border border-[var(--app-border)] bg-[var(--app-bg)] px-3 py-1 font-medium"
+                            >
+                                Prepend Older History
+                            </button>
+                        </div>
+                    </div>
+                    <HappyThread
+                        api={fakeApi}
+                        session={session}
+                        sessionId={session.id}
+                        metadata={session.metadata}
+                        disabled={false}
+                        onRefresh={() => {}}
+                        onViewModeChange={() => {}}
+                        isSyncingTail={false}
+                        messagesWarning={null}
+                        hasMoreMessages={hasMore}
+                        isLoadingMoreMessages={false}
+                        onLoadMore={handleLoadMore}
+                        onCancelLoadMore={() => {}}
+                        unseenCount={0}
+                        rawMessagesCount={messages.length}
+                        normalizedMessagesCount={normalizedMessages.length}
+                        messagesVersion={messagesVersion}
+                        historyVersion={historyGeneration}
+                        forceScrollToken={0}
+                        outlineOpen={false}
+                        outlineItems={[]}
+                        onOutlineOpenChange={() => {}}
+                    />
+                </div>
+            </AssistantRuntimeProvider>
+        </QueryClientProvider>
+    )
+}
+
 function FixtureRouter() {
     const params = new URLSearchParams(window.location.search)
     const fixture = params.get('fixture')
     if (fixture === 'feature-isolation') return <FeatureIsolationFixture />
     if (fixture === 'streaming-isolation') return <StreamingIsolationFixture />
+    if (fixture === 'composer-flavor-settings') return <ComposerFlavorSettingsFixture />
+    if (fixture === 'thread-scroll-anchors') return <ThreadScrollAnchorsFixture />
     return <TurnTimelineDemo />
 }
 

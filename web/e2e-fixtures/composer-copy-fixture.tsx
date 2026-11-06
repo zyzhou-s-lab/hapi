@@ -11,7 +11,7 @@ import ReactDOM from 'react-dom/client'
 import '../src/index.css'
 import { useState } from 'react'
 import { RichComposerInput } from '../src/components/AssistantChat/RichComposerInput'
-import { applyGlobalSelectAll } from '../src/components/SessionChat'
+import { applyGlobalSelectAll } from '../src/components/sessionChatHelpers'
 
 declare global {
     interface Window {

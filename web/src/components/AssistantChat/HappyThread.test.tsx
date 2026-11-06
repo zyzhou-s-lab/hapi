@@ -4,6 +4,10 @@ import { useState, type ComponentProps } from 'react'
 import { I18nProvider } from '@/lib/i18n-context'
 import {
     ConversationOutlinePanel,
+    ThreadMessagesById,
+} from '@/components/AssistantChat/HappyThread'
+import { isNestedScrollEvent } from '@/components/AssistantChat/nestedScroll'
+import {
     ANCHOR_PIN_MAX_MS,
     captureScrollAnchor,
     getHistoryCoverageRetryDelay,
@@ -11,20 +15,18 @@ import {
     getScrollIntent,
     getVisibleTurnBoundaryId,
     hasAppliedHistoryVersion,
-    isNestedScrollEvent,
     isTopTurnHeadlessAssistant,
-    measureComposerDockInset,
     loadUntilVisibleBoundaryChanges,
     locateOutlineTargetMessage,
+    measureComposerDockInset,
     nextPinnedAnchorUntil,
-    prependMissingUserSnapshot,
     restoreScrollAnchor,
+    shouldCancelInitialScrollSettling,
+    shouldLoadOlderForViewport,
     shouldRecapturePendingHistoryAnchor,
     shouldSuppressPinnedWheel,
-    shouldLoadOlderForViewport,
-    shouldCancelInitialScrollSettling,
-    ThreadMessagesById,
-} from '@/components/AssistantChat/HappyThread'
+} from '@/components/AssistantChat/threadScrollHelpers'
+import { prependMissingUserSnapshot } from '@/components/AssistantChat/useShareTurnCapture'
 import { AssistantRuntimeProvider, useExternalStoreRuntime } from '@assistant-ui/react'
 import type { ThreadMessageLike } from '@assistant-ui/react'
 import type { ConversationOutlineItem } from '@/chat/outline'

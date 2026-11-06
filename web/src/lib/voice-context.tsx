@@ -5,7 +5,7 @@ import { storeVoiceContextNotice } from '@/lib/voiceContextStream'
 import { getElevenLabsCodeFromPreference } from '@/lib/languages'
 import { readStoredVoiceSelection } from '@/lib/voicePickerPreferences'
 
-interface VoiceContextValue {
+export interface VoiceContextValue {
     status: ConversationStatus
     errorMessage: string | null
     micMuted: boolean

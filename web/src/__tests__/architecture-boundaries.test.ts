@@ -142,4 +142,32 @@ describe('architecture & CSS cascade boundaries', () => {
         expect(railSpecifiers).not.toContain('@/components/AssistantChat/messages/TurnTodoSection')
         expect(railSpecifiers).not.toContain('@/components/AssistantChat/messages/TurnAnswerSection')
     })
+
+    it('enforces PR 4 and PR 5 component line-count and controller boundary budgets', () => {
+        const countLines = (relPath: string) =>
+            readFileSync(path.join(WEB_SRC_DIR, relPath), 'utf8').split('\n').length
+
+        expect(countLines('components/AssistantChat/messages/TimelineTurnBlock.tsx')).toBeLessThanOrEqual(300)
+        expect(countLines('components/AssistantChat/messages/TurnBlock.tsx')).toBeLessThanOrEqual(220)
+        expect(countLines('components/SessionChat.tsx')).toBeLessThanOrEqual(900)
+        expect(countLines('components/AssistantChat/HappyComposer.tsx')).toBeLessThanOrEqual(750)
+        expect(countLines('components/AssistantChat/HappyThread.tsx')).toBeLessThanOrEqual(900)
+
+        const sessionChatSpecifiers = parseModuleSpecifiers(path.join(WEB_SRC_DIR, 'components/SessionChat.tsx'))
+        expect(sessionChatSpecifiers).toContain('@/components/AssistantChat/composer/useSessionFlavorModelController')
+        expect(sessionChatSpecifiers).toContain('@/components/AssistantChat/composer/useSessionComposerSendBridge')
+        expect(sessionChatSpecifiers).not.toContain('@/hooks/queries/useCodexModels')
+        expect(sessionChatSpecifiers).not.toContain('@/hooks/queries/useCursorModels')
+        expect(sessionChatSpecifiers).not.toContain('@/hooks/queries/useOmpModels')
+        expect(sessionChatSpecifiers).not.toContain('@/hooks/queries/usePiModels')
+
+        const happyComposerSpecifiers = parseModuleSpecifiers(path.join(WEB_SRC_DIR, 'components/AssistantChat/HappyComposer.tsx'))
+        expect(happyComposerSpecifiers).toContain('./composer/ComposerSettingsSheet')
+        expect(happyComposerSpecifiers).toContain('./composer/composerInputHelpers')
+        expect(happyComposerSpecifiers).toContain('./composer/useComposerDraftAndSendLifecycle')
+
+        const happyThreadSpecifiers = parseModuleSpecifiers(path.join(WEB_SRC_DIR, 'components/AssistantChat/HappyThread.tsx'))
+        expect(happyThreadSpecifiers).toContain('@/components/AssistantChat/useThreadScrollAndHistoryController')
+        expect(happyThreadSpecifiers).toContain('@/components/AssistantChat/useShareTurnCapture')
+    })
 })

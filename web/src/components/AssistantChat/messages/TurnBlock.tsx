@@ -1,11 +1,7 @@
 import { memo, useEffect, useMemo, useState } from 'react'
 import { TextMessagePartProvider, useAuiState } from '@assistant-ui/react'
 import { projectSessionTodoSnapshot } from '@/chat/projections/todoProjection'
-import {
-    useOptionalHappyChatSessionStateContext,
-    useOptionalHappyChatStaticContext,
-    useOptionalHappyChatTodosContext,
-} from '@/components/AssistantChat/context'
+import { useOptionalHappyChatSessionStateContext, useOptionalHappyChatStaticContext, useOptionalHappyChatTodosContext } from '@/components/AssistantChat/context'
 import type { TodoItem } from '@/types/api'
 import { NotifySummaryText } from '@/components/AssistantChat/messages/NotifySummaryText'
 import {

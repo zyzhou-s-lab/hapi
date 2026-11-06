@@ -36,7 +36,7 @@ vi.mock('@assistant-ui/react', () => ({
     }),
 }))
 
-import { ScratchlistDrawerHost } from './SessionChat'
+import { ScratchlistDrawerHost } from '@/components/sessionChatHelpers'
 
 function makeEntry(overrides: Partial<ScratchlistEntry> & { id: string }): ScratchlistEntry {
     return { text: 'note', createdAt: 1000, ...overrides }
