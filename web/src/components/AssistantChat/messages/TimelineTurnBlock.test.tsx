@@ -1095,6 +1095,93 @@ describe('TimelineTurnBlock & summarizeTurnActivity', () => {
         expect(screen.queryByText('Old completed task')).not.toBeInTheDocument()
     })
 
+    it('renders blocked tasks with a neutral pause icon while open/streaming, hides blocked-only todo cards when collapsed after turn completion, and ignores blocked-only fallbackTodos', () => {
+        const turnWithoutTodoCall = partitionTurn(
+            [
+                { type: 'reasoning', text: 'Reading lines 150-196 and 395-535 of design spec' },
+                call(tool('r1', 'Read', { input: { file_path: 'docs/spec.md' } })),
+            ],
+            null
+        )
+
+        const { unmount } = render(
+            <I18nProvider>
+                <TimelineTurnBlockView
+                    partition={turnWithoutTodoCall}
+                    streaming={true}
+                    durationMs={66000}
+                    initiallyOpen={true}
+                    fallbackTodos={[
+                        { id: '1', content: 'Add multi-port dev isolation section to V3.1 spec', status: 'pending', priority: 'medium', blocked: true },
+                        { id: '2', content: 'Execute V3.1 rearchitecture PRs after user approval', status: 'pending', priority: 'medium', blocked: true },
+                    ]}
+                />
+            </I18nProvider>
+        )
+        expect(screen.queryByTestId('turn-todo-checklist-card')).not.toBeInTheDocument()
+        unmount()
+
+        const turnWithBlockedTodoCall = partitionTurn(
+            [
+                call(tool('todo-block', 'todo', {
+                    state: 'completed',
+                    input: {
+                        input: [
+                            '*** Begin Todo',
+                            'BLOCK "Add multi-port dev isolation section to V3.1 spec" "Awaiting operator review"',
+                            '*** End Todo',
+                        ].join('\n'),
+                    },
+                    result: {
+                        details: {
+                            op: 'block',
+                            phases: [
+                                {
+                                    name: 'V3.1 Spec',
+                                    tasks: [
+                                        { id: '1', content: 'Add multi-port dev isolation section to V3.1 spec', status: 'blocked' },
+                                        { id: '2', content: 'Execute V3.1 rearchitecture PRs after user approval', status: 'blocked' },
+                                    ],
+                                },
+                            ],
+                        },
+                    },
+                })),
+                { type: 'text', text: '请确认方案是否符合预期。' },
+            ],
+            null
+        )
+
+        const { rerender } = render(
+            <I18nProvider>
+                <TimelineTurnBlockView
+                    partition={turnWithBlockedTodoCall}
+                    streaming={true}
+                    durationMs={5000}
+                    initiallyOpen={true}
+                />
+            </I18nProvider>
+        )
+
+        const blockedBadges = screen.getAllByTestId('turn-todo-item-blocked')
+        expect(blockedBadges).toHaveLength(2)
+        expect(blockedBadges[0]?.textContent).toBe('')
+        expect(blockedBadges[0]?.className).not.toContain('app-badge-error')
+
+        rerender(
+            <I18nProvider>
+                <TimelineTurnBlockView
+                    partition={turnWithBlockedTodoCall}
+                    streaming={false}
+                    durationMs={5000}
+                    initiallyOpen={false}
+                />
+            </I18nProvider>
+        )
+
+        expect(screen.queryByTestId('turn-todo-checklist-card')).not.toBeInTheDocument()
+    })
+
     it('keeps pre-compaction final answer outside the timeline rail when ContextCompaction and post-compaction continuation follow', () => {
         const midCompactionStreaming = partitionTurn(
             [

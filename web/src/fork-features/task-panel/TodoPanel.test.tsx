@@ -107,4 +107,26 @@ describe('TodoPanel', () => {
         expect(card.parentElement?.className).toContain('relative')
         expect(card.parentElement?.className).toContain('h-[calc(1.75rem+2px)]')
     })
+
+    it('hides when all unfinished tasks are blocked and reappears when a task becomes active', () => {
+        const blockedTodos: TodoItem[] = [
+            { id: '1', content: 'Add multi-port dev isolation section to V3.1 spec', status: 'pending', priority: 'medium', blocked: true },
+            { id: '2', content: 'Execute V3.1 rearchitecture PRs after user approval', status: 'pending', priority: 'medium', blocked: true }
+        ]
+        const view = renderPanel(blockedTodos)
+        expect(screen.queryByTestId('todo-panel')).toBeNull()
+
+        view.rerender(
+            <I18nProvider>
+                <TodoPanel
+                    sessionId="session-117"
+                    todos={[
+                        { id: '1', content: 'Add multi-port dev isolation section to V3.1 spec', status: 'in_progress', priority: 'medium' },
+                        { id: '2', content: 'Execute V3.1 rearchitecture PRs after user approval', status: 'pending', priority: 'medium', blocked: true }
+                    ]}
+                />
+            </I18nProvider>
+        )
+        expect(screen.getByTestId('todo-panel')).toHaveTextContent('Add multi-port dev isolation section to V3.1 spec')
+    })
 })

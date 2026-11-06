@@ -359,7 +359,7 @@ export function TurnBlock() {
     const activeTodoText = streaming
         ? (ctx?.todos?.find((item) => item.status === 'in_progress')?.content ?? null)
         : null
-    const fallbackTodos = (streaming || isLastMessage) ? (ctx?.todos ?? null) : null
+    const fallbackTodos = streaming ? (ctx?.todos ?? null) : null
 
     useEffect(() => {
         if (!streaming) return

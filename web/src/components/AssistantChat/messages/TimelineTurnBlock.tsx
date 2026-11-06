@@ -647,10 +647,17 @@ export function TimelineTodoChecklistCard(props: { items: readonly ChecklistItem
                                 </span>
                             ) : isBlocked ? (
                                 <span
-                                    className="inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full border border-[var(--app-badge-error-border)] bg-[var(--app-badge-error-bg)] text-[10px] font-bold text-[var(--app-badge-error-text)]"
+                                    className="inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full border border-[var(--app-hint)]/45 text-[var(--app-hint)]"
                                     data-testid="turn-todo-item-blocked"
                                 >
-                                    !
+                                    <svg className="h-2.5 w-2.5" viewBox="0 0 12 12" fill="none" aria-hidden="true">
+                                        <path
+                                            d="M4.5 3.25V8.75M7.5 3.25V8.75"
+                                            stroke="currentColor"
+                                            strokeWidth="1.5"
+                                            strokeLinecap="round"
+                                        />
+                                    </svg>
                                 </span>
                             ) : (
                                 <span
@@ -665,8 +672,7 @@ export function TimelineTodoChecklistCard(props: { items: readonly ChecklistItem
                                     'min-w-0 flex-1 break-words',
                                     isRunning && 'font-medium text-[var(--app-fg)]',
                                     isCompleted && 'text-[var(--app-fg)]/85',
-                                    isBlocked && 'text-[var(--app-badge-error-text)]',
-                                    !isRunning && !isCompleted && !isBlocked && 'text-[var(--app-hint)]'
+                                    !isRunning && !isCompleted && 'text-[var(--app-hint)]'
                                 )}
                             >
                                 {item.text}
@@ -1242,12 +1248,22 @@ export function TimelineTurnBlockView(props: {
         () => pinnedToolRows.filter((row) => !pinnedChecklistByKey.has(row.key)),
         [pinnedToolRows, pinnedChecklistByKey]
     )
+    const visiblePinnedChecklistEntries = useMemo(() => {
+        const entries = Array.from(pinnedChecklistByKey.entries())
+        if (open || props.streaming) return entries
+        return entries.filter(([, items]) => {
+            const hasActiveOrPending = items.some((item) => item.status === 'in_progress' || item.status === 'pending')
+            const hasBlocked = items.some((item) => item.status === 'blocked')
+            return hasActiveOrPending || !hasBlocked
+        })
+    }, [open, props.streaming, pinnedChecklistByKey])
     const fallbackTodoCardItems = useMemo(() => {
+        if (!props.streaming) return []
         if (pinnedChecklistByKey.size > 0) return []
         if (fallbackChecklistItems.length === 0) return []
-        if (!fallbackChecklistItems.some((item) => item.status !== 'completed')) return []
+        if (!fallbackChecklistItems.some((item) => item.status === 'in_progress')) return []
         return fallbackChecklistItems
-    }, [pinnedChecklistByKey.size, fallbackChecklistItems])
+    }, [props.streaming, pinnedChecklistByKey.size, fallbackChecklistItems])
     const isInitialStreamingWait = props.streaming && stepRows.length === 0 && mediaRows.length === 0 && trailing.length === 0
     const hasSteps = stepRows.some((row) => row.kind === 'reasoning' || row.kind === 'tool' || row.kind === 'coalesced') || isInitialStreamingWait
     const headerText = props.streaming ? summary.workingHeader : summary.completedHeader
@@ -1683,10 +1699,10 @@ export function TimelineTurnBlockView(props: {
                         </>
                     ) : null}
 
-                    {pinnedChecklistByKey.size > 0 || fallbackTodoCardItems.length > 0 ? (
+                    {visiblePinnedChecklistEntries.length > 0 || fallbackTodoCardItems.length > 0 ? (
                         <div className="mt-2 space-y-2" data-testid="turn-live-todo-cards">
-                            {pinnedChecklistByKey.size > 0
-                                ? Array.from(pinnedChecklistByKey.entries()).map(([key, items]) => (
+                            {visiblePinnedChecklistEntries.length > 0
+                                ? visiblePinnedChecklistEntries.map(([key, items]) => (
                                     <TimelineTodoChecklistCard key={key} items={items} />
                                 ))
                                 : (

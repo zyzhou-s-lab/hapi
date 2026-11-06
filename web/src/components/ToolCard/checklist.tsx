@@ -256,9 +256,14 @@ function scopeChecklistItemsByOmpPhaseId(items: ChecklistItem[]): ChecklistItem[
         }
     }
     if (phaseGroups.length <= 1) return items
-    const firstActiveIdx = phaseGroups.findIndex((group) => group.some((item) => item.status !== 'completed'))
-    if (firstActiveIdx >= 0) {
-        return phaseGroups.slice(firstActiveIdx).flat()
+    const firstActiveIdx = phaseGroups.findIndex((group) =>
+        group.some((item) => item.status === 'in_progress' || item.status === 'pending')
+    )
+    const firstUnfinishedIdx = firstActiveIdx >= 0
+        ? firstActiveIdx
+        : phaseGroups.findIndex((group) => group.some((item) => item.status !== 'completed'))
+    if (firstUnfinishedIdx >= 0) {
+        return phaseGroups.slice(firstUnfinishedIdx).flat()
     }
     return phaseGroups[phaseGroups.length - 1]!
 }
@@ -324,14 +329,14 @@ export function extractUpdatePlanChecklist(input: unknown, result: unknown): Che
 function checklistTone(item: ChecklistItem): string {
     if (item.status === 'completed') return 'text-emerald-600 line-through'
     if (item.status === 'in_progress') return 'text-[var(--app-link)]'
-    if (item.status === 'blocked') return 'text-red-500'
+    if (item.status === 'blocked') return 'text-[var(--app-hint)]'
     return 'text-[var(--app-hint)]'
 }
 
 function checklistIcon(item: ChecklistItem): ReactNode {
     if (item.status === 'completed') return '☑'
     if (item.status === 'in_progress') return '◉'
-    if (item.status === 'blocked') return '⚠'
+    if (item.status === 'blocked') return '⏸'
     return '☐'
 }
 

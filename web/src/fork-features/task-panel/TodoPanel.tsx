@@ -18,6 +18,8 @@ export const TodoPanel = memo(function TodoPanel(props: { sessionId: string; tod
     const items = useMemo(() => extractTodoChecklist({ todos: props.todos }, null), [props.todos])
     const completed = items.filter((item) => item.status === 'completed').length
     const inProgress = items.find((item) => item.status === 'in_progress') ?? null
+    const hasActiveOrPending = items.some((item) => item.status === 'in_progress' || item.status === 'pending')
+    const allBlockedOrDone = items.length > 0 && !hasActiveOrPending && items.some((item) => item.status === 'blocked')
     const allDone = items.length > 0 && completed === items.length
     const isStaleCompleted = allDone && Boolean(props.sessionThinking)
     const [collapsed, setCollapsed] = useState(
@@ -30,7 +32,7 @@ export const TodoPanel = memo(function TodoPanel(props: { sessionId: string; tod
         }
         prevStaleRef.current = isStaleCompleted
     }, [isStaleCompleted])
-    if (items.length === 0) return null
+    if (items.length === 0 || allBlockedOrDone) return null
     const toggleCollapsed = () => {
         const next = !collapsed
         localStorage.setItem(COLLAPSED_STORAGE_KEY, next ? '1' : '0')
