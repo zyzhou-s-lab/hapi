@@ -1466,7 +1466,7 @@ export function TimelineTurnBlockView(props: {
                 {trailing.map((row) => {
                     const isRowStreaming = props.streaming && row === lastRow
                     return (
-                        <div key={row.key} className="text-[15px] leading-relaxed text-[var(--app-fg)] whitespace-pre-wrap">
+                        <div key={row.key} className="text-[15px] leading-relaxed text-[var(--app-fg)]">
                             {props.renderTrailingText ? props.renderTrailingText(row.text, isRowStreaming) : renderSimpleMarkdownText(row.text)}
                         </div>
                     )

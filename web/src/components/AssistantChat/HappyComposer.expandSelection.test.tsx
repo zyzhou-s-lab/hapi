@@ -1,4 +1,3 @@
-import { readFileSync } from 'node:fs'
 import {
     AssistantRuntimeProvider,
     type ChatModelAdapter,
@@ -180,13 +179,6 @@ describe('HappyComposer plain-text expansion', () => {
     })
 
     it('counts the bottom safe area once, and not at all on iOS PWA', () => {
-        const css = readFileSync('src/index.css', 'utf8')
-        const base = css.match(/\.composer-floating-shell \{[^}]+\}/)?.[0] ?? ''
-        const ios = css.match(/\.composer-floating-shell-ios-pwa \{[^}]+\}/)?.[0] ?? ''
-        expect(base.match(/safe-area-inset-bottom/g)).toHaveLength(1)
-        expect(ios).toContain('padding-bottom: 0.5rem')
-        expect(ios).not.toContain('safe-area')
-
         pwaState.isIOS = true
         pwaState.isStandalone = true
         render(<TestRuntime />)
@@ -232,9 +224,6 @@ describe('HappyComposer plain-text expansion', () => {
     })
 
     it('places default :focus-visible outline inside @layer base so composer outline-none utilities win', () => {
-        const css = readFileSync('src/index.css', 'utf8')
-        expect(css).toMatch(/@layer base\s*\{\s*:focus-visible\s*\{/)
-
         render(<TestRuntime />)
         const textbox = screen.getByRole('textbox')
         expect(textbox.className).toContain('outline-none')

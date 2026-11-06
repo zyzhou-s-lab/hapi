@@ -1131,7 +1131,7 @@ export const RichComposerInput = forwardRef<RichComposerInputHandle, Props>(func
                 contentEditable={contentEditableValue(disabled)}
                 suppressContentEditableWarning
                 data-testid="rich-composer-input"
-                className={`${className ?? ''}${disabled ? ' cursor-not-allowed opacity-50' : ''}`}
+                className={`outline-none outline-0 focus:outline-none focus-visible:outline-none focus-visible:outline-0 ${className ?? ''}${disabled ? ' cursor-not-allowed opacity-50' : ''}`}
                 onInput={handleInput}
                 onFocus={onFocus}
                 onKeyDown={handleKeyDown}

@@ -25,6 +25,7 @@ export default defineConfig({
             use: {
                 ...devices['Desktop Chrome'],
                 launchOptions: {
+                    executablePath: process.env.PLAYWRIGHT_CHROME_PATH,
                     // The CI runner and most sandboxed dev environments
                     // run as root or under restricted user namespaces;
                     // without --no-sandbox chromium silently exits 0 a
