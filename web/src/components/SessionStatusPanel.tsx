@@ -17,9 +17,9 @@ function Section(props: { title: string; children: ReactNode }) {
 }
 
 function subagentTone(state: SessionStatusSubagent['state']): string {
-    if (state === 'error') return 'text-red-600'
-    if (state === 'waiting') return 'text-amber-600'
-    return 'text-emerald-600'
+    if (state === 'error') return 'text-[var(--app-badge-error-text)]'
+    if (state === 'waiting') return 'text-[var(--app-badge-warning-text)]'
+    return 'text-[var(--app-badge-success-text)]'
 }
 
 function elapsedSince(startedAt: number | null, now: number): string | null {
@@ -50,7 +50,7 @@ export function SessionStatusPanel({ data }: { data: SessionStatusData }) {
                 {data.goal ? (
                     <Section title={t('session.status.goal')}>
                         <div className="break-words text-sm text-[var(--app-fg)]">{data.goal.objective}</div>
-                        <div className="mt-0.5 text-xs text-[var(--app-hint)]">
+                        <div className="mt-0.5 text-xs tabular-nums text-[var(--app-hint)]">
                             {t(`session.status.goal.${data.goal.status}`)}
                             {data.goal.timeUsedSeconds > 0 ? ` · ${formatDuration(data.goal.timeUsedSeconds * 1000)}` : ''}
                         </div>
@@ -73,7 +73,7 @@ export function SessionStatusPanel({ data }: { data: SessionStatusData }) {
                                         <div className="flex min-w-0 items-baseline gap-1.5">
                                             <span className={`shrink-0 text-xs ${subagentTone(subagent.state)}`}>●</span>
                                             <span className="min-w-0 break-words text-[var(--app-fg)]">{subagent.title}</span>
-                                            <span className={`ml-auto shrink-0 text-xs ${subagentTone(subagent.state)}`}>
+                                            <span className={`ml-auto shrink-0 text-xs tabular-nums ${subagentTone(subagent.state)}`}>
                                                 {t(`session.status.subagent.${subagent.state}`)}
                                                 {elapsed ? ` · ${elapsed}` : ''}
                                             </span>
@@ -99,7 +99,7 @@ export function SessionStatusPanel({ data }: { data: SessionStatusData }) {
                                             {terminal.command}
                                         </code>
                                         {(terminal.cwd || elapsed) ? (
-                                            <div className="overflow-hidden text-ellipsis whitespace-nowrap text-[11px] text-[var(--app-hint)]">
+                                            <div className="overflow-hidden text-ellipsis whitespace-nowrap text-[11px] tabular-nums text-[var(--app-hint)]">
                                                 {[terminal.cwd, elapsed].filter(Boolean).join(' · ')}
                                             </div>
                                         ) : null}

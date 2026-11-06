@@ -2,14 +2,21 @@ import type { ChatToolCall, GeneratedFileBlock, GeneratedImageBlock, RoundSummar
 import type { ToolGroupBlock } from '@/chat/toolGroups'
 import { isSubagentToolName } from '@/chat/subagentTool'
 import { isAskUserQuestionToolName } from '@/components/ToolCard/askUserQuestion'
-import { extractTodoChecklist } from '@/components/ToolCard/checklist'
+import {
+    projectSessionTodoSnapshot,
+    projectToolTodoSnapshot,
+} from '@/chat/projections/todoProjection'
+import {
+    extractTodoChecklist,
+    type TodoCardItem,
+} from '@/components/ToolCard/checklist'
+import { classifyToolPresentation } from '@/components/AssistantChat/messages/toolPresentationManifest'
 import { getToolPresentation } from '@/components/ToolCard/knownTools'
 import { isRequestUserInputToolName } from '@/components/ToolCard/requestUserInput'
 import { resolveToolViewName } from '@/components/ToolCard/toolNameAliases'
 import { getInputStringAny, truncate } from '@/lib/toolInputUtils'
 import { isObject } from '@hapi/protocol'
-import type { SessionMetadataSummary } from '@/types/api'
-
+import type { SessionMetadataSummary, TodoItem } from '@/types/api'
 export type TurnContentPart = {
     type: string
     text?: string
@@ -1573,5 +1580,169 @@ export function summarizeTurnActivity(
         workingHeader,
         completedHeader,
         counts,
+    }
+}
+
+/**
+ * Lightweight $O(k)$ check whether raw message content parts produce any
+ * non-text turn activity (reasoning, non-CodexReasoning tool calls, tool groups,
+ * generated images, or generated files) without allocating a full `TurnPartition`.
+ */
+export function hasTurnContentActivity(parts: readonly TurnContentPart[]): boolean {
+    for (const part of parts) {
+        if (part.type === 'reasoning' && typeof part.text === 'string' && part.text.trim().length > 0) {
+            return true
+        }
+        if (isToolGroup(part)) {
+            if (part.artifact.tools.length > 0) return true
+            continue
+        }
+        if (isToolCall(part)) {
+            if (part.artifact.tool.name !== 'CodexReasoning') return true
+            continue
+        }
+        if (isGeneratedImage(part) || isGeneratedFile(part)) {
+            return true
+        }
+    }
+    return false
+}
+
+export interface ProjectedTodoChecklist {
+    readonly key: string
+    readonly items: TodoCardItem[]
+}
+
+export interface ProjectedQuietTextRow {
+    readonly row: TurnTextRow
+    readonly keepVisibleWhenCollapsed: boolean
+}
+
+export interface ProjectedSubturn {
+    readonly key: string
+    readonly rows: TurnRow[]
+    readonly nonTrailingRows: TurnRow[]
+    readonly stepRows: TurnDisplayStepRow[]
+    readonly collapsedPinnedRailRows: Array<TurnToolRow | TurnCoalescedRow>
+    readonly todoChecklists: ProjectedTodoChecklist[]
+    readonly quietTextRows: ProjectedQuietTextRow[]
+    readonly mediaRows: Array<TurnImageRow | TurnFileRow>
+    readonly answerRows: TurnTextRow[]
+    readonly hasSteps: boolean
+    readonly lastRow: TurnRow | undefined
+}
+
+export interface ProjectedTurn {
+    readonly subturns: ProjectedSubturn[]
+}
+
+export function projectTurn(
+    partition: TurnPartition,
+    options?: {
+        readonly viewMode?: 'normal' | 'thinking' | 'verbose'
+        readonly streaming?: boolean
+        readonly fallbackTodos?: readonly TodoItem[] | null
+    }
+): ProjectedTurn {
+    const viewMode = options?.viewMode ?? 'normal'
+    const streaming = options?.streaming ?? false
+    const rows = partition.rows
+    const isInitialStreamingWait = streaming && rows.length === 0
+    const answerRows = rows.filter((row): row is TurnTextRow => row.kind === 'text' && row.trailing)
+    const nonTrailingRows = rows.filter((row) => !(row.kind === 'text' && row.trailing))
+    const mediaRows = nonTrailingRows.filter(
+        (row): row is TurnImageRow | TurnFileRow => row.kind === 'image' || row.kind === 'file'
+    )
+    const stepCandidates = nonTrailingRows.filter(
+        (row): row is Exclude<TurnRow, TurnImageRow | TurnFileRow> => row.kind !== 'image' && row.kind !== 'file'
+    )
+    const stepRows: TurnDisplayStepRow[] = viewMode === 'verbose'
+        ? stepCandidates
+        : coalesceTurnStepRows(stepCandidates, { absorbTransitionalThoughts: viewMode === 'normal' })
+    const hasSteps = stepRows.some((row) => row.kind !== 'text') || isInitialStreamingWait
+
+    const fallbackChecklistItems: TodoCardItem[] =
+        options?.fallbackTodos && options.fallbackTodos.length > 0
+            ? [...projectSessionTodoSnapshot(options.fallbackTodos).items]
+            : []
+    const allToolBlocks = stepCandidates
+        .filter((r): r is TurnToolRow => r.kind === 'tool')
+        .map((r) => r.block)
+
+    const pinnedChecklistByKey = new Map<string, TodoCardItem[]>()
+    for (const row of stepRows) {
+        if (row.kind !== 'tool' || !row.pinned || row.error) continue
+        const checklist = [...projectToolTodoSnapshot(row.block, allToolBlocks, fallbackChecklistItems).items]
+        const rule = classifyToolPresentation(row.block, {
+            hasValidTodoChecklist: checklist.length > 0,
+            errorRecovered: false,
+        })
+        if (rule.slot === 'turn-todo-section' && checklist.length > 0) {
+            pinnedChecklistByKey.set(row.key, checklist)
+        }
+    }
+
+    const todoChecklists: ProjectedTodoChecklist[] = []
+    if (pinnedChecklistByKey.size > 0) {
+        for (const [key, items] of pinnedChecklistByKey.entries()) {
+            todoChecklists.push({ key, items })
+        }
+    } else if (
+        fallbackChecklistItems.length > 0
+        && fallbackChecklistItems.some((item) => item.status !== 'completed')
+    ) {
+        todoChecklists.push({ key: 'session-fallback-todos', items: fallbackChecklistItems })
+    }
+
+    const collapsedPinnedRailRows = stepRows.filter((row): row is TurnToolRow | TurnCoalescedRow => {
+        if (row.kind === 'coalesced') {
+            return row.rows.some(
+                (r) => r.kind === 'tool' && r.pinned && !pinnedChecklistByKey.has(r.key)
+            )
+        }
+        if (row.kind === 'tool') {
+            const checklist = !row.error
+                ? [...projectToolTodoSnapshot(row.block, allToolBlocks, fallbackChecklistItems).items]
+                : []
+            const rule = classifyToolPresentation(row.block, {
+                hasValidTodoChecklist: checklist.length > 0,
+                errorRecovered: !row.pinned && row.error,
+            })
+            return rule.slot === 'rail' && row.pinned && !pinnedChecklistByKey.has(row.key)
+        }
+        return false
+    })
+
+    const quietTextRows: ProjectedQuietTextRow[] = []
+    nonTrailingRows.forEach((row, idx) => {
+        if (row.kind !== 'text') return
+        const laterRows = nonTrailingRows.slice(idx + 1)
+        const keepVisibleWhenCollapsed =
+            laterRows.some((later) => later.kind === 'image' || later.kind === 'file')
+            || (
+                answerRows.length === 0
+                && laterRows.length > 0
+                && laterRows.every((later) => later.kind === 'tool' && later.block.tool.name === 'ContextCompaction')
+            )
+        quietTextRows.push({ row, keepVisibleWhenCollapsed })
+    })
+
+    const firstStableKey = rows[0]?.key ?? 'subturn:initial'
+    return {
+        subturns: [
+            {
+                key: `subturn:${firstStableKey}`,
+                rows,
+                nonTrailingRows,
+                stepRows,
+                collapsedPinnedRailRows,
+                todoChecklists,
+                quietTextRows,
+                mediaRows,
+                answerRows,
+                hasSteps,
+                lastRow: rows[rows.length - 1],
+            },
+        ],
     }
 }

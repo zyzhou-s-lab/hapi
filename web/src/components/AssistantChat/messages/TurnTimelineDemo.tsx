@@ -434,13 +434,23 @@ function buildStageData(stage: DemoLifecycleStage, activeToolIdx = 6): {
         { id: '3', content: 'Fetch reference documentation and compare with classic TurnBlock', status: 'completed' },
         { id: '4', content: 'Verify 3-level expansion, auto-collapse, and docked composer widgets', status: 'completed' },
     ]
+    const followUpTodo = makeToolPart({
+        id: 'tool-todo-followup-3',
+        name: 'TodoWrite',
+        state: 'completed',
+        description: 'Mark all 4 frontend timeline verification tasks completed',
+        toolInput: {
+            todos,
+        },
+        result: 'Updated 4 todos',
+    })
     return {
         parts: [thought1, bash1, bash2, bash3, read1, thought2, webFetch1, webSearch1, edit1],
         streaming: false,
         durationMs: 19400,
         todos,
         activeTodoText: null,
-        followUpParts: [followUpThought, followUpEdit, followUpBash, trailingAnswer],
+        followUpParts: [followUpThought, followUpEdit, followUpBash, followUpTodo, trailingAnswer],
         followUpStreaming: false,
         followUpDurationMs: 11200,
         followUpActiveTodoText: null,

@@ -100,7 +100,7 @@ describe('architecture & CSS cascade boundaries', () => {
             'chat/sessionStatus.ts',
             'components/SessionStatusPanel.tsx',
             'components/ToolCard/checklist.tsx',
-            'components/AssistantChat/messages/TimelineTurnBlock.tsx',
+            'components/AssistantChat/messages/turnBlockModel.ts',
             'components/AssistantChat/messages/TurnBlock.tsx',
             'fork-features/task-panel/TodoPanel.tsx',
         ]
@@ -123,5 +123,23 @@ describe('architecture & CSS cascade boundaries', () => {
             }
         }
         expect(duplicateParserFiles).toEqual([])
+    })
+
+    it('enforces PR 3 Subturn slot isolation, FeatureErrorBoundary wrapping, and 4-context split', () => {
+        const contextSrc = readFileSync(path.join(WEB_SRC_DIR, 'components/AssistantChat/context.tsx'), 'utf8')
+        expect(contextSrc).not.toMatch(/\buseHappyChatContext\b/)
+        expect(contextSrc).not.toMatch(/\buseOptionalHappyChatContext\b/)
+
+        const timelineTurnSrc = readFileSync(path.join(WEB_SRC_DIR, 'components/AssistantChat/messages/TimelineTurnBlock.tsx'), 'utf8')
+        expect(timelineTurnSrc.split('\n').length).toBeLessThan(180)
+        const timelineSpecifiers = parseModuleSpecifiers(path.join(WEB_SRC_DIR, 'components/AssistantChat/messages/TimelineTurnBlock.tsx'))
+        expect(timelineSpecifiers).toContain('@/components/FeatureErrorBoundary')
+        expect(timelineSpecifiers).toContain('@/components/AssistantChat/messages/TurnExecutionRail')
+        expect(timelineSpecifiers).toContain('@/components/AssistantChat/messages/TurnTodoSection')
+        expect(timelineSpecifiers).toContain('@/components/AssistantChat/messages/TurnAnswerSection')
+
+        const railSpecifiers = parseModuleSpecifiers(path.join(WEB_SRC_DIR, 'components/AssistantChat/messages/TurnExecutionRail.tsx'))
+        expect(railSpecifiers).not.toContain('@/components/AssistantChat/messages/TurnTodoSection')
+        expect(railSpecifiers).not.toContain('@/components/AssistantChat/messages/TurnAnswerSection')
     })
 })

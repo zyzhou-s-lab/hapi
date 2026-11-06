@@ -54,10 +54,10 @@ export type HappyChatStaticContextValue = Omit<
     | keyof HappyChatHistoryContextValue
 >
 
-const HappyChatStaticContext = createContext<HappyChatStaticContextValue | null>(null)
-const HappyChatTodosContext = createContext<HappyChatTodosContextValue | null>(null)
-const HappyChatSessionStateContext = createContext<HappyChatSessionStateContextValue | null>(null)
-const HappyChatHistoryContext = createContext<HappyChatHistoryContextValue | null>(null)
+export const HappyChatStaticContext = createContext<HappyChatStaticContextValue | null>(null)
+export const HappyChatTodosContext = createContext<HappyChatTodosContextValue | null>(null)
+export const HappyChatSessionStateContext = createContext<HappyChatSessionStateContextValue | null>(null)
+export const HappyChatHistoryContext = createContext<HappyChatHistoryContextValue | null>(null)
 
 function sameSummary(
     a: SessionMetadataSummary['summary'],

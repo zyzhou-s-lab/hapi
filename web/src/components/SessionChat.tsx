@@ -83,6 +83,7 @@ import type { SendMessageAcceptance, SendMessageSettlement } from '@/hooks/mutat
 import { handoffComposerDraft, transferComposerDraftThenNavigate } from '@/lib/composer-draft-transfer'
 import { SessionHeader } from '@/components/SessionHeader'
 import { CursorMigrationBanner } from '@/components/CursorMigrationBanner'
+import { FeatureErrorBoundary } from '@/components/FeatureErrorBoundary'
 import { TeamPanel } from '@/components/TeamPanel'
 import { SessionStatusPanel } from '@/components/SessionStatusPanel'
 import { buildSessionStatusData } from '@/chat/sessionStatus'
@@ -2041,7 +2042,9 @@ function SessionChatInner(props: SessionChatProps) {
 
             <div className="flex flex-col min-h-0 flex-1">
             {props.session.teamState && (
-                <TeamPanel teamState={props.session.teamState} />
+                <FeatureErrorBoundary name="team-panel" resetKey={props.session.id}>
+                    <TeamPanel teamState={props.session.teamState} />
+                </FeatureErrorBoundary>
             )}
 
             {sessionInactive ? (
@@ -2138,11 +2141,13 @@ function SessionChatInner(props: SessionChatProps) {
                     />
 
                     <div className="px-3">
-                        <TodoPanel
-                            sessionId={props.session.id}
-                            todos={props.session.todos}
-                            sessionThinking={Boolean(props.session.thinking)}
-                        />
+                        <FeatureErrorBoundary name="todo-panel" resetKey={props.session.id}>
+                            <TodoPanel
+                                sessionId={props.session.id}
+                                todos={props.session.todos}
+                                sessionThinking={Boolean(props.session.thinking)}
+                            />
+                        </FeatureErrorBoundary>
                         {/*
                          * Scratchlist drawer - composer-controlled. Only
                          * mounted when the operator clicks the notepad icon

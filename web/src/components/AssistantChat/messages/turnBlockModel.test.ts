@@ -1,19 +1,21 @@
 import { describe, expect, it } from 'vitest'
 import type { ToolCallBlock } from '@/chat/types'
 import type { ToolGroupBlock } from '@/chat/toolGroups'
+import { classifyToolPresentation } from '@/components/AssistantChat/messages/toolPresentationManifest'
 import {
     coalesceTurnStepRows,
     countTurnActions,
     describeCoalescedTurnStep,
     describeTurnToolStep,
     extractThoughtSummary,
+    hasTurnContentActivity,
     partitionTurn,
+    projectTurn,
     turnDurationMs,
     type TurnCoalescedRow,
     type TurnContentPart,
     type TurnToolRow,
 } from '@/components/AssistantChat/messages/turnBlockModel'
-
 function tool(id: string, name: string, extra: Partial<ToolCallBlock['tool']> = {}): ToolCallBlock {
     return {
         kind: 'tool-call',
@@ -503,5 +505,87 @@ describe('OMP native tool aliases, Thought summary, and homogeneous step coalesc
             intentLabel: 'MentorPlan',
             secondaryBadge: 'Done',
         })
+    })
+})
+
+describe('PR 3 toolPresentationManifest, hasTurnContentActivity, and projectTurn', () => {
+    it('classifies tool presentation slot and pinPolicy deterministically', () => {
+        const todoBlock = tool('todo-1', 'TodoWrite', {
+            input: {
+                todos: [{ content: 'Split contexts', status: 'in_progress' }],
+            },
+        })
+        expect(classifyToolPresentation(todoBlock, { hasValidTodoChecklist: true })).toEqual({
+            slot: 'turn-todo-section',
+            pinPolicy: 'never',
+            interactiveFooter: 'none',
+        })
+
+        const erroredTodoBlock = tool('todo-err', 'TodoWrite', {
+            state: 'error',
+            result: { error: 'Invalid Todo format' },
+        })
+        expect(classifyToolPresentation(erroredTodoBlock, { hasValidTodoChecklist: false })).toEqual({
+            slot: 'rail',
+            pinPolicy: 'until-recovered',
+            interactiveFooter: 'none',
+        })
+
+        const subagentBlock = tool('task-1', 'Task', {
+            state: 'completed',
+            input: { name: 'WorkerA', task: 'Check types' },
+        })
+        expect(classifyToolPresentation(subagentBlock)).toEqual({
+            slot: 'rail',
+            pinPolicy: 'always',
+            interactiveFooter: 'none',
+        })
+    })
+
+    it('checks hasTurnContentActivity in O(k) without partitioning', () => {
+        expect(hasTurnContentActivity([{ type: 'text', text: 'Plain markdown reply' }])).toBe(false)
+        expect(hasTurnContentActivity([{ type: 'reasoning', text: '   ' }])).toBe(false)
+        expect(hasTurnContentActivity([{ type: 'reasoning', text: 'Inspecting state' }])).toBe(true)
+        expect(hasTurnContentActivity([call(tool('codex-r', 'CodexReasoning'))])).toBe(false)
+        expect(hasTurnContentActivity([call(tool('r1', 'Read'))])).toBe(true)
+    })
+
+    it('keeps subturn key stable across streaming appends and retains last valid todo snapshot when a later todo errors', () => {
+        const partsStep1: TurnContentPart[] = [
+            { type: 'reasoning', text: 'Planning PR 3 changes' },
+            call(tool('todo-1', 'TodoWrite', {
+                state: 'completed',
+                input: {
+                    todos: [
+                        { content: 'Extract slots', status: 'completed' },
+                        { content: 'Split context', status: 'in_progress' },
+                    ],
+                },
+            })),
+        ]
+        const projected1 = projectTurn(partitionTurn(partsStep1, null))
+        expect(projected1.subturns).toHaveLength(1)
+        const subturn1 = projected1.subturns[0]!
+        expect(subturn1.todoChecklists).toHaveLength(1)
+        expect(subturn1.todoChecklists[0]?.items).toHaveLength(2)
+        expect(subturn1.collapsedPinnedRailRows).toHaveLength(0)
+
+        const partsStep2: TurnContentPart[] = [
+            ...partsStep1,
+            call(tool('todo-2', 'TodoWrite', {
+                state: 'error',
+                input: { input: 'bad document' },
+                result: 'Todo validation failed',
+            })),
+            { type: 'text', text: 'Final answer after failed todo update.' },
+        ]
+        const projected2 = projectTurn(partitionTurn(partsStep2, null))
+        const subturn2 = projected2.subturns[0]!
+        expect(subturn2.key).toBe(subturn1.key)
+        // Valid todo-1 checklist stays in TurnTodoSection while errored todo-2 stays in collapsedPinnedRailRows
+        expect(subturn2.todoChecklists).toHaveLength(1)
+        expect(subturn2.todoChecklists[0]?.key).toBe('todo-1')
+        expect(subturn2.collapsedPinnedRailRows.map((r) => r.key)).toEqual(['todo-2'])
+        expect(subturn2.answerRows.map((r) => r.text)).toEqual(['Final answer after failed todo update.'])
     })
 })

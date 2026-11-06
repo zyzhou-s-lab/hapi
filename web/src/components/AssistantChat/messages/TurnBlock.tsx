@@ -1,10 +1,20 @@
-import { useEffect, useMemo, useState } from 'react'
+import { memo, useEffect, useMemo, useState } from 'react'
 import { TextMessagePartProvider, useAuiState } from '@assistant-ui/react'
 import { projectSessionTodoSnapshot } from '@/chat/projections/todoProjection'
-import { useOptionalHappyChatContext } from '@/components/AssistantChat/context'
+import {
+    useOptionalHappyChatSessionStateContext,
+    useOptionalHappyChatStaticContext,
+    useOptionalHappyChatTodosContext,
+} from '@/components/AssistantChat/context'
 import type { TodoItem } from '@/types/api'
 import { NotifySummaryText } from '@/components/AssistantChat/messages/NotifySummaryText'
-import { partitionTurn, turnDurationMs, type TurnContentPart, type TurnPartition } from '@/components/AssistantChat/messages/turnBlockModel'
+import {
+    hasTurnContentActivity,
+    partitionTurn,
+    turnDurationMs,
+    type TurnContentPart,
+    type TurnPartition,
+} from '@/components/AssistantChat/messages/turnBlockModel'
 import { TimelineTurnBlockView, type TranscriptViewMode } from '@/components/AssistantChat/messages/TimelineTurnBlock'
 import { useReasoningCollapse } from '@/hooks/useReasoningCollapse'
 import type { HappyChatMessageMetadata } from '@/lib/assistant-runtime'
@@ -73,41 +83,66 @@ export function TurnBlockView(props: {
     )
 }
 
-export function TurnBlock() {
-    const ctx = useOptionalHappyChatContext()
-    const { locale } = useTranslation()
-    const { reasoningCollapsed } = useReasoningCollapse()
-    const content = useAuiState((state) => state.message.role === 'assistant' ? state.message.content : [])
-    const auiRunning = useAuiState((state) => state.message.status?.type === 'running')
-    const isLastMessage = useAuiState((state) => state.message.isLast)
-    const createdAt = useAuiState((state) => state.message.createdAt.getTime())
-    const custom = useAuiState((state) => state.message.metadata.custom as Partial<HappyChatMessageMetadata> | undefined)
-    const partition = useMemo(
-        () => partitionTurn(contentParts(content), ctx?.metadata ?? null),
-        [content, ctx?.metadata]
+const MemoizedTurnBlockView = memo(TurnBlockView)
+
+function HistoricalTurnBlockBody(props: {
+    partition: TurnPartition
+    createdAt: number
+    custom: Partial<HappyChatMessageMetadata> | undefined
+    lang: 'en' | 'zh-CN'
+}) {
+    const durationMs = useMemo(
+        () => turnDurationMs({
+            roundSummary: props.custom?.roundSummary,
+            invokedAt: props.custom?.invokedAt,
+            createdAt: props.createdAt,
+            now: props.createdAt,
+            streaming: false,
+        }),
+        [props.custom?.roundSummary, props.custom?.invokedAt, props.createdAt]
     )
-    const hasRunningTool = useMemo(
-        () => partition.rows.some(
-            (row) => row.kind === 'tool'
-                && (row.block.tool.state === 'running' || (row.block.tool.state === 'pending' && Boolean(row.permission)))
-        ),
-        [partition.rows]
+
+    return (
+        <MemoizedTurnBlockView
+            activeTodoText={null}
+            fallbackTodos={null}
+            lang={props.lang}
+            partition={props.partition}
+            streaming={false}
+            initiallyOpen={false}
+            durationMs={durationMs}
+        />
     )
+}
+
+function LiveTailTurnBlockBody(props: {
+    partition: TurnPartition
+    auiRunning: boolean
+    hasRunningTool: boolean
+    isLastMessage: boolean
+    createdAt: number
+    custom: Partial<HappyChatMessageMetadata> | undefined
+    reasoningCollapsed: boolean
+    lang: 'en' | 'zh-CN'
+}) {
+    const sessionStateCtx = useOptionalHappyChatSessionStateContext()
+    const todosCtx = useOptionalHappyChatTodosContext()
+
     const isActiveSessionTailTurn = Boolean(
-        isLastMessage
-        && ctx?.sessionThinking
+        props.isLastMessage
+        && sessionStateCtx?.sessionThinking
         && (
-            ctx.activeTurnStartedAt == null
-            || Math.max(createdAt, custom?.invokedAt ?? 0) >= ctx.activeTurnStartedAt
+            sessionStateCtx.activeTurnStartedAt == null
+            || Math.max(props.createdAt, props.custom?.invokedAt ?? 0) >= sessionStateCtx.activeTurnStartedAt
         )
     )
-    const streaming = auiRunning || hasRunningTool || isActiveSessionTailTurn
+    const streaming = props.auiRunning || props.hasRunningTool || isActiveSessionTailTurn
     const [now, setNow] = useState(() => Date.now())
 
     const activeTodoText = streaming
-        ? projectSessionTodoSnapshot(ctx?.todos).activeLabel
+        ? projectSessionTodoSnapshot(todosCtx?.todos).activeLabel
         : null
-    const fallbackTodos = (streaming || isLastMessage) ? (ctx?.todos ?? null) : null
+    const fallbackTodos = (streaming || props.isLastMessage) ? (todosCtx?.todos ?? null) : null
 
     useEffect(() => {
         if (!streaming) return
@@ -116,17 +151,17 @@ export function TurnBlock() {
     }, [streaming])
 
     return (
-        <TurnBlockView
+        <MemoizedTurnBlockView
             activeTodoText={activeTodoText}
             fallbackTodos={fallbackTodos}
-            lang={locale === 'zh-CN' ? 'zh-CN' : 'en'}
-            partition={partition}
+            lang={props.lang}
+            partition={props.partition}
             streaming={streaming}
-            initiallyOpen={streaming && !reasoningCollapsed}
+            initiallyOpen={streaming && !props.reasoningCollapsed}
             durationMs={turnDurationMs({
-                roundSummary: custom?.roundSummary,
-                invokedAt: custom?.invokedAt ?? (streaming ? (ctx?.activeTurnStartedAt ?? createdAt) : undefined),
-                createdAt,
+                roundSummary: props.custom?.roundSummary,
+                invokedAt: props.custom?.invokedAt ?? (streaming ? (sessionStateCtx?.activeTurnStartedAt ?? props.createdAt) : undefined),
+                createdAt: props.createdAt,
                 now,
                 streaming,
             })}
@@ -134,6 +169,54 @@ export function TurnBlock() {
     )
 }
 
+export function TurnBlock() {
+    const staticCtx = useOptionalHappyChatStaticContext()
+    const { locale } = useTranslation()
+    const { reasoningCollapsed } = useReasoningCollapse()
+    const content = useAuiState((state) => state.message.role === 'assistant' ? state.message.content : [])
+    const auiRunning = useAuiState((state) => state.message.status?.type === 'running')
+    const isLastMessage = useAuiState((state) => state.message.isLast)
+    const createdAt = useAuiState((state) => state.message.createdAt.getTime())
+    const custom = useAuiState((state) => state.message.metadata.custom as Partial<HappyChatMessageMetadata> | undefined)
+
+    const partition = useMemo(
+        () => partitionTurn(contentParts(content), staticCtx?.metadata ?? null),
+        [content, staticCtx?.metadata]
+    )
+    const hasRunningTool = useMemo(
+        () => partition.rows.some(
+            (row) => row.kind === 'tool'
+                && (row.block.tool.state === 'running' || (row.block.tool.state === 'pending' && Boolean(row.permission)))
+        ),
+        [partition.rows]
+    )
+
+    const lang = locale === 'zh-CN' ? 'zh-CN' : 'en'
+    if (!isLastMessage && !auiRunning && !hasRunningTool) {
+        return (
+            <HistoricalTurnBlockBody
+                partition={partition}
+                createdAt={createdAt}
+                custom={custom}
+                lang={lang}
+            />
+        )
+    }
+
+    return (
+        <LiveTailTurnBlockBody
+            partition={partition}
+            auiRunning={auiRunning}
+            hasRunningTool={hasRunningTool}
+            isLastMessage={isLastMessage}
+            createdAt={createdAt}
+            custom={custom}
+            reasoningCollapsed={reasoningCollapsed}
+            lang={lang}
+        />
+    )
+}
+
 export function messageHasTurnActivity(content: readonly { type: string }[]): boolean {
-    return partitionTurn(contentParts(content), null).hasActivity
+    return hasTurnContentActivity(contentParts(content))
 }

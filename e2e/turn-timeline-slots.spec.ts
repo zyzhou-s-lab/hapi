@@ -117,4 +117,40 @@ test.describe('TurnTimeline Todo projection, slot geometry, and TurnDockedWidget
 
         expect(errors).toEqual([])
     })
+
+    test('PR 3 SubturnView renders 3 peer slots and 390x844 Mobile PWA frame stays synchronized', async ({ page }) => {
+        const errors: string[] = []
+        page.on('pageerror', (err) => errors.push(err.message))
+        page.on('console', (msg) => {
+            if (msg.type() === 'error') errors.push(msg.text())
+        })
+
+        await page.setViewportSize({ width: 1440, height: 900 })
+        await page.goto('/e2e-fixtures/turn-timeline-demo.html')
+        await page.locator('[data-testid="turn-timeline-workbench"]').waitFor()
+
+        // Desktop preview and 390x844 Mobile PWA preview are rendered side-by-side
+        await expect(page.locator('[data-testid="desktop-preview"]')).toBeVisible()
+        const mobileFrame = page.locator('[data-testid="mobile-pwa-frame"]')
+        await expect(mobileFrame).toBeVisible()
+        const mobileIframe = page.locator('[data-testid="mobile-pwa-iframe"]')
+        await expect(mobileIframe).toHaveAttribute('width', '390')
+        await expect(mobileIframe).toHaveAttribute('height', '844')
+
+        // Switch to completed stage and verify SubturnView contains all 3 peer slots
+        await page.locator('[data-testid="stage-btn-completed"]').click()
+        const desktopFollowUpSubturn = page.locator('[data-testid="desktop-preview"] [data-testid="turn-followup-block"] [data-testid="turn-subturn"]')
+        await expect(desktopFollowUpSubturn).toBeVisible()
+        await expect(desktopFollowUpSubturn.locator('[data-testid="turn-level0-header"]')).toBeVisible()
+        await expect(desktopFollowUpSubturn.locator('[data-testid="turn-todo-section"]')).toBeVisible()
+        await expect(desktopFollowUpSubturn.locator('[data-testid="turn-trailing-answer"]')).toBeVisible()
+
+        // Tier 3 contract reference is collapsed by default and expands on click
+        const contractToggle = page.locator('[data-testid="demo-contract-toggle"]')
+        await expect(contractToggle).toHaveAttribute('aria-expanded', 'false')
+        await contractToggle.click()
+        await expect(contractToggle).toHaveAttribute('aria-expanded', 'true')
+
+        expect(errors).toEqual([])
+    })
 })
