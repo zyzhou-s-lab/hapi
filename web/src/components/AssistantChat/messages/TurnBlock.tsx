@@ -15,7 +15,6 @@ import { isAskUserQuestionToolName } from '@/components/ToolCard/askUserQuestion
 import { isRequestUserInputToolName } from '@/components/ToolCard/requestUserInput'
 import { ToolDetailDialogContent } from '@/components/ToolCard/ToolCard'
 import { extractImagesFromResult } from '@/components/ToolCard/views/_results'
-import { useReasoningCollapse } from '@/hooks/useReasoningCollapse'
 import type { HappyChatMessageMetadata } from '@/lib/assistant-runtime'
 import { useTranslation } from '@/lib/use-translation'
 import { cn } from '@/lib/utils'
@@ -328,7 +327,6 @@ export function TurnBlockView(props: {
 export function TurnBlock() {
     const ctx = useOptionalHappyChatContext()
     const { locale } = useTranslation()
-    const { reasoningCollapsed } = useReasoningCollapse()
     const content = useAuiState((state) => state.message.role === 'assistant' ? state.message.content : [])
     const auiRunning = useAuiState((state) => state.message.status?.type === 'running')
     const isLastMessage = useAuiState((state) => state.message.isLast)
@@ -375,7 +373,7 @@ export function TurnBlock() {
             lang={locale === 'zh-CN' ? 'zh-CN' : 'en'}
             partition={partition}
             streaming={streaming}
-            initiallyOpen={streaming && !reasoningCollapsed}
+            initiallyOpen={false}
             durationMs={turnDurationMs({
                 roundSummary: custom?.roundSummary,
                 invokedAt: custom?.invokedAt ?? (streaming ? (ctx?.activeTurnStartedAt ?? createdAt) : undefined),

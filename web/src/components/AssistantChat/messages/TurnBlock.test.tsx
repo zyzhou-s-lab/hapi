@@ -4,8 +4,28 @@ import type { ReactNode } from 'react'
 import { I18nProvider } from '@/lib/i18n-context'
 import { HappyChatProvider, type HappyChatContextValue } from '@/components/AssistantChat/context'
 import { partitionTurn } from '@/components/AssistantChat/messages/turnBlockModel'
-import { TurnBlockView } from '@/components/AssistantChat/messages/TurnBlock'
+import { TurnBlock, TurnBlockView } from '@/components/AssistantChat/messages/TurnBlock'
 import type { ToolCallBlock } from '@/chat/types'
+
+const { mockAuiMessage } = vi.hoisted(() => ({
+    mockAuiMessage: {
+        role: 'assistant' as const,
+        content: [] as unknown[],
+        status: { type: 'running' as 'running' | 'complete' },
+        isLast: true,
+        createdAt: new Date(1_000),
+        metadata: { custom: {} as Record<string, unknown> },
+    },
+}))
+
+vi.mock('@assistant-ui/react', async (importOriginal) => {
+    const actual = (await importOriginal()) as Record<string, unknown>
+    return {
+        ...actual,
+        useAuiState: (selector: (state: { message: typeof mockAuiMessage }) => unknown) =>
+            selector({ message: mockAuiMessage }),
+    }
+})
 
 vi.mock('@/components/AssistantChat/messages/NotifySummaryText', () => ({
     NotifySummaryText: ({ text }: { text: string }) => <p>{text}</p>,
@@ -366,5 +386,69 @@ describe('TurnBlockView', () => {
         const imageNodeAfter = screen.getByText('image preview.png')
         expect(imageNodeAfter).toBe(imageNodeBefore)
         expect(screen.getByTestId('turn-level1-rail')).not.toContainElement(imageNodeAfter)
+    })
+
+    it('defaults the timeline track to collapsed while a turn is running and still supports manual expand and auto-collapse', () => {
+        mockAuiMessage.status = { type: 'running' }
+        mockAuiMessage.content = [
+            { type: 'reasoning', text: 'Inspecting TurnBlock default open state', status: { type: 'running' } },
+            {
+                type: 'tool-call',
+                toolCallId: 'read-1',
+                toolName: 'Read',
+                artifact: tool('read-1', 'Read', {
+                    state: 'running',
+                    input: { file_path: 'web/src/components/AssistantChat/messages/TurnBlock.tsx', i: 'Reading TurnBlock' },
+                }),
+            },
+        ]
+
+        const { rerender } = renderBlock(<TurnBlock />)
+
+        const header = screen.getByTestId('turn-level0-header')
+        const shell = screen.getByTestId('turn-level1-shell')
+        expect(header).toHaveAttribute('aria-expanded', 'false')
+        expect(shell).toHaveAttribute('data-open', 'false')
+
+        fireEvent.click(header)
+        expect(header).toHaveAttribute('aria-expanded', 'true')
+        expect(shell).toHaveAttribute('data-open', 'true')
+
+        mockAuiMessage.status = { type: 'complete' }
+        mockAuiMessage.content = [
+            { type: 'reasoning', text: 'Inspecting TurnBlock default open state', status: { type: 'complete' } },
+            {
+                type: 'tool-call',
+                toolCallId: 'read-1',
+                toolName: 'Read',
+                artifact: tool('read-1', 'Read', {
+                    state: 'completed',
+                    input: { file_path: 'web/src/components/AssistantChat/messages/TurnBlock.tsx', i: 'Reading TurnBlock' },
+                }),
+            },
+            { type: 'text', text: 'Timeline now defaults to collapsed while running.' },
+        ]
+
+        rerender(
+            <I18nProvider>
+                <HappyChatProvider
+                    value={{
+                        api: {
+                            approvePermission: vi.fn(async () => undefined),
+                            denyPermission: vi.fn(async () => undefined),
+                        },
+                        sessionId: 'session',
+                        metadata: null,
+                        disabled: false,
+                        onRefresh: vi.fn(),
+                    } as unknown as HappyChatContextValue}
+                >
+                    <TurnBlock />
+                </HappyChatProvider>
+            </I18nProvider>
+        )
+
+        expect(screen.getByTestId('turn-level0-header')).toHaveAttribute('aria-expanded', 'false')
+        expect(screen.getByTestId('turn-level1-shell')).toHaveAttribute('data-open', 'false')
     })
 })
