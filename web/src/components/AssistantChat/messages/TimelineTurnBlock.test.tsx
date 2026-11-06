@@ -1294,4 +1294,103 @@ describe('TimelineTurnBlock & summarizeTurnActivity', () => {
         expect(trailingAnswersAfterComplete[1]).toHaveTextContent('方案已在上文完整呈现，请确认优先级。')
         expect(trailingAnswersAfterComplete[1]?.querySelector('[data-streaming]')).toHaveAttribute('data-streaming', 'false')
     })
+
+    it('resolves all tasks to completed without a stuck spinner when a multi-step OMP todo turn finishes with DONE ALL and auto-cleared phases', () => {
+        const turnWithDoneAll = partitionTurn(
+            [
+                call(tool('todo-1', 'todo', {
+                    state: 'completed',
+                    input: {
+                        input: [
+                            '*** Begin Todo',
+                            'PHASE "Phase 2: Unified Projection & Docked Widgets"',
+                            'ADD "2.1: Create web/src/chat/projections/todoProjection.ts + unit tests" "Create module" 10',
+                            'ADD "2.2: Migrate Checklist, TimelineTurnBlock, TurnTimelineDemo, and ToolMessage to todoProjection" "Migrate consumers" 15',
+                            'ADD "2.3 & 2.4: Extract TurnDockedWidgets.tsx & delete classic TurnBlockView" "Extract widgets" 15',
+                            'ADD "2.5: Run vitest + typecheck and commit PR 2" "Verify and commit" 10',
+                            'START "2.1: Create web/src/chat/projections/todoProjection.ts + unit tests"',
+                            '*** End Todo',
+                        ].join('\n'),
+                    },
+                    result: [{ type: 'text', text: 'Added 4 tasks' }],
+                })),
+                call(tool('todo-2-err', 'todo', {
+                    state: 'error',
+                    input: {
+                        input: [
+                            '*** Begin Todo',
+                            'DONE "2.1: Create web/src/chat/projections/todoProjection.ts + unit tests"',
+                            'START "2.2: Migrate Checklist, TimelineTurnBlock, TurnTimelineDemo, and ToolMessage to todoProjection"',
+                            '*** End Todo',
+                        ].join('\n'),
+                    },
+                    result: 'DONE requires a commit clause when working tree has uncommitted changes',
+                })),
+                call(tool('todo-3', 'todo', {
+                    state: 'completed',
+                    input: {
+                        input: [
+                            '*** Begin Todo',
+                            'START "2.3 & 2.4: Extract TurnDockedWidgets.tsx & delete classic TurnBlockView"',
+                            '*** End Todo',
+                        ].join('\n'),
+                    },
+                    result: {
+                        details: {
+                            phases: [{
+                                name: 'Phase 2: Unified Projection & Docked Widgets',
+                                tasks: [
+                                    { id: 'Phase 2:1', content: '2.1: Create web/src/chat/projections/todoProjection.ts + unit tests', status: 'pending' },
+                                    { id: 'Phase 2:2', content: '2.2: Migrate Checklist, TimelineTurnBlock, TurnTimelineDemo, and ToolMessage to todoProjection', status: 'pending' },
+                                    { id: 'Phase 2:3', content: '2.3 & 2.4: Extract TurnDockedWidgets.tsx & delete classic TurnBlockView', status: 'in_progress' },
+                                    { id: 'Phase 2:4', content: '2.5: Run vitest + typecheck and commit PR 2', status: 'pending' },
+                                ],
+                            }],
+                        },
+                    },
+                })),
+                call(tool('todo-4', 'todo', {
+                    state: 'completed',
+                    input: {
+                        input: [
+                            '*** Begin Todo',
+                            'DONE ALL "refactor(web): unify todoProjection, extract TurnDockedWidgets, and remove classic TurnBlockView (PR 2)"',
+                            '*** End Todo',
+                        ].join('\n'),
+                    },
+                    result: {
+                        details: {
+                            op: 'done',
+                            operations: ['done'],
+                            phases: [],
+                        },
+                    },
+                })),
+                { type: 'text', text: '已完成 V3.2 重构方案的 PR 2。' },
+            ],
+            null
+        )
+
+        render(
+            <I18nProvider>
+                <TimelineTurnBlockView
+                    partition={turnWithDoneAll}
+                    streaming={false}
+                    durationMs={8000}
+                    initiallyOpen={false}
+                    fallbackTodos={[
+                        { id: 'Phase 2:1', content: '2.1: Create web/src/chat/projections/todoProjection.ts + unit tests', status: 'pending', priority: 'medium' },
+                        { id: 'Phase 2:2', content: '2.2: Migrate Checklist, TimelineTurnBlock, TurnTimelineDemo, and ToolMessage to todoProjection', status: 'pending', priority: 'medium' },
+                        { id: 'Phase 2:3', content: '2.3 & 2.4: Extract TurnDockedWidgets.tsx & delete classic TurnBlockView', status: 'in_progress', priority: 'medium' },
+                        { id: 'Phase 2:4', content: '2.5: Run vitest + typecheck and commit PR 2', status: 'pending', priority: 'medium' },
+                    ]}
+                />
+            </I18nProvider>
+        )
+
+        expect(screen.getAllByTestId('turn-todo-checklist-card')).toHaveLength(1)
+        expect(screen.getAllByTestId('turn-todo-item-check')).toHaveLength(4)
+        expect(screen.queryByTestId('turn-todo-item-spinner')).not.toBeInTheDocument()
+        expect(screen.queryByTestId('turn-todo-item-pending')).not.toBeInTheDocument()
+    })
 })

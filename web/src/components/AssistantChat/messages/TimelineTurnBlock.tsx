@@ -25,6 +25,7 @@ import {
     extractTodoChecklist,
     extractUpdatePlanChecklist,
     type ChecklistItem,
+    type OmpTodoTurnCall,
 } from '@/components/ToolCard/checklist'
 import { resolveToolViewName } from '@/components/ToolCard/toolNameAliases'
 import type { ToolCallBlock } from '@/chat/types'
@@ -535,33 +536,51 @@ function extractToolChecklistItems(
     fallbackItems?: readonly ChecklistItem[]
 ): ChecklistItem[] {
     const resolved = resolveToolViewName(block.tool.name)
-    if (resolved !== 'TodoWrite' && resolved !== 'UpdatePlan') return []
-    const turnContext = resolved === 'TodoWrite' && allRows
-        ? collectOmpTodoTurnContext(
-            allRows
-                .filter((row): row is TurnToolRow => row.kind === 'tool' && resolveToolViewName(row.block.tool.name) === 'TodoWrite')
-                .map((row) => ({ input: row.block.tool.input, result: row.block.tool.result }))
-        )
+    if (resolved !== 'TodoWrite' && resolved !== 'UpdatePlan' && resolved !== 'update_plan') return []
+    const isTodoWrite = resolved === 'TodoWrite'
+    const turnCalls: OmpTodoTurnCall[] = []
+    if (isTodoWrite && allRows) {
+        for (const row of allRows) {
+            if (row.kind !== 'tool') continue
+            if (
+                resolveToolViewName(row.block.tool.name) === 'TodoWrite'
+                && row.block.tool.state !== 'error'
+                && !row.error
+            ) {
+                turnCalls.push({
+                    input: row.block.tool.input,
+                    result: row.block.tool.result
+                })
+            }
+            if (row.block.id === block.id) break
+        }
+    }
+    if (isTodoWrite && block.tool.state === 'error') {
+        if (turnCalls.length === 0) return fallbackItems ? [...fallbackItems] : []
+        const lastValidCall = turnCalls[turnCalls.length - 1]!
+        const turnContext = collectOmpTodoTurnContext(turnCalls, fallbackItems)
+        return extractTodoChecklist(lastValidCall.input, lastValidCall.result, turnContext)
+    }
+    const turnContext = isTodoWrite
+        ? collectOmpTodoTurnContext(turnCalls, fallbackItems)
         : undefined
-    const rawItems = resolved === 'TodoWrite'
+    let items = isTodoWrite
         ? extractTodoChecklist(block.tool.input, block.tool.result, turnContext)
         : extractUpdatePlanChecklist(block.tool.input, block.tool.result)
 
-    let items = rawItems
-    if (allRows && block.tool.result == null) {
+    if (!isTodoWrite && allRows && block.tool.result == null) {
         let baseItems: ChecklistItem[] = fallbackItems ? [...fallbackItems] : []
         for (const row of allRows) {
             if (row.kind !== 'tool') continue
             if (row.block.id === block.id) break
             if (resolveToolViewName(row.block.tool.name) !== resolved) continue
-            const prior = resolved === 'TodoWrite'
-                ? extractTodoChecklist(row.block.tool.input, row.block.tool.result, turnContext)
-                : extractUpdatePlanChecklist(row.block.tool.input, row.block.tool.result)
+            if (row.block.tool.state === 'error' || row.error) continue
+            const prior = extractUpdatePlanChecklist(row.block.tool.input, row.block.tool.result)
             if (prior.length > 0) baseItems = prior
         }
         if (baseItems.length > 0) {
             const merged = baseItems.map((item) => ({ ...item }))
-            for (const update of rawItems) {
+            for (const update of items) {
                 const existing = merged.find((item) => item.text === update.text)
                 if (existing) {
                     existing.status = update.status
@@ -572,7 +591,6 @@ function extractToolChecklistItems(
             items = merged
         }
     }
-
     if (
         block.tool.state === 'running'
         && items.length > 0
