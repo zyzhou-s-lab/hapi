@@ -90,9 +90,11 @@ const PERSIST_THROTTLE_MS = 200
 const STORAGE_KEY_PREFIX = 'hapi:message-window:v2:'
 const pendingNotifySessionIds = new Set<string>()
 const pendingPersistSessionIds = new Set<string>()
+const deferredPersistSessionIds = new Set<string>()
 let notifyRafId: ReturnType<typeof requestAnimationFrame> | null = null
 let notifyTimerId: ReturnType<typeof setTimeout> | null = null
 let persistTimerId: ReturnType<typeof setTimeout> | null = null
+let pagehidePersistListenerBound = false
 let lastNotifyAt = 0
 
 function requestNotifyFrame(): void {
@@ -195,6 +197,11 @@ function persistState(sessionId: string, state: InternalState): void {
 
 function clearPersistedState(sessionId: string): void {
     pendingPersistSessionIds.delete(sessionId)
+    deferredPersistSessionIds.delete(sessionId)
+    if (pendingPersistSessionIds.size === 0 && persistTimerId !== null) {
+        clearTimeout(persistTimerId)
+        persistTimerId = null
+    }
     if (!isSessionStorageAvailable()) {
         return
     }
@@ -209,6 +216,7 @@ function flushPersistedStates(): void {
     const sessionIds = [...pendingPersistSessionIds]
     pendingPersistSessionIds.clear()
     for (const sessionId of sessionIds) {
+        deferredPersistSessionIds.delete(sessionId)
         const state = states.get(sessionId)
         if (state) {
             persistState(sessionId, state)
@@ -218,16 +226,44 @@ function flushPersistedStates(): void {
     }
 }
 
-function schedulePersist(sessionId: string): void {
+export function flushDeferredPersistedStates(): void {
+    if (deferredPersistSessionIds.size === 0 && pendingPersistSessionIds.size === 0) {
+        return
+    }
+    for (const sessionId of deferredPersistSessionIds) {
+        pendingPersistSessionIds.add(sessionId)
+    }
+    deferredPersistSessionIds.clear()
+    if (persistTimerId !== null) {
+        clearTimeout(persistTimerId)
+        persistTimerId = null
+    }
+    flushPersistedStates()
+}
+
+function ensurePagehidePersistListener(): void {
+    if (pagehidePersistListenerBound || typeof window === 'undefined' || typeof window.addEventListener !== 'function') {
+        return
+    }
+    pagehidePersistListenerBound = true
+    window.addEventListener('pagehide', flushDeferredPersistedStates)
+}
+
+function schedulePersist(sessionId: string, deferWhileStreaming = false): void {
     if (!isSessionStorageAvailable()) {
         return
     }
+    ensurePagehidePersistListener()
+    if (deferWhileStreaming) {
+        deferredPersistSessionIds.add(sessionId)
+        return
+    }
+    deferredPersistSessionIds.delete(sessionId)
     pendingPersistSessionIds.add(sessionId)
     if (persistTimerId === null) {
         persistTimerId = setTimeout(flushPersistedStates, PERSIST_THROTTLE_MS)
     }
 }
-
 function createState(sessionId: string): InternalState {
     return {
         finalizedStreamIds: new Set(),
@@ -324,9 +360,14 @@ function notifyImmediate(sessionId: string): void {
     }
 }
 
-function setState(sessionId: string, next: InternalState, immediate = false): void {
+function setState(
+    sessionId: string,
+    next: InternalState,
+    immediate = false,
+    deferPersist = false
+): void {
     states.set(sessionId, next)
-    schedulePersist(sessionId)
+    schedulePersist(sessionId, deferPersist)
     if (immediate) {
         notifyImmediate(sessionId)
     } else {
@@ -337,12 +378,13 @@ function setState(sessionId: string, next: InternalState, immediate = false): vo
 function updateState(
     sessionId: string,
     updater: (previous: InternalState) => InternalState,
-    immediate = false
+    immediate = false,
+    deferPersist = false
 ): void {
     const previous = getState(sessionId)
     const next = updater(previous)
     if (next !== previous) {
-        setState(sessionId, next, immediate)
+        setState(sessionId, next, immediate, deferPersist)
     }
 }
 
@@ -736,6 +778,13 @@ function applyLatestResponse(
                 && JSON.stringify(existing.content) === JSON.stringify(message.content)
             ) {
                 return existing
+            }
+            if (existing && message.status === undefined && existing.status && (existing.status !== 'queued' || message.invokedAt == null)) {
+                return {
+                    ...message,
+                    status: existing.status,
+                    ...(existing.queuedWhileSending && message.invokedAt == null ? { queuedWhileSending: true } : {})
+                }
             }
             return message
         })
@@ -1265,6 +1314,9 @@ export function setMessageViewMode(sessionId: string, mode: MessageViewMode): vo
 
 export function ingestIncomingMessages(sessionId: string, incoming: DecryptedMessage[]): void {
     if (incoming.length === 0) return
+    const isLiveStreamOnlyUpdate = incoming.every(
+        (message) => getLiveMessageStreamId(message.content) !== null
+    )
     updateState(sessionId, (previous) => {
         let merged = mergeIntoWindow(previous, incoming, {
             advanceTailRevision: true
@@ -1282,7 +1334,7 @@ export function ingestIncomingMessages(sessionId: string, incoming: DecryptedMes
             newestPositionSeq: newest?.seq ?? null
         })
         return merged
-    })
+    }, false, isLiveStreamOnlyUpdate)
 }
 
 export function getMessageWindowState(sessionId: string): MessageWindowState {
@@ -1308,11 +1360,12 @@ export function clearMessageWindow(sessionId: string): void {
     clearPersistedState(sessionId)
     const previous = states.get(sessionId)
     if (!previous) return
-    setState(sessionId, {
+    states.set(sessionId, {
         ...createState(sessionId),
         syncGeneration: previous.syncGeneration + 1,
         olderGeneration: previous.olderGeneration + 1
-    }, true)
+    })
+    notifyImmediate(sessionId)
 }
 
 export function seedMessageWindowFromSession(fromSessionId: string, toSessionId: string): void {
@@ -1388,7 +1441,7 @@ export function updateMessageStatus(sessionId: string, localId: string, status: 
             return { ...message, status }
         })
         return changed ? buildState(previous, { messages }) : previous
-    })
+    }, true)
 }
 
 export function removeOptimisticMessage(sessionId: string, localId: string): void {
@@ -1455,7 +1508,11 @@ export function markMessagesConsumed(
             const needsSteered = steered === true && message.steered !== true
             if (!needsStatus && !needsInvokedAt && !needsSteered) return message
             changed = true
-            const { deliveryState: _deliveryState, ...withoutDeliveryState } = message
+            const {
+                deliveryState: _deliveryState,
+                queuedWhileSending: _queuedWhileSending,
+                ...withoutDeliveryState
+            } = message
             return {
                 ...withoutDeliveryState,
                 ...(needsStatus ? { status: 'sent' as MessageStatus } : {}),
@@ -1468,5 +1525,5 @@ export function markMessagesConsumed(
             messages: mergeMessages([], updated),
             tailRevision: previous.tailRevision + 1
         })
-    })
+    }, true)
 }

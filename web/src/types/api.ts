@@ -134,6 +134,7 @@ export type DecryptedMessage = ProtocolDecryptedMessage & {
     status?: MessageStatus
     originalText?: string
     invokedAt?: number | null
+    queuedWhileSending?: boolean
 }
 
 export type FileSearchItem = {

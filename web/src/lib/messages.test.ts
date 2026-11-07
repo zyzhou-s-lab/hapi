@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { DecryptedMessage } from '@/types/api'
-import { mergeMessages } from '@/lib/messages'
+import { isDisplayedInQueueBar, isQueuedForInvocation, mergeMessages } from '@/lib/messages'
 
 function userMessage(partial: Partial<DecryptedMessage> & { id: string }): DecryptedMessage {
     return {
@@ -69,5 +69,54 @@ describe('mergeMessages', () => {
         const merged = mergeMessages([inconsistent], [])
         expect(merged).toHaveLength(1)
         expect(merged[0]?.status).not.toBe('queued')
+    })
+
+    it('preserves status "sent" and queuedWhileSending when an uninvoked server echo arrives', () => {
+        const optimisticIdle = userMessage({ id: 'local-idle', localId: 'local-idle', invokedAt: null, status: 'sent' })
+        const serverIdle = userMessage({ id: 'server-idle', localId: 'local-idle', invokedAt: null })
+        const mergedIdle = mergeMessages([optimisticIdle], [serverIdle])
+        expect(mergedIdle[0]?.status).toBe('sent')
+        expect(isDisplayedInQueueBar(mergedIdle[0]!)).toBe(false)
+
+        const optimisticQueued = {
+            ...userMessage({ id: 'local-q', localId: 'local-q', invokedAt: null, status: 'sending' }),
+            queuedWhileSending: true,
+        }
+        const serverQueued = userMessage({ id: 'server-q', localId: 'local-q', invokedAt: null })
+        const mergedQueued = mergeMessages([optimisticQueued], [serverQueued])
+        expect(mergedQueued[0]?.queuedWhileSending).toBe(true)
+        expect(isDisplayedInQueueBar(mergedQueued[0]!)).toBe(true)
+    })
+})
+
+describe('isDisplayedInQueueBar', () => {
+    it('routes immediate idle sends to the main timeline while keeping them queued for invocation retention', () => {
+        const sendingIdle = userMessage({ id: 'local-1', invokedAt: null, status: 'sending' })
+        expect(isQueuedForInvocation(sendingIdle)).toBe(true)
+        expect(isDisplayedInQueueBar(sendingIdle)).toBe(false)
+
+        const sentIdle = userMessage({ id: 'local-1', invokedAt: null, status: 'sent' })
+        expect(isQueuedForInvocation(sentIdle)).toBe(true)
+        expect(isDisplayedInQueueBar(sentIdle)).toBe(false)
+    })
+
+    it('routes thinking-session, explicitly queued, scheduled, and server-uninvoked messages to the queue bar', () => {
+        const sendingWhileBusy: DecryptedMessage = {
+            ...userMessage({ id: 'local-2', invokedAt: null, status: 'sending' }),
+            queuedWhileSending: true,
+        }
+        expect(isDisplayedInQueueBar(sendingWhileBusy)).toBe(true)
+
+        const queued = userMessage({ id: 'local-3', invokedAt: null, status: 'queued' })
+        expect(isDisplayedInQueueBar(queued)).toBe(true)
+
+        const serverPending = userMessage({ id: 'server-4', invokedAt: null, status: undefined })
+        expect(isDisplayedInQueueBar(serverPending)).toBe(true)
+
+        const scheduled: DecryptedMessage = {
+            ...userMessage({ id: 'local-5', invokedAt: null, status: 'sent' }),
+            scheduledAt: 1_700_005_000_000,
+        }
+        expect(isDisplayedInQueueBar(scheduled)).toBe(true)
     })
 })

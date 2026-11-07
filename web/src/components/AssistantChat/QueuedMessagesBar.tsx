@@ -2,7 +2,7 @@ import { useAui, useAuiState } from '@assistant-ui/react'
 import { useCallback, useEffect, useMemo, useRef, useSyncExternalStore } from 'react'
 import type { ApiClient } from '@/api/client'
 import { getMessageWindowState, subscribeMessageWindow } from '@/lib/message-window-store'
-import { isQueuedForInvocation } from '@/lib/messages'
+import { isDisplayedInQueueBar } from '@/lib/messages'
 import { EMPTY_STATE } from '@/hooks/queries/useMessages'
 import { normalizeDecryptedMessage } from '@/chat/normalize'
 import type { DecryptedMessage } from '@/types/api'
@@ -101,7 +101,7 @@ function useQueuedMessages(sessionId: string): DecryptedMessage[] {
     // useSyncExternalStore guarantees a stable reference when the snapshot is
     // unchanged, so [state] as the dependency avoids unnecessary re-sorts.
     return useMemo(() => {
-        return sortQueuedMessages(state.messages.filter(isQueuedForInvocation))
+        return sortQueuedMessages(state.messages.filter(isDisplayedInQueueBar))
     }, [state])
 }
 

@@ -7,6 +7,7 @@ import {
     appendOptimisticMessage,
     clearMessageWindow,
     fetchOlderMessages,
+    flushDeferredPersistedStates,
     getMessageWindowState,
     getQueuedReconcileCandidateLocalIds,
     ingestIncomingMessages,
@@ -2199,5 +2200,35 @@ describe('canonical assistant snapshot compaction', () => {
             beforeSeq: 5
         }))
         expect(getMessageWindowState(id).hasMore).toBe(false)
+    })
+
+    it('defers sessionStorage writes during live streaming snapshots until finalized or flushed', () => {
+        vi.useFakeTimers()
+        const id = sessionId('defer-live-persist')
+        const storageKey = `hapi:message-window:v2:${id}`
+
+        try {
+            ingestIncomingMessages(id, [makeCanonicalSnapshot('live-1', 'stream-defer', 1, true)])
+            ingestIncomingMessages(id, [makeCanonicalSnapshot('live-2', 'stream-defer', 2, true)])
+            vi.advanceTimersByTime(250)
+
+            expect(sessionStorage.getItem(storageKey)).toBeNull()
+
+            ingestIncomingMessages(id, [makeCanonicalSnapshot('final-3', 'stream-defer', 3, false)])
+            vi.advanceTimersByTime(250)
+            const persistedAfterFinal = JSON.parse(sessionStorage.getItem(storageKey)!)
+            expect(persistedAfterFinal.messages.map((m: DecryptedMessage) => m.id)).toEqual(['final-3'])
+
+            ingestIncomingMessages(id, [makeCanonicalSnapshot('live-4', 'stream-defer-2', 4, true)])
+            vi.advanceTimersByTime(250)
+            const persistedWhileLive = JSON.parse(sessionStorage.getItem(storageKey)!)
+            expect(persistedWhileLive.messages.map((m: DecryptedMessage) => m.id)).toEqual(['final-3'])
+
+            flushDeferredPersistedStates()
+            const persistedAfterFlush = JSON.parse(sessionStorage.getItem(storageKey)!)
+            expect(persistedAfterFlush.messages.map((m: DecryptedMessage) => m.id)).toEqual(['final-3', 'live-4'])
+        } finally {
+            vi.useRealTimers()
+        }
     })
 })

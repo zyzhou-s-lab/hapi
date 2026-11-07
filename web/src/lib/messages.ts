@@ -22,6 +22,19 @@ export function isQueuedForInvocation(msg: DecryptedMessage): boolean {
     return isUserMessage(msg) && msg.invokedAt === null && msg.status !== 'failed'
 }
 
+/** Whether an uninvoked user message belongs in QueuedMessagesBar above the
+ *  composer rather than the main chat timeline (`visibleMessages`). Immediate
+ *  sends in an idle session (`status === 'sending'` without `queuedWhileSending`,
+ *  or `status === 'sent'`) enter the main chat timeline at 0ms instead of
+ *  bouncing through the queue bar while awaiting `messages-consumed`. */
+export function isDisplayedInQueueBar(msg: DecryptedMessage): boolean {
+    if (!isQueuedForInvocation(msg)) return false
+    if (msg.scheduledAt != null) return true
+    if (msg.status === 'sent') return false
+    if (msg.status === 'sending') return msg.queuedWhileSending === true
+    return true
+}
+
 function isOptimisticMessage(msg: DecryptedMessage): boolean {
     return Boolean(msg.localId && msg.id === msg.localId)
 }
@@ -79,6 +92,15 @@ export function mergeMessages(existing: DecryptedMessage[], incoming: DecryptedM
             if (existing.steered && !msg.steered) {
                 preserved.steered = true
             }
+            const effectiveInvokedAt = preserved.invokedAt ?? msg.invokedAt
+            if (existing.status && !msg.status) {
+                if (existing.status !== 'queued' || effectiveInvokedAt == null) {
+                    preserved.status = existing.status
+                }
+            }
+            if (existing.queuedWhileSending && !msg.queuedWhileSending && effectiveInvokedAt == null) {
+                preserved.queuedWhileSending = true
+            }
             byId.set(msg.id, Object.keys(preserved).length > 0 ? { ...msg, ...preserved } : msg)
         } else {
             byId.set(msg.id, msg)
@@ -100,6 +122,7 @@ export function mergeMessages(existing: DecryptedMessage[], incoming: DecryptedM
         const optimisticStatusByLocalId = new Map<string, DecryptedMessage['status']>()
         const optimisticInvokedAtByLocalId = new Map<string, number | null | undefined>()
         const optimisticSteeredByLocalId = new Map<string, boolean>()
+        const optimisticQueuedWhileSendingByLocalId = new Map<string, boolean>()
         for (const msg of merged) {
             if (msg.localId && isOptimisticMessage(msg) && incomingStoredLocalIds.has(msg.localId)) {
                 if (msg.status) {
@@ -111,6 +134,9 @@ export function mergeMessages(existing: DecryptedMessage[], incoming: DecryptedM
                 if (msg.steered) {
                     optimisticSteeredByLocalId.set(msg.localId, true)
                 }
+                if (msg.queuedWhileSending) {
+                    optimisticQueuedWhileSendingByLocalId.set(msg.localId, true)
+                }
             }
         }
         merged = merged.filter((msg) => {
@@ -119,7 +145,7 @@ export function mergeMessages(existing: DecryptedMessage[], incoming: DecryptedM
             }
             return !isOptimisticMessage(msg)
         })
-        if (optimisticStatusByLocalId.size > 0 || optimisticInvokedAtByLocalId.size > 0 || optimisticSteeredByLocalId.size > 0) {
+        if (optimisticStatusByLocalId.size > 0 || optimisticInvokedAtByLocalId.size > 0 || optimisticSteeredByLocalId.size > 0 || optimisticQueuedWhileSendingByLocalId.size > 0) {
             merged = merged.map((msg) => {
                 if (!msg.localId) return msg
                 const update: Partial<DecryptedMessage> = {}
@@ -145,6 +171,9 @@ export function mergeMessages(existing: DecryptedMessage[], incoming: DecryptedM
                 // otherwise the ↳ Steered badge vanishes the moment the echo lands.
                 if (optimisticSteeredByLocalId.has(msg.localId) && !msg.steered) {
                     update.steered = true
+                }
+                if (optimisticQueuedWhileSendingByLocalId.has(msg.localId) && !msg.queuedWhileSending && (update.invokedAt ?? msg.invokedAt) == null) {
+                    update.queuedWhileSending = true
                 }
                 if (Object.keys(update).length > 0) {
                     return { ...msg, ...update }

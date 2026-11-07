@@ -108,7 +108,11 @@ type UseSendMessageOptions = {
 
 /** Create an optimistic message for display. Extracted as an extension point
  *  so a future floating-UI PR can route queued messages to a separate area. */
-function createOptimisticMessage(input: SendMessageInput, status: 'queued' | 'sending'): DecryptedMessage {
+function createOptimisticMessage(
+    input: SendMessageInput,
+    status: 'queued' | 'sending',
+    queuedWhileSending = false,
+): DecryptedMessage {
     return {
         id: input.localId,
         seq: null,
@@ -132,6 +136,7 @@ function createOptimisticMessage(input: SendMessageInput, status: 'queued' | 'se
         scheduledAt: input.scheduledAt ?? null,
         status,
         originalText: input.text,
+        ...(queuedWhileSending ? { queuedWhileSending: true } : {}),
     }
 }
 
@@ -227,8 +232,9 @@ export function useSendMessage(
             )
         },
         onMutate: async (input) => {
-            const successStatus = isSessionThinkingRef.current ? 'queued' as const : 'sent' as const
-            appendOptimisticMessage(input.sessionId, createOptimisticMessage(input, 'sending'))
+            const isQueuedSend = isSessionThinkingRef.current || input.scheduledAt != null
+            const successStatus = isQueuedSend ? 'queued' as const : 'sent' as const
+            appendOptimisticMessage(input.sessionId, createOptimisticMessage(input, 'sending', isQueuedSend))
             return { successStatus }
         },
         onSuccess: (_, input, context) => {

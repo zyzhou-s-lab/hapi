@@ -12,7 +12,7 @@ import { buildVisibleChatBlocks, isToolGroupBlock, type ToolGroupBlock } from '@
 import { buildSessionStatusData } from '@/chat/sessionStatus'
 import { useUnseenBlockCount } from '@/hooks/useUnseenBlockCount'
 import { useCodexExplorationCollapse } from '@/hooks/useCodexExplorationCollapse'
-import { isQueuedForInvocation } from '@/lib/messages'
+import { isDisplayedInQueueBar } from '@/lib/messages'
 import { findLatestCompletedBoundaryId } from '@/lib/assistant-runtime'
 import { useToast } from '@/lib/toast-context'
 import { useTranslation } from '@/lib/use-translation'
@@ -479,12 +479,11 @@ export function useSessionChatPipeline(props: UseSessionChatPipelineParams) {
         onResetSessionViewRef.current?.()
     }, [props.session.id])
 
-    // Exclude user messages that haven't been invoked yet — those appear in the
-    // QueuedMessagesBar above the composer, not in the thread timeline. The
-    // `isQueuedForInvocation` predicate is shared with the window store and the
-    // floating bar so the three views never disagree about queued state.
+    // Exclude user messages that belong in QueuedMessagesBar above the composer.
+    // Immediate sends on an idle session stay in `visibleMessages` from 0ms so
+    // they never bounce through the queue bar while awaiting `messages-consumed`.
     const visibleMessages = useMemo(
-        () => props.messages.filter((m) => !isQueuedForInvocation(m)),
+        () => props.messages.filter((m) => !isDisplayedInQueueBar(m)),
         [props.messages]
     )
 
