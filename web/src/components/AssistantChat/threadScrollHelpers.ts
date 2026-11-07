@@ -16,6 +16,11 @@ export type PendingScrollRestore = {
 export type HistoryLoadSource = 'coverage' | 'user' | 'consumer'
 export type PullToLoadState = 'idle' | 'pulling' | 'ready'
 
+export type ThreadScrollMode =
+    | 'tail-follow'
+    | 'user-reading'
+    | 'pagination-restore'
+
 export type HistoryLoaderState = {
     runId: number
     phase: 'idle' | 'loading' | 'backoff' | 'awaiting-render'
@@ -111,6 +116,148 @@ export function shouldCancelInitialScrollSettling(
     return hasExplicitUpwardIntent
         && intent.isScrollingUp
         && intent.distanceFromBottom > MANUAL_SCROLL_EPSILON_PX
+}
+
+export function resolveThreadScrollMode(params: {
+    autoScrollEnabled: boolean
+    atBottom: boolean
+    hasPendingRestore: boolean
+}): ThreadScrollMode {
+    if (params.hasPendingRestore) {
+        return 'pagination-restore'
+    }
+    if (params.autoScrollEnabled && params.atBottom) {
+        return 'tail-follow'
+    }
+    return 'user-reading'
+}
+
+export function shouldFollowTailInScrollMode(mode: ThreadScrollMode): boolean {
+    return mode === 'tail-follow'
+}
+
+export type ViewportScrollTransition = {
+    nextMode: ThreadScrollMode
+    autoScrollEnabled: boolean
+    atBottom: boolean
+    cancelInitialSettling: boolean
+    clearTailScrollInProgress: boolean
+    cancelActiveHistoryLoad: boolean
+    preserveTailDuringSmoothScroll: boolean
+}
+
+export function transitionScrollModeOnViewportScroll(params: {
+    intent: ScrollIntent
+    isInitialSettling: boolean
+    hadExplicitUpwardIntent: boolean
+    tailScrollInProgress: boolean
+    needsCoverage: boolean
+    hasPendingRestore: boolean
+}): ViewportScrollTransition {
+    if (params.isInitialSettling) {
+        const cancel = shouldCancelInitialScrollSettling(params.intent, params.hadExplicitUpwardIntent)
+        const autoScrollEnabled = !cancel
+        const atBottom = !cancel
+        return {
+            nextMode: resolveThreadScrollMode({
+                autoScrollEnabled,
+                atBottom,
+                hasPendingRestore: params.hasPendingRestore,
+            }),
+            autoScrollEnabled,
+            atBottom,
+            cancelInitialSettling: cancel,
+            clearTailScrollInProgress: false,
+            cancelActiveHistoryLoad: false,
+            preserveTailDuringSmoothScroll: !cancel,
+        }
+    }
+
+    if (params.intent.isScrollingUp && params.intent.distanceFromBottom > MANUAL_SCROLL_EPSILON_PX) {
+        return {
+            nextMode: resolveThreadScrollMode({
+                autoScrollEnabled: false,
+                atBottom: false,
+                hasPendingRestore: params.hasPendingRestore,
+            }),
+            autoScrollEnabled: false,
+            atBottom: false,
+            cancelInitialSettling: false,
+            clearTailScrollInProgress: true,
+            cancelActiveHistoryLoad: false,
+            preserveTailDuringSmoothScroll: false,
+        }
+    }
+
+    if (params.intent.isNearBottom) {
+        return {
+            nextMode: resolveThreadScrollMode({
+                autoScrollEnabled: true,
+                atBottom: true,
+                hasPendingRestore: params.hasPendingRestore,
+            }),
+            autoScrollEnabled: true,
+            atBottom: true,
+            cancelInitialSettling: false,
+            clearTailScrollInProgress: true,
+            cancelActiveHistoryLoad: !params.needsCoverage,
+            preserveTailDuringSmoothScroll: false,
+        }
+    }
+
+    if (params.tailScrollInProgress) {
+        return {
+            nextMode: resolveThreadScrollMode({
+                autoScrollEnabled: true,
+                atBottom: true,
+                hasPendingRestore: params.hasPendingRestore,
+            }),
+            autoScrollEnabled: true,
+            atBottom: true,
+            cancelInitialSettling: false,
+            clearTailScrollInProgress: false,
+            cancelActiveHistoryLoad: false,
+            preserveTailDuringSmoothScroll: true,
+        }
+    }
+
+    return {
+        nextMode: resolveThreadScrollMode({
+            autoScrollEnabled: false,
+            atBottom: false,
+            hasPendingRestore: params.hasPendingRestore,
+        }),
+        autoScrollEnabled: false,
+        atBottom: false,
+        cancelInitialSettling: false,
+        clearTailScrollInProgress: false,
+        cancelActiveHistoryLoad: false,
+        preserveTailDuringSmoothScroll: false,
+    }
+}
+
+export function resolveStructureMessagesVersion(params: {
+    messagesVersion: number
+    previousStructureVersion: number
+    previousStructureKey: string
+    nextStructureKey: string
+    previousHistoryVersion: number
+    nextHistoryVersion: number
+    previousRawMessagesCount: number
+    nextRawMessagesCount: number
+}): number {
+    if (params.messagesVersion <= 0) {
+        return 0
+    }
+    if (
+        params.previousStructureVersion <= 0
+        || params.previousStructureKey !== params.nextStructureKey
+        || params.previousHistoryVersion !== params.nextHistoryVersion
+        || params.previousRawMessagesCount !== params.nextRawMessagesCount
+    ) {
+        return params.messagesVersion
+    }
+    return params.previousStructureVersion
 }
 
 type CapturedAnchorState = {

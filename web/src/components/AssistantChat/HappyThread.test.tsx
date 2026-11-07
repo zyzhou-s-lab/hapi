@@ -20,11 +20,15 @@ import {
     locateOutlineTargetMessage,
     measureComposerDockInset,
     nextPinnedAnchorUntil,
+    resolveStructureMessagesVersion,
+    resolveThreadScrollMode,
     restoreScrollAnchor,
     shouldCancelInitialScrollSettling,
+    shouldFollowTailInScrollMode,
     shouldLoadOlderForViewport,
     shouldRecapturePendingHistoryAnchor,
     shouldSuppressPinnedWheel,
+    transitionScrollModeOnViewportScroll,
 } from '@/components/AssistantChat/threadScrollHelpers'
 import { prependMissingUserSnapshot } from '@/components/AssistantChat/useShareTurnCapture'
 import { AssistantRuntimeProvider, useExternalStoreRuntime } from '@assistant-ui/react'
@@ -850,5 +854,122 @@ describe('visible older-history loading', () => {
         const anchor = captureScrollAnchor(viewport)
         expect(anchor?.id).toBe('hapi-message-assistant-split')
         expect(isTopTurnHeadlessAssistant(viewport)).toBe(true)
+    })
+})
+
+describe('3-state scroll mode and structure version helpers', () => {
+    it('maps auto-scroll, bottom proximity, and pending restore into explicit scroll modes', () => {
+        expect(resolveThreadScrollMode({
+            autoScrollEnabled: true,
+            atBottom: true,
+            hasPendingRestore: false,
+        })).toBe('tail-follow')
+
+        expect(resolveThreadScrollMode({
+            autoScrollEnabled: false,
+            atBottom: false,
+            hasPendingRestore: false,
+        })).toBe('user-reading')
+
+        expect(resolveThreadScrollMode({
+            autoScrollEnabled: true,
+            atBottom: true,
+            hasPendingRestore: true,
+        })).toBe('pagination-restore')
+
+        expect(shouldFollowTailInScrollMode('tail-follow')).toBe(true)
+        expect(shouldFollowTailInScrollMode('user-reading')).toBe(false)
+        expect(shouldFollowTailInScrollMode('pagination-restore')).toBe(false)
+    })
+
+    it('transitions between tail-follow, user-reading, and pagination-restore on viewport scroll', () => {
+        const scrolledUp = transitionScrollModeOnViewportScroll({
+            intent: getScrollIntent({
+                scrollTop: 200,
+                previousScrollTop: 400,
+                scrollHeight: 1200,
+                clientHeight: 600,
+            }),
+            isInitialSettling: false,
+            hadExplicitUpwardIntent: true,
+            tailScrollInProgress: false,
+            needsCoverage: false,
+            hasPendingRestore: false,
+        })
+        expect(scrolledUp.nextMode).toBe('user-reading')
+        expect(scrolledUp.autoScrollEnabled).toBe(false)
+        expect(scrolledUp.atBottom).toBe(false)
+
+        const returnedToBottom = transitionScrollModeOnViewportScroll({
+            intent: getScrollIntent({
+                scrollTop: 600,
+                previousScrollTop: 300,
+                scrollHeight: 1200,
+                clientHeight: 600,
+            }),
+            isInitialSettling: false,
+            hadExplicitUpwardIntent: false,
+            tailScrollInProgress: false,
+            needsCoverage: false,
+            hasPendingRestore: false,
+        })
+        expect(returnedToBottom.nextMode).toBe('tail-follow')
+        expect(returnedToBottom.autoScrollEnabled).toBe(true)
+        expect(returnedToBottom.atBottom).toBe(true)
+
+        const duringPagination = transitionScrollModeOnViewportScroll({
+            intent: getScrollIntent({
+                scrollTop: 200,
+                previousScrollTop: 400,
+                scrollHeight: 1200,
+                clientHeight: 600,
+            }),
+            isInitialSettling: false,
+            hadExplicitUpwardIntent: true,
+            tailScrollInProgress: false,
+            needsCoverage: false,
+            hasPendingRestore: true,
+        })
+        expect(duringPagination.nextMode).toBe('pagination-restore')
+    })
+
+    it('keeps structureMessagesVersion stable during streaming deltas when timeline structure is unchanged', () => {
+        const initial = resolveStructureMessagesVersion({
+            messagesVersion: 1,
+            previousStructureVersion: 0,
+            previousStructureKey: '',
+            nextStructureKey: 'user:u1|assistant:a1',
+            previousHistoryVersion: 0,
+            nextHistoryVersion: 0,
+            previousRawMessagesCount: 0,
+            nextRawMessagesCount: 2,
+        })
+        expect(initial).toBe(1)
+
+        // Streaming delta increments messagesVersion to 2, 3, 4 without changing structure
+        const delta2 = resolveStructureMessagesVersion({
+            messagesVersion: 2,
+            previousStructureVersion: initial,
+            previousStructureKey: 'user:u1|assistant:a1',
+            nextStructureKey: 'user:u1|assistant:a1',
+            previousHistoryVersion: 0,
+            nextHistoryVersion: 0,
+            previousRawMessagesCount: 2,
+            nextRawMessagesCount: 2,
+        })
+        expect(delta2).toBe(1)
+
+        // Appending a new block updates structureMessagesVersion to latest messagesVersion
+        const appended = resolveStructureMessagesVersion({
+            messagesVersion: 5,
+            previousStructureVersion: delta2,
+            previousStructureKey: 'user:u1|assistant:a1',
+            nextStructureKey: 'user:u1|assistant:a1|tool_group:tg1',
+            previousHistoryVersion: 0,
+            nextHistoryVersion: 0,
+            previousRawMessagesCount: 2,
+            nextRawMessagesCount: 3,
+        })
+        expect(appended).toBe(5)
     })
 })

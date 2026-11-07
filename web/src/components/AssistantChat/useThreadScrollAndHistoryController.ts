@@ -16,7 +16,9 @@ import {
     MAX_COVERAGE_LOAD_RETRIES,
     MESSAGE_ANCHOR_SELECTOR,
     nextPinnedAnchorUntil,
+    resolveThreadScrollMode,
     restoreScrollAnchor,
+    shouldFollowTailInScrollMode,
     shouldLoadOlderForViewport,
     WHEEL_GESTURE_GAP_MS,
     type HistoryLoaderState,
@@ -24,6 +26,7 @@ import {
     type PendingScrollRestore,
     type PullToLoadState,
     type ScrollAnchor,
+    type ThreadScrollMode,
 } from '@/components/AssistantChat/threadScrollHelpers'
 import { useThreadViewportEvents } from '@/components/AssistantChat/useThreadViewportEvents'
 
@@ -42,12 +45,12 @@ export function useThreadScrollAndHistoryController(props: {
     appliedHistoryVersion: number
     isAwaitingMessagesRender: boolean
     isAwaitingHistoryRender: boolean
+    timelineStructureKey?: string
     onOutlineOpenChange: (open: boolean) => void
     onOutlineItemClick?: (item: ConversationOutlineItem) => void
     bottomInsetPx?: number
 }) {
     const {
-        appliedMessagesVersion,
         appliedHistoryVersion,
         isAwaitingMessagesRender,
         isAwaitingHistoryRender,
@@ -126,8 +129,21 @@ export function useThreadScrollAndHistoryController(props: {
     const initialScrollDeadlineRef = useRef(0)
     const initialScrollTimersRef = useRef<number[]>([])
 
-    // Smart scroll state: enabled only while the user is intentionally at the bottom.
+    // Explicit 3-state scroll machine: 'tail-follow' | 'user-reading' | 'pagination-restore'.
+    const scrollModeRef = useRef<ThreadScrollMode>('tail-follow')
     const autoScrollEnabledRef = useRef(true)
+    const syncScrollMode = useCallback((): ThreadScrollMode => {
+        const next = resolveThreadScrollMode({
+            autoScrollEnabled: autoScrollEnabledRef.current,
+            atBottom: atBottomRef.current,
+            hasPendingRestore: pendingScrollRef.current !== null,
+        })
+        scrollModeRef.current = next
+        return next
+    }, [])
+    const hasSettledInitialScroll = initialScrollSessionRef.current === props.sessionId
+    const isAwaitingInitialRender = !hasSettledInitialScroll && isAwaitingMessagesRender
+    const structureKey = props.timelineStructureKey ?? `${props.rawMessagesCount}:${appliedHistoryVersion}`
     useLayoutEffect(() => {
         onViewModeChangeRef.current = props.onViewModeChange
         hasMoreMessagesRef.current = props.hasMoreMessages
@@ -179,8 +195,9 @@ export function useThreadScrollAndHistoryController(props: {
         pendingScrollRef.current = null
         pendingLoadResolveRef.current = null
         pendingLoadPromiseRef.current = null
+        syncScrollMode()
         resolve?.(result)
-    }, [])
+    }, [syncScrollMode])
 
     const cancelActiveHistoryLoad = useCallback(() => {
         const state = historyLoaderRef.current
@@ -212,6 +229,7 @@ export function useThreadScrollAndHistoryController(props: {
     useThreadViewportEvents({
         viewportRef,
         lastScrollTopRef,
+        scrollModeRef,
         autoScrollEnabledRef,
         atBottomRef,
         onViewModeChangeRef,
@@ -257,7 +275,8 @@ export function useThreadScrollAndHistoryController(props: {
             clearInitialScrollTimers()
         }
         autoScrollEnabledRef.current = followLatest && atBottomRef.current
-    }, [clearInitialScrollTimers])
+        syncScrollMode()
+    }, [clearInitialScrollTimers, syncScrollMode])
 
     // Scroll to bottom handler for the indicator button
     const scrollToBottom = useCallback(() => {
@@ -272,7 +291,8 @@ export function useThreadScrollAndHistoryController(props: {
             atBottomRef.current = true
             onViewModeChangeRef.current('tail')
         }
-    }, [])
+        syncScrollMode()
+    }, [syncScrollMode])
 
     // Reset state when session changes
     useLayoutEffect(() => {
@@ -283,6 +303,7 @@ export function useThreadScrollAndHistoryController(props: {
         onViewModeChangeRef.current('tail')
         forceScrollTokenRef.current = props.forceScrollToken
         pendingScrollRef.current = null
+        scrollModeRef.current = 'tail-follow'
         pullToLoadStateRef.current = 'idle'
         setPullToLoadState('idle')
         historyLoaderRef.current = {
@@ -310,7 +331,7 @@ export function useThreadScrollAndHistoryController(props: {
         if (
             initialScrollSessionRef.current === props.sessionId
             || props.rawMessagesCount === 0
-            || isAwaitingMessagesRender
+            || isAwaitingInitialRender
             || pendingScrollRef.current
         ) {
             return
@@ -319,6 +340,7 @@ export function useThreadScrollAndHistoryController(props: {
         initialScrollSessionRef.current = props.sessionId
         autoScrollEnabledRef.current = true
         atBottomRef.current = true
+        scrollModeRef.current = 'tail-follow'
         onViewModeChangeRef.current('tail')
         scrollToBottomInstant()
 
@@ -327,8 +349,7 @@ export function useThreadScrollAndHistoryController(props: {
         initialScrollTimersRef.current = INITIAL_SCROLL_SETTLE_DELAYS_MS.map((delay) => window.setTimeout(() => {
             if (
                 initialScrollSessionRef.current !== props.sessionId
-                || !autoScrollEnabledRef.current
-                || pendingScrollRef.current
+                || !shouldFollowTailInScrollMode(syncScrollMode())
             ) {
                 return
             }
@@ -337,11 +358,10 @@ export function useThreadScrollAndHistoryController(props: {
     }, [
         props.sessionId,
         props.rawMessagesCount,
-        props.messagesVersion,
-        appliedMessagesVersion,
-        isAwaitingMessagesRender,
+        isAwaitingInitialRender,
         scrollToBottomInstant,
-        clearInitialScrollTimers
+        clearInitialScrollTimers,
+        syncScrollMode
     ])
 
     useEffect(() => {
@@ -456,8 +476,8 @@ export function useThreadScrollAndHistoryController(props: {
             pinOnRestore: state.source === 'user' && wheelGestureUntilRef.current > Date.now()
         }
         autoScrollEnabledRef.current = false
+        scrollModeRef.current = 'pagination-restore'
         historyLoaderRef.current = { ...state, phase: 'loading' }
-
         void (async () => {
             let outcome: OlderLoadOutcome
             try {
@@ -500,8 +520,8 @@ export function useThreadScrollAndHistoryController(props: {
                 historyLoaderRef.current = { ...current, phase: 'awaiting-render' }
                 return
             }
-
             pendingScrollRef.current = null
+            syncScrollMode()
             if (outcome.kind === 'failed') {
                 const failureCount = current.failureCount + 1
                 console.error('Failed to load older messages:', outcome.error)
@@ -661,8 +681,8 @@ export function useThreadScrollAndHistoryController(props: {
         if (target) {
             target.scrollIntoView({ block: 'start', behavior: 'smooth' })
             autoScrollEnabledRef.current = false
+            syncScrollMode()
         }
-        props.onOutlineItemClick?.(item)
         props.onOutlineOpenChange(false)
     }, [loadOlderForOutline, props.onOutlineItemClick, props.onOutlineOpenChange])
 
@@ -671,7 +691,7 @@ export function useThreadScrollAndHistoryController(props: {
             !props.hasMoreMessages
             || props.isSyncingTail
             || props.isLoadingMoreMessages
-            || isAwaitingMessagesRender
+            || isAwaitingInitialRender
             || isAwaitingHistoryRender
         ) {
             clearCoverageCheckTimer()
@@ -689,9 +709,9 @@ export function useThreadScrollAndHistoryController(props: {
         props.hasMoreMessages,
         props.isSyncingTail,
         props.isLoadingMoreMessages,
-        props.messagesVersion,
-        appliedMessagesVersion,
-        isAwaitingMessagesRender,
+        structureKey,
+        appliedHistoryVersion,
+        isAwaitingInitialRender,
         isAwaitingHistoryRender,
         isInitialScrollSettling,
         needsViewportCoverage,
@@ -720,11 +740,7 @@ export function useThreadScrollAndHistoryController(props: {
             // Message DOM can grow after messagesVersion commits (assistant-ui
             // updates its external runtime in an effect, then markdown/tool
             // content may resize). Keep following while the user is at bottom.
-            if (
-                autoScrollEnabledRef.current
-                && atBottomRef.current
-                && !pendingScrollRef.current
-            ) {
+            if (shouldFollowTailInScrollMode(syncScrollMode())) {
                 scrollToBottomInstant()
             }
             // Late content growth can leave the viewport near the top without
@@ -788,10 +804,12 @@ export function useThreadScrollAndHistoryController(props: {
             const loaderState = historyLoaderRef.current
             if (loaderState.runId !== pending.runId || loaderState.phase !== 'awaiting-render') {
                 pendingScrollRef.current = null
+                syncScrollMode()
                 return
             }
             lastScrollTopRef.current = viewport.scrollTop
             pendingScrollRef.current = null
+            syncScrollMode()
             clearFailureRetryTimer()
             historyLoaderRef.current = {
                 ...loaderState,
@@ -808,30 +826,29 @@ export function useThreadScrollAndHistoryController(props: {
             return
         }
         if (
-            !isAwaitingMessagesRender
+            !isAwaitingInitialRender
             && props.rawMessagesCount > 0
-            && atBottomRef.current
-            && autoScrollEnabledRef.current
+            && shouldFollowTailInScrollMode(syncScrollMode())
         ) {
             scrollToBottomInstant()
         }
     }, [
-        appliedMessagesVersion,
+        structureKey,
         appliedHistoryVersion,
-        isAwaitingMessagesRender,
+        isAwaitingInitialRender,
         props.rawMessagesCount,
         scrollToBottomInstant,
         settlePendingLoad,
-        clearFailureRetryTimer
+        clearFailureRetryTimer,
+        syncScrollMode
     ])
 
     const bottomInsetPx = props.bottomInsetPx ?? 0
     useLayoutEffect(() => {
-        if (pendingScrollRef.current) return
-        if (atBottomRef.current && autoScrollEnabledRef.current) {
+        if (shouldFollowTailInScrollMode(syncScrollMode())) {
             scrollToBottomInstant()
         }
-    }, [bottomInsetPx, scrollToBottomInstant])
+    }, [bottomInsetPx, scrollToBottomInstant, syncScrollMode])
 
     return {
         viewportRef,

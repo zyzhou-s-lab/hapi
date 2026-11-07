@@ -237,6 +237,8 @@ function SessionChatInner(props: SessionChatProps) {
         onRefresh: props.onRefresh,
     })
     const {
+        timelineStructureKey,
+        structureMessagesVersion,
         visibleMessages,
         normalizedMessages,
         reduced,
@@ -253,6 +255,8 @@ function SessionChatInner(props: SessionChatProps) {
         hasMoreMessages: props.hasMoreMessages,
         viewMode: props.viewMode,
         tailRevision: props.tailRevision,
+        messagesVersion: props.messagesVersion,
+        historyVersion: props.historyVersion,
         onResetSessionView: () => setOutlineOpen(false),
     })
 
@@ -324,7 +328,7 @@ function SessionChatInner(props: SessionChatProps) {
     const runtime = useHappyRuntime({
         session: props.session,
         blocks: visibleBlocks,
-        messagesVersion: props.messagesVersion,
+        messagesVersion: structureMessagesVersion,
         historyVersion: props.historyVersion,
         viewMode: props.viewMode,
         isSyncingTail: props.isSyncingTail,
@@ -491,8 +495,9 @@ function SessionChatInner(props: SessionChatProps) {
                         unseenCount={unseenCount}
                         rawMessagesCount={visibleMessages.length}
                         normalizedMessagesCount={normalizedMessages.length}
-                        messagesVersion={props.messagesVersion}
+                        messagesVersion={structureMessagesVersion}
                         historyVersion={props.historyVersion}
+                        timelineStructureKey={timelineStructureKey}
                         forceScrollToken={forceScrollToken}
                         outlineOpen={outlineOpen}
                         bottomInsetPx={threadBottomInsetPx}

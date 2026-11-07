@@ -262,6 +262,7 @@ export function HappyThread(props: {
     normalizedMessagesCount: number
     messagesVersion: number
     historyVersion: number
+    timelineStructureKey?: string
     forceScrollToken: number
     outlineOpen: boolean
     outlineItems: readonly ConversationOutlineItem[]
@@ -313,6 +314,7 @@ export function HappyThread(props: {
         appliedHistoryVersion,
         isAwaitingMessagesRender,
         isAwaitingHistoryRender,
+        timelineStructureKey: props.timelineStructureKey,
         onOutlineOpenChange: props.onOutlineOpenChange,
         onOutlineItemClick: props.onOutlineItemClick,
         bottomInsetPx: props.bottomInsetPx,

@@ -13,13 +13,12 @@ import {
     getPullToLoadState,
     getScrollIntent,
     KEYBOARD_SCROLL_INTENT_WINDOW_MS,
-    MANUAL_SCROLL_EPSILON_PX,
     nextPinnedAnchorUntil,
     POINTER_CANCEL_INTENT_WINDOW_MS,
     restoreScrollAnchor,
-    shouldCancelInitialScrollSettling,
     shouldRecapturePendingHistoryAnchor,
     shouldSuppressPinnedWheel,
+    transitionScrollModeOnViewportScroll,
     UPWARD_SCROLL_KEYS,
     WHEEL_GESTURE_GAP_MS,
     type HistoryLoaderState,
@@ -28,11 +27,13 @@ import {
     type PullToLoadState,
     type ScrollAnchor,
     type ScrollIntent,
+    type ThreadScrollMode,
 } from '@/components/AssistantChat/threadScrollHelpers'
 
 export type ThreadViewportEventBindings = {
     viewportRef: RefObject<HTMLDivElement | null>
     lastScrollTopRef: MutableRefObject<number>
+    scrollModeRef: MutableRefObject<ThreadScrollMode>
     autoScrollEnabledRef: MutableRefObject<boolean>
     atBottomRef: MutableRefObject<boolean>
     onViewModeChangeRef: MutableRefObject<(mode: 'tail' | 'history') => void>
@@ -62,6 +63,7 @@ export function useThreadViewportEvents(bindings: ThreadViewportEventBindings): 
     const {
         viewportRef,
         lastScrollTopRef,
+        scrollModeRef,
         autoScrollEnabledRef,
         atBottomRef,
         onViewModeChangeRef,
@@ -206,66 +208,64 @@ export function useThreadViewportEvents(bindings: ThreadViewportEventBindings): 
             const hadExplicitUpwardIntent = hasExplicitUpwardIntent(intent)
             const explicitUpwardIntent = needsCoverage && consumeExplicitUpwardIntent(intent)
 
-            if (isInitialScrollSettling()) {
-                if (shouldCancelInitialScrollSettling(intent, hadExplicitUpwardIntent)) {
-                    initialScrollDeadlineRef.current = 0
-                    clearInitialScrollTimers()
-                    setAutoScrollMode(false)
-                    setAtBottomMode(false)
+            const isSettling = isInitialScrollSettling()
+            if (!isSettling) {
+                // Scroll position is the source of truth. The loader controller
+                // decides whether this demand may start a request; programmatic
+                // scroll events cannot bypass backoff or a paused coverage run.
+                if (needsCoverage) {
                     if (explicitUpwardIntent) {
-                        void loadOlderFromUserGestureRef.current()
+                        runUserGestureLoad()
+                    } else {
+                        void requestOlderRef.current('coverage')
                     }
-                }
-                return
-            }
-
-            // Scroll position is the source of truth. The loader controller
-            // decides whether this demand may start a request; programmatic
-            // scroll events cannot bypass backoff or a paused coverage run.
-            if (needsCoverage) {
-                if (explicitUpwardIntent) {
-                    runUserGestureLoad()
                 } else {
-                    void requestOlderRef.current('coverage')
-                }
-            } else {
-                wheelLatched = false
-                pointerResumeLatched = false
-                if (historyLoaderRef.current.autoPaused) {
-                    historyLoaderRef.current = {
-                        ...historyLoaderRef.current,
-                        autoPaused: false
+                    wheelLatched = false
+                    pointerResumeLatched = false
+                    if (historyLoaderRef.current.autoPaused) {
+                        historyLoaderRef.current = {
+                            ...historyLoaderRef.current,
+                            autoPaused: false
+                        }
                     }
                 }
             }
 
-            if (intent.isScrollingUp && intent.distanceFromBottom > MANUAL_SCROLL_EPSILON_PX) {
-                tailScrollInProgressRef.current = false
+            const transition = transitionScrollModeOnViewportScroll({
+                intent,
+                isInitialSettling: isSettling,
+                hadExplicitUpwardIntent,
+                tailScrollInProgress: tailScrollInProgressRef.current,
+                needsCoverage,
+                hasPendingRestore: pendingScrollRef.current !== null,
+            })
+
+            if (transition.cancelInitialSettling) {
+                initialScrollDeadlineRef.current = 0
+                clearInitialScrollTimers()
                 setAutoScrollMode(false)
                 setAtBottomMode(false)
-                return
-            }
-
-            if (intent.isNearBottom) {
-                if (!needsCoverage) {
-                    cancelActiveHistoryLoad()
+                scrollModeRef.current = transition.nextMode
+                if (explicitUpwardIntent) {
+                    void loadOlderFromUserGestureRef.current()
                 }
+                return
+            }
+            if (isSettling) {
+                return
+            }
+
+            if (transition.cancelActiveHistoryLoad) {
+                cancelActiveHistoryLoad()
+            }
+            if (transition.clearTailScrollInProgress) {
                 tailScrollInProgressRef.current = false
-                setAutoScrollMode(true)
-                setAtBottomMode(true)
-                return
             }
-
-            // An explicit jump-to-tail uses native smooth scrolling. Its
-            // intermediate scroll events are still far from the bottom and
-            // must not be mistaken for ordinary history browsing. Keep tail
-            // mode armed until the animation arrives or the user reverses it.
-            if (tailScrollInProgressRef.current) {
-                return
+            if (!transition.preserveTailDuringSmoothScroll) {
+                setAutoScrollMode(transition.autoScrollEnabled)
+                setAtBottomMode(transition.atBottom)
             }
-
-            setAutoScrollMode(false)
-            setAtBottomMode(false)
+            scrollModeRef.current = transition.nextMode
         }
 
         // Gesture fallback: at scrollTop=0 no further scroll events fire. Give

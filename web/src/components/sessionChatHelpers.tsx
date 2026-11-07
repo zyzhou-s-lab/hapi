@@ -16,6 +16,7 @@ import { useUnseenBlockCount } from '@/hooks/useUnseenBlockCount'
 import { useCodexExplorationCollapse } from '@/hooks/useCodexExplorationCollapse'
 import { findLatestCompletedBoundaryId } from '@/lib/assistant-runtime'
 import { useToast } from '@/lib/toast-context'
+import { resolveStructureMessagesVersion } from '@/components/AssistantChat/threadScrollHelpers'
 import { useTranslation } from '@/lib/use-translation'
 import type { MessageDeliveryMode } from '@hapi/protocol'
 import { isHubScratchlistAttachmentPath } from '@hapi/protocol'
@@ -433,24 +434,30 @@ export type UseSessionChatPipelineParams = {
     onResetSessionView?: () => void
 }
 
-export function useSessionChatPipeline(props: UseSessionChatPipelineParams) {
+export function useSessionChatPipeline(props: UseSessionChatPipelineParams & {
+    messagesVersion?: number
+    historyVersion?: number
+}) {
     const { t } = useTranslation()
     const { addToast } = useToast()
-    const { codexExplorationCollapsed } = useCodexExplorationCollapse()
-    const entityStoreRef = useRef<SessionEntityStore | null>(null)
-    if (!entityStoreRef.current) {
-        entityStoreRef.current = createSessionEntityStore()
-    }
-    const entityStore = entityStoreRef.current
+    const { collapsed: codexExplorationCollapsed } = useCodexExplorationCollapse()
     const modelRefusalFallbackToastIdsRef = useRef<Set<string>>(new Set())
+    const onResetSessionViewRef = useRef(props.onResetSessionView)
+    onResetSessionViewRef.current = props.onResetSessionView
+    const entityStore = useMemo(() => new SessionEntityStore(), [])
+    const prevOutlineItemsRef = useRef<readonly ConversationOutlineItem[]>([])
     const prevSessionStatusRef = useRef<SessionStatusData | null>(null)
-    const prevOutlineItemsRef = useRef<ConversationOutlineItem[]>([])
+    const structureVersionTrackerRef = useRef({
+        sessionId: props.session.id,
+        structureVersion: 0,
+        structureKey: '',
+        historyVersion: 0,
+        rawMessagesCount: 0,
+    })
     const [rememberedTailBoundary, setRememberedTailBoundary] = useState<{
         id: string | null
         tailRevision: number
     } | null>(null)
-    const onResetSessionViewRef = useRef(props.onResetSessionView)
-    onResetSessionViewRef.current = props.onResetSessionView
 
     useEffect(() => {
         modelRefusalFallbackToastIdsRef.current.clear()
@@ -482,10 +489,41 @@ export function useSessionChatPipeline(props: UseSessionChatPipelineParams) {
         normalizedMessages,
         visibleBlocks,
         timelineIndex,
+        timelineStructureKey,
         hasRunningChildAgent,
         activityLabel,
     } = snapshot
 
+    const structureMessagesVersion = useMemo(() => {
+        const rawVersion = props.messagesVersion ?? 0
+        const historyVer = props.historyVersion ?? 0
+        const prev = structureVersionTrackerRef.current
+        const sameSession = prev.sessionId === props.session.id
+        const nextVersion = resolveStructureMessagesVersion({
+            messagesVersion: rawVersion,
+            previousStructureVersion: sameSession ? prev.structureVersion : 0,
+            previousStructureKey: sameSession ? prev.structureKey : '',
+            nextStructureKey: timelineStructureKey,
+            previousHistoryVersion: sameSession ? prev.historyVersion : 0,
+            nextHistoryVersion: historyVer,
+            previousRawMessagesCount: sameSession ? prev.rawMessagesCount : 0,
+            nextRawMessagesCount: visibleMessages.length,
+        })
+        structureVersionTrackerRef.current = {
+            sessionId: props.session.id,
+            structureVersion: nextVersion,
+            structureKey: timelineStructureKey,
+            historyVersion: historyVer,
+            rawMessagesCount: visibleMessages.length,
+        }
+        return nextVersion
+    }, [
+        props.historyVersion,
+        props.messagesVersion,
+        props.session.id,
+        timelineStructureKey,
+        visibleMessages.length,
+    ])
     const reduced = useMemo(
         () => ({
             blocks: snapshot.blocks,
@@ -590,6 +628,8 @@ export function useSessionChatPipeline(props: UseSessionChatPipelineParams) {
     return {
         entityStore,
         timelineIndex,
+        timelineStructureKey,
+        structureMessagesVersion,
         visibleMessages,
         normalizedMessages,
         reduced,
