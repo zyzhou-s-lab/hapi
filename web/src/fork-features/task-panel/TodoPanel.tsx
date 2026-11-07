@@ -2,18 +2,10 @@ import { memo, useEffect, useMemo, useRef, useState } from 'react'
 import type { TodoItem } from '@hapi/protocol/types'
 import { projectSessionTodoSnapshot } from '@/chat/projections/todoProjection'
 import { ChecklistList } from '@/components/ToolCard/checklist'
+import { Card, SmallChevron } from '@/components/ui/card'
 import { useTranslation } from '@/lib/use-translation'
 
 const COLLAPSED_STORAGE_KEY = 'hapi.todo-panel.collapsed'
-
-function ChevronIcon(props: { open: boolean }) {
-    return (
-        <svg aria-hidden="true" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={`shrink-0 transition-transform duration-200 ${props.open ? 'rotate-90' : ''}`}>
-            <polyline points="9 18 15 12 9 6" />
-        </svg>
-    )
-}
-
 export const TodoPanel = memo(function TodoPanel(props: { sessionId: string; todos: TodoItem[] | undefined; sessionThinking?: boolean }) {
     const { t } = useTranslation()
     const snapshot = useMemo(() => projectSessionTodoSnapshot(props.todos), [props.todos])
@@ -41,7 +33,7 @@ export const TodoPanel = memo(function TodoPanel(props: { sessionId: string; tod
 
     return (
         <div className="relative mx-auto mb-1 h-[calc(1.75rem+2px)] w-full max-w-content">
-            <div className="composer-dock-card absolute inset-x-0 bottom-0 z-10 rounded-lg" data-testid="todo-panel">
+            <Card variant="dock" className="absolute inset-x-0 bottom-0 z-10" data-testid="todo-panel">
                 <button type="button" onClick={toggleCollapsed} aria-expanded={!collapsed} aria-controls={`todo-panel-body-${props.sessionId}`} className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs font-medium text-[var(--app-fg)] hover:opacity-90">
                     <span className="shrink-0 text-[11px] tabular-nums text-[var(--app-hint)]">{completed}/{items.length}</span>
                     <span className="sr-only">{t('todoPanel.title')}</span>
@@ -63,14 +55,14 @@ export const TodoPanel = memo(function TodoPanel(props: { sessionId: string; tod
                     ) : (
                         <span className="min-w-0 flex-1 truncate text-[var(--app-hint)]">{t('todoPanel.title')}</span>
                     )}
-                    <ChevronIcon open={!collapsed} />
+                    <SmallChevron open={!collapsed} />
                 </button>
                 {!collapsed ? (
                     <div id={`todo-panel-body-${props.sessionId}`} className="max-h-44 overflow-y-auto px-3 pb-2">
                         <ChecklistList items={items} />
                     </div>
                 ) : null}
-            </div>
+            </Card>
         </div>
     )
 })

@@ -294,10 +294,13 @@ describe('UpdatePlanView', () => {
         const inProgress = screen.getByText(/Trace broken build path/)
         const pending = screen.getByText(/Summarize fix/)
 
-        expect(completed).toBeInTheDocument()
-        expect(completed.className).toContain('line-through')
-        expect(inProgress.className).toContain('text-[var(--app-link)]')
-        expect(pending.className).toContain('text-[var(--app-hint)]')
+        expect(screen.getByTestId('checklist-item-check')).toBeInTheDocument()
+        expect(screen.getByTestId('checklist-item-spinner')).toBeInTheDocument()
+        expect(screen.getByTestId('checklist-item-pending')).toBeInTheDocument()
+        expect(completed.className).toContain('text-[var(--app-hint)]')
+        expect(completed.className).not.toContain('line-through')
+        expect(inProgress.className).toContain('turn-text-shimmer')
+        expect(pending.className).toContain('text-[var(--app-fg)]')
     })
 
     it('is registered as the compact tool view', () => {

@@ -3,6 +3,7 @@ import { formatDuration } from '@/chat/presentation'
 import type { SessionStatusData, SessionStatusSubagent } from '@/chat/sessionStatus'
 import { projectSessionTodoSnapshot } from '@/chat/projections/todoProjection'
 import { ChecklistList } from '@/components/ToolCard/checklist'
+import { Card, SmallChevron } from '@/components/ui/card'
 import { useTranslation } from '@/lib/use-translation'
 
 function Section(props: { title: string; children: ReactNode }) {
@@ -44,9 +45,9 @@ export function SessionStatusPanel({ data }: { data: SessionStatusData }) {
         <details className="group relative z-30 mx-3 mt-3 rounded-md border border-[var(--app-border)] bg-[var(--app-subtle-bg)]">
             <summary className="flex cursor-pointer list-none items-center gap-2 px-3 py-2 text-xs font-semibold text-[var(--app-fg)] [&::-webkit-details-marker]:hidden">
                 {t('session.status.title')}
-                <span className="ml-auto text-[10px] text-[var(--app-hint)] transition-transform group-open:rotate-180" aria-hidden="true">▼</span>
+                <SmallChevron open={false} direction="down" className="ml-auto text-[var(--app-hint)] group-open:rotate-180" />
             </summary>
-            <div className="composer-dock-card absolute inset-x-0 top-full z-30 mt-1 grid max-h-[min(50dvh,24rem)] gap-3 overflow-y-auto rounded-md px-3 py-2.5 sm:grid-cols-2">
+            <Card variant="dock" className="absolute inset-x-0 top-full z-30 mt-1 grid max-h-[min(50dvh,24rem)] gap-3 overflow-y-auto rounded-md px-3 py-2.5 sm:grid-cols-2">
                 {data.goal ? (
                     <Section title={t('session.status.goal')}>
                         <div className="break-words text-sm text-[var(--app-fg)]">{data.goal.objective}</div>
@@ -124,7 +125,7 @@ export function SessionStatusPanel({ data }: { data: SessionStatusData }) {
                         </div>
                     </Section>
                 ) : null}
-            </div>
+            </Card>
         </details>
     )
 }

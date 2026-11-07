@@ -1,7 +1,8 @@
 import { useState } from 'react'
 import { projectSessionTodoSnapshot } from '@/chat/projections/todoProjection'
+import { ChecklistItemRow } from '@/components/ToolCard/checklist'
+import { Card, SmallChevron } from '@/components/ui/card'
 import { cn } from '@/lib/utils'
-
 export type DockedTodoItem = {
     id: string
     content: string
@@ -13,33 +14,6 @@ export type DockedQuestionItem = {
     id: string
     question: string
     options: Array<{ label: string; description?: string }>
-}
-
-function SmallChevron(props: { open: boolean; direction?: 'right' | 'up'; className?: string }) {
-    const baseRotation = props.direction === 'up'
-        ? (props.open ? 'rotate-180' : 'rotate-0')
-        : (props.open ? 'rotate-90' : 'rotate-0')
-    return (
-        <svg
-            xmlns="http://www.w3.org/2000/svg"
-            width="12"
-            height="12"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            className={cn('shrink-0 transition-transform duration-150', baseRotation, props.className)}
-            aria-hidden="true"
-        >
-            {props.direction === 'up' ? (
-                <polyline points="18 15 12 9 6 15" />
-            ) : (
-                <polyline points="9 18 15 12 9 6" />
-            )}
-        </svg>
-    )
 }
 
 export function DockedTodoProgressBar(props: {
@@ -68,8 +42,9 @@ export function DockedTodoProgressBar(props: {
         : (snapshot.activeLabel || snapshot.items[0]?.text || '')
 
     return (
-        <div
-            className="composer-dock-card overflow-hidden rounded-t-xl border border-b-0 border-[var(--app-border)] bg-[var(--app-subtle-bg)]/70"
+        <Card
+            variant="dock"
+            className="overflow-hidden rounded-t-xl rounded-b-none border border-b-0 border-[var(--app-border)] bg-[var(--app-subtle-bg)]/70"
             data-testid="docked-todo-bar"
         >
             <button
@@ -98,46 +73,20 @@ export function DockedTodoProgressBar(props: {
                 aria-hidden={!expanded}
             >
                 <div className="turn-collapsible-body">
-                    <div className="border-t border-[var(--app-border)]/70 px-3.5 py-2.5 space-y-2">
-                        {snapshot.items.map((item, idx) => {
-                            const isDone = item.status === 'completed'
-                            const isRunning = item.status === 'in_progress'
-                            return (
-                                <div
-                                    key={item.id ?? `${idx}:${item.text}`}
-                                    className="flex items-start gap-2.5 text-[13px] leading-5"
-                                >
-                                    <span className="mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center">
-                                        {isDone ? (
-                                            <span className="inline-flex h-4 w-4 items-center justify-center rounded-full bg-emerald-500/20 text-[10px] font-bold text-emerald-600 dark:text-emerald-400">
-                                                ✓
-                                            </span>
-                                        ) : isRunning ? (
-                                            <span className="inline-block h-3.5 w-3.5 animate-spin rounded-full border-2 border-[#da7756] border-t-transparent" />
-                                        ) : (
-                                            <span className="inline-block h-3.5 w-3.5 rounded-full border border-[var(--app-hint)]/50" />
-                                        )}
-                                    </span>
-                                    <span className="shrink-0 tabular-nums text-[12px] text-[var(--app-hint)]">
-                                        {idx + 1}.
-                                    </span>
-                                    <span
-                                        className={cn(
-                                            'min-w-0 flex-1',
-                                            isDone && 'text-[var(--app-hint)] line-through decoration-[var(--app-hint)]/50',
-                                            isRunning && 'font-medium text-[var(--app-fg)]',
-                                            !isDone && !isRunning && 'text-[var(--app-hint)]'
-                                        )}
-                                    >
-                                        {isRunning && item.activeForm ? item.activeForm : item.text}
-                                    </span>
-                                </div>
-                            )
-                        })}
+                    <div className="border-t border-[var(--app-border)]/70 px-3.5 py-2.5 space-y-1.5">
+                        {snapshot.items.map((item, idx) => (
+                            <ChecklistItemRow
+                                key={item.id ?? `${idx}:${item.text}`}
+                                item={item}
+                                indexLabel={`${idx + 1}.`}
+                                useActiveForm={true}
+                                className="text-[13px]"
+                            />
+                        ))}
                     </div>
                 </div>
             </div>
-        </div>
+        </Card>
     )
 }
 

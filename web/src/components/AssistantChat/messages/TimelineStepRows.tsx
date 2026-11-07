@@ -20,34 +20,10 @@ import { projectToolTodoSnapshot } from '@/chat/projections/todoProjection'
 import type { ChecklistItem } from '@/components/ToolCard/checklist'
 import type { ToolCallBlock } from '@/chat/types'
 import { useOptionalHappyChatStaticContext } from '@/components/AssistantChat/context'
+import { SmallChevron } from '@/components/ui/card'
 import { cn } from '@/lib/utils'
 
-export function SmallChevron(props: { open: boolean; direction?: 'right' | 'up'; className?: string }) {
-    const baseRotation = props.direction === 'up'
-        ? (props.open ? 'rotate-180' : 'rotate-0')
-        : (props.open ? 'rotate-90' : 'rotate-0')
-    return (
-        <svg
-            xmlns="http://www.w3.org/2000/svg"
-            width="12"
-            height="12"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            className={cn('shrink-0 transition-transform duration-150', baseRotation, props.className)}
-            aria-hidden="true"
-        >
-            {props.direction === 'up' ? (
-                <polyline points="18 15 12 9 6 15" />
-            ) : (
-                <polyline points="9 18 15 12 9 6" />
-            )}
-        </svg>
-    )
-}
+export { SmallChevron }
 
 export function CopyButton(props: { text: string; label?: string }) {
     const [copied, setCopied] = useState(false)
