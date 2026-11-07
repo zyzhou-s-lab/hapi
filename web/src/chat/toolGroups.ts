@@ -261,12 +261,45 @@ function createToolGroupId(
         : `tool-group:${firstToolId}`
 }
 
+function findReusableToolGroup(
+    previousGroups: readonly ToolGroupBlock[],
+    id: string,
+    tools: readonly ToolCallBlock[],
+    defaultOpen: boolean,
+    needsOlderHistory: boolean,
+    activityTitle: string | null,
+    presentationMode: 'default' | 'codex-exploration'
+): ToolGroupBlock | null {
+    const firstTool = tools[0]
+    const lastTool = tools[tools.length - 1]
+    if (!firstTool || !lastTool) return null
+    for (const prev of previousGroups) {
+        if (
+            prev.id === id
+            && prev.createdAt === firstTool.createdAt
+            && prev.invokedAt === firstTool.invokedAt
+            && prev.firstToolId === firstTool.id
+            && prev.lastToolId === lastTool.id
+            && prev.defaultOpen === defaultOpen
+            && prev.needsOlderHistory === needsOlderHistory
+            && (prev.activityTitle ?? null) === activityTitle
+            && prev.presentationMode === presentationMode
+            && prev.roundSummary === firstTool.roundSummary
+            && prev.tools.length === tools.length
+            && prev.tools.every((tool, idx) => tool === tools[idx])
+        ) {
+            return prev
+        }
+    }
+    return null
+}
+
 export function isToolGroupBlock(block: VisibleChatBlock | ChatBlock): block is ToolGroupBlock {
     return block.kind === 'tool-group'
 }
 
 export function buildVisibleChatBlocks(
-    blocks: ChatBlock[],
+    blocks: readonly ChatBlock[],
     options: ToolGroupingOptions
 ): VisibleChatBlock[] {
     const visibleBlocks: VisibleChatBlock[] = []
@@ -307,15 +340,31 @@ export function buildVisibleChatBlocks(
             && previousBlock.tool.name === 'CodexReasoning'
             ? getInputStringAny(previousBlock.tool.input, ['title'])
             : null
+        const groupId = createToolGroupId(tools, needsOlderHistory, previousGroups)
+        const defaultOpen = groupingFamily === 'codex-exploration' && options.codexExplorationCollapsed === false
+        const reusableGroup = findReusableToolGroup(
+            previousGroups,
+            groupId,
+            tools,
+            defaultOpen,
+            needsOlderHistory,
+            activityTitle,
+            groupingFamily
+        )
+        if (reusableGroup) {
+            visibleBlocks.push(reusableGroup)
+            index = cursor - 1
+            continue
+        }
         visibleBlocks.push({
             kind: 'tool-group',
-            id: createToolGroupId(tools, needsOlderHistory, previousGroups),
+            id: groupId,
             createdAt: tools[0].createdAt,
             invokedAt: tools[0].invokedAt,
             firstToolId: tools[0].id,
             lastToolId: tools[tools.length - 1].id,
             tools,
-            defaultOpen: groupingFamily === 'codex-exploration' && options.codexExplorationCollapsed === false,
+            defaultOpen,
             historyState: needsOlderHistory ? 'needs-older-history' : 'complete',
             needsOlderHistory,
             activityTitle,

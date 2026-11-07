@@ -419,9 +419,44 @@ function activityTitle(part: TurnContentPart): string | null {
     return title ? firstLine(title) : null
 }
 
+function areTurnRowsEqual(a: TurnRow, b: TurnRow): boolean {
+    if (a === b) return true
+    if (a.kind !== b.kind || a.key !== b.key) return false
+    switch (a.kind) {
+        case 'reasoning':
+            return a.text === (b as TurnReasoningRow).text
+        case 'text': {
+            const other = b as TurnTextRow
+            return a.text === other.text && a.trailing === other.trailing
+        }
+        case 'tool': {
+            const other = b as TurnToolRow
+            return a.block === other.block
+                && a.verb === other.verb
+                && a.intent === other.intent
+                && a.pinned === other.pinned
+                && a.error === other.error
+                && a.permission === other.permission
+        }
+        case 'image':
+        case 'file':
+            return a.block === (b as TurnImageRow | TurnFileRow).block
+    }
+}
+
+function isSameRefArray<T>(a: readonly T[], b: readonly T[]): boolean {
+    if (a === b) return true
+    if (a.length !== b.length) return false
+    for (let i = 0; i < a.length; i += 1) {
+        if (!Object.is(a[i], b[i])) return false
+    }
+    return true
+}
+
 export function partitionTurn(
     parts: readonly TurnContentPart[],
-    metadata: SessionMetadataSummary | null
+    metadata: SessionMetadataSummary | null,
+    previousPartition?: TurnPartition | null
 ): TurnPartition {
     const rows: TurnRow[] = []
     let streaming = false
@@ -530,14 +565,41 @@ export function partitionTurn(
         ?? shownTitle(tools[tools.length - 1]?.verb)
         ?? ''
 
-    return {
-        rows,
+    let stabilizedRows = rows
+    if (previousPartition) {
+        const prevByKey = new Map<string, TurnRow>()
+        for (const prevRow of previousPartition.rows) {
+            prevByKey.set(prevRow.key, prevRow)
+        }
+        const nextRows = rows.map((row) => {
+            const prevRow = prevByKey.get(row.key)
+            return prevRow && areTurnRowsEqual(prevRow, row) ? prevRow : row
+        })
+        stabilizedRows = isSameRefArray(nextRows, previousPartition.rows)
+            ? previousPartition.rows
+            : nextRows
+    }
+
+    const nextPartition: TurnPartition = {
+        rows: stabilizedRows,
         title,
         hasFoldable: foldable.length > 0,
-        hasPinned: rows.some((row) => row.kind === 'tool' && row.pinned),
-        hasActivity: rows.some((row) => row.kind === 'reasoning' || row.kind === 'tool' || row.kind === 'image' || row.kind === 'file'),
+        hasPinned: stabilizedRows.some((row) => row.kind === 'tool' && row.pinned),
+        hasActivity: stabilizedRows.some((row) => row.kind === 'reasoning' || row.kind === 'tool' || row.kind === 'image' || row.kind === 'file'),
         streaming,
     }
+    if (
+        previousPartition
+        && previousPartition.rows === nextPartition.rows
+        && previousPartition.title === nextPartition.title
+        && previousPartition.hasFoldable === nextPartition.hasFoldable
+        && previousPartition.hasPinned === nextPartition.hasPinned
+        && previousPartition.hasActivity === nextPartition.hasActivity
+        && previousPartition.streaming === nextPartition.streaming
+    ) {
+        return previousPartition
+    }
+    return nextPartition
 }
 
 export function turnDurationMs(input: {
@@ -1636,13 +1698,44 @@ export interface ProjectedTurn {
     readonly subturns: ProjectedSubturn[]
 }
 
+function areTodoCardItemsEqual(a: readonly TodoCardItem[], b: readonly TodoCardItem[]): boolean {
+    if (a === b) return true
+    if (a.length !== b.length) return false
+    for (let i = 0; i < a.length; i += 1) {
+        const left = a[i]!
+        const right = b[i]!
+        if (
+            left.id !== right.id
+            || left.content !== right.content
+            || left.status !== right.status
+            || left.priority !== right.priority
+        ) {
+            return false
+        }
+    }
+    return true
+}
+
+function areDisplayStepRowsEqual(a: TurnDisplayStepRow, b: TurnDisplayStepRow): boolean {
+    if (a === b) return true
+    if (a.kind !== b.kind || a.key !== b.key) return false
+    if (a.kind === 'coalesced' && b.kind === 'coalesced') {
+        return a.category === b.category
+            && a.pinned === b.pinned
+            && isSameRefArray(a.rows, b.rows)
+            && isSameRefArray(a.toolRows, b.toolRows)
+    }
+    return areTurnRowsEqual(a as TurnRow, b as TurnRow)
+}
+
 export function projectTurn(
     partition: TurnPartition,
     options?: {
         readonly viewMode?: 'normal' | 'thinking' | 'verbose'
         readonly streaming?: boolean
         readonly fallbackTodos?: readonly TodoItem[] | null
-    }
+    },
+    previousProjected?: ProjectedTurn | null
 ): ProjectedTurn {
     const viewMode = options?.viewMode ?? 'normal'
     const streaming = options?.streaming ?? false
@@ -1729,20 +1822,88 @@ export function projectTurn(
     })
 
     const firstStableKey = rows[0]?.key ?? 'subturn:initial'
+    const prevSubturn = previousProjected?.subturns[0] ?? null
+    const stableRows = prevSubturn && isSameRefArray(rows, prevSubturn.rows) ? prevSubturn.rows : rows
+    const stableNonTrailingRows = prevSubturn && isSameRefArray(nonTrailingRows, prevSubturn.nonTrailingRows)
+        ? prevSubturn.nonTrailingRows
+        : nonTrailingRows
+    const prevStepByKey = new Map<string, TurnDisplayStepRow>()
+    if (prevSubturn) {
+        for (const prevStep of prevSubturn.stepRows) {
+            prevStepByKey.set(prevStep.key, prevStep)
+        }
+    }
+    const mappedStepRows = stepRows.map((step) => {
+        const prevStep = prevStepByKey.get(step.key)
+        return prevStep && areDisplayStepRowsEqual(prevStep, step) ? prevStep : step
+    })
+    const stableStepRows = prevSubturn && isSameRefArray(mappedStepRows, prevSubturn.stepRows)
+        ? prevSubturn.stepRows
+        : mappedStepRows
+    const mappedCollapsedPinned = collapsedPinnedRailRows.map((row) => {
+        const prevStep = prevStepByKey.get(row.key)
+        return (prevStep && areDisplayStepRowsEqual(prevStep, row) ? prevStep : row) as TurnToolRow | TurnCoalescedRow
+    })
+    const stableCollapsedPinnedRailRows = prevSubturn && isSameRefArray(mappedCollapsedPinned, prevSubturn.collapsedPinnedRailRows)
+        ? prevSubturn.collapsedPinnedRailRows
+        : mappedCollapsedPinned
+    const mappedChecklists = todoChecklists.map((checklist) => {
+        const prevChecklist = prevSubturn?.todoChecklists.find((c) => c.key === checklist.key)
+        return prevChecklist && areTodoCardItemsEqual(prevChecklist.items, checklist.items)
+            ? prevChecklist
+            : checklist
+    })
+    const stableTodoChecklists = prevSubturn && isSameRefArray(mappedChecklists, prevSubturn.todoChecklists)
+        ? prevSubturn.todoChecklists
+        : mappedChecklists
+    const mappedQuietTextRows = quietTextRows.map((entry) => {
+        const prevEntry = prevSubturn?.quietTextRows.find((q) => q.row.key === entry.row.key)
+        return prevEntry && prevEntry.row === entry.row && prevEntry.keepVisibleWhenCollapsed === entry.keepVisibleWhenCollapsed
+            ? prevEntry
+            : entry
+    })
+    const stableQuietTextRows = prevSubturn && isSameRefArray(mappedQuietTextRows, prevSubturn.quietTextRows)
+        ? prevSubturn.quietTextRows
+        : mappedQuietTextRows
+    const stableMediaRows = prevSubturn && isSameRefArray(mediaRows, prevSubturn.mediaRows)
+        ? prevSubturn.mediaRows
+        : mediaRows
+    const stableAnswerRows = prevSubturn && isSameRefArray(answerRows, prevSubturn.answerRows)
+        ? prevSubturn.answerRows
+        : answerRows
+    const subturnKey = `subturn:${firstStableKey}`
+    const lastRow = stableRows[stableRows.length - 1]
+    if (
+        prevSubturn
+        && prevSubturn.key === subturnKey
+        && prevSubturn.rows === stableRows
+        && prevSubturn.nonTrailingRows === stableNonTrailingRows
+        && prevSubturn.stepRows === stableStepRows
+        && prevSubturn.collapsedPinnedRailRows === stableCollapsedPinnedRailRows
+        && prevSubturn.todoChecklists === stableTodoChecklists
+        && prevSubturn.quietTextRows === stableQuietTextRows
+        && prevSubturn.mediaRows === stableMediaRows
+        && prevSubturn.answerRows === stableAnswerRows
+        && prevSubturn.hasSteps === hasSteps
+        && prevSubturn.lastRow === lastRow
+        && previousProjected
+    ) {
+        return previousProjected
+    }
     return {
         subturns: [
             {
-                key: `subturn:${firstStableKey}`,
-                rows,
-                nonTrailingRows,
-                stepRows,
-                collapsedPinnedRailRows,
-                todoChecklists,
-                quietTextRows,
-                mediaRows,
-                answerRows,
+                key: subturnKey,
+                rows: stableRows,
+                nonTrailingRows: stableNonTrailingRows,
+                stepRows: stableStepRows,
+                collapsedPinnedRailRows: stableCollapsedPinnedRailRows,
+                todoChecklists: stableTodoChecklists,
+                quietTextRows: stableQuietTextRows,
+                mediaRows: stableMediaRows,
+                answerRows: stableAnswerRows,
                 hasSteps,
-                lastRow: rows[rows.length - 1],
+                lastRow,
             },
         ],
     }

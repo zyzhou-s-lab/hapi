@@ -1,4 +1,4 @@
-import { memo, useEffect, useMemo, useState } from 'react'
+import { memo, useEffect, useMemo, useRef, useState } from 'react'
 import { TextMessagePartProvider, useAuiState } from '@assistant-ui/react'
 import { projectSessionTodoSnapshot } from '@/chat/projections/todoProjection'
 import { useOptionalHappyChatSessionStateContext, useOptionalHappyChatStaticContext, useOptionalHappyChatTodosContext } from '@/components/AssistantChat/context'
@@ -53,6 +53,9 @@ function TurnText(props: { text: string; streaming: boolean }) {
     )
 }
 
+function renderTurnText(text: string, isStreaming: boolean) {
+    return <TurnText text={text} streaming={isStreaming} />
+}
 export function TurnBlockView(props: {
     partition: TurnPartition
     streaming: boolean
@@ -73,7 +76,7 @@ export function TurnBlockView(props: {
             fallbackTodos={props.fallbackTodos}
             viewMode={props.viewMode}
             lang={props.lang}
-            renderTrailingText={(text, isStreaming) => <TurnText text={text} streaming={isStreaming} />}
+            renderTrailingText={renderTurnText}
         />
     )
 }
@@ -172,10 +175,12 @@ export function TurnBlock() {
     const createdAt = useAuiState((state) => state.message.createdAt.getTime())
     const custom = useAuiState((state) => state.message.metadata.custom as Partial<HappyChatMessageMetadata> | undefined)
 
-    const partition = useMemo(
-        () => partitionTurn(contentParts(content), staticCtx?.metadata ?? null),
-        [content, staticCtx?.metadata]
-    )
+    const prevPartitionRef = useRef<TurnPartition | null>(null)
+    const partition = useMemo(() => {
+        const next = partitionTurn(contentParts(content), staticCtx?.metadata ?? null, prevPartitionRef.current)
+        prevPartitionRef.current = next
+        return next
+    }, [content, staticCtx?.metadata])
     const hasRunningTool = useMemo(
         () => partition.rows.some(
             (row) => row.kind === 'tool'

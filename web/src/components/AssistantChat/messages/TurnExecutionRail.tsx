@@ -44,16 +44,35 @@ export function TurnExecutionRail(props: {
         renderTrailingText,
     } = props
 
-    const failed = subturn.rows.some(
-        (row) => row.kind === 'tool' && row.error && row.pinned
+    const failed = useMemo(
+        () => subturn.nonTrailingRows.some(
+            (row) => row.kind === 'tool' && row.error && row.pinned
+        ),
+        [subturn.nonTrailingRows]
     )
 
     const summary = useMemo(
-        () => summarizeTurnActivity(partition, {
+        () => summarizeTurnActivity({
+            rows: subturn.nonTrailingRows,
+            title: partition.title,
+            hasFoldable: partition.hasFoldable,
+            hasPinned: partition.hasPinned,
+            hasActivity: partition.hasActivity,
+            streaming: partition.streaming,
+        }, {
             activeTodoText,
             lang,
         }),
-        [partition, activeTodoText, lang]
+        [
+            subturn.nonTrailingRows,
+            partition.title,
+            partition.hasFoldable,
+            partition.hasPinned,
+            partition.hasActivity,
+            partition.streaming,
+            activeTodoText,
+            lang,
+        ]
     )
 
     const { stepRows, nonTrailingRows, hasSteps, collapsedPinnedRailRows, quietTextRows, lastRow } = subturn

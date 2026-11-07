@@ -4,15 +4,16 @@ import { useAui } from '@assistant-ui/react'
 import type { ApiClient } from '@/api/client'
 import type { AttachmentMetadata, DecryptedMessage, PiModelSummary, Session } from '@/types/api'
 import type { ChatBlock, ModelRefusalFallbackEvent, NormalizedMessage } from '@/chat/types'
-import { normalizeDecryptedMessage } from '@/chat/normalize'
-import { reduceChatBlocks } from '@/chat/reducer'
-import { reconcileChatBlocks } from '@/chat/reconcile'
-import { buildConversationOutline } from '@/chat/outline'
-import { buildVisibleChatBlocks, isToolGroupBlock, type ToolGroupBlock } from '@/chat/toolGroups'
-import { buildSessionStatusData } from '@/chat/sessionStatus'
+import { buildConversationOutline, type ConversationOutlineItem } from '@/chat/outline'
+import { areSessionStatusDataEqual, buildSessionStatusData, type SessionStatusData } from '@/chat/sessionStatus'
+import {
+    buildGoalStateMessages,
+    createSessionEntityStore,
+    hasAbortableAgentRun,
+    type SessionEntityStore,
+} from '@/chat/store/sessionEntityStore'
 import { useUnseenBlockCount } from '@/hooks/useUnseenBlockCount'
 import { useCodexExplorationCollapse } from '@/hooks/useCodexExplorationCollapse'
-import { isDisplayedInQueueBar } from '@/lib/messages'
 import { findLatestCompletedBoundaryId } from '@/lib/assistant-runtime'
 import { useToast } from '@/lib/toast-context'
 import { useTranslation } from '@/lib/use-translation'
@@ -232,9 +233,7 @@ export function mergeStagedAttachmentsInOrder(
     return attachments.map((attachment) => stagedById.get(attachment.id) ?? attachment)
 }
 
-function isUninvokedScheduledMessage(message: DecryptedMessage): boolean {
-    return message.invokedAt == null && message.scheduledAt != null
-}
+export { buildGoalStateMessages, hasAbortableAgentRun }
 
 /**
  * Watches for incoming `abort-restore` events (emitted by the PTY launcher
@@ -358,11 +357,6 @@ export function ScratchlistDrawerHost(props: {
     )
 }
 
-export function buildGoalStateMessages(
-    messages: DecryptedMessage[]
-): DecryptedMessage[] {
-    return messages.filter((message) => !isUninvokedScheduledMessage(message))
-}
 
 /**
  * Keep the latest completed fork boundary available while reading history.
@@ -391,22 +385,7 @@ export function isModelRefusalFallbackEvent(value: unknown): value is ModelRefus
     return Boolean(value) && typeof value === 'object' && value !== null && 'type' in value && value.type === 'model-refusal-fallback'
 }
 
-export function hasAbortableAgentRun(blocks: readonly ChatBlock[]): boolean {
-    for (const block of blocks) {
-        if (block.kind === 'tool-call') {
-            if (
-                block.tool.name === 'CodexAgent'
-                && (block.tool.state === 'running' || block.tool.state === 'pending')
-            ) {
-                return true
-            }
-            if (hasAbortableAgentRun(block.children)) {
-                return true
-            }
-        }
-    }
-    return false
-}
+
 /**
  * Floating chat stage. One explicit column: without `grid-cols-1`, the dock is
  * an auto-placed second item and lands in an implicit column beside the thread.
@@ -458,68 +437,64 @@ export function useSessionChatPipeline(props: UseSessionChatPipelineParams) {
     const { t } = useTranslation()
     const { addToast } = useToast()
     const { codexExplorationCollapsed } = useCodexExplorationCollapse()
-    const normalizedCacheRef = useRef<Map<string, { source: DecryptedMessage; normalized: NormalizedMessage | null }>>(new Map())
+    const entityStoreRef = useRef<SessionEntityStore | null>(null)
+    if (!entityStoreRef.current) {
+        entityStoreRef.current = createSessionEntityStore()
+    }
+    const entityStore = entityStoreRef.current
     const modelRefusalFallbackToastIdsRef = useRef<Set<string>>(new Set())
-    const blocksByIdRef = useRef<Map<string, ChatBlock>>(new Map())
-    const visibleGroupsRef = useRef<ToolGroupBlock[]>([])
+    const prevSessionStatusRef = useRef<SessionStatusData | null>(null)
+    const prevOutlineItemsRef = useRef<ConversationOutlineItem[]>([])
     const [rememberedTailBoundary, setRememberedTailBoundary] = useState<{
         id: string | null
         tailRevision: number
     } | null>(null)
     const onResetSessionViewRef = useRef(props.onResetSessionView)
     onResetSessionViewRef.current = props.onResetSessionView
-    // Track session id to clear caches when it changes
-    const prevSessionIdRef = useRef<string | null>(null)
 
     useEffect(() => {
-        normalizedCacheRef.current.clear()
         modelRefusalFallbackToastIdsRef.current.clear()
-        blocksByIdRef.current.clear()
-        visibleGroupsRef.current = []
+        prevSessionStatusRef.current = null
+        prevOutlineItemsRef.current = []
         onResetSessionViewRef.current?.()
     }, [props.session.id])
 
-    // Exclude user messages that belong in QueuedMessagesBar above the composer.
-    // Immediate sends on an idle session stay in `visibleMessages` from 0ms so
-    // they never bounce through the queue bar while awaiting `messages-consumed`.
-    const visibleMessages = useMemo(
-        () => props.messages.filter((m) => !isDisplayedInQueueBar(m)),
-        [props.messages]
+    const snapshot = useMemo(
+        () => entityStore.reconcileInput({
+            sessionId: props.session.id,
+            messages: props.messages,
+            agentState: props.session.agentState,
+            hasMoreMessages: props.hasMoreMessages,
+            codexExplorationCollapsed,
+        }),
+        [
+            codexExplorationCollapsed,
+            entityStore,
+            props.hasMoreMessages,
+            props.messages,
+            props.session.agentState,
+            props.session.id,
+        ]
     )
 
-    const normalizedMessages: NormalizedMessage[] = useMemo(() => {
-        // Clear caches immediately when session changes (before useEffect runs)
-        if (prevSessionIdRef.current !== null && prevSessionIdRef.current !== props.session.id) {
-            normalizedCacheRef.current.clear()
-            blocksByIdRef.current.clear()
-            visibleGroupsRef.current = []
-        }
-        prevSessionIdRef.current = props.session.id
+    const {
+        visibleMessages,
+        normalizedMessages,
+        visibleBlocks,
+        timelineIndex,
+        hasRunningChildAgent,
+        activityLabel,
+    } = snapshot
 
-        const cache = normalizedCacheRef.current
-        const normalized: NormalizedMessage[] = []
-        const seen = new Set<string>()
-        for (const message of visibleMessages) {
-            if (seen.has(message.id)) {
-                continue
-            }
-            seen.add(message.id)
-            const cached = cache.get(message.id)
-            if (cached && cached.source === message) {
-                if (cached.normalized) normalized.push(cached.normalized)
-                continue
-            }
-            const next = normalizeDecryptedMessage(message)
-            cache.set(message.id, { source: message, normalized: next })
-            if (next) normalized.push(next)
-        }
-        for (const id of cache.keys()) {
-            if (!seen.has(id)) {
-                cache.delete(id)
-            }
-        }
-        return normalized
-    }, [visibleMessages])
+    const reduced = useMemo(
+        () => ({
+            blocks: snapshot.blocks,
+            hasReadyEvent: snapshot.hasReadyEvent,
+            latestGoal: snapshot.latestGoal,
+            latestUsage: snapshot.latestUsage,
+        }),
+        [snapshot.blocks, snapshot.hasReadyEvent, snapshot.latestGoal, snapshot.latestUsage]
+    )
 
     useEffect(() => {
         const displayedIds = modelRefusalFallbackToastIdsRef.current
@@ -544,88 +519,25 @@ export function useSessionChatPipeline(props: UseSessionChatPipelineParams) {
         }
     }, [addToast, normalizedMessages, props.session.id, t])
 
-    const goalStateSourceMessages = useMemo(
-        () => buildGoalStateMessages(props.messages),
-        [props.messages]
-    )
-
-    const normalizedGoalStateMessages: NormalizedMessage[] = useMemo(() => {
-        if (
-            visibleMessages.length === props.messages.length
-            && goalStateSourceMessages.length === props.messages.length
-        ) {
-            return normalizedMessages
-        }
-        const cache = normalizedCacheRef.current
-        const normalized: NormalizedMessage[] = []
-        const seen = new Set<string>()
-        for (const message of goalStateSourceMessages) {
-            if (seen.has(message.id)) {
-                continue
-            }
-            seen.add(message.id)
-            const cached = cache.get(message.id)
-            if (cached && cached.source === message) {
-                if (cached.normalized) normalized.push(cached.normalized)
-                continue
-            }
-            const next = normalizeDecryptedMessage(message)
-            if (next) normalized.push(next)
-        }
-        return normalized
-    }, [goalStateSourceMessages, normalizedMessages, props.messages.length, visibleMessages.length])
-
-    const reduced = useMemo(
-        () => reduceChatBlocks(normalizedMessages, props.session.agentState, {
-            goalStateMessages: normalizedGoalStateMessages
-        }),
-        [normalizedMessages, normalizedGoalStateMessages, props.session.agentState]
-    )
-    const reconciled = useMemo(
-        () => reconcileChatBlocks(reduced.blocks, blocksByIdRef.current),
-        [reduced.blocks]
-    )
-    const sessionStatus = useMemo(
-        () => buildSessionStatusData({
-            goal: reduced.latestGoal,
-            blocks: reconciled.blocks,
+    const sessionStatus = useMemo(() => {
+        const next = buildSessionStatusData({
+            goal: snapshot.latestGoal,
+            blocks: snapshot.blocks,
             messages: normalizedMessages,
             backgroundTaskCount: props.session.backgroundTaskCount,
             includeSubagents: false,
-        }),
-        [
-            reduced.latestGoal,
-            props.session.backgroundTaskCount,
-            reconciled.blocks,
-            normalizedMessages
-        ]
-    )
-    const hasRunningChildAgent = useMemo(
-        () => hasAbortableAgentRun(reduced.blocks),
-        [reduced.blocks]
-    )
-    const activityLabel = useMemo(() => {
-        for (let index = reconciled.blocks.length - 1; index >= 0; index -= 1) {
-            const block = reconciled.blocks[index]
-            if (block?.kind === 'tool-call' && (block.tool.state === 'running' || block.tool.state === 'pending')) {
-                return block.tool.name
-            }
+        })
+        if (prevSessionStatusRef.current && areSessionStatusDataEqual(prevSessionStatusRef.current, next)) {
+            return prevSessionStatusRef.current
         }
-        return null
-    }, [reconciled.blocks])
-
-    useEffect(() => {
-        blocksByIdRef.current = reconciled.byId
-    }, [reconciled.byId])
-
-    const visibleBlocks = useMemo(
-        () => buildVisibleChatBlocks(reconciled.blocks, {
-            hasMoreMessages: props.hasMoreMessages,
-            previousGroups: visibleGroupsRef.current,
-            codexExplorationCollapsed
-        }),
-        [reconciled.blocks, props.hasMoreMessages, codexExplorationCollapsed]
-    )
+        prevSessionStatusRef.current = next
+        return next
+    }, [
+        normalizedMessages,
+        props.session.backgroundTaskCount,
+        snapshot.blocks,
+        snapshot.latestGoal,
+    ])
 
     // Fork-current must compare against assistant-ui message ids (`kind:id`),
     // not raw hub message ids — MessageActions receive the rendered card id,
@@ -664,21 +576,20 @@ export function useSessionChatPipeline(props: UseSessionChatPipelineParams) {
         return latestCompletedBoundaryId === messageId
     }, [latestCompletedBoundaryId])
 
-    useEffect(() => {
-        visibleGroupsRef.current = visibleBlocks.filter(isToolGroupBlock)
-    }, [visibleBlocks])
-
     // "N new messages" counts rendered blocks, not raw messages: a subagent run
     // is dozens of sidechain messages but a single Task card, and a tool_use +
     // tool_result pair is one card.
     const unseenCount = useUnseenBlockCount(props.viewMode, visibleBlocks)
 
-    const outlineItems = useMemo(
-        () => buildConversationOutline(reconciled.blocks),
-        [reconciled.blocks]
-    )
+    const outlineItems = useMemo(() => {
+        const next = buildConversationOutline(snapshot.blocks, prevOutlineItemsRef.current)
+        prevOutlineItemsRef.current = next
+        return next
+    }, [snapshot.blocks])
 
     return {
+        entityStore,
+        timelineIndex,
         visibleMessages,
         normalizedMessages,
         reduced,

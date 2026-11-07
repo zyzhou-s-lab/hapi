@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { projectTurn, type ProjectedSubturn, type TurnPartition } from '@/components/AssistantChat/messages/turnBlockModel'
+import { projectTurn, type ProjectedSubturn, type ProjectedTurn, type TurnPartition } from '@/components/AssistantChat/messages/turnBlockModel'
 import { TurnExecutionRail } from '@/components/AssistantChat/messages/TurnExecutionRail'
 import { TimelineTodoChecklistCard, TurnTodoSection } from '@/components/AssistantChat/messages/TurnTodoSection'
 import { TurnAnswerSection } from '@/components/AssistantChat/messages/TurnAnswerSection'
@@ -93,14 +93,16 @@ export function TimelineTurnBlockView(props: {
     const viewMode = props.viewMode ?? 'normal'
     const accentColor = props.indicatorColor ?? '#da7756'
 
-    const projected = useMemo(
-        () => projectTurn(props.partition, {
+    const prevProjectedRef = useRef<ProjectedTurn | null>(null)
+    const projected = useMemo(() => {
+        const next = projectTurn(props.partition, {
             viewMode,
             streaming: props.streaming,
             fallbackTodos: props.fallbackTodos,
-        }),
-        [props.partition, viewMode, props.streaming, props.fallbackTodos]
-    )
+        }, prevProjectedRef.current)
+        prevProjectedRef.current = next
+        return next
+    }, [props.partition, viewMode, props.streaming, props.fallbackTodos])
 
     const subturn = projected.subturns[0]!
     const isInitialStreamingWait =

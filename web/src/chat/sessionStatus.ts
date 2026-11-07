@@ -200,3 +200,72 @@ export function buildSessionStatusData(args: {
         ? data
         : null
 }
+
+export function areSessionStatusDataEqual(
+    a: SessionStatusData | null,
+    b: SessionStatusData | null
+): boolean {
+    if (a === b) return true
+    if (!a || !b) return false
+    if (a.undiscoveredTerminalCount !== b.undiscoveredTerminalCount) return false
+    if (a.goal !== b.goal) {
+        if (!a.goal || !b.goal) return false
+        if (
+            a.goal.text !== b.goal.text
+            || a.goal.status !== b.goal.status
+            || a.goal.updatedAt !== b.goal.updatedAt
+        ) {
+            return false
+        }
+    }
+    if (a.tasks.length !== b.tasks.length) return false
+    for (let i = 0; i < a.tasks.length; i += 1) {
+        const t1 = a.tasks[i]!
+        const t2 = b.tasks[i]!
+        if (
+            t1 !== t2
+            && (
+                t1.id !== t2.id
+                || t1.content !== t2.content
+                || t1.status !== t2.status
+                || t1.priority !== t2.priority
+                || t1.phaseId !== t2.phaseId
+            )
+        ) {
+            return false
+        }
+    }
+    if (a.subagents.length !== b.subagents.length) return false
+    for (let i = 0; i < a.subagents.length; i += 1) {
+        const s1 = a.subagents[i]!
+        const s2 = b.subagents[i]!
+        if (
+            s1.id !== s2.id
+            || s1.title !== s2.title
+            || s1.detail !== s2.detail
+            || s1.state !== s2.state
+            || s1.startedAt !== s2.startedAt
+            || s1.endedAt !== s2.endedAt
+        ) {
+            return false
+        }
+    }
+    if (a.terminals.length !== b.terminals.length) return false
+    for (let i = 0; i < a.terminals.length; i += 1) {
+        const term1 = a.terminals[i]!
+        const term2 = b.terminals[i]!
+        if (
+            term1.id !== term2.id
+            || term1.command !== term2.command
+            || term1.cwd !== term2.cwd
+            || term1.startedAt !== term2.startedAt
+        ) {
+            return false
+        }
+    }
+    if (a.possibleTerminalCommands.length !== b.possibleTerminalCommands.length) return false
+    for (let i = 0; i < a.possibleTerminalCommands.length; i += 1) {
+        if (a.possibleTerminalCommands[i] !== b.possibleTerminalCommands[i]) return false
+    }
+    return true
+}

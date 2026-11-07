@@ -42,7 +42,32 @@ function isLocatableOutlineBlock(block: ChatBlock): block is UserTextBlock {
         && !(block.invokedAt === null && block.status !== 'failed')
 }
 
-export function buildConversationOutline(blocks: readonly ChatBlock[]): ConversationOutlineItem[] {
+export function areConversationOutlineItemsEqual(
+    a: readonly ConversationOutlineItem[],
+    b: readonly ConversationOutlineItem[]
+): boolean {
+    if (a === b) return true
+    if (a.length !== b.length) return false
+    for (let i = 0; i < a.length; i += 1) {
+        const prev = a[i]!
+        const next = b[i]!
+        if (
+            prev.id !== next.id
+            || prev.targetMessageId !== next.targetMessageId
+            || prev.kind !== next.kind
+            || prev.label !== next.label
+            || prev.createdAt !== next.createdAt
+        ) {
+            return false
+        }
+    }
+    return true
+}
+
+export function buildConversationOutline(
+    blocks: readonly ChatBlock[],
+    previousItems?: ConversationOutlineItem[]
+): ConversationOutlineItem[] {
     const items: ConversationOutlineItem[] = []
     const seen = new Map<string, number>()
 
@@ -50,6 +75,10 @@ export function buildConversationOutline(blocks: readonly ChatBlock[]): Conversa
         if (isLocatableOutlineBlock(block)) {
             items.push(userBlockToOutlineItem(block, seen))
         }
+    }
+
+    if (previousItems && areConversationOutlineItemsEqual(previousItems, items)) {
+        return previousItems
     }
 
     return items
