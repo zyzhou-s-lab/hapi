@@ -22,7 +22,8 @@ export function TurnExecutionRail(props: {
     partition: TurnPartition
     streaming: boolean
     durationMs: number | null
-    initiallyOpen?: boolean
+    open: boolean
+    onOpenChange: (open: boolean) => void
     activeTodoText?: string | null
     viewMode: 'normal' | 'thinking' | 'verbose'
     lang: 'en' | 'zh-CN'
@@ -34,7 +35,8 @@ export function TurnExecutionRail(props: {
         partition,
         streaming,
         durationMs,
-        initiallyOpen,
+        open,
+        onOpenChange,
         activeTodoText,
         viewMode,
         lang,
@@ -42,28 +44,9 @@ export function TurnExecutionRail(props: {
         renderTrailingText,
     } = props
 
-    const [open, setOpen] = useState(
-        initiallyOpen ?? (viewMode === 'verbose')
-    )
-    const sawStream = useRef(streaming)
-
-    const hasPendingInteractive = subturn.rows.some(
-        (row) => row.kind === 'tool' && (row.permission || row.block.tool.state === 'pending')
-    )
     const failed = subturn.rows.some(
         (row) => row.kind === 'tool' && row.error && row.pinned
     )
-
-    useEffect(() => {
-        if (sawStream.current && !streaming && viewMode !== 'verbose' && !hasPendingInteractive) {
-            setOpen(false)
-        }
-        sawStream.current = streaming
-    }, [streaming, viewMode, hasPendingInteractive])
-
-    useEffect(() => {
-        if (viewMode === 'verbose') setOpen(true)
-    }, [viewMode])
 
     const summary = useMemo(
         () => summarizeTurnActivity(partition, {
@@ -301,7 +284,7 @@ export function TurnExecutionRail(props: {
             <button
                 type="button"
                 aria-expanded={open}
-                onClick={() => setOpen((v) => !v)}
+                onClick={() => onOpenChange(!open)}
                 data-testid="turn-level0-header"
                 data-hapi-share-exclude="true"
                 className="group inline-flex max-w-full items-center gap-1.5 rounded-md py-1 pr-2 text-left text-[13.5px] leading-5 text-[var(--app-hint)] transition-colors hover:text-[var(--app-fg)]"

@@ -80,10 +80,17 @@ export function TodoStatusBadge(props: {
     if (props.status === 'blocked') {
         return (
             <span
-                className="inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full border border-[var(--app-badge-error-border)] bg-[var(--app-badge-error-bg)] text-[10px] font-bold text-[var(--app-badge-error-text)]"
+                className="inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full border border-[var(--app-hint)]/40 bg-[var(--app-subtle-bg)] text-[var(--app-hint)]"
                 data-testid={`${prefix}-blocked`}
             >
-                !
+                <svg className="h-2.5 w-2.5" viewBox="0 0 12 12" fill="none" aria-hidden="true">
+                    <path
+                        d="M4.25 3.25V8.75M7.75 3.25V8.75"
+                        stroke="currentColor"
+                        strokeWidth="1.6"
+                        strokeLinecap="round"
+                    />
+                </svg>
             </span>
         )
     }
@@ -100,7 +107,7 @@ export function TodoStatusBadge(props: {
 function checklistTone(item: ChecklistItem): string {
     if (item.status === 'completed') return 'text-[var(--app-fg)]/85 line-through'
     if (item.status === 'in_progress') return 'text-[var(--app-link)] font-medium'
-    if (item.status === 'blocked') return 'text-[var(--app-badge-error-text)]'
+    if (item.status === 'blocked') return 'text-[var(--app-hint)]'
     return 'text-[var(--app-hint)]'
 }
 

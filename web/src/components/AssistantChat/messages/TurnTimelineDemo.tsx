@@ -17,6 +17,8 @@ import {
     type DockedQuestionItem,
     type DockedTodoItem,
 } from '@/components/AssistantChat/messages/TurnDockedWidgets'
+import { StatusBar } from '@/components/AssistantChat/StatusBar'
+import { TodoPanel } from '@/fork-features/task-panel/TodoPanel'
 import { cn } from '@/lib/utils'
 
 export type DemoLifecycleStage =
@@ -615,6 +617,40 @@ function DemoConversation(props: {
             </div>
             <div className="max-h-[65%] shrink-0 overflow-y-auto border-t border-[var(--app-border)] bg-[var(--app-bg)] px-3 py-3 sm:px-5" data-testid="demo-composer-dock">
                 <div className="mx-auto max-w-3xl">
+                    <StatusBar
+                        active
+                        thinking={running}
+                        agentState={null}
+                        gitBranch="main"
+                        gitStatus={{
+                            branch: 'main',
+                            stagedFiles: [
+                                {
+                                    fileName: 'TimelineTurnBlock.tsx',
+                                    filePath: 'web/src/components/AssistantChat/messages/TimelineTurnBlock.tsx',
+                                    fullPath: 'web/src/components/AssistantChat/messages/TimelineTurnBlock.tsx',
+                                    status: 'modified',
+                                    isStaged: true,
+                                    linesAdded: 30,
+                                    linesRemoved: 4,
+                                },
+                            ],
+                            unstagedFiles: [
+                                {
+                                    fileName: 'TurnTodoSection.tsx',
+                                    filePath: 'web/src/components/AssistantChat/messages/TurnTodoSection.tsx',
+                                    fullPath: 'web/src/components/AssistantChat/messages/TurnTodoSection.tsx',
+                                    status: 'modified',
+                                    isStaged: false,
+                                    linesAdded: 18,
+                                    linesRemoved: 8,
+                                },
+                            ],
+                            totalStaged: 1,
+                            totalUnstaged: 1,
+                        }}
+                        hideContextUsage
+                    />
                     {state.stage === 'asking-user' ? (
                         <div className="mb-2">
                             <DockedQuestionWizard
@@ -624,13 +660,24 @@ function DemoConversation(props: {
                             />
                         </div>
                     ) : null}
+                    <TodoPanel
+                        sessionId="demo-turn-timeline"
+                        todos={stageData.todos.map((item) => ({
+                            id: item.id,
+                            content: item.content,
+                            status: item.status,
+                            priority: 'medium' as const,
+                        }))}
+                        sessionThinking={running}
+                    />
                     <DockedTodoProgressBar todos={stageData.todos} defaultExpanded={state.stage === 'working-step-1'} lang={state.lang} />
-                    <div className="rounded-b-xl border border-[var(--app-composer-border)] bg-[var(--app-composer-surface)] px-3 py-3">
-                        <div className="flex min-h-10 items-center justify-between gap-3 text-xs text-[var(--app-hint)]">
-                            <span className="min-w-0 leading-5">
+                    <div data-testid="composer-frame" className="composer-floating-frame backdrop-blur-md">
+                        <div className="flex min-h-9 items-center gap-2.5 px-3.5 py-2.5 text-xs text-[var(--app-hint)]">
+                            <span data-testid="composer-attach-plus" className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-[var(--app-border)] bg-[var(--app-bg)]/80 text-[var(--app-fg)]/75 shadow-2xs" aria-hidden="true">+</span>
+                            <span className="min-w-0 flex-1 leading-5">
                                 {running
                                     ? (state.lang === 'zh-CN' ? '↵ 发送，⌘↵ 排队等待稍后执行…' : '↵ to send, ⌘↵ to queue for later…')
-                                    : (state.lang === 'zh-CN' ? '输入消息…' : 'Write a message…')}
+                                    : (state.lang === 'zh-CN' ? '输入消息…' : 'Ask anything, @ to mention, / for skills…')}
                             </span>
                             {running ? (
                                 <button
@@ -638,15 +685,24 @@ function DemoConversation(props: {
                                     data-testid="demo-stop-running-btn"
                                     aria-label={state.lang === 'zh-CN' ? '停止当前运行' : 'Stop current run'}
                                     onClick={() => props.onAction({ type: 'stage', stage: 'completed' })}
-                                    className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-[var(--app-button)] text-[var(--app-button-text)] hover:opacity-80"
+                                    className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-[var(--app-badge-error-border)] bg-[var(--app-badge-error-bg)] text-[var(--app-badge-error-text)] shadow-2xs transition-colors hover:opacity-90"
                                 >
-                                    <span aria-hidden="true" className="h-3 w-3 rounded-xs bg-current" />
+                                    <span aria-hidden="true" className="h-2.5 w-2.5 rounded-xs bg-current" />
                                 </button>
                             ) : null}
+                            <span className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[var(--app-button)] text-[var(--app-button-text)] opacity-80" aria-hidden="true">↑</span>
                         </div>
-                        <div className="mt-1 flex justify-between gap-2 text-[10px] text-[var(--app-hint)]">
-                            <span>{state.lang === 'zh-CN' ? '演示输入区' : 'Demo composer'}</span>
+                    </div>
+                    <div data-testid="composer-external-bar" className="mt-1.5 flex shrink-0 items-center justify-between gap-2 px-1 text-xs text-[var(--app-fg)]/70">
+                        <div data-testid="composer-toolbar-items" className="flex min-w-0 flex-1 items-center gap-1 font-medium">
+                            <span data-testid="composer-settings-button" className="flex h-8 w-8 items-center justify-center rounded-full text-[var(--app-hint)]" aria-hidden="true">⚙</span>
+                            <span className="flex h-8 items-center gap-1 rounded-full px-3">GPT-5.4 ▾</span>
+                            <span className="flex h-8 items-center gap-1 rounded-full px-3">High ▾</span>
+                        </div>
+                        <div data-testid="composer-external-right" className="flex shrink-0 items-center gap-1.5 font-mono text-[10.5px] text-[var(--app-hint)]">
                             <span>{props.mobile ? state.viewMode : `Ctrl+O · ${state.viewMode}`}</span>
+                            <span aria-hidden="true" className="mx-0.5 h-3.5 w-px bg-[var(--app-border)]" />
+                            <span>55%</span>
                         </div>
                     </div>
                 </div>

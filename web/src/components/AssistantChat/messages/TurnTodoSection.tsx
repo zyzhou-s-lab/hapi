@@ -73,7 +73,7 @@ export function TimelineTodoChecklistCard(props: {
                                         isCompleted && 'text-[var(--app-hint)] line-through decoration-[var(--app-hint)]/60',
                                         isInProgress && !props.suppressRunningShimmer && 'font-medium text-[var(--app-fg)]',
                                         isInProgress && props.suppressRunningShimmer && 'text-[var(--app-hint)] opacity-65',
-                                        isBlocked && 'text-[var(--app-badge-error-text)]',
+                                        isBlocked && 'text-[var(--app-hint)]',
                                         !isCompleted && !isInProgress && !isBlocked && 'text-[var(--app-fg)]/90'
                                     )}
                                 >
@@ -92,8 +92,17 @@ export function TurnTodoSection(props: {
     checklists: readonly ProjectedTodoChecklist[]
     accentColor?: string
     suppressRunningShimmer?: boolean
+    open?: boolean
+    streaming?: boolean
 }) {
-    if (props.checklists.length === 0) return null
+    const visibleChecklists = (props.open || props.streaming)
+        ? props.checklists
+        : props.checklists.filter(
+            (checklist) =>
+                checklist.items.some((item) => item.status === 'in_progress' || item.status === 'pending')
+                || !checklist.items.some((item) => item.status === 'blocked')
+        )
+    if (visibleChecklists.length === 0) return null
 
     return (
         <div
@@ -102,7 +111,7 @@ export function TurnTodoSection(props: {
             className="w-full"
         >
             <div className="mt-2 space-y-2" data-testid="turn-live-todo-cards">
-                {props.checklists.map((checklist) => (
+                {visibleChecklists.map((checklist) => (
                     <TimelineTodoChecklistCard
                         key={checklist.key}
                         items={checklist.items}

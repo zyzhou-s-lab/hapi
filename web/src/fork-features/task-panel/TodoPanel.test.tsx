@@ -30,17 +30,25 @@ describe('TodoPanel', () => {
         expect(screen.getByText('1/2')).toBeInTheDocument()
     })
 
-    it('persists collapse state and exposes the active task in the header', () => {
-        const todos: TodoItem[] = [{ id: '2', content: '运行 smoke', status: 'in_progress', priority: 'medium' }]
+    it('persists collapse state, unmounts the checklist body while collapsed, and exposes the active task in the header', () => {
+        const todos: TodoItem[] = [
+            { id: '1', content: '已完成任务', status: 'completed', priority: 'medium' },
+            { id: '2', content: '运行 smoke', status: 'in_progress', priority: 'medium' }
+        ]
         const first = renderPanel(todos)
+        expect(document.getElementById('todo-panel-body-session-117')).not.toBeNull()
+        expect(screen.getByTestId('todo-panel')).toHaveTextContent('已完成任务')
         const toggle = screen.getByRole('button', { name: /Tasks/ })
         fireEvent.click(toggle)
         expect(toggle).toHaveAttribute('aria-expanded', 'false')
         expect(toggle).toHaveTextContent('运行 smoke')
+        expect(document.getElementById('todo-panel-body-session-117')).toBeNull()
+        expect(screen.getByTestId('todo-panel')).not.toHaveTextContent('已完成任务')
         first.unmount()
 
         renderPanel(todos)
         expect(screen.getByRole('button', { name: /Tasks/ })).toHaveAttribute('aria-expanded', 'false')
+        expect(document.getElementById('todo-panel-body-session-117')).toBeNull()
     })
 
     it('clears and restores task content when the supplied projection changes', () => {
@@ -87,5 +95,42 @@ describe('TodoPanel', () => {
         )
         expect(toggle).toHaveAttribute('aria-expanded', 'false')
         expect(screen.getByTestId('todo-panel-stale-done')).toHaveTextContent('Previous tasks completed')
+    })
+
+    it.each(['pending', 'in_progress'] as const)('restores the paused task panel when a task becomes %s', (status) => {
+        const blockedTodos: TodoItem[] = [
+            { id: '1', content: 'Add multi-port dev isolation section to V3.1 spec', status: 'pending', priority: 'medium', blocked: true },
+            { id: '2', content: 'Execute V3.1 rearchitecture PRs after user approval', status: 'pending', priority: 'medium', blocked: true }
+        ]
+        const view = renderPanel(blockedTodos)
+        expect(screen.queryByTestId('todo-panel')).toBeNull()
+
+        view.rerender(
+            <I18nProvider>
+                <TodoPanel
+                    sessionId="session-117"
+                    todos={[
+                        { ...blockedTodos[0]!, status, blocked: false },
+                        blockedTodos[1]!
+                    ]}
+                />
+            </I18nProvider>
+        )
+        expect(screen.getByTestId('todo-panel')).toHaveTextContent('Add multi-port dev isolation section to V3.1 spec')
+    })
+
+    it('hides a completed and blocked mix without changing completed-only panel visibility', () => {
+        const todos: TodoItem[] = [
+            { id: '1', content: 'Write the spec', status: 'completed', priority: 'medium' },
+            { id: '2', content: 'Await approval', status: 'pending', priority: 'medium', blocked: true }
+        ]
+        const view = renderPanel(todos)
+        expect(screen.queryByTestId('todo-panel')).toBeNull()
+        view.rerender(
+            <I18nProvider>
+                <TodoPanel sessionId="session-117" todos={todos.map((todo) => ({ ...todo, status: 'completed', blocked: false }))} />
+            </I18nProvider>
+        )
+        expect(screen.getByTestId('todo-panel')).toHaveTextContent('2/2')
     })
 })

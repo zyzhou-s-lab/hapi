@@ -240,4 +240,59 @@ describe('StatusBar context details popover', () => {
         const cacheLine = await screen.findByText('Cache: 86k')
         expect(cacheLine.parentElement?.textContent).toBe('Cache: 86kUsed: 90k (35%)Remaining: 168k (65%)')
     })
+
+    it('renders top-left git branch and diff stats next to online and hides right-side context when hideContextUsage is enabled', async () => {
+        localStorage.setItem('hapi-lang', 'en')
+        render(
+            <I18nProvider>
+                <StatusBar
+                    active
+                    thinking={false}
+                    agentState={null}
+                    contextSize={90_000}
+                    contextCacheRead={86_000}
+                    contextWindow={258_000}
+                    hideContextUsage
+                    gitBranch="main"
+                    gitStatus={{
+                        branch: 'main',
+                        totalStaged: 1,
+                        totalUnstaged: 1,
+                        stagedFiles: [
+                            {
+                                fileName: 'HappyComposer.tsx',
+                                filePath: 'web/src/components/AssistantChat',
+                                fullPath: 'web/src/components/AssistantChat/HappyComposer.tsx',
+                                status: 'modified',
+                                isStaged: true,
+                                linesAdded: 36,
+                                linesRemoved: 8,
+                            },
+                        ],
+                        unstagedFiles: [
+                            {
+                                fileName: 'ComposerButtons.tsx',
+                                filePath: 'web/src/components/AssistantChat',
+                                fullPath: 'web/src/components/AssistantChat/ComposerButtons.tsx',
+                                status: 'modified',
+                                isStaged: false,
+                                linesAdded: 12,
+                                linesRemoved: 4,
+                            },
+                        ],
+                    }}
+                />
+            </I18nProvider>
+        )
+
+        expect(screen.getByText('online')).toBeInTheDocument()
+        expect(screen.queryByRole('button', { name: 'Context details' })).toBeNull()
+        const gitTrigger = screen.getByTestId('statusbar-git-trigger')
+        expect(gitTrigger.textContent).toContain('main')
+        expect(gitTrigger.textContent).toContain('+48')
+        expect(gitTrigger.textContent).toContain('-12')
+
+        fireEvent.click(gitTrigger)
+        expect(await screen.findByText('web/src/components/AssistantChat/HappyComposer.tsx')).toBeInTheDocument()
+    })
 })

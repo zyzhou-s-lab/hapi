@@ -222,6 +222,21 @@ describe('extractTodoChecklist', () => {
             { id: 'Fix scroll:2', text: 'Anchor viewport', status: 'in_progress' }
         ])
     })
+
+    it('advances past an earlier phase with only blocked/completed tasks when a later phase has an active task', () => {
+        const items = extractTodoChecklist(
+            {
+                todos: [
+                    { id: 'Phase 1:1', content: 'Add multi-port dev isolation section to V3.1 spec', status: 'pending', blocked: true, priority: 'medium' },
+                    { id: 'Phase 2:1', content: 'Implement PR 1 CSS layer cleanup', status: 'in_progress', priority: 'medium' }
+                ]
+            },
+            undefined
+        )
+        expect(items).toEqual([
+            { id: 'Phase 2:1', text: 'Implement PR 1 CSS layer cleanup', status: 'in_progress' }
+        ])
+    })
 })
 
 describe('update_plan tool presentation', () => {
@@ -302,4 +317,5 @@ describe('ChecklistList', () => {
 
         expect(screen.getByText(/\(empty\)/)).toBeInTheDocument()
     })
+
 })

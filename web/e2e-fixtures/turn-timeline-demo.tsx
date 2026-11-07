@@ -18,6 +18,8 @@ import {
 import { HappyComposer } from '../src/components/AssistantChat/HappyComposer'
 import { HappyThread } from '../src/components/AssistantChat/HappyThread'
 import { useSessionFlavorModelController } from '../src/components/AssistantChat/composer/useSessionFlavorModelController'
+import { SessionStatusPanel } from '../src/components/SessionStatusPanel'
+import { TodoPanel } from '../src/fork-features/task-panel/TodoPanel'
 import { projectSessionTodoSnapshot } from '../src/chat/projections/todoProjection'
 import { normalizeDecryptedMessage } from '../src/chat/normalize'
 import { reduceChatBlocks } from '../src/chat/reducer'
@@ -381,7 +383,11 @@ function ComposerFlavorSettingsInner() {
         agentStateVersion: 1,
         thinking: isPiGenerating,
         thinkingAt: isPiGenerating ? 1_700_000_000_000 : 0,
-        todos: [],
+        todos: [
+            { id: '1', content: 'Phase 1:1 (completed) · Align CSS @layer cascade', status: 'completed', priority: 'high' },
+            { id: '2', content: 'Phase 1:2 (in_progress) · Verify SubturnView slots and floating dock', status: 'in_progress', priority: 'high' },
+            { id: '3', content: 'Phase 1:3 (blocked) · Paused fallback verification task', status: 'blocked', priority: 'medium' },
+        ],
     }), [
         collaborationMode,
         copilotAgentMode,
@@ -550,7 +556,30 @@ function ComposerFlavorSettingsInner() {
     return (
         <AssistantRuntimeProvider runtime={runtime}>
             <div className="min-h-screen bg-[var(--app-bg)] p-6 text-[var(--app-fg)]" data-testid="composer-flavor-fixture">
-                <div className="mx-auto flex max-w-3xl flex-col gap-6 pt-64">
+                <div className="mx-auto flex max-w-3xl flex-col gap-6">
+                    <SessionStatusPanel
+                        data={{
+                            goal: {
+                                objective: 'Verify PR 1-5 rearchitectured components with main 96e3a282 styles',
+                                status: 'active',
+                                timeUsedSeconds: 145,
+                            },
+                            tasks: session.todos ?? [],
+                            subagents: [
+                                {
+                                    id: 'agent-pr45',
+                                    title: 'PR45Steady',
+                                    state: 'working',
+                                    detail: 'Auditing SubturnView open state and floating dock geometry',
+                                    startedAt: 1_700_000_000_000,
+                                    endedAt: null,
+                                },
+                            ],
+                            terminals: [],
+                            undiscoveredTerminalCount: 0,
+                            possibleTerminalCommands: [],
+                        }}
+                    />
                     <div className="rounded-xl border border-[var(--app-border)] bg-[var(--app-subtle-bg)] p-4">
                         <div className="mb-3 flex flex-wrap items-center gap-2">
                             {(['omp', 'cursor', 'pi', 'codex', 'claude'] as const).map((item) => (
@@ -598,14 +627,27 @@ function ComposerFlavorSettingsInner() {
                             <span data-testid="state-resume">resume={String(resumeWithSessionModel)}</span>
                         </div>
                     </div>
+                    <div className="flex flex-col gap-0 pt-56" data-testid="composer-dock-stack">
+                        <div className="px-3">
+                            <FeatureErrorBoundary name="todo-panel" resetKey={session.id}>
+                                <TodoPanel
+                                    sessionId={session.id}
+                                    todos={session.todos}
+                                    sessionThinking={session.thinking}
+                                />
+                            </FeatureErrorBoundary>
+                        </div>
 
-                    <HappyComposer
-                        sessionId={session.id}
-                        disabled={false}
-                        allowSendWhenInactive={!session.active}
-                        thinking={session.thinking}
-                        flavorController={flavorController}
-                    />
+                        <HappyComposer
+                            sessionId={session.id}
+                            disabled={false}
+                            allowSendWhenInactive={!session.active}
+                            thinking={session.thinking}
+                            contextSize={110_000}
+                            contextModel="gpt-5.4"
+                            flavorController={flavorController}
+                        />
+                    </div>
                 </div>
             </div>
         </AssistantRuntimeProvider>

@@ -32,10 +32,7 @@ import type { ScratchlistParkResult } from '@/lib/scratchlistAttachmentFlow'
 import { useFue } from '@/lib/use-fue'
 import { useTranslation } from '@/lib/use-translation'
 import type { ConversationStatus } from '@/realtime/types'
-import type {
-    AgentState,
-    ThreadGoal,
-} from '@/types/api'
+import type { AgentState, GitStatusFiles, ThreadGoal } from '@/types/api'
 import type { ComposerFlavorPropsInput } from './composer/ComposerSettingsSheet'
 import {
     ComposerSettingsSheet,
@@ -126,6 +123,9 @@ export interface HappyComposerProps extends ComposerFlavorPropsInput {
     attachmentOrderRef?: MutableRefObject<string[]>
     /** Chip hover / aria-label resolver (SessionChat → useSessions). */
     resolveSessionMentionTooltip?: (id: string, title: string) => SessionMentionResolveResult
+    gitBranch?: string | null
+    gitStatus?: GitStatusFiles | null
+    onViewFiles?: () => void
 }
 
 export function HappyComposer(props: HappyComposerProps) {
@@ -435,6 +435,8 @@ export function HappyComposer(props: HappyComposerProps) {
         overlayPositionClass,
     ])
 
+    const [inlineLeadingSlot, setInlineLeadingSlot] = useState<HTMLDivElement | null>(null)
+    const [inlineTrailingSlot, setInlineTrailingSlot] = useState<HTMLDivElement | null>(null)
     const shellClassName = isExpanded
         ? `z-[60] flex min-h-0 flex-col bg-[var(--app-bg)] px-3 ${bottomPaddingClass} max-sm:fixed max-sm:inset-x-0 max-sm:top-0 max-sm:h-[var(--tg-viewport-stable-height,var(--app-viewport-height,100dvh))] max-sm:pt-[calc(0.5rem+env(safe-area-inset-top))] sm:absolute sm:inset-0 sm:pt-2`
         : `composer-floating-shell${isIOSPWA ? ' composer-floating-shell-ios-pwa' : ''}`
@@ -487,6 +489,10 @@ export function HappyComposer(props: HappyComposerProps) {
                                 threadGoal={threadGoal}
                                 agentFlavor={agentFlavor}
                                 voiceStatus={effectiveVoiceStatus}
+                                gitBranch={props.gitBranch}
+                                gitStatus={props.gitStatus}
+                                onViewFiles={props.onViewFiles}
+                                hideContextUsage
                             />
                         ) : null}
 
@@ -541,9 +547,14 @@ export function HappyComposer(props: HappyComposerProps) {
                                 </div>
                             ) : null}
 
-                            <div className={`flex px-4 py-3 ${
+                            <div className={`flex gap-2.5 px-3.5 py-2.5 ${
                                 isExpanded ? 'min-h-0 flex-1 items-stretch' : 'items-center'
                             }`}>
+                                <div
+                                    ref={setInlineLeadingSlot}
+                                    data-testid="composer-inline-leading"
+                                    className={`flex shrink-0 items-center ${isExpanded ? 'self-end pb-0.5' : ''}`}
+                                />
                                 {richMentionsEnabled ? (
                                     <div
                                         ref={richComposerFueAnchorRef}
@@ -615,6 +626,11 @@ export function HappyComposer(props: HappyComposerProps) {
                                         className="app-input-text flex-1 resize-none bg-transparent text-[var(--app-fg)] placeholder-[var(--app-hint)] outline-none outline-0 focus:outline-none focus-visible:outline-none focus-visible:outline-0 disabled:cursor-not-allowed disabled:opacity-50"
                                     />
                                 )}
+                                <div
+                                    ref={setInlineTrailingSlot}
+                                    data-testid="composer-inline-trailing"
+                                    className={`flex shrink-0 items-center gap-1.5 ${isExpanded ? 'self-end pb-0.5' : ''}`}
+                                />
                             </div>
                             {richMentionsEnabled && richComposerFueStatus === 'engaging' ? (
                                 <FueCallout
@@ -627,54 +643,62 @@ export function HappyComposer(props: HappyComposerProps) {
                                     width={288}
                                 />
                             ) : null}
-
-                            <ComposerButtons
-                                canSend={canSend}
-                                controlsDisabled={controlsDisabled}
-                                showSettingsButton={showSettingsButton}
-                                settingsButtonRef={settingsButtonRef}
-                                settingsDisabled={modelEffortControlsDisabled}
-                                modelValueButtonRef={modelValueButtonRef}
-                                effortValueButtonRef={effortValueButtonRef}
-                                onSettingsToggle={handleGearToggle}
-                                expanded={isExpanded}
-                                onExpandedToggle={handleExpandedToggle}
-                                showTerminalButton={showTerminalButton}
-                                terminalDisabled={terminalDisabled}
-                                terminalLabel={terminalLabel}
-                                onTerminal={onTerminal ?? (() => {})}
-                                showAbortButton={showAbortButton}
-                                abortDisabled={abortDisabled}
-                                isAborting={isAborting}
-                                onAbort={handleAbort}
-                                showSwitchButton={showSwitchButton}
-                                switchDisabled={switchDisabled}
-                                isSwitching={isSwitching}
-                                onSwitch={handleSwitch}
-                                voiceEnabled={voiceEnabled}
-                                dictationEnabled={dictationActive}
-                                voiceStatus={effectiveVoiceStatus}
-                                voiceMicMuted={dictationActive ? false : voiceMicMuted}
-                                onVoiceToggle={effectiveVoiceToggle ?? (() => {})}
-                                onVoiceMicToggle={dictationActive ? undefined : onVoiceMicToggle}
-                                onSend={handleSend}
-                                pendingSchedule={pendingSchedule}
-                                onSchedule={handleUserSchedule}
-                                onClearSchedule={onUserClearSchedule}
-                                hasAttachments={blocksScheduling}
-                                modelValueLabel={modelValueLabel}
-                                modelValueDisabled={modelEffortControlsDisabled}
-                                modelValueOpen={showSettings && settingsSection !== 'effort'}
-                                onModelValueToggle={handleModelValueToggle}
-                                effortValueLabel={effortValueLabel}
-                                effortValueDisabled={modelEffortControlsDisabled}
-                                effortValueOpen={showSettings && settingsSection !== 'model'}
-                                onEffortValueToggle={handleEffortValueToggle}
-                                scratchlistMode={props.scratchlistMode}
-                                scratchlistCount={props.scratchlistCount}
-                                onScratchlistToggle={props.onScratchlistToggle}
-                            />
                         </div>
+
+                        <ComposerButtons
+                            canSend={canSend}
+                            controlsDisabled={controlsDisabled}
+                            showSettingsButton={showSettingsButton}
+                            settingsButtonRef={settingsButtonRef}
+                            settingsDisabled={modelEffortControlsDisabled}
+                            modelValueButtonRef={modelValueButtonRef}
+                            effortValueButtonRef={effortValueButtonRef}
+                            onSettingsToggle={handleGearToggle}
+                            expanded={isExpanded}
+                            onExpandedToggle={handleExpandedToggle}
+                            showTerminalButton={showTerminalButton}
+                            terminalDisabled={terminalDisabled}
+                            terminalLabel={terminalLabel}
+                            onTerminal={onTerminal ?? (() => {})}
+                            showAbortButton={showAbortButton}
+                            abortDisabled={abortDisabled}
+                            isAborting={isAborting}
+                            onAbort={handleAbort}
+                            showSwitchButton={showSwitchButton}
+                            switchDisabled={switchDisabled}
+                            isSwitching={isSwitching}
+                            onSwitch={handleSwitch}
+                            voiceEnabled={voiceEnabled}
+                            dictationEnabled={dictationActive}
+                            voiceStatus={effectiveVoiceStatus}
+                            voiceMicMuted={dictationActive ? false : voiceMicMuted}
+                            onVoiceToggle={effectiveVoiceToggle ?? (() => {})}
+                            onVoiceMicToggle={dictationActive ? undefined : onVoiceMicToggle}
+                            onSend={handleSend}
+                            pendingSchedule={pendingSchedule}
+                            onSchedule={handleUserSchedule}
+                            onClearSchedule={onUserClearSchedule}
+                            hasAttachments={blocksScheduling}
+                            modelValueLabel={modelValueLabel}
+                            modelValueDisabled={modelEffortControlsDisabled}
+                            modelValueOpen={showSettings && settingsSection !== 'effort'}
+                            onModelValueToggle={handleModelValueToggle}
+                            effortValueLabel={effortValueLabel}
+                            effortValueDisabled={modelEffortControlsDisabled}
+                            effortValueOpen={showSettings && settingsSection !== 'model'}
+                            onEffortValueToggle={handleEffortValueToggle}
+                            scratchlistMode={props.scratchlistMode}
+                            scratchlistCount={props.scratchlistCount}
+                            onScratchlistToggle={props.onScratchlistToggle}
+                            inlineLeadingSlot={inlineLeadingSlot}
+                            inlineTrailingSlot={inlineTrailingSlot}
+                            contextSize={contextSize}
+                            contextCacheRead={contextCacheRead}
+                            contextWindow={contextWindow}
+                            contextModel={contextModel}
+                            model={model}
+                            agentFlavor={agentFlavor}
+                        />
                     </ComposerPrimitive.Root>
                 </div>
             </div>

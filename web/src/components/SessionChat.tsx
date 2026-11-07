@@ -5,12 +5,7 @@ import { AssistantRuntimeProvider } from '@assistant-ui/react'
 import { stopSpeaking } from '@/realtime/messageSummarySpeaker'
 import { DragDropZone } from '@/components/AssistantChat/DragDropZone'
 import type { ApiClient } from '@/api/client'
-import type {
-    AttachmentMetadata,
-    DecryptedMessage,
-    Session,
-    SlashCommand
-} from '@/types/api'
+import type { AttachmentMetadata, DecryptedMessage, Session, SlashCommand } from '@/types/api'
 import type { Suggestion } from '@/hooks/useActiveSuggestions'
 import { inactiveSessionCanResume } from '@/lib/sessionResume'
 import { HappyComposer } from '@/components/AssistantChat/HappyComposer'
@@ -22,6 +17,7 @@ import { measureComposerDockInset } from '@/components/AssistantChat/threadScrol
 import { QueuedMessagesBar } from '@/components/AssistantChat/QueuedMessagesBar'
 import { TodoPanel } from '@/fork-features/task-panel/TodoPanel'
 import { useSessions } from '@/hooks/queries/useSessions'
+import { useGitStatusFiles } from '@/hooks/queries/useGitStatusFiles'
 import { getSessionTitle } from '@/lib/sessionTitle'
 import { formatSessionMentionTooltip } from '@/lib/sessionReference'
 import { classifySessionAttention, getSessionAttentionLabelKey } from '@/lib/sessionAttention'
@@ -45,12 +41,7 @@ import { SessionStatusPanel } from '@/components/SessionStatusPanel'
 import { AgentTerminalView } from '@/components/AgentTerminal/AgentTerminalView'
 import { isRemoteTerminalSupported } from '@/utils/terminalSupport'
 import { VoiceBackendSession, useSessionVoiceBridge } from '@/hooks/useSessionVoiceBridge'
-import {
-    AbortRestoreConsumer,
-    ScratchlistDrawerHost,
-    chatComposerGridPlacement,
-    useSessionChatPipeline,
-} from '@/components/sessionChatHelpers'
+import { AbortRestoreConsumer, ScratchlistDrawerHost, chatComposerGridPlacement, useSessionChatPipeline } from '@/components/sessionChatHelpers'
 
 type SessionChatProps = {
     api: ApiClient
@@ -274,6 +265,10 @@ function SessionChatInner(props: SessionChatProps) {
             ...PRESERVE_SESSION_SIDEBAR_SCROLL,
         })
     }, [navigate, props.session.id])
+    const { status: composerGitStatus } = useGitStatusFiles(
+        props.api,
+        props.session.active ? props.session.id : null
+    )
 
     const handleToggleConfig = useCallback(() => {
         setOutlineOpen(false)
@@ -630,6 +625,9 @@ function SessionChatInner(props: SessionChatProps) {
                         onClearSendError={handleClearSendError}
                         onSuppressSendErrorRestore={props.onSuppressSendErrorRestore}
                         pendingSendIntentRef={pendingSendIntentRef}
+                        gitBranch={props.session.metadata?.worktree?.branch ?? null}
+                        gitStatus={composerGitStatus}
+                        onViewFiles={props.session.active ? handleToggleFiles : undefined}
                         />
                     </div>
                     </div>

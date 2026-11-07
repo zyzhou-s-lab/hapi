@@ -22,11 +22,15 @@ export function truncateOutlineLabel(value: string, maxLength = MAX_OUTLINE_LABE
     return `${normalized.slice(0, Math.max(0, maxLength - 3)).trimEnd()}...`
 }
 
-function userBlockToOutlineItem(block: UserTextBlock): ConversationOutlineItem {
+function userBlockToOutlineItem(block: UserTextBlock, seen: Map<string, number>): ConversationOutlineItem {
     const label = truncateOutlineLabel(block.text) || 'Empty message'
+    const base = `user-text:${block.localId || block.id}`
+    const occurrence = seen.get(base) ?? 0
+    seen.set(base, occurrence + 1)
+    const messageId = occurrence === 0 ? base : `${base}~${occurrence}`
     return {
-        id: `outline:user-text:${block.id}`,
-        targetMessageId: `user-text:${block.id}`,
+        id: `outline:${messageId}`,
+        targetMessageId: messageId,
         kind: 'user',
         label,
         createdAt: block.createdAt
@@ -40,10 +44,11 @@ function isLocatableOutlineBlock(block: ChatBlock): block is UserTextBlock {
 
 export function buildConversationOutline(blocks: readonly ChatBlock[]): ConversationOutlineItem[] {
     const items: ConversationOutlineItem[] = []
+    const seen = new Map<string, number>()
 
     for (const block of blocks) {
         if (isLocatableOutlineBlock(block)) {
-            items.push(userBlockToOutlineItem(block))
+            items.push(userBlockToOutlineItem(block, seen))
         }
     }
 

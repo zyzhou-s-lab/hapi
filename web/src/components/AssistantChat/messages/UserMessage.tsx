@@ -56,9 +56,8 @@ export function HappyUserMessage() {
     const role = useAuiState(({ message }) => message.role)
     const messageId = useAuiState(({ message }) => message.id)
     const elementId = getConversationMessageAnchorId(messageId)
-    // Raw hub-DB message id (unprefixed). `message.id` is the composed
-    // assistant-ui threadMessageId `${kind}:${block.id}` — hub's fork
-    // endpoint matches on the raw id, not the composed one.
+    // The hub's fork endpoint matches the stored ID in metadata.custom.hubMessageId;
+    // assistant-ui message.id is a separate presentation key.
     const hubMessageId = useAuiState(({ message }) => {
         if (message.role !== 'user') return undefined
         const custom = message.metadata.custom as Partial<HappyChatMessageMetadata> | undefined

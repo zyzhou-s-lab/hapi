@@ -12,7 +12,6 @@ import {
     type TurnPartition,
 } from '@/components/AssistantChat/messages/turnBlockModel'
 import { TimelineTurnBlockView, type TranscriptViewMode } from '@/components/AssistantChat/messages/TimelineTurnBlock'
-import { useReasoningCollapse } from '@/hooks/useReasoningCollapse'
 import type { HappyChatMessageMetadata } from '@/lib/assistant-runtime'
 import { useTranslation } from '@/lib/use-translation'
 
@@ -118,7 +117,6 @@ function LiveTailTurnBlockBody(props: {
     isLastMessage: boolean
     createdAt: number
     custom: Partial<HappyChatMessageMetadata> | undefined
-    reasoningCollapsed: boolean
     lang: 'en' | 'zh-CN'
 }) {
     const sessionStateCtx = useOptionalHappyChatSessionStateContext()
@@ -138,7 +136,7 @@ function LiveTailTurnBlockBody(props: {
     const activeTodoText = streaming
         ? projectSessionTodoSnapshot(todosCtx?.todos).activeLabel
         : null
-    const fallbackTodos = (streaming || props.isLastMessage) ? (todosCtx?.todos ?? null) : null
+    const fallbackTodos = streaming ? (todosCtx?.todos ?? null) : null
 
     useEffect(() => {
         if (!streaming) return
@@ -153,7 +151,7 @@ function LiveTailTurnBlockBody(props: {
             lang={props.lang}
             partition={props.partition}
             streaming={streaming}
-            initiallyOpen={streaming && !props.reasoningCollapsed}
+            initiallyOpen={false}
             durationMs={turnDurationMs({
                 roundSummary: props.custom?.roundSummary,
                 invokedAt: props.custom?.invokedAt ?? (streaming ? (sessionStateCtx?.activeTurnStartedAt ?? props.createdAt) : undefined),
@@ -168,7 +166,6 @@ function LiveTailTurnBlockBody(props: {
 export function TurnBlock() {
     const staticCtx = useOptionalHappyChatStaticContext()
     const { locale } = useTranslation()
-    const { reasoningCollapsed } = useReasoningCollapse()
     const content = useAuiState((state) => state.message.role === 'assistant' ? state.message.content : [])
     const auiRunning = useAuiState((state) => state.message.status?.type === 'running')
     const isLastMessage = useAuiState((state) => state.message.isLast)
@@ -207,7 +204,6 @@ export function TurnBlock() {
             isLastMessage={isLastMessage}
             createdAt={createdAt}
             custom={custom}
-            reasoningCollapsed={reasoningCollapsed}
             lang={lang}
         />
     )

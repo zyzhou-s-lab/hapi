@@ -160,7 +160,7 @@ export function useComposerDictationController(params: {
         setComposerText,
     ])
     const dictation = useDictation(dictationConfig)
-    const dictationActive = voiceInput.voiceMode === 'dictation'
+    const dictationActive = voiceInput.voiceMode === 'dictation' || (!onVoiceToggle && dictation.supported)
     const effectiveVoiceStatus = dictationActive ? dictation.status : voiceStatus
     const effectiveVoiceToggle = dictationActive
         ? (dictation.supported ? dictation.toggle : undefined)

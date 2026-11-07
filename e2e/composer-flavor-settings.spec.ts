@@ -9,7 +9,8 @@ test.describe('PR 4 SessionFlavorModelController & ComposerSettingsSheet real-cl
         })
 
         await page.addInitScript(() => {
-            window.localStorage.setItem('hapi.fue.v1.composer-model-effort', 'acknowledged')
+            window.localStorage.setItem('hapi.fue.v1.composer-model-effort', '1')
+            window.localStorage.setItem('hapi.fue.v1.rich-composer-mentions', '1')
         })
         await page.goto('/e2e-fixtures/turn-timeline-demo.html?fixture=composer-flavor-settings')
         await page.locator('[data-testid="composer-flavor-fixture"]').waitFor()
@@ -79,6 +80,70 @@ test.describe('PR 4 SessionFlavorModelController & ComposerSettingsSheet real-cl
         await expect(page.locator('[data-testid="state-tier"]')).toHaveText('tier=fast')
         await page.waitForTimeout(300)
 
+        expect(errors).toEqual([])
+    })
+
+    test('verifies Scheme 2 composer layout, floating TodoPanel/SessionStatusPanel overlays, and paused task badge', async ({ page }) => {
+        const errors: string[] = []
+        page.on('pageerror', (err) => errors.push(err.message))
+
+        await page.addInitScript(() => {
+            window.localStorage.setItem('hapi.fue.v1.composer-model-effort', '1')
+            window.localStorage.setItem('hapi.fue.v1.rich-composer-mentions', '1')
+            window.localStorage.setItem('hapi.todo-panel.collapsed', '1')
+            window.localStorage.setItem('hapi.todo-panel.collapsed', '1')
+        })
+        await page.goto('/e2e-fixtures/turn-timeline-demo.html?fixture=composer-flavor-settings')
+        await page.locator('[data-testid="composer-flavor-fixture"]').waitFor()
+
+        // 1. Scheme 2 (c2-balanced) composer layout: inline attach-plus inside frame, settings/model/effort on external bar
+        const composerFrame = page.locator('[data-testid="composer-frame"]')
+        const externalBar = page.locator('[data-testid="composer-external-bar"]')
+        await expect(composerFrame.locator('[data-testid="composer-attach-plus"]')).toBeVisible()
+        await expect(externalBar.locator('[data-testid="composer-settings-button"]')).toBeVisible()
+
+        const frameBoxBefore = await composerFrame.boundingBox()
+        const externalBoxBefore = await externalBar.boundingBox()
+        expect(frameBoxBefore).not.toBeNull()
+        expect(externalBoxBefore).not.toBeNull()
+        expect(externalBoxBefore!.y).toBeGreaterThanOrEqual(frameBoxBefore!.y + frameBoxBefore!.height - 2)
+
+        // 2. TodoPanel floating overlay: expanding does not shift HappyComposer and stays above composer top
+        const todoPanel = page.locator('[data-testid="todo-panel"]')
+        await expect(todoPanel).toBeVisible()
+        await expect(todoPanel).toHaveClass(/composer-dock-card/)
+        const overlayPosition = await todoPanel.evaluate((el) => window.getComputedStyle(el).position)
+        expect(overlayPosition).toBe('absolute')
+
+        await expect(todoPanel.locator('button[aria-expanded]')).toHaveAttribute('aria-expanded', 'false')
+        await todoPanel.locator('button[aria-expanded]').click()
+        await expect(todoPanel.locator('button[aria-expanded]')).toHaveAttribute('aria-expanded', 'true')
+        await page.waitForTimeout(200)
+
+        const frameBoxAfterTodo = await composerFrame.boundingBox()
+        const overlayBox = await todoPanel.boundingBox()
+        expect(frameBoxAfterTodo!.y).toBeCloseTo(frameBoxBefore!.y, 1)
+        expect(overlayBox!.y + overlayBox!.height).toBeLessThanOrEqual(frameBoxAfterTodo!.y + 4)
+
+        // 3. Paused (blocked) Todo item renders neutral pause badge instead of destructive !
+        const blockedItem = todoPanel.locator('[data-todo-status="blocked"]')
+        await expect(blockedItem).toBeVisible()
+        await expect(blockedItem).toContainText('Paused fallback verification task')
+        await expect(blockedItem.locator('[data-testid="checklist-item-blocked"]')).toBeVisible()
+        await expect(blockedItem).not.toContainText('!')
+
+        // Collapse TodoPanel
+        await todoPanel.locator('button[aria-expanded]').click()
+        await page.waitForTimeout(150)
+        // 4. SessionStatusPanel floating overlay: opening details does not shift composer frame and renders ⏸ for blocked tasks
+        const statusSummary = page.locator('details > summary').first()
+        await statusSummary.click()
+        await page.waitForTimeout(150)
+        const statusOverlay = page.locator('details .composer-dock-card').first()
+        await expect(statusOverlay).toBeVisible()
+        await expect(statusOverlay.locator('[data-testid="checklist-item-blocked"]')).toBeVisible()
+        const frameBoxAfterStatus = await composerFrame.boundingBox()
+        expect(frameBoxAfterStatus!.y).toBeCloseTo(frameBoxBefore!.y, 1)
         expect(errors).toEqual([])
     })
 })

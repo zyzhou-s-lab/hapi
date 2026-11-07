@@ -238,6 +238,43 @@ describe('useHappyRuntime event visibility', () => {
         view.rerender({ blocks: blocksFor('row-empty-final', [], false) })
         expect(assistantUiMocks.useExternalMessageConverter.mock.calls.at(-1)![0].messages).toEqual([])
     })
+
+    it('preserves user-text threadMessageId across optimistic-to-server echo while updating hubMessageId', () => {
+        const optimistic = userText('local-4cdab591', {
+            localId: 'local-4cdab591',
+            text: '继续',
+            status: 'sending'
+        })
+        const confirmed = userText('server-msg-1', {
+            localId: 'local-4cdab591',
+            text: '继续',
+            status: 'sent'
+        })
+        const view = renderHook(({ blocks }) => useHappyRuntime({
+            session: session('omp'),
+            blocks,
+            isRunning: true,
+            isSending: false,
+            onSendMessage: () => undefined,
+            onAbort: async () => undefined,
+            messagesVersion: 0,
+            historyVersion: 0
+        }), { initialProps: { blocks: [optimistic] } })
+        const first = assistantUiMocks.useExternalMessageConverter.mock.calls.at(-1)![0]
+        expect(first.messages[0]?.threadMessageId).toBe('user-text:local-4cdab591')
+        expect(first.messages.map(first.callback)[0]).toMatchObject({
+            id: 'user-text:local-4cdab591',
+            metadata: { custom: { hubMessageId: 'local-4cdab591', status: 'sending' } }
+        })
+
+        view.rerender({ blocks: [confirmed] })
+        const second = assistantUiMocks.useExternalMessageConverter.mock.calls.at(-1)![0]
+        expect(second.messages[0]?.threadMessageId).toBe('user-text:local-4cdab591')
+        expect(second.messages.map(second.callback)[0]).toMatchObject({
+            id: 'user-text:local-4cdab591',
+            metadata: { custom: { hubMessageId: 'server-msg-1', status: 'sent' } }
+        })
+    })
 })
 
 describe('hoistMidTurnTitleEvents', () => {

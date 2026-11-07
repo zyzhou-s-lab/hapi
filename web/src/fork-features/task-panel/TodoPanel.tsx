@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { memo, useEffect, useMemo, useRef, useState } from 'react'
 import type { TodoItem } from '@hapi/protocol/types'
 import { projectSessionTodoSnapshot } from '@/chat/projections/todoProjection'
 import { ChecklistList } from '@/components/ToolCard/checklist'
@@ -14,10 +14,12 @@ function ChevronIcon(props: { open: boolean }) {
     )
 }
 
-export function TodoPanel(props: { sessionId: string; todos: TodoItem[] | undefined; sessionThinking?: boolean }) {
+export const TodoPanel = memo(function TodoPanel(props: { sessionId: string; todos: TodoItem[] | undefined; sessionThinking?: boolean }) {
     const { t } = useTranslation()
     const snapshot = useMemo(() => projectSessionTodoSnapshot(props.todos), [props.todos])
     const { items, totalCount, completedCount: completed, activeItem: inProgress } = snapshot
+    const hasActiveOrPending = items.some((item) => item.status === 'in_progress' || item.status === 'pending')
+    const allBlockedOrDone = items.length > 0 && !hasActiveOrPending && items.some((item) => item.status === 'blocked')
     const allDone = totalCount > 0 && completed === totalCount
     const isStaleCompleted = allDone && Boolean(props.sessionThinking)
     const [collapsed, setCollapsed] = useState(
@@ -30,7 +32,7 @@ export function TodoPanel(props: { sessionId: string; todos: TodoItem[] | undefi
         }
         prevStaleRef.current = isStaleCompleted
     }, [isStaleCompleted])
-    if (items.length === 0) return null
+    if (items.length === 0 || allBlockedOrDone) return null
     const toggleCollapsed = () => {
         const next = !collapsed
         localStorage.setItem(COLLAPSED_STORAGE_KEY, next ? '1' : '0')
@@ -38,8 +40,8 @@ export function TodoPanel(props: { sessionId: string; todos: TodoItem[] | undefi
     }
 
     return (
-        <div className="mx-auto mb-1 w-full max-w-content">
-            <div className="composer-dock-card rounded-lg" data-testid="todo-panel">
+        <div className="relative mx-auto mb-1 h-[calc(1.75rem+2px)] w-full max-w-content">
+            <div className="composer-dock-card absolute inset-x-0 bottom-0 z-10 rounded-lg" data-testid="todo-panel">
                 <button type="button" onClick={toggleCollapsed} aria-expanded={!collapsed} aria-controls={`todo-panel-body-${props.sessionId}`} className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs font-medium text-[var(--app-fg)] hover:opacity-90">
                     <span className="shrink-0 text-[11px] tabular-nums text-[var(--app-hint)]">{completed}/{items.length}</span>
                     <span className="sr-only">{t('todoPanel.title')}</span>
@@ -63,12 +65,12 @@ export function TodoPanel(props: { sessionId: string; todos: TodoItem[] | undefi
                     )}
                     <ChevronIcon open={!collapsed} />
                 </button>
-                <div id={`todo-panel-body-${props.sessionId}`} className="collapsible-panel" aria-hidden={collapsed} {...(!collapsed ? { 'data-open': '' } : {})}>
-                    <div className="collapsible-inner" inert={collapsed}>
-                        <div className="max-h-44 overflow-y-auto px-3 pb-2"><ChecklistList items={items} /></div>
+                {!collapsed ? (
+                    <div id={`todo-panel-body-${props.sessionId}`} className="max-h-44 overflow-y-auto px-3 pb-2">
+                        <ChecklistList items={items} />
                     </div>
-                </div>
+                ) : null}
             </div>
         </div>
     )
-}
+})

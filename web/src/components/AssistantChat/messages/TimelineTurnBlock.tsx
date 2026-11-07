@@ -1,14 +1,7 @@
-import { useMemo } from 'react'
-import {
-    projectTurn,
-    type ProjectedSubturn,
-    type TurnPartition,
-} from '@/components/AssistantChat/messages/turnBlockModel'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { projectTurn, type ProjectedSubturn, type TurnPartition } from '@/components/AssistantChat/messages/turnBlockModel'
 import { TurnExecutionRail } from '@/components/AssistantChat/messages/TurnExecutionRail'
-import {
-    TimelineTodoChecklistCard,
-    TurnTodoSection,
-} from '@/components/AssistantChat/messages/TurnTodoSection'
+import { TimelineTodoChecklistCard, TurnTodoSection } from '@/components/AssistantChat/messages/TurnTodoSection'
 import { TurnAnswerSection } from '@/components/AssistantChat/messages/TurnAnswerSection'
 import {
     TurnActivityIndicator,
@@ -51,19 +44,22 @@ function SubturnView(props: {
     accentColor: string
     renderTrailingText?: (text: string, streaming: boolean) => React.ReactNode
 }) {
-    const {
-        subturn,
-        partition,
-        streaming,
-        durationMs,
-        initiallyOpen,
-        activeTodoText,
-        viewMode,
-        lang,
-        accentColor,
-        renderTrailingText,
-    } = props
+    const { subturn, partition, streaming, durationMs, initiallyOpen, activeTodoText, viewMode, lang, accentColor, renderTrailingText } = props
+    const [open, setOpen] = useState(initiallyOpen ?? (viewMode === 'verbose'))
+    const sawStream = useRef(streaming)
+    const hasPendingInteractive = useMemo(
+        () => subturn.rows.some((row) => row.kind === 'tool' && (row.permission || row.block.tool.state === 'pending')),
+        [subturn.rows]
+    )
 
+    useEffect(() => {
+        if (sawStream.current && !streaming && viewMode !== 'verbose' && !hasPendingInteractive) setOpen(false)
+        sawStream.current = streaming
+    }, [streaming, viewMode, hasPendingInteractive])
+
+    useEffect(() => {
+        if (viewMode === 'verbose') setOpen(true)
+    }, [viewMode])
     return (
         <div data-testid="turn-subturn" className="w-full">
             <FeatureErrorBoundary name="turn-rail" resetKey={subturn.key}>
@@ -72,7 +68,8 @@ function SubturnView(props: {
                     partition={partition}
                     streaming={streaming}
                     durationMs={durationMs}
-                    initiallyOpen={initiallyOpen}
+                    open={open}
+                    onOpenChange={setOpen}
                     activeTodoText={activeTodoText}
                     viewMode={viewMode}
                     lang={lang}
@@ -85,6 +82,8 @@ function SubturnView(props: {
                 <TurnTodoSection
                     checklists={subturn.todoChecklists}
                     accentColor={accentColor}
+                    open={open}
+                    streaming={streaming}
                 />
             </FeatureErrorBoundary>
 

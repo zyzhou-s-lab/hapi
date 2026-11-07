@@ -192,26 +192,33 @@ function selectRelevantOmpPhases(
     if (phases.length <= 1) return phases
     if (turnContext?.hasInit) return phases
 
-    const isPhaseCompleted = (phase: ParsedOmpPhaseBlock): boolean =>
-        phase.items.length > 0 && phase.items.every((item) => item.status === 'completed')
+    const hasPhaseActiveOrPending = (phase: ParsedOmpPhaseBlock): boolean =>
+        phase.items.some((item) => item.status === 'in_progress' || item.status === 'pending')
+    const anyPhaseActiveOrPending = phases.some(hasPhaseActiveOrPending)
+    const isPhaseSettled = (phase: ParsedOmpPhaseBlock): boolean =>
+        phase.items.length > 0 && (
+            anyPhaseActiveOrPending
+                ? !hasPhaseActiveOrPending(phase)
+                : phase.items.every((item) => item.status === 'completed')
+        )
 
-    if (phases.every(isPhaseCompleted)) {
+    if (phases.every(isPhaseSettled)) {
         return [phases[phases.length - 1]]
     }
 
-    let firstNonCompletedIdx = -1
+    let firstUnsettledIdx = -1
     for (let i = 0; i < phases.length; i += 1) {
-        if (!isPhaseCompleted(phases[i])) {
-            firstNonCompletedIdx = i
+        if (!isPhaseSettled(phases[i])) {
+            firstUnsettledIdx = i
             break
         }
     }
 
     return phases.filter((phase, idx) => {
-        if (!isPhaseCompleted(phase)) return true
+        if (!isPhaseSettled(phase)) return true
         if (phase.name && turnContext?.referencedPhaseNames.has(phase.name)) return true
-        // Only keep a completed phase if it sits AFTER the first active/pending phase
-        return firstNonCompletedIdx !== -1 && idx > firstNonCompletedIdx
+        // Only keep a settled phase if it sits AFTER the first active/pending phase
+        return firstUnsettledIdx !== -1 && idx > firstUnsettledIdx
     })
 }
 

@@ -1662,7 +1662,7 @@ export function projectTurn(
     const hasSteps = stepRows.some((row) => row.kind !== 'text') || isInitialStreamingWait
 
     const fallbackChecklistItems: TodoCardItem[] =
-        options?.fallbackTodos && options.fallbackTodos.length > 0
+        streaming && options?.fallbackTodos && options.fallbackTodos.length > 0
             ? [...projectSessionTodoSnapshot(options.fallbackTodos).items]
             : []
     const allToolBlocks = stepCandidates
@@ -1688,8 +1688,9 @@ export function projectTurn(
             todoChecklists.push({ key, items })
         }
     } else if (
-        fallbackChecklistItems.length > 0
-        && fallbackChecklistItems.some((item) => item.status !== 'completed')
+        streaming
+        && fallbackChecklistItems.length > 0
+        && fallbackChecklistItems.some((item) => item.status === 'in_progress' || item.status === 'pending')
     ) {
         todoChecklists.push({ key: 'session-fallback-todos', items: fallbackChecklistItems })
     }

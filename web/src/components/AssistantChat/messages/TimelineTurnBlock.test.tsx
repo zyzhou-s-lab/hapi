@@ -1095,6 +1095,44 @@ describe('TimelineTurnBlock & summarizeTurnActivity', () => {
         expect(screen.queryByText('Old completed task')).not.toBeInTheDocument()
     })
 
+    it('hides paused-only fallback tasks and restores a paused turn checklist when expanded', () => {
+        const pausedTurn = partitionTurn(
+            [
+                { type: 'reasoning', text: 'Pausing implementation pending user confirmation' },
+                call(tool('todo-paused', 'TodoWrite', {
+                    state: 'completed',
+                    input: {
+                        todos: [
+                            { id: 'Phase 2:1', content: 'Implement PR 1 CSS layer cleanup', status: 'pending', blocked: true, priority: 'medium' },
+                        ],
+                    },
+                })),
+                { type: 'text', text: 'Paused awaiting user confirmation.' },
+            ],
+            null
+        )
+
+        render(
+            <I18nProvider>
+                <TimelineTurnBlockView
+                    partition={pausedTurn}
+                    streaming={false}
+                    durationMs={8000}
+                    initiallyOpen={false}
+                    fallbackTodos={[
+                        { id: 'Phase 1:1', content: 'Paused task in earlier phase', status: 'pending', blocked: true, priority: 'medium' },
+                    ]}
+                />
+            </I18nProvider>
+        )
+
+        expect(screen.queryByTestId('turn-todo-checklist-card')).not.toBeInTheDocument()
+
+        fireEvent.click(screen.getByTestId('turn-level0-header'))
+        expect(screen.getByTestId('turn-todo-checklist-card')).toBeInTheDocument()
+        expect(screen.getByText('Implement PR 1 CSS layer cleanup')).toBeInTheDocument()
+        expect(screen.queryByText('Paused task in earlier phase')).not.toBeInTheDocument()
+    })
     it('keeps pre-compaction final answer outside the timeline rail when ContextCompaction and post-compaction continuation follow', () => {
         const midCompactionStreaming = partitionTurn(
             [
