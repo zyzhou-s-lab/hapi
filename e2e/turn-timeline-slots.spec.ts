@@ -73,10 +73,34 @@ test.describe('TurnTimeline Todo projection, slot geometry, and TurnDockedWidget
         const interactiveTurn = showcase.locator('[data-testid="turn-timeline-block"]').first()
         const interactiveCard = interactiveTurn.locator('[data-testid="turn-todo-checklist-card"]')
         await expect(interactiveCard).toHaveCount(1)
+        await expect(interactiveCard.locator('[data-testid="turn-todo-progress-header"]')).toHaveCount(0)
         await expect(interactiveCard.locator('[data-testid="turn-todo-item-check"]')).toHaveCount(1)
         await expect(interactiveCard.locator('[data-testid="turn-todo-item-spinner"]')).toHaveCount(1)
         await expect(interactiveCard.locator('[data-testid="turn-todo-item-pending"]')).toHaveCount(1)
+        await expect(interactiveTurn.locator('[data-testid="rail-step-spinner"]')).toHaveCount(1)
 
+        const runningCardStyles = await interactiveTurn.evaluate((turnEl) => {
+            const completedTextEl = turnEl.querySelector('[data-todo-status="completed"] > span:last-child')
+            const runningTextEl = turnEl.querySelector('[data-todo-status="in_progress"] > span:last-child')
+            const railSpinnerSvg = turnEl.querySelector('[data-testid="rail-step-spinner"] svg')
+            if (!completedTextEl || !runningTextEl || !railSpinnerSvg) return null
+            const completedStyle = window.getComputedStyle(completedTextEl)
+            const runningStyle = window.getComputedStyle(runningTextEl)
+            const spinnerStyle = window.getComputedStyle(railSpinnerSvg)
+            return {
+                completedTextDecorationLine: completedStyle.textDecorationLine,
+                runningHasShimmerClass: runningTextEl.classList.contains('turn-text-shimmer'),
+                runningColor: runningStyle.color,
+                runningAnimationName: runningStyle.animationName,
+                railSpinnerAnimationName: spinnerStyle.animationName,
+            }
+        })
+        expect(runningCardStyles).not.toBeNull()
+        expect(runningCardStyles!.completedTextDecorationLine).toBe('none')
+        expect(runningCardStyles!.runningHasShimmerClass).toBe(true)
+        expect(runningCardStyles!.runningColor).toBe('rgba(0, 0, 0, 0)')
+        expect(runningCardStyles!.runningAnimationName).toBe('turn-shimmer-sweep')
+        expect(runningCardStyles!.railSpinnerAnimationName).toBe('turn-step-ring-spin')
         expect(errors).toEqual([])
     })
 
