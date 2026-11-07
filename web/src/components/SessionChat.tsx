@@ -14,8 +14,7 @@ import { useSessionFlavorModelController } from '@/components/AssistantChat/comp
 import { useSessionComposerSendBridge } from '@/components/AssistantChat/composer/useSessionComposerSendBridge'
 import { HappyThread } from '@/components/AssistantChat/HappyThread'
 import { measureComposerDockInset } from '@/components/AssistantChat/threadScrollHelpers'
-import { QueuedMessagesBar } from '@/components/AssistantChat/QueuedMessagesBar'
-import { TodoPanel } from '@/fork-features/task-panel/TodoPanel'
+import { COMPOSER_DOCK_SLOTS, ChatSlotHost } from '@/components/AssistantChat/slotRegistry'
 import { useSessions } from '@/hooks/queries/useSessions'
 import { useGitStatusFiles } from '@/hooks/queries/useGitStatusFiles'
 import { getSessionTitle } from '@/lib/sessionTitle'
@@ -41,7 +40,7 @@ import { SessionStatusPanel } from '@/components/SessionStatusPanel'
 import { AgentTerminalView } from '@/components/AgentTerminal/AgentTerminalView'
 import { isRemoteTerminalSupported } from '@/utils/terminalSupport'
 import { VoiceBackendSession, useSessionVoiceBridge } from '@/hooks/useSessionVoiceBridge'
-import { AbortRestoreConsumer, ScratchlistDrawerHost, chatComposerGridPlacement, useSessionChatPipeline } from '@/components/sessionChatHelpers'
+import { AbortRestoreConsumer, chatComposerGridPlacement, useSessionChatPipeline } from '@/components/sessionChatHelpers'
 
 type SessionChatProps = {
     api: ApiClient
@@ -534,46 +533,30 @@ function SessionChatInner(props: SessionChatProps) {
                     />
 
                     <div className="px-3">
-                        <FeatureErrorBoundary name="todo-panel" resetKey={props.session.id}>
-                            <TodoPanel
-                                sessionId={props.session.id}
-                                todos={props.session.todos}
-                                sessionThinking={Boolean(props.session.thinking)}
-                            />
-                        </FeatureErrorBoundary>
-                        {/*
-                         * Scratchlist drawer - composer-controlled. Only
-                         * mounted when the operator clicks the notepad icon
-                         * in the composer toolbar. State lives in the
-                         * useScratchlist hook above (so the toolbar counter
-                         * and the drawer share one source of truth).
-                         */}
-                        {scratchlistMode ? (
-                            <ScratchlistDrawerHost
-                                sessionId={props.session.id}
-                                api={props.api}
-                                entries={scratchlist.entries}
-                                onMove={scratchlist.move}
-                                onDelete={scratchlist.remove}
-                                onSend={props.onSend}
-                                onExitScratchlistMode={() => setScratchlistMode(false)}
-                                disabled={props.isSending || isScratchlistParking}
-                            />
-                        ) : null}
-                        <QueuedMessagesBar
-                            sessionId={props.session.id}
-                            api={props.api}
-                            pendingSchedule={pendingSchedule}
-                            pendingScheduleRevision={pendingScheduleRevision}
-                            onEdit={({ pendingSchedule: restored }) => {
-                                // Restore the schedule so the clock button re-activates
-                                updatePendingSchedule(restored)
+                        <ChatSlotHost
+                            slots={COMPOSER_DOCK_SLOTS}
+                            resetKey={props.session.id}
+                            ctx={{
+                                sessionId: props.session.id,
+                                api: props.api,
+                                todos: props.session.todos,
+                                sessionThinking: Boolean(props.session.thinking),
+                                scratchlistMode,
+                                scratchlistEntries: scratchlist.entries,
+                                onScratchlistMove: scratchlist.move,
+                                onScratchlistDelete: scratchlist.remove,
+                                onSend: props.onSend,
+                                onExitScratchlistMode: () => setScratchlistMode(false),
+                                scratchlistDisabled: props.isSending || isScratchlistParking,
+                                pendingSchedule,
+                                pendingScheduleRevision,
+                                onRestorePendingSchedule: updatePendingSchedule,
+                                canSteer: isSteeringSupportedForSession(props.session.metadata)
+                                    && (agentFlavor === 'pi'
+                                        ? props.session.thinking
+                                        : props.session.agentState?.steeringActive === true)
+                                    && !controlledByUser,
                             }}
-                            canSteer={isSteeringSupportedForSession(props.session.metadata)
-                                && (agentFlavor === 'pi'
-                                    ? props.session.thinking
-                                    : props.session.agentState?.steeringActive === true)
-                                && !controlledByUser}
                         />
                     </div>
                     </div>

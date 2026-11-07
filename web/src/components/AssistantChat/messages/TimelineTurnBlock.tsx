@@ -16,7 +16,7 @@ import {
     type DockedQuestionItem,
     type DockedTodoItem,
 } from '@/components/AssistantChat/messages/TurnDockedWidgets'
-import { FeatureErrorBoundary } from '@/components/FeatureErrorBoundary'
+import { ChatSlotHost, defineChatSlots, type TurnSlotContext } from '@/components/AssistantChat/slotRegistry'
 import type { TodoItem } from '@/types/api'
 
 export type TranscriptViewMode = 'normal' | 'thinking' | 'verbose'
@@ -32,6 +32,11 @@ export {
     type DockedTodoItem,
     type TurnActivityIndicatorVariant,
 }
+export const TURN_SLOTS = defineChatSlots<TurnSlotContext>([
+    { id: 'turn-rail', order: 10, Component: ({ ctx }) => <TurnExecutionRail {...ctx} onOpenChange={ctx.setOpen} /> },
+    { id: 'turn-todo', order: 20, Component: ({ ctx }) => <TurnTodoSection checklists={ctx.subturn.todoChecklists} accentColor={ctx.accentColor} open={ctx.open} streaming={ctx.streaming} /> },
+    { id: 'turn-answer', order: 30, Component: ({ ctx }) => <TurnAnswerSection subturn={ctx.subturn} streaming={ctx.streaming} renderTrailingText={ctx.renderTrailingText} /> },
+])
 function SubturnView(props: {
     subturn: ProjectedSubturn
     partition: TurnPartition
@@ -62,38 +67,11 @@ function SubturnView(props: {
     }, [viewMode])
     return (
         <div data-testid="turn-subturn" className="w-full">
-            <FeatureErrorBoundary name="turn-rail" resetKey={subturn.key}>
-                <TurnExecutionRail
-                    subturn={subturn}
-                    partition={partition}
-                    streaming={streaming}
-                    durationMs={durationMs}
-                    open={open}
-                    onOpenChange={setOpen}
-                    activeTodoText={activeTodoText}
-                    viewMode={viewMode}
-                    lang={lang}
-                    accentColor={accentColor}
-                    renderTrailingText={renderTrailingText}
-                />
-            </FeatureErrorBoundary>
-
-            <FeatureErrorBoundary name="turn-todo" resetKey={subturn.key}>
-                <TurnTodoSection
-                    checklists={subturn.todoChecklists}
-                    accentColor={accentColor}
-                    open={open}
-                    streaming={streaming}
-                />
-            </FeatureErrorBoundary>
-
-            <FeatureErrorBoundary name="turn-answer" resetKey={subturn.key}>
-                <TurnAnswerSection
-                    subturn={subturn}
-                    streaming={streaming}
-                    renderTrailingText={renderTrailingText}
-                />
-            </FeatureErrorBoundary>
+            <ChatSlotHost
+                slots={TURN_SLOTS}
+                ctx={{ ...props, open, setOpen }}
+                resetKey={subturn.key}
+            />
         </div>
     )
 }
