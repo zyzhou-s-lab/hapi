@@ -265,6 +265,13 @@ describe('omp todo extraction', () => {
             null
         )).toEqual(kept)
 
+        expect([earlier, ompToolResult({ op: 'done', phases: [], storage: 'session' })].reduce<TodoItem[] | null>(
+            (todos, message) => applyTodoMessageContent(todos, message) ?? todos,
+            null
+        )).toEqual([
+            { content: '写 MLP 训练脚本', status: 'completed', priority: 'medium', id: 'Tasks:0' },
+            { content: '跑通并核对指标', status: 'completed', priority: 'medium', id: 'Tasks:1' }
+        ])
     })
 
     test('reads a full todos array from an omp-named tool call and ignores its phase input', () => {

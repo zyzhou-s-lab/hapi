@@ -44,34 +44,144 @@ function parseChecklistEntries(
     return items
 }
 
-function parseOmpTodoDocument(doc: string): ChecklistItem[] {
-    const byTitle = new Map<string, ChecklistItem>()
+type OmpTrackedItem = ChecklistItem & {
+    phase?: string
+}
+
+function inferOmpItemPhase(item: ChecklistItem): string | undefined {
+    if (!item.id) return undefined
+    const match = /^(.+):\d+$/.exec(item.id)
+    return match ? match[1] : undefined
+}
+
+function ompDocumentDefinesTasks(doc: string): boolean {
     for (const rawLine of doc.split('\n')) {
         const line = rawLine.trim()
-        const match = /^(ADD|START|DONE)\s+"((?:\\.|[^"\\])+)"/.exec(line)
+        if (/^(?:INIT|ADD)\s+"/.test(line)) return true
+    }
+    return false
+}
+
+export function applyOmpTodoDocument(
+    doc: string,
+    baseItems: readonly ChecklistItem[] = []
+): ChecklistItem[] {
+    let items: OmpTrackedItem[] = baseItems.map((item) => ({
+        ...item,
+        phase: inferOmpItemPhase(item)
+    }))
+    let currentPhase: string | undefined
+
+    for (const rawLine of doc.split('\n')) {
+        const line = rawLine.trim()
+        if (!line || line === '*** Begin Todo' || line === '*** End Todo' || line === 'VIEW') {
+            continue
+        }
+        if (/^INIT\s+"/.test(line)) {
+            items = []
+            currentPhase = 'Tasks'
+            continue
+        }
+        const phaseMatch = /^PHASE\s+"((?:\\.|[^"\\])+)"/.exec(line)
+        if (phaseMatch) {
+            const phaseName = phaseMatch[1].replace(/\\"/g, '"').trim()
+            if (phaseName) currentPhase = phaseName
+            continue
+        }
+        if (/^DONE\s+ALL(?:\s|$)/.test(line)) {
+            items = items.map((item) => ({ ...item, status: 'completed' }))
+            continue
+        }
+        const donePhaseMatch = /^DONE\s+PHASE\s+"((?:\\.|[^"\\])+)"/.exec(line)
+        if (donePhaseMatch) {
+            const phaseName = donePhaseMatch[1].replace(/\\"/g, '"').trim()
+            if (phaseName) {
+                const hasMatchingPhase = items.some((item) => item.phase === phaseName)
+                items = items.map((item) =>
+                    !hasMatchingPhase || item.phase === phaseName
+                        ? { ...item, status: 'completed' }
+                        : item
+                )
+            }
+            continue
+        }
+        if (/^(?:DROP|RM)\s+ALL(?:\s|$)/.test(line)) {
+            items = []
+            continue
+        }
+        const dropPhaseMatch = /^(?:DROP|RM)\s+PHASE\s+"((?:\\.|[^"\\])+)"/.exec(line)
+        if (dropPhaseMatch) {
+            const phaseName = dropPhaseMatch[1].replace(/\\"/g, '"').trim()
+            if (phaseName) {
+                items = items.filter((item) => item.phase !== phaseName)
+            }
+            continue
+        }
+        const match = /^(ADD|START|DONE|BLOCK|UNBLOCK|DROP|RM)\s+"((?:\\.|[^"\\])+)"/.exec(line)
         if (!match) continue
         const [, op, rawTitle] = match
         const text = rawTitle.replace(/\\"/g, '"').trim()
         if (!text) continue
+
+        if (op === 'DROP' || op === 'RM') {
+            items = items.filter((item) => item.text !== text)
+            continue
+        }
+
+        const existingIdx = items.findIndex((item) => item.text === text)
         if (op === 'ADD') {
-            if (!byTitle.has(text)) {
-                byTitle.set(text, { text, status: 'pending' })
+            if (existingIdx === -1) {
+                items.push({ text, status: 'pending', phase: currentPhase })
+            } else if (currentPhase && !items[existingIdx]!.phase) {
+                items[existingIdx] = { ...items[existingIdx]!, phase: currentPhase }
             }
         } else if (op === 'START') {
-            byTitle.set(text, { text, status: 'in_progress' })
+            items = items.map((item) =>
+                item.status === 'in_progress' && item.text !== text
+                    ? { ...item, status: 'pending' }
+                    : item
+            )
+            if (existingIdx >= 0) {
+                items[existingIdx] = { ...items[existingIdx]!, status: 'in_progress' }
+            } else {
+                items.push({ text, status: 'in_progress', phase: currentPhase })
+            }
         } else if (op === 'DONE') {
-            byTitle.set(text, { text, status: 'completed' })
+            if (existingIdx >= 0) {
+                items[existingIdx] = { ...items[existingIdx]!, status: 'completed' }
+            } else {
+                items.push({ text, status: 'completed', phase: currentPhase })
+            }
+        } else if (op === 'BLOCK') {
+            if (existingIdx >= 0) {
+                items[existingIdx] = { ...items[existingIdx]!, status: 'blocked' }
+            } else {
+                items.push({ text, status: 'blocked', phase: currentPhase })
+            }
+        } else if (op === 'UNBLOCK') {
+            if (existingIdx >= 0) {
+                items[existingIdx] = { ...items[existingIdx]!, status: 'pending' }
+            } else {
+                items.push({ text, status: 'pending', phase: currentPhase })
+            }
         }
     }
-    return Array.from(byTitle.values())
+
+    return items.map(({ id, text, status }) => (id !== undefined ? { id, text, status } : { text, status }))
+}
+
+export type OmpTodoTurnCall = {
+    input: unknown
+    result: unknown
 }
 
 export type OmpTodoTurnContext = {
     touchedPhases: ReadonlySet<string>
     touchedTasks: ReadonlySet<string>
     isInit: boolean
+    calls?: ReadonlyArray<OmpTodoTurnCall>
+    fallbackItems?: readonly ChecklistItem[]
 }
-
 function isOmpPhaseTerminal(phase: Record<string, unknown>): boolean {
     if (!Array.isArray(phase.tasks)) return true
     for (const task of phase.tasks) {
@@ -167,13 +277,21 @@ function resolveOmpRawDetails(result: unknown): { phases: unknown[]; raw: Record
     return null
 }
 
+function isOmpCallResultError(result: unknown): boolean {
+    return isObject(result) && (result.isError === true || result.is_error === true)
+}
+
 export function collectOmpTodoTurnContext(
-    calls: ReadonlyArray<{ input: unknown; result: unknown }>
+    calls: ReadonlyArray<OmpTodoTurnCall>,
+    fallbackItems?: readonly ChecklistItem[]
 ): OmpTodoTurnContext {
     const touchedPhases = new Set<string>()
     const touchedTasks = new Set<string>()
+    const validCalls: OmpTodoTurnCall[] = []
     let isInit = false
     for (const call of calls) {
+        if (isOmpCallResultError(call.result)) continue
+        validCalls.push(call)
         const resolved = resolveOmpRawDetails(call.result)
         if (collectOmpTodoTargetsFromCall(call.input, resolved?.raw ?? null, touchedPhases, touchedTasks)) {
             isInit = true
@@ -194,7 +312,7 @@ export function collectOmpTodoTurnContext(
             }
         }
     }
-    return { touchedPhases, touchedTasks, isInit }
+    return { touchedPhases, touchedTasks, isInit, calls: validCalls, fallbackItems }
 }
 
 function selectRelevantOmpPhases(
@@ -268,11 +386,11 @@ function scopeChecklistItemsByOmpPhaseId(items: ChecklistItem[]): ChecklistItem[
     return phaseGroups[phaseGroups.length - 1]!
 }
 
-export function extractTodoChecklist(
+function extractStructuredTodoChecklist(
     input: unknown,
     result: unknown,
     turnContext?: OmpTodoTurnContext
-): ChecklistItem[] {
+): ChecklistItem[] | null {
     if (isObject(input) && Array.isArray(input.todos)) {
         const items = parseChecklistEntries(input.todos, {
             textKey: 'content',
@@ -297,17 +415,93 @@ export function extractTodoChecklist(
         if (items.length > 0) return items
     }
     if (isObject(result) && Array.isArray(result.newTodos)) {
-        return parseChecklistEntries(result.newTodos, {
+        const items = parseChecklistEntries(result.newTodos, {
             textKey: 'content',
             idKey: 'id'
         })
+        if (items.length > 0) return items
     }
+
+    return null
+}
+
+function extractCompletedTasksFromOmpDetails(result: unknown): ChecklistItem[] {
+    const resolved = resolveOmpRawDetails(result)
+    if (!resolved || !Array.isArray(resolved.raw.completedTasks)) return []
+    const items: ChecklistItem[] = []
+    for (const entry of resolved.raw.completedTasks) {
+        if (!isObject(entry)) continue
+        const text = typeof entry.content === 'string' && entry.content.trim() !== ''
+            ? entry.content.trim()
+            : typeof entry.task === 'string' && entry.task.trim() !== ''
+                ? entry.task.trim()
+                : null
+        if (!text) continue
+        const id = typeof entry.id === 'string' && entry.id !== '' ? entry.id : undefined
+        items.push(id !== undefined ? { id, text, status: 'completed' } : { text, status: 'completed' })
+    }
+    return items
+}
+
+export function extractTodoChecklist(
+    input: unknown,
+    result: unknown,
+    turnContext?: OmpTodoTurnContext
+): ChecklistItem[] {
+    if (isOmpCallResultError(result)) return []
+
+    const structured = extractStructuredTodoChecklist(input, result, turnContext)
+    if (structured !== null) return structured
 
     if (isObject(input) && typeof input.input === 'string' && input.input.includes('*** Begin Todo')) {
-        return parseOmpTodoDocument(input.input)
+        if (turnContext?.calls && turnContext.calls.length > 0) {
+            const turnDefinesOwnTasks = turnContext.calls.some((call) => {
+                if (extractStructuredTodoChecklist(call.input, call.result, turnContext) !== null) return true
+                return (
+                    isObject(call.input)
+                    && typeof call.input.input === 'string'
+                    && ompDocumentDefinesTasks(call.input.input)
+                )
+            }) || ompDocumentDefinesTasks(input.input)
+
+            let runningItems: ChecklistItem[] =
+                !turnDefinesOwnTasks && turnContext.fallbackItems
+                    ? turnContext.fallbackItems.map((item) => ({ ...item }))
+                    : []
+            let reachedTarget = false
+            for (const call of turnContext.calls) {
+                if (isOmpCallResultError(call.result)) continue
+                const callStructured = extractStructuredTodoChecklist(call.input, call.result, turnContext)
+                if (callStructured !== null) {
+                    runningItems = callStructured.map((item) => ({ ...item }))
+                } else if (
+                    isObject(call.input)
+                    && typeof call.input.input === 'string'
+                    && call.input.input.includes('*** Begin Todo')
+                ) {
+                    runningItems = applyOmpTodoDocument(call.input.input, runningItems)
+                }
+                if (call.input === input) {
+                    reachedTarget = true
+                    break
+                }
+            }
+            if (!reachedTarget) {
+                runningItems = applyOmpTodoDocument(input.input, runningItems)
+            }
+            if (runningItems.length > 0) return runningItems
+        }
+
+        const completedFromDetails = extractCompletedTasksFromOmpDetails(result)
+        const seedItems = completedFromDetails.length > 0
+            ? completedFromDetails
+            : !ompDocumentDefinesTasks(input.input) && turnContext?.fallbackItems
+                ? turnContext.fallbackItems
+                : []
+        return applyOmpTodoDocument(input.input, seedItems)
     }
 
-    return []
+    return extractCompletedTasksFromOmpDetails(result)
 }
 
 export function extractUpdatePlanChecklist(input: unknown, result: unknown): ChecklistItem[] {
