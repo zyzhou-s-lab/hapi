@@ -32,8 +32,15 @@ export interface ReasoningMessage {
     type: 'reasoning';
     message: string;
     id: string;
+    streamSnapshot?: boolean;
+    live?: boolean;
 }
 
+export interface ReasoningProcessorOptions {
+    streamUntitledDeltas?: boolean;
+    snapshotIntervalMs?: number;
+    now?: () => number;
+}
 export type ReasoningOutput = ReasoningToolCall | ReasoningToolResult | ReasoningMessage;
 
 export class ReasoningProcessor {
@@ -45,17 +52,25 @@ export class ReasoningProcessor {
     private currentCallId: string | null = null;
     private toolCallStarted: boolean = false;
     private currentTitle: string | null = null;
-    private onMessage: ((message: any) => void) | null = null;
+    private currentReasoningId: string | null = null;
+    private lastReasoningSnapshotAt: number = 0;
+    private onMessage: ((message: ReasoningOutput) => void) | null = null;
+    private streamUntitledDeltas: boolean;
+    private snapshotIntervalMs: number;
+    private now: () => number;
 
-    constructor(onMessage?: (message: any) => void) {
+    constructor(onMessage?: (message: ReasoningOutput) => void, options?: ReasoningProcessorOptions) {
         this.onMessage = onMessage || null;
+        this.streamUntitledDeltas = options?.streamUntitledDeltas === true;
+        this.snapshotIntervalMs = options?.snapshotIntervalMs ?? 40;
+        this.now = options?.now ?? (() => Date.now());
         this.reset();
     }
 
     /**
      * Set the message callback for sending messages directly
      */
-    setMessageCallback(callback: (message: any) => void): void {
+    setMessageCallback(callback: (message: ReasoningOutput) => void): void {
         this.onMessage = callback;
     }
 
@@ -118,6 +133,31 @@ export class ReasoningProcessor {
         } else {
             // Untitled reasoning, just accumulate
             this.contentBuffer = this.accumulator;
+        }
+
+        if (
+            this.streamUntitledDeltas
+            && !this.inTitleCapture
+            && !this.hasTitle
+            && !this.accumulator.startsWith('*')
+            && this.contentBuffer.length > 0
+        ) {
+            const currentTime = this.now();
+            this.currentReasoningId = this.currentReasoningId || randomUUID();
+            if (
+                this.lastReasoningSnapshotAt === 0
+                || currentTime - this.lastReasoningSnapshotAt >= this.snapshotIntervalMs
+            ) {
+                this.lastReasoningSnapshotAt = currentTime;
+                const liveMessage: ReasoningMessage = {
+                    type: 'reasoning',
+                    message: this.contentBuffer,
+                    id: this.currentReasoningId,
+                    streamSnapshot: true,
+                    live: true
+                };
+                this.onMessage?.(liveMessage);
+            }
         }
     }
 
@@ -183,10 +223,12 @@ export class ReasoningProcessor {
             this.onMessage?.(toolResult);
         } else {
             // Send regular reasoning message for untitled reasoning
+            const settledReasoningId = this.currentReasoningId;
             const reasoningMessage: ReasoningMessage = {
                 type: 'reasoning',
                 message: content,
-                id: randomUUID()
+                id: settledReasoningId || randomUUID(),
+                ...(settledReasoningId ? { streamSnapshot: true } : {})
             };
             logger.debug('[ReasoningProcessor] Sending reasoning message');
             this.onMessage?.(reasoningMessage);
@@ -230,6 +272,14 @@ export class ReasoningProcessor {
             };
             logger.debug(`[ReasoningProcessor] Sending tool call result with status: ${status}`);
             this.onMessage?.(toolResult);
+        } else if (this.currentReasoningId && this.contentBuffer) {
+            const settledReasoning: ReasoningMessage = {
+                type: 'reasoning',
+                message: this.contentBuffer,
+                id: this.currentReasoningId,
+                streamSnapshot: true
+            };
+            this.onMessage?.(settledReasoning);
         }
     }
 
@@ -245,6 +295,8 @@ export class ReasoningProcessor {
         this.currentCallId = null;
         this.toolCallStarted = false;
         this.currentTitle = null;
+        this.currentReasoningId = null;
+        this.lastReasoningSnapshotAt = 0;
     }
 
     /**

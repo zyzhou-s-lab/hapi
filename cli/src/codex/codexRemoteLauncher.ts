@@ -742,10 +742,19 @@ class CodexRemoteLauncher extends RemoteLauncherBase {
         });
         const reasoningProcessor = new ReasoningProcessor((message) => {
             session.sendAgentMessage(message);
+        }, {
+            streamUntitledDeltas: true,
+            snapshotIntervalMs: 40
         });
         const diffProcessor = new DiffProcessor((message) => {
             session.sendAgentMessage(message);
         });
+        let activeAgentMessageStream: {
+            id: string;
+            itemId: string | null;
+            message: string;
+            lastSnapshotAt: number;
+        } | null = null;
         const mcpTitleByCallId = new Map<string, string>();
         const agentCardByAgentId = new Map<string, string>();
         const agentSummaryByCardId = new Map<string, string>();
@@ -2961,6 +2970,42 @@ class CodexRemoteLauncher extends RemoteLauncherBase {
                 ) {
                     cancelSafetyBufferingRequest('Agent output started');
                 }
+                const itemId = asString(msg.item_id ?? msg.itemId);
+                const cumulative = asString(msg.message);
+                const delta = asString(msg.delta);
+                if (cumulative || delta) {
+                    const now = Date.now();
+                    if (
+                        !activeAgentMessageStream
+                        || (itemId && activeAgentMessageStream.itemId && activeAgentMessageStream.itemId !== itemId)
+                    ) {
+                        activeAgentMessageStream = {
+                            id: randomUUID(),
+                            itemId: itemId ?? null,
+                            message: cumulative ?? delta ?? '',
+                            lastSnapshotAt: 0
+                        };
+                    } else {
+                        if (itemId && !activeAgentMessageStream.itemId) {
+                            activeAgentMessageStream.itemId = itemId;
+                        }
+                        activeAgentMessageStream.message = cumulative ?? (activeAgentMessageStream.message + (delta ?? ''));
+                    }
+                    if (
+                        activeAgentMessageStream.message
+                        && (activeAgentMessageStream.lastSnapshotAt === 0 || now - activeAgentMessageStream.lastSnapshotAt >= 40)
+                    ) {
+                        activeAgentMessageStream.lastSnapshotAt = now;
+                        session.sendAgentMessage({
+                            type: 'message',
+                            message: activeAgentMessageStream.message,
+                            model: session.getModel(),
+                            id: activeAgentMessageStream.id,
+                            streamSnapshot: true,
+                            live: true
+                        });
+                    }
+                }
                 return;
             }
 
@@ -3239,6 +3284,20 @@ class CodexRemoteLauncher extends RemoteLauncherBase {
                     logger.debug('thinking completed');
                     session.onThinkingChange(false);
                 }
+                if (activeAgentMessageStream) {
+                    const settled = activeAgentMessageStream;
+                    activeAgentMessageStream = null;
+                    if (settled.message) {
+                        session.sendAgentMessage({
+                            type: 'message',
+                            message: settled.message,
+                            model: session.getModel(),
+                            id: settled.id,
+                            streamSnapshot: true
+                        });
+                    }
+                }
+                reasoningProcessor.abort();
                 diffProcessor.reset();
                 appServerEventConverter.reset();
                 mcpTitleByCallId.clear();
@@ -3287,12 +3346,15 @@ class CodexRemoteLauncher extends RemoteLauncherBase {
             }
             if (msgType === 'agent_message') {
                 const message = asString(msg.message);
+                const settledStream = activeAgentMessageStream;
+                activeAgentMessageStream = null;
                 if (message) {
                     session.sendAgentMessage({
                         type: 'message',
                         message,
                         model: session.getModel(),
-                        id: randomUUID()
+                        id: settledStream?.id ?? randomUUID(),
+                        ...(settledStream ? { streamSnapshot: true } : {})
                     });
                 }
             }

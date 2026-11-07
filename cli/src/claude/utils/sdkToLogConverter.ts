@@ -54,6 +54,23 @@ export interface ConversionContext {
     // the only turn-1 signal that such a session is 1M. Used only to seed the very first
     // contextWindow estimate before result.modelUsage confirms the real value.
     selectedModel?: string | null
+    streamSnapshotIntervalMs?: number
+    now?: () => number
+}
+
+type StreamedContentBlock =
+    | { type: 'text'; text: string }
+    | { type: 'thinking'; thinking: string; signature?: string }
+
+type ActiveAssistantStreamState = {
+    uuid: string
+    parentUuid: string | null
+    isSidechain: boolean
+    parentToolUseId?: string
+    model?: string
+    blocks: Map<number, StreamedContentBlock>
+    lastSnapshotAt: number | null
+    hasEmittedLiveSnapshot: boolean
 }
 
 type PermissionResponse = {
@@ -103,7 +120,7 @@ export class SDKToLogConverter {
     // — rather than a single sticky number — means a mid-session model switch picks up the
     // new model's own window immediately instead of inheriting the previous model's.
     private modelContextWindows = new Map<string, number>()
-
+    private activeStreamsByScope = new Map<string, ActiveAssistantStreamState>()
     constructor(
         context: Omit<ConversionContext, 'parentUuid'>,
         responses?: Map<string, PermissionResponse>
@@ -163,6 +180,181 @@ export class SDKToLogConverter {
     resetParentChain(): void {
         this.lastUuid = null
         this.context.parentUuid = null
+        this.activeStreamsByScope.clear()
+    }
+
+    private getStreamScopeKey(parentToolUseId?: string | null): string {
+        return typeof parentToolUseId === 'string' && parentToolUseId.length > 0
+            ? parentToolUseId
+            : '__main__'
+    }
+
+    private ensureActiveStreamState(
+        scopeKey: string,
+        parentToolUseId: string | undefined,
+        model?: string
+    ): ActiveAssistantStreamState {
+        const existing = this.activeStreamsByScope.get(scopeKey)
+        if (existing) {
+            if (model && !existing.model) {
+                existing.model = model
+            }
+            return existing
+        }
+        const isSidechain = Boolean(parentToolUseId)
+        const parentUuid = parentToolUseId
+            ? (this.sidechainLastUUID.get(parentToolUseId) ?? null)
+            : this.lastUuid
+        const created: ActiveAssistantStreamState = {
+            uuid: randomUUID(),
+            parentUuid,
+            isSidechain,
+            parentToolUseId,
+            model: model ?? this.resolvedModel ?? undefined,
+            blocks: new Map<number, StreamedContentBlock>(),
+            lastSnapshotAt: null,
+            hasEmittedLiveSnapshot: false
+        }
+        this.activeStreamsByScope.set(scopeKey, created)
+        return created
+    }
+
+    private emitLiveAssistantSnapshot(state: ActiveAssistantStreamState): RawJSONLines | null {
+        const content = Array.from(state.blocks.entries())
+            .sort(([a], [b]) => a - b)
+            .map(([, block]) => ({ ...block }))
+            .filter((block) => (block.type === 'text' ? block.text.length > 0 : block.thinking.length > 0))
+        if (content.length === 0) {
+            return null
+        }
+        const currentTime = (this.context.now ?? Date.now)()
+        const intervalMs = this.context.streamSnapshotIntervalMs ?? 0
+        if (
+            state.lastSnapshotAt !== null
+            && intervalMs > 0
+            && currentTime - state.lastSnapshotAt < intervalMs
+        ) {
+            return null
+        }
+        state.lastSnapshotAt = currentTime
+        state.hasEmittedLiveSnapshot = true
+        return {
+            parentUuid: state.parentUuid,
+            isSidechain: state.isSidechain,
+            parentToolUseId: state.parentToolUseId,
+            userType: 'external' as const,
+            cwd: this.context.cwd,
+            sessionId: this.context.sessionId,
+            version: this.context.version,
+            gitBranch: this.context.gitBranch,
+            uuid: state.uuid,
+            timestamp: new Date(currentTime).toISOString(),
+            type: 'assistant',
+            streamSnapshot: true,
+            live: true,
+            message: {
+                role: 'assistant',
+                ...(state.model ? { model: state.model } : {}),
+                content
+            }
+        }
+    }
+
+    private convertStreamEvent(sdkMessage: SDKMessage): RawJSONLines | null {
+        const rawEvent = (sdkMessage as unknown as { event?: unknown }).event
+        if (!rawEvent || typeof rawEvent !== 'object') {
+            return null
+        }
+        const event = rawEvent as {
+            type?: unknown
+            index?: unknown
+            message?: { model?: unknown }
+            content_block?: { type?: unknown; text?: unknown; thinking?: unknown; signature?: unknown }
+            delta?: { type?: unknown; text?: unknown; thinking?: unknown; signature?: unknown }
+        }
+        const eventType = typeof event.type === 'string' ? event.type : null
+        if (!eventType) {
+            return null
+        }
+        const rawParentToolUseId = (sdkMessage as unknown as { parent_tool_use_id?: unknown }).parent_tool_use_id
+        const parentToolUseId = typeof rawParentToolUseId === 'string' && rawParentToolUseId.length > 0
+            ? rawParentToolUseId
+            : undefined
+        const scopeKey = this.getStreamScopeKey(parentToolUseId)
+
+        if (eventType === 'message_start') {
+            const model = typeof event.message?.model === 'string' ? event.message.model : undefined
+            const existing = this.activeStreamsByScope.get(scopeKey)
+            if (!existing || !existing.hasEmittedLiveSnapshot) {
+                this.activeStreamsByScope.delete(scopeKey)
+                this.ensureActiveStreamState(scopeKey, parentToolUseId, model)
+            } else if (model) {
+                existing.model = model
+            }
+            return null
+        }
+
+        const index = typeof event.index === 'number' ? event.index : 0
+        if (eventType === 'content_block_start') {
+            const contentBlock = event.content_block
+            if (!contentBlock || typeof contentBlock !== 'object') {
+                return null
+            }
+            if (contentBlock.type === 'text') {
+                const state = this.ensureActiveStreamState(scopeKey, parentToolUseId)
+                const text = typeof contentBlock.text === 'string' ? contentBlock.text : ''
+                state.blocks.set(index, { type: 'text', text })
+                return text.length > 0 ? this.emitLiveAssistantSnapshot(state) : null
+            }
+            if (contentBlock.type === 'thinking') {
+                const state = this.ensureActiveStreamState(scopeKey, parentToolUseId)
+                const thinking = typeof contentBlock.thinking === 'string' ? contentBlock.thinking : ''
+                const signature = typeof contentBlock.signature === 'string' ? contentBlock.signature : undefined
+                state.blocks.set(index, {
+                    type: 'thinking',
+                    thinking,
+                    ...(signature ? { signature } : {})
+                })
+                return thinking.length > 0 ? this.emitLiveAssistantSnapshot(state) : null
+            }
+            return null
+        }
+
+        if (eventType === 'content_block_delta') {
+            const delta = event.delta
+            if (!delta || typeof delta !== 'object') {
+                return null
+            }
+            if (delta.type === 'text_delta' && typeof delta.text === 'string' && delta.text.length > 0) {
+                const state = this.ensureActiveStreamState(scopeKey, parentToolUseId)
+                const current = state.blocks.get(index)
+                const nextText = (current?.type === 'text' ? current.text : '') + delta.text
+                state.blocks.set(index, { type: 'text', text: nextText })
+                return this.emitLiveAssistantSnapshot(state)
+            }
+            if (delta.type === 'thinking_delta' && typeof delta.thinking === 'string' && delta.thinking.length > 0) {
+                const state = this.ensureActiveStreamState(scopeKey, parentToolUseId)
+                const current = state.blocks.get(index)
+                const nextThinking = (current?.type === 'thinking' ? current.thinking : '') + delta.thinking
+                state.blocks.set(index, {
+                    type: 'thinking',
+                    thinking: nextThinking,
+                    ...(current?.type === 'thinking' && current.signature ? { signature: current.signature } : {})
+                })
+                return this.emitLiveAssistantSnapshot(state)
+            }
+            if (delta.type === 'signature_delta' && typeof delta.signature === 'string' && delta.signature.length > 0) {
+                const state = this.activeStreamsByScope.get(scopeKey)
+                const current = state?.blocks.get(index)
+                if (current?.type === 'thinking') {
+                    current.signature = (current.signature ?? '') + delta.signature
+                }
+                return null
+            }
+            return null
+        }
+
+        return null
     }
 
     /**
@@ -224,6 +416,10 @@ export class SDKToLogConverter {
             return this.convertRateLimitEvent(sdkMessage)
         }
 
+        if (sdkMessage.type === 'stream_event') {
+            return this.convertStreamEvent(sdkMessage)
+        }
+
         // Bail before allocating a uuid or touching sidechain/parent tracking —
         // an unknown event must not advance the transcript chain it never joins.
         if (!CONVERTIBLE_SDK_MESSAGE_TYPES.has(sdkMessage.type)) {
@@ -231,7 +427,16 @@ export class SDKToLogConverter {
             return null
         }
 
-        const uuid = randomUUID()
+        const rawParentToolUseId = (sdkMessage as unknown as { parent_tool_use_id?: unknown }).parent_tool_use_id
+        const scopeKey = this.getStreamScopeKey(typeof rawParentToolUseId === 'string' ? rawParentToolUseId : undefined)
+        const pendingStream = sdkMessage.type === 'assistant'
+            ? this.activeStreamsByScope.get(scopeKey)
+            : undefined
+        if (sdkMessage.type === 'assistant' || sdkMessage.type === 'result') {
+            this.activeStreamsByScope.delete(scopeKey)
+        }
+        const settledFromLiveStream = Boolean(pendingStream?.hasEmittedLiveSnapshot)
+        const uuid = settledFromLiveStream && pendingStream ? pendingStream.uuid : randomUUID()
         const timestamp = new Date().toISOString()
         let parentUuid = this.lastUuid;
         let isSidechain = false;
@@ -329,8 +534,9 @@ export class SDKToLogConverter {
                     ...baseFields,
                     type: 'assistant',
                     message: assistantMsg.message,
+                    ...(settledFromLiveStream ? { streamSnapshot: true } : {}),
                     // Assistant messages often have additional fields
-                    requestId: (assistantMsg as any).requestId
+                    requestId: (assistantMsg as unknown as { requestId?: string }).requestId
                 }
                 // if (assistantMsg.message.content && Array.isArray(assistantMsg.message.content)) {
                 //     for (const content of assistantMsg.message.content) {

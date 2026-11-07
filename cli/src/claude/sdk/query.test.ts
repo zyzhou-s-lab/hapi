@@ -146,4 +146,24 @@ describe('Query', () => {
         child.stdout.end()
         child.emit('close', 0)
     })
+
+    it('passes --include-partial-messages when includePartialMessages is enabled', async () => {
+        const child = createFakeChild()
+        spawnMock.mockReturnValueOnce(child)
+        process.env.HAPI_CLAUDE_PATH = 'claude'
+
+        // Dynamic import after vi.mock setup to exercise mocked spawn boundary
+        const { query } = await import('./query')
+        query({
+            prompt: 'stream me',
+            options: {
+                includePartialMessages: true
+            }
+        })
+
+        const args = spawnMock.mock.calls[0][1] as string[]
+        expect(args).toContain('--include-partial-messages')
+        child.stdout.end()
+        child.emit('close', 0)
+    })
 })

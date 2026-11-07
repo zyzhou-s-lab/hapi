@@ -148,7 +148,8 @@ class ClaudeRemoteLauncher extends RemoteLauncherBase {
             sessionId: session.sessionId || 'unknown',
             cwd: session.path,
             version: process.env.npm_package_version,
-            selectedModel: session.getModel()
+            selectedModel: session.getModel(),
+            streamSnapshotIntervalMs: 40
         }, permissionHandler.getResponses());
 
         const handleSessionFound = (sessionId: string) => {

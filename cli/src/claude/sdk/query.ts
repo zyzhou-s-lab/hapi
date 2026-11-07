@@ -319,7 +319,8 @@ export function query(config: {
             settingsPath,
             strictMcpConfig,
             canCallTool,
-            promptFailureCleanupTimeoutMs = DEFAULT_PROMPT_FAILURE_CLEANUP_TIMEOUT_MS
+            promptFailureCleanupTimeoutMs = DEFAULT_PROMPT_FAILURE_CLEANUP_TIMEOUT_MS,
+            includePartialMessages = false
         } = {}
     } = config
 
@@ -346,6 +347,9 @@ export function query(config: {
     if (continueConversation) args.push('--continue')
     if (resume) args.push('--resume', resume)
     if (forkSession) args.push('--fork-session')
+    if (includePartialMessages && !additionalArgs.includes('--include-partial-messages')) {
+        args.push('--include-partial-messages')
+    }
     args.push(...additionalArgs)
     if (settingsPath) args.push('--settings', settingsPath)
     if (allowedTools.length > 0) args.push('--allowedTools', allowedTools.join(','))

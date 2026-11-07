@@ -1342,4 +1342,105 @@ describe('SDKToLogConverter', () => {
         expect(converted?.providerMessageId).toBe('claude-provider-uuid')
     })
 
+
+    describe('Streaming assistant snapshots (stream_event)', () => {
+        it('emits live streamSnapshot assistant updates on text and thinking deltas and settles the same uuid on assistant completion', () => {
+            let currentTime = 1_000
+            const streamConverter = new SDKToLogConverter({
+                cwd: '/w',
+                sessionId: 's',
+                version: 'v',
+                streamSnapshotIntervalMs: 40,
+                now: () => currentTime
+            })
+
+            expect(streamConverter.convert({
+                type: 'stream_event',
+                event: {
+                    type: 'message_start',
+                    message: { id: 'msg_1', model: 'claude-sonnet-4-5', role: 'assistant' }
+                }
+            } as unknown as SDKAssistantMessage)).toBeNull()
+
+            expect(streamConverter.convert({
+                type: 'stream_event',
+                event: {
+                    type: 'content_block_start',
+                    index: 0,
+                    content_block: { type: 'thinking', thinking: '' }
+                }
+            } as unknown as SDKAssistantMessage)).toBeNull()
+
+            const firstThinking = streamConverter.convert({
+                type: 'stream_event',
+                event: {
+                    type: 'content_block_delta',
+                    index: 0,
+                    delta: { type: 'thinking_delta', thinking: 'Step 1' }
+                }
+            } as unknown as SDKAssistantMessage)
+            expect(firstThinking).toMatchObject({
+                type: 'assistant',
+                streamSnapshot: true,
+                live: true,
+                message: {
+                    role: 'assistant',
+                    model: 'claude-sonnet-4-5',
+                    content: [{ type: 'thinking', thinking: 'Step 1' }]
+                }
+            })
+
+            currentTime += 20
+            const throttled = streamConverter.convert({
+                type: 'stream_event',
+                event: {
+                    type: 'content_block_delta',
+                    index: 0,
+                    delta: { type: 'thinking_delta', thinking: ' and Step 2' }
+                }
+            } as unknown as SDKAssistantMessage)
+            expect(throttled).toBeNull()
+
+            currentTime += 25
+            const firstText = streamConverter.convert({
+                type: 'stream_event',
+                event: {
+                    type: 'content_block_delta',
+                    index: 1,
+                    delta: { type: 'text_delta', text: 'Final answer' }
+                }
+            } as unknown as SDKAssistantMessage)
+            expect(firstText).toMatchObject({
+                type: 'assistant',
+                uuid: firstThinking?.uuid,
+                streamSnapshot: true,
+                live: true,
+                message: {
+                    role: 'assistant',
+                    model: 'claude-sonnet-4-5',
+                    content: [
+                        { type: 'thinking', thinking: 'Step 1 and Step 2' },
+                        { type: 'text', text: 'Final answer' }
+                    ]
+                }
+            })
+
+            const settled = streamConverter.convert({
+                type: 'assistant',
+                message: {
+                    role: 'assistant',
+                    content: [
+                        { type: 'thinking', thinking: 'Step 1 and Step 2' },
+                        { type: 'text', text: 'Final answer' }
+                    ]
+                }
+            })
+            expect(settled).toMatchObject({
+                type: 'assistant',
+                uuid: firstThinking?.uuid,
+                streamSnapshot: true
+            })
+            expect((settled as { live?: boolean } | null)?.live).toBeUndefined()
+        })
+    })
 })

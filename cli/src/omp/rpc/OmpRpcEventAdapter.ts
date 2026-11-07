@@ -564,7 +564,7 @@ export class OmpRpcEventAdapter {
             active.timestamp ??= new Date().toISOString();
             this.commitAssistant(this.projection('message_end'), active.displayId,
                 assistant.data, active.timestamp, true);
-        }, 75);
+        }, 40);
         this.snapshotTimer.unref();
     }
 

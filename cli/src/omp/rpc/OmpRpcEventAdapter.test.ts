@@ -1094,11 +1094,11 @@ describe('OmpRpcEventAdapter', () => {
             const harness = createHarness();
             harness.adapter.handle(rpcEvent({ type: 'message_start', message: assistantMessage('') }));
             update(harness.adapter, assistantMessage('one'));
-            vi.advanceTimersByTime(30);
+            vi.advanceTimersByTime(15);
             update(harness.adapter, assistantMessage('one two'));
-            vi.advanceTimersByTime(30);
+            vi.advanceTimersByTime(15);
             update(harness.adapter, assistantMessage('one two three'));
-            vi.advanceTimersByTime(14);
+            vi.advanceTimersByTime(9);
             expect(harness.canonicalMessages).toEqual([]);
             vi.advanceTimersByTime(1);
             expect(harness.canonicalMessages).toHaveLength(1);

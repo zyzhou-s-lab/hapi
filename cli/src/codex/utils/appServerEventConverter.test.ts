@@ -1109,4 +1109,38 @@ describe('AppServerEventConverter', () => {
 
         debug.mockRestore();
     });
+
+    it('emits cumulative message text and item_id on agent_message_delta events', () => {
+        const converter = new AppServerEventConverter();
+
+        const first = converter.handleNotification('item/agentMessage/delta', {
+            threadId: 'thread-1',
+            turnId: 'turn-1',
+            itemId: 'msg-1',
+            delta: 'Hello '
+        });
+        const second = converter.handleNotification('item/agentMessage/delta', {
+            threadId: 'thread-1',
+            turnId: 'turn-1',
+            itemId: 'msg-1',
+            delta: 'world'
+        });
+
+        expect(first).toEqual([{
+            type: 'agent_message_delta',
+            thread_id: 'thread-1',
+            turn_id: 'turn-1',
+            item_id: 'msg-1',
+            delta: 'Hello ',
+            message: 'Hello '
+        }]);
+        expect(second).toEqual([{
+            type: 'agent_message_delta',
+            thread_id: 'thread-1',
+            turn_id: 'turn-1',
+            item_id: 'msg-1',
+            delta: 'world',
+            message: 'Hello world'
+        }]);
+    });
 });

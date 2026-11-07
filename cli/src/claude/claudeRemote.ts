@@ -203,6 +203,7 @@ export async function claudeRemote(opts: {
         pathToClaudeCodeExecutable: getDefaultClaudeCodePath(),
         settingsPath: opts.hookSettingsPath,
         additionalDirectories: [getHapiBlobsDir()],
+        includePartialMessages: true,
     }
 
     if (!awaitingForkInit) {

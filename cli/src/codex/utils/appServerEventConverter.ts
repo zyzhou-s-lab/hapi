@@ -907,8 +907,14 @@ export class AppServerEventConverter {
                 }
                 this.lastAgentMessageDeltaByItemId.set(itemId, delta);
                 const prev = this.agentMessageBuffers.get(itemId) ?? '';
-                this.agentMessageBuffers.set(itemId, prev + delta);
-                events.push(scoped({ type: 'agent_message_delta' }));
+                const next = prev + delta;
+                this.agentMessageBuffers.set(itemId, next);
+                events.push(scoped({
+                    type: 'agent_message_delta',
+                    item_id: itemId,
+                    delta,
+                    message: next
+                }));
             }
             return events;
         }

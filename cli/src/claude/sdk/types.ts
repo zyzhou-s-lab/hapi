@@ -115,6 +115,34 @@ export interface SDKLog extends SDKMessage {
     }
 }
 
+export interface SDKStreamEventMessage extends SDKMessage {
+    type: 'stream_event'
+    uuid?: string
+    session_id?: string
+    parent_tool_use_id?: string | null
+    event?: {
+        type?: string
+        index?: number
+        message?: {
+            id?: string
+            model?: string
+            role?: string
+        }
+        content_block?: {
+            type?: string
+            text?: string
+            thinking?: string
+            signature?: string
+        }
+        delta?: {
+            type?: string
+            text?: string
+            thinking?: string
+            signature?: string
+        }
+    }
+}
+
 /**
  * Control request types
  */
@@ -209,6 +237,7 @@ export interface QueryOptions {
     strictMcpConfig?: boolean
     canCallTool?: CanCallToolCallback
     promptFailureCleanupTimeoutMs?: number
+    includePartialMessages?: boolean
 }
 
 /**
