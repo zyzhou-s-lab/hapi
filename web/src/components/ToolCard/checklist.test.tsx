@@ -298,7 +298,7 @@ describe('UpdatePlanView', () => {
         expect(screen.getByTestId('checklist-item-spinner')).toBeInTheDocument()
         expect(screen.getByTestId('checklist-item-pending')).toBeInTheDocument()
         expect(completed.className).toContain('text-[var(--app-hint)]')
-        expect(completed.className).not.toContain('line-through')
+        expect(completed.className).toContain('line-through')
         expect(inProgress.className).toContain('turn-text-shimmer')
         expect(pending.className).toContain('text-[var(--app-fg)]')
     })

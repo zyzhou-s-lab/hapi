@@ -126,7 +126,10 @@ export function checklistItemTextClass(
             ? 'font-medium text-[var(--app-fg)]'
             : 'turn-text-shimmer font-medium text-[var(--app-fg)]'
     }
-    if (status === 'completed' || status === 'blocked') {
+    if (status === 'completed') {
+        return 'text-[var(--app-hint)] line-through'
+    }
+    if (status === 'blocked') {
         return 'text-[var(--app-hint)]'
     }
     return 'text-[var(--app-fg)]'

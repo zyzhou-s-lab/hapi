@@ -96,7 +96,7 @@ test.describe('TurnTimeline Todo projection, slot geometry, and TurnDockedWidget
             }
         })
         expect(runningCardStyles).not.toBeNull()
-        expect(runningCardStyles!.completedTextDecorationLine).toBe('none')
+        expect(runningCardStyles!.completedTextDecorationLine).toContain('line-through')
         expect(runningCardStyles!.runningHasShimmerClass).toBe(true)
         expect(runningCardStyles!.runningColor).toBe('rgba(0, 0, 0, 0)')
         expect(runningCardStyles!.runningAnimationName).toBe('turn-shimmer-sweep')
