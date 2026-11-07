@@ -245,6 +245,7 @@ function StreamingIsolationFixture() {
     ])
     const [sessionThinking, setSessionThinking] = useState(true)
     const [tick, setTick] = useState(0)
+    const [lifecycleStep, setLifecycleStep] = useState<'default' | 'execution_only' | 'tool_running' | 'final_answer'>('default')
 
     const noopRefresh = useMemo(() => () => {}, [])
     const noopLoadOlder = useMemo(() => async () => 'terminal-stop' as const, [])
@@ -282,11 +283,76 @@ function StreamingIsolationFixture() {
     )
 
     const tailPartition = useMemo(
-        () => partitionTurn([
-            { type: 'reasoning', text: `Tail streaming thought tick ${tick}`, status: { type: 'running' } },
-            { type: 'text', text: `Tail streaming answer tick ${tick}`, status: { type: 'running' } },
-        ], stableMetadata),
-        [tick, stableMetadata]
+        () => {
+            if (lifecycleStep === 'execution_only') {
+                return partitionTurn([
+                    { type: 'text', text: 'Pre-tool commentary (phase=execution)', status: { type: 'running' }, phase: 'execution' },
+                ], stableMetadata)
+            }
+            if (lifecycleStep === 'tool_running') {
+                return partitionTurn([
+                    { type: 'text', text: 'Pre-tool commentary (phase=execution)', status: { type: 'complete' }, phase: 'execution' },
+                    {
+                        type: 'tool-call',
+                        toolCallId: 'tool-lc-1',
+                        toolName: 'Bash',
+                        status: { type: 'running' },
+                        artifact: {
+                            block: {
+                                kind: 'tool-call',
+                                id: 'tool-lc-1',
+                                createdAt: 1100,
+                                children: [],
+                                tool: {
+                                    name: 'Bash',
+                                    input: { command: 'bun typecheck' },
+                                    state: 'running',
+                                    createdAt: 1100,
+                                    startedAt: 1100,
+                                    completedAt: null,
+                                    description: 'Running typecheck',
+                                },
+                            },
+                        },
+                    },
+                ], stableMetadata)
+            }
+            if (lifecycleStep === 'final_answer') {
+                return partitionTurn([
+                    { type: 'text', text: 'Pre-tool commentary (phase=execution)', status: { type: 'complete' }, phase: 'execution' },
+                    {
+                        type: 'tool-call',
+                        toolCallId: 'tool-lc-1',
+                        toolName: 'Bash',
+                        status: { type: 'complete' },
+                        artifact: {
+                            block: {
+                                kind: 'tool-call',
+                                id: 'tool-lc-1',
+                                createdAt: 1100,
+                                children: [],
+                                tool: {
+                                    name: 'Bash',
+                                    input: { command: 'bun typecheck' },
+                                    state: 'completed',
+                                    createdAt: 1100,
+                                    startedAt: 1100,
+                                    completedAt: 1200,
+                                    description: 'Running typecheck',
+                                    result: 'Done in 1.2s',
+                                },
+                            },
+                        },
+                    },
+                    { type: 'text', text: 'All checks passed (phase=final_answer)', status: { type: 'complete' }, phase: 'final_answer' },
+                ], stableMetadata)
+            }
+            return partitionTurn([
+                { type: 'reasoning', text: `Tail streaming thought tick ${tick}`, status: { type: 'running' } },
+                { type: 'text', text: `Tail streaming answer tick ${tick}`, status: { type: 'running' } },
+            ], stableMetadata)
+        },
+        [lifecycleStep, tick, stableMetadata]
     )
 
     return (
@@ -316,6 +382,21 @@ function StreamingIsolationFixture() {
                             className="rounded border border-[var(--app-border)] bg-[var(--app-subtle-bg)] px-3 py-1.5 text-xs font-medium"
                         >
                             Toggle Thinking ({String(sessionThinking)})
+                        </button>
+                        <button
+                            type="button"
+                            data-testid="advance-lifecycle-step"
+                            onClick={() => {
+                                setLifecycleStep((prev) => {
+                                    if (prev === 'default') return 'execution_only'
+                                    if (prev === 'execution_only') return 'tool_running'
+                                    if (prev === 'tool_running') return 'final_answer'
+                                    return 'default'
+                                })
+                            }}
+                            className="rounded border border-[var(--app-border)] bg-[var(--app-subtle-bg)] px-3 py-1.5 text-xs font-medium"
+                        >
+                            Lifecycle Step ({lifecycleStep})
                         </button>
                     </div>
 

@@ -588,4 +588,38 @@ describe('PR 3 toolPresentationManifest, hasTurnContentActivity, and projectTurn
         expect(subturn2.collapsedPinnedRailRows.map((r) => r.key)).toEqual(['todo-2'])
         expect(subturn2.answerRows.map((r) => r.text)).toEqual(['Final answer after failed todo update.'])
     })
+
+    it('honors explicit phase: execution vs final_answer so pre-tool commentary stays in rail without flashing as final answer', () => {
+        const preToolParts: TurnContentPart[] = [
+            { type: 'text', text: 'Let me inspect the repository first.', phase: 'execution' },
+        ]
+        expect(hasTurnContentActivity(preToolParts)).toBe(true)
+        expect(hasTurnContentActivity([{ type: 'text', text: 'Direct reply.', phase: 'final_answer' }])).toBe(false)
+
+        const preToolPartitioned = partitionTurn(preToolParts, null)
+        expect(preToolPartitioned.hasActivity).toBe(true)
+        const preToolProjected = projectTurn(preToolPartitioned, { streaming: true })
+        expect(preToolProjected.subturns).toHaveLength(1)
+        const subturnBeforeTool = preToolProjected.subturns[0]!
+        expect(subturnBeforeTool.hasSteps).toBe(true)
+        expect(subturnBeforeTool.stepRows.map((r) => r.kind === 'text' ? r.text : r.kind)).toEqual([
+            'Let me inspect the repository first.',
+        ])
+        expect(subturnBeforeTool.answerRows).toEqual([])
+
+        const withToolAndFinalParts: TurnContentPart[] = [
+            ...preToolParts,
+            call(tool('read-1', 'Read', { state: 'completed', input: { file_path: 'src/index.ts' } })),
+            { type: 'text', text: 'Here is the final answer.', phase: 'final_answer' },
+        ]
+        const afterProjected = projectTurn(partitionTurn(withToolAndFinalParts, null), { streaming: false })
+        const subturnAfterTool = afterProjected.subturns[0]!
+        expect(subturnAfterTool.stepRows.map((r) => r.kind === 'text' ? r.text : r.kind)).toEqual([
+            'Let me inspect the repository first.',
+            'tool',
+        ])
+        expect(subturnAfterTool.answerRows.map((r) => r.text)).toEqual([
+            'Here is the final answer.',
+        ])
+    })
 })

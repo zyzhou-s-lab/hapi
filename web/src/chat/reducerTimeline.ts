@@ -860,6 +860,12 @@ export function reduceTimeline(
                             existing.model = msg.model
                             existing.meta = msg.meta
                             existing.invokedAt = msg.invokedAt
+                            if (c.phase !== undefined) {
+                                existing.phase = c.phase
+                            }
+                            if (msg.turnId !== undefined) {
+                                existing.turnId = msg.turnId
+                            }
                             continue
                         }
                     }
@@ -874,7 +880,9 @@ export function reduceTimeline(
                         usage: msg.usage,
                         model: msg.model,
                         text: c.text,
-                        meta: msg.meta
+                        meta: msg.meta,
+                        ...(c.phase !== undefined ? { phase: c.phase } : {}),
+                        ...(msg.turnId !== undefined ? { turnId: msg.turnId } : {})
                     }
                     blocks.push(block)
                     if (streamId) {
@@ -925,6 +933,9 @@ export function reduceTimeline(
                             existing.model = msg.model
                             existing.meta = msg.meta
                             existing.invokedAt = msg.invokedAt
+                            if (msg.turnId !== undefined) {
+                                existing.turnId = msg.turnId
+                            }
                             continue
                         }
                     }
@@ -939,7 +950,9 @@ export function reduceTimeline(
                         usage: msg.usage,
                         model: msg.model,
                         text: c.text,
-                        meta: msg.meta
+                        meta: msg.meta,
+                        ...(c.phase !== undefined ? { phase: c.phase } : {}),
+                        ...(msg.turnId !== undefined ? { turnId: msg.turnId } : {})
                     }
                     blocks.push(block)
                     if (streamId) {
@@ -1039,7 +1052,8 @@ export function reduceTimeline(
                         progress: c.progress,
                         status: effectiveStatus,
                         permission,
-                        agentTimestamp: msg.agentTimestamp
+                        agentTimestamp: msg.agentTimestamp,
+                        turnId: msg.turnId
                     })
 
                     if (block.tool.state === 'pending' && effectiveStatus !== 'pending') {
@@ -1121,7 +1135,8 @@ export function reduceTimeline(
                         name: permissionEntry?.toolName ?? 'Tool',
                         input: permissionEntry?.input ?? null,
                         description: null,
-                        permission
+                        permission,
+                        turnId: msg.turnId
                         // NOTE: no agentTimestamp seed here. execStartedAt must
                         // only ever originate from a tool_use entry; the tool_use
                         // path backfills it via setEarliestExecStartedAt. Seeding

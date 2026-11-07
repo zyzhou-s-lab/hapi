@@ -143,12 +143,15 @@ export type CodexReview = {
     overallConfidenceScore: number | null
 }
 
+export type AssistantContentPhase = 'execution' | 'final_answer'
+
 export type NormalizedAgentContent =
     | {
         type: 'text'
         text: string
         uuid: string
         streamId?: string
+        phase?: AssistantContentPhase
         parentUUID: string | null
     }
     | {
@@ -156,6 +159,7 @@ export type NormalizedAgentContent =
         text: string
         uuid: string
         streamId?: string
+        phase?: 'execution'
         parentUUID: string | null
     }
     | ToolUse
@@ -179,6 +183,8 @@ export type NormalizedMessage = ({
     content: NormalizedAgentContent[]
     /** Whole assistant snapshots replace every earlier block, including on empty final output. */
     streamSnapshot?: { id: string; live: boolean }
+    /** True when an incremental stream delta message is still in flight. */
+    live?: boolean
 } | {
     role: 'event'
     content: AgentEvent
@@ -209,6 +215,8 @@ export type NormalizedMessage = ({
     agentTimestamp?: number | null
     /** True when a user message was steered into an active turn (mid-turn). */
     steered?: boolean
+    /** Optional turn identifier emitted by CLI adapters to group blocks without timestamp heuristics. */
+    turnId?: string
 }
 
 export type ToolPermission = {
@@ -278,6 +286,8 @@ export type AgentTextBlock = {
     roundSummary?: RoundSummary
     text: string
     meta?: unknown
+    phase?: AssistantContentPhase
+    turnId?: string
 }
 
 export type AgentReasoningBlock = {
@@ -292,6 +302,8 @@ export type AgentReasoningBlock = {
     roundSummary?: RoundSummary
     text: string
     meta?: unknown
+    phase?: 'execution'
+    turnId?: string
 }
 
 export type CodexReviewBlock = {
@@ -374,6 +386,7 @@ export type ToolCallBlock = {
     tool: ChatToolCall
     children: ChatBlock[]
     meta?: unknown
+    turnId?: string
 }
 
 export type ChatBlock = UserTextBlock | AgentTextBlock | AgentReasoningBlock | CodexReviewBlock | CliOutputBlock | ToolCallBlock | GeneratedImageBlock | GeneratedFileBlock | AgentEventBlock

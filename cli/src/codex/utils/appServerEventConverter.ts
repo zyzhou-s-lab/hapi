@@ -490,6 +490,7 @@ function buildCollabAgentOutput(item: Record<string, unknown>, toolName: string)
 
 export class AppServerEventConverter {
     private readonly agentMessageBuffers = new Map<string, string>();
+    private readonly agentMessagePhases = new Map<string, string>();
     private readonly reasoningBuffers = new Map<string, string>();
     private readonly commandOutputBuffers = new Map<string, string>();
     private readonly commandMeta = new Map<string, Record<string, unknown>>();
@@ -909,11 +910,13 @@ export class AppServerEventConverter {
                 const prev = this.agentMessageBuffers.get(itemId) ?? '';
                 const next = prev + delta;
                 this.agentMessageBuffers.set(itemId, next);
+                const phase = asString(paramsRecord.phase) ?? this.agentMessagePhases.get(itemId);
                 events.push(scoped({
                     type: 'agent_message_delta',
                     item_id: itemId,
                     delta,
-                    message: next
+                    message: next,
+                    ...(phase ? { phase } : {})
                 }));
             }
             return events;
@@ -993,16 +996,26 @@ export class AppServerEventConverter {
             }
 
             if (itemType === 'agentmessage') {
+                const itemPhase = asString(item.phase ?? paramsRecord.phase);
+                if (itemPhase) {
+                    this.agentMessagePhases.set(itemId, itemPhase);
+                }
                 if (method === 'item/completed') {
                     if (this.completedAgentMessageItems.has(itemId)) {
                         return events;
                     }
                     const text = extractItemText(item) ?? this.agentMessageBuffers.get(itemId);
+                    const phase = itemPhase ?? this.agentMessagePhases.get(itemId);
                     if (text) {
-                        events.push(scoped({ type: 'agent_message', message: text }));
+                        events.push(scoped({
+                            type: 'agent_message',
+                            message: text,
+                            ...(phase ? { phase } : {})
+                        }));
                         this.completedAgentMessageItems.add(itemId);
                         this.agentMessageBuffers.delete(itemId);
                     }
+                    this.agentMessagePhases.delete(itemId);
                     this.lastAgentMessageDeltaByItemId.delete(itemId);
                 }
                 return events;
@@ -1203,6 +1216,7 @@ export class AppServerEventConverter {
 
     reset(): void {
         this.agentMessageBuffers.clear();
+        this.agentMessagePhases.clear();
         this.reasoningBuffers.clear();
         this.commandOutputBuffers.clear();
         this.commandMeta.clear();

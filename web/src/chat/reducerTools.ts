@@ -81,6 +81,7 @@ export function ensureToolBlock(
         permission?: ToolPermission
         /** Claude entry execution-machine timestamp for the tool_use, if known (see `ChatToolCall.execStartedAt`). */
         agentTimestamp?: number | null
+        turnId?: string
     }
 ): ToolCallBlock {
     const existing = toolBlocksById.get(id)
@@ -158,6 +159,9 @@ export function ensureToolBlock(
         if (seed.model !== undefined) {
             existing.model = seed.model
         }
+        if (seed.turnId !== undefined && existing.turnId === undefined) {
+            existing.turnId = seed.turnId
+        }
         return existing
     }
 
@@ -200,7 +204,8 @@ export function ensureToolBlock(
         model: seed.model,
         tool,
         children: [],
-        meta: seed.meta
+        meta: seed.meta,
+        ...(seed.turnId !== undefined ? { turnId: seed.turnId } : {})
     }
 
     toolBlocksById.set(id, block)

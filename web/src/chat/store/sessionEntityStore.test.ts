@@ -361,6 +361,85 @@ describe('SessionEntityStore', () => {
         expect(snapOtherSession.sessionId).toBe('sess-other')
         expect(snapOtherSession.timelineIndex.map((e) => e.id)).toEqual(['u-other'])
     })
+
+    it('propagates Codex turnId, phase: commentary -> execution, and live streaming flag across streamId snapshots', () => {
+        const store = createSessionEntityStore()
+        const codexLiveMsg: DecryptedMessage = {
+            id: 'codex-msg-1',
+            seq: 1,
+            localId: null,
+            createdAt: 1000,
+            content: {
+                role: 'agent',
+                content: {
+                    type: 'codex',
+                    data: {
+                        type: 'message',
+                        id: 'stream-item-1',
+                        turn_id: 'turn-abc',
+                        phase: 'commentary',
+                        streamSnapshot: true,
+                        live: true,
+                        message: 'Checking workspace files...',
+                    },
+                },
+            },
+        }
+
+        const liveSnap = store.reconcileInput({
+            sessionId: 'sess-codex',
+            messages: [codexLiveMsg],
+            agentState: null,
+            hasMoreMessages: false,
+            codexExplorationCollapsed: false,
+        })
+        expect(liveSnap.hasLiveStreamingMessage).toBe(true)
+        expect(liveSnap.blocks).toHaveLength(1)
+        const liveBlock = liveSnap.blocks[0]!
+        expect(liveBlock.kind).toBe('agent-text')
+        if (liveBlock.kind === 'agent-text') {
+            expect(liveBlock.phase).toBe('execution')
+            expect(liveBlock.turnId).toBe('turn-abc')
+            expect(liveBlock.text).toBe('Checking workspace files...')
+        }
+
+        const codexSettledMsg: DecryptedMessage = {
+            ...codexLiveMsg,
+            id: 'codex-msg-2',
+            seq: 2,
+            content: {
+                role: 'agent',
+                content: {
+                    type: 'codex',
+                    data: {
+                        type: 'message',
+                        id: 'stream-item-1',
+                        turn_id: 'turn-abc',
+                        phase: 'commentary',
+                        streamSnapshot: true,
+                        message: 'Checking workspace files completed.',
+                    },
+                },
+            },
+        }
+
+        const settledSnap = store.reconcileInput({
+            sessionId: 'sess-codex',
+            messages: [codexSettledMsg],
+            agentState: null,
+            hasMoreMessages: false,
+            codexExplorationCollapsed: false,
+        })
+        expect(settledSnap.hasLiveStreamingMessage).toBe(false)
+        expect(settledSnap.blocks).toHaveLength(1)
+        const settledBlock = settledSnap.blocks[0]!
+        expect(settledBlock.kind).toBe('agent-text')
+        if (settledBlock.kind === 'agent-text') {
+            expect(settledBlock.phase).toBe('execution')
+            expect(settledBlock.turnId).toBe('turn-abc')
+            expect(settledBlock.text).toBe('Checking workspace files completed.')
+        }
+    })
 })
 
 describe('partitionTurn and projectTurn reference stabilization', () => {

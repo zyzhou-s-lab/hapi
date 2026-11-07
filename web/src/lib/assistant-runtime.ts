@@ -228,6 +228,7 @@ export function hoistMidTurnTitleEvents(blocks: readonly VisibleChatBlock[]): re
 
 type TurnSource = {
     localId: string | null
+    turnId?: string
     invokedAt: number | null
     durationMs: number | undefined
     model: string | null
@@ -244,6 +245,7 @@ function turnSourcesFromBlock(block: VisibleChatBlock): TurnSource[] {
     if (block.kind === 'tool-group') {
         return block.tools.map((tool) => ({
             localId: tool.localId,
+            turnId: tool.turnId,
             invokedAt: tool.invokedAt ?? null,
             durationMs: tool.durationMs,
             model: tool.model ?? null,
@@ -259,6 +261,7 @@ function turnSourcesFromBlock(block: VisibleChatBlock): TurnSource[] {
     ) {
         return [{
             localId: block.localId,
+            turnId: 'turnId' in block ? block.turnId : undefined,
             invokedAt: block.invokedAt ?? null,
             durationMs: block.durationMs,
             model: block.model ?? null,
@@ -627,9 +630,13 @@ export function findLatestCompletedBoundaryId(
         } else if (activeTurnStartedAt === null) {
             return null
         } else {
-            const firstActiveBlock = assigned.findIndex(({ block }) => (
-                (block.invokedAt ?? block.createdAt) >= activeTurnStartedAt
-            ))
+            const lastBlock = assigned[assigned.length - 1]?.block
+            const activeTurnId = lastBlock && 'turnId' in lastBlock ? lastBlock.turnId : undefined
+            const firstActiveBlock = activeTurnId
+                ? assigned.findIndex(({ block }) => 'turnId' in block && block.turnId === activeTurnId)
+                : assigned.findIndex(({ block }) => (
+                    (block.invokedAt ?? block.createdAt) >= activeTurnStartedAt
+                ))
             if (firstActiveBlock >= 0) {
                 limit = firstActiveBlock
             }
@@ -718,11 +725,14 @@ function toThreadMessageLike(
     }
 
     if (block.kind === 'agent-text') {
+        const textPart = block.phase !== undefined
+            ? ({ type: 'text', text: block.text, phase: block.phase } as const)
+            : ({ type: 'text', text: block.text } as const)
         return {
             role: 'assistant',
             id: threadMessageId,
             createdAt: new Date(timestamp),
-            content: [{ type: 'text', text: block.text }],
+            content: [textPart as { type: 'text'; text: string }],
             metadata: {
                 custom: {
                     kind: 'assistant',

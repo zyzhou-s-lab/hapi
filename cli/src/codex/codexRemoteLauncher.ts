@@ -753,6 +753,7 @@ class CodexRemoteLauncher extends RemoteLauncherBase {
             id: string;
             itemId: string | null;
             message: string;
+            phase: string | null;
             lastSnapshotAt: number;
         } | null = null;
         const mcpTitleByCallId = new Map<string, string>();
@@ -2973,6 +2974,7 @@ class CodexRemoteLauncher extends RemoteLauncherBase {
                 const itemId = asString(msg.item_id ?? msg.itemId);
                 const cumulative = asString(msg.message);
                 const delta = asString(msg.delta);
+                const phase = asString(msg.phase);
                 if (cumulative || delta) {
                     const now = Date.now();
                     if (
@@ -2983,11 +2985,15 @@ class CodexRemoteLauncher extends RemoteLauncherBase {
                             id: randomUUID(),
                             itemId: itemId ?? null,
                             message: cumulative ?? delta ?? '',
+                            phase: phase ?? null,
                             lastSnapshotAt: 0
                         };
                     } else {
                         if (itemId && !activeAgentMessageStream.itemId) {
                             activeAgentMessageStream.itemId = itemId;
+                        }
+                        if (phase) {
+                            activeAgentMessageStream.phase = phase;
                         }
                         activeAgentMessageStream.message = cumulative ?? (activeAgentMessageStream.message + (delta ?? ''));
                     }
@@ -3002,7 +3008,8 @@ class CodexRemoteLauncher extends RemoteLauncherBase {
                             model: session.getModel(),
                             id: activeAgentMessageStream.id,
                             streamSnapshot: true,
-                            live: true
+                            live: true,
+                            ...(activeAgentMessageStream.phase ? { phase: activeAgentMessageStream.phase } : {})
                         });
                     }
                 }
@@ -3293,7 +3300,8 @@ class CodexRemoteLauncher extends RemoteLauncherBase {
                             message: settled.message,
                             model: session.getModel(),
                             id: settled.id,
-                            streamSnapshot: true
+                            streamSnapshot: true,
+                            ...(settled.phase ? { phase: settled.phase } : {})
                         });
                     }
                 }
@@ -3348,13 +3356,15 @@ class CodexRemoteLauncher extends RemoteLauncherBase {
                 const message = asString(msg.message);
                 const settledStream = activeAgentMessageStream;
                 activeAgentMessageStream = null;
+                const phase = asString(msg.phase) ?? settledStream?.phase ?? null;
                 if (message) {
                     session.sendAgentMessage({
                         type: 'message',
                         message,
                         model: session.getModel(),
                         id: settledStream?.id ?? randomUUID(),
-                        ...(settledStream ? { streamSnapshot: true } : {})
+                        ...(settledStream ? { streamSnapshot: true } : {}),
+                        ...(phase ? { phase } : {})
                     });
                 }
             }

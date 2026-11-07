@@ -54,6 +54,7 @@ export type SessionEntityStoreSnapshot = {
     readonly visibleMessages: readonly DecryptedMessage[]
     readonly normalizedMessages: readonly NormalizedMessage[]
     readonly timelineIndex: readonly TimelineEntryRef[]
+    readonly timelineStructureKey: string
     readonly blocks: readonly ChatBlock[]
     readonly byId: ChatBlocksById
     readonly visibleBlocks: readonly VisibleChatBlock[]
@@ -64,6 +65,7 @@ export type SessionEntityStoreSnapshot = {
     readonly hasReadyEvent: boolean
     readonly hasRunningChildAgent: boolean
     readonly activityLabel: string | null
+    readonly hasLiveStreamingMessage: boolean
     readonly reductionMode: 'incremental-tail' | 'full' | 'noop'
     readonly splitIndex: number
 }
@@ -115,7 +117,7 @@ function isSilentGoalCommandText(text: string): boolean {
 function isRootUserTurnBoundaryMessage(msg: NormalizedMessage): boolean {
     if (msg.role !== 'user') return false
     if (msg.steered) return false
-    if (msg.isSidechain || msg.parentUuid || msg.parentToolUseId) return false
+    if (msg.isSidechain || msg.parentToolUseId) return false
     if (isCliOutputText(msg.content.text, msg.meta)) return false
     if (isSilentGoalCommandText(msg.content.text)) return false
     return true
@@ -181,6 +183,15 @@ function hasUnsettledPrefixBlocks(blocks: readonly ChatBlock[]): boolean {
     return false
 }
 
+function hasUnsettledPrefixMessages(messages: readonly NormalizedMessage[]): boolean {
+    for (const msg of messages) {
+        if (msg.role === 'agent' && (msg.live === true || msg.streamSnapshot?.live === true)) {
+            return true
+        }
+    }
+    return false
+}
+
 function collectPrefixLookupSets(
     prefixMessages: readonly NormalizedMessage[],
     prefixBlocks: readonly ChatBlock[]
@@ -209,9 +220,10 @@ function collectPrefixLookupSets(
 
     for (const msg of prefixMessages) {
         prefixUuids.add(msg.id)
-        if (msg.uuid) prefixUuids.add(msg.uuid)
-        if (msg.streamSnapshot?.id) prefixStreamIds.add(msg.streamSnapshot.id)
         if (msg.parentToolUseId) prefixToolIds.add(msg.parentToolUseId)
+        if (msg.role === 'agent' && msg.streamSnapshot?.id) {
+            prefixStreamIds.add(msg.streamSnapshot.id)
+        }
 
         const parsedEvent = parseMessageAsEvent(msg)
         if (parsedEvent?.type === 'title-changed' && typeof parsedEvent.title === 'string') {
@@ -241,6 +253,9 @@ function collectPrefixLookupSets(
 
         if (msg.role === 'agent') {
             for (const c of msg.content) {
+                if ('uuid' in c && typeof c.uuid === 'string' && c.uuid) {
+                    prefixUuids.add(c.uuid)
+                }
                 if ((c.type === 'text' || c.type === 'reasoning') && c.streamId) {
                     prefixStreamIds.add(c.streamId)
                 } else if (c.type === 'tool-call') {
@@ -305,13 +320,17 @@ function tailMessageReferencesPrefix(
         // so the previous turn is sealed into the settled prefix.
         return true
     }
-    if (msg.streamSnapshot?.id && cache.prefixStreamIds.has(msg.streamSnapshot.id)) {
-        return true
+    if (msg.role === 'agent') {
+        if (msg.streamSnapshot?.id && cache.prefixStreamIds.has(msg.streamSnapshot.id)) {
+            return true
+        }
+        for (const c of msg.content) {
+            if ('parentUUID' in c && typeof c.parentUUID === 'string' && cache.prefixUuids.has(c.parentUUID)) {
+                return true
+            }
+        }
     }
     if (msg.parentToolUseId && cache.prefixToolIds.has(msg.parentToolUseId)) {
-        return true
-    }
-    if (msg.parentUuid && cache.prefixUuids.has(msg.parentUuid)) {
         return true
     }
     if (msg.role === 'event') {
@@ -460,8 +479,12 @@ function isSameLatestUsage(a: LatestUsage | null, b: LatestUsage | null): boolea
 function isSameThreadGoal(a: ThreadGoal | null, b: ThreadGoal | null): boolean {
     if (a === b) return true
     if (!a || !b) return false
-    return a.summary === b.summary
+    return a.threadId === b.threadId
+        && a.objective === b.objective
         && a.status === b.status
+        && a.tokenBudget === b.tokenBudget
+        && a.tokensUsed === b.tokensUsed
+        && a.timeUsedSeconds === b.timeUsedSeconds
         && a.updatedAt === b.updatedAt
 }
 
@@ -536,6 +559,7 @@ export class SessionEntityStore {
         visibleMessages: EMPTY_VISIBLE_MESSAGES,
         normalizedMessages: EMPTY_NORMALIZED_MESSAGES,
         timelineIndex: EMPTY_TIMELINE_INDEX,
+        timelineStructureKey: '',
         blocks: EMPTY_BLOCKS,
         byId: EMPTY_BY_ID,
         visibleBlocks: EMPTY_VISIBLE_BLOCKS,
@@ -546,6 +570,7 @@ export class SessionEntityStore {
         hasReadyEvent: false,
         hasRunningChildAgent: false,
         activityLabel: null,
+        hasLiveStreamingMessage: false,
         reductionMode: 'noop',
         splitIndex: -1,
     }
@@ -625,6 +650,7 @@ export class SessionEntityStore {
             visibleMessages: EMPTY_VISIBLE_MESSAGES,
             normalizedMessages: EMPTY_NORMALIZED_MESSAGES,
             timelineIndex: EMPTY_TIMELINE_INDEX,
+            timelineStructureKey: '',
             blocks: EMPTY_BLOCKS,
             byId: EMPTY_BY_ID,
             visibleBlocks: EMPTY_VISIBLE_BLOCKS,
@@ -635,6 +661,7 @@ export class SessionEntityStore {
             hasReadyEvent: false,
             hasRunningChildAgent: false,
             activityLabel: null,
+            hasLiveStreamingMessage: false,
             reductionMode: 'noop',
             splitIndex: -1,
         }
@@ -836,6 +863,9 @@ export class SessionEntityStore {
         }
 
         const timelineIndex = buildTimelineIndex(stableVisibleBlocks, prevSnapshot.timelineIndex)
+        const timelineStructureKey = timelineIndex === prevSnapshot.timelineIndex
+            ? prevSnapshot.timelineStructureKey
+            : timelineIndex.map((entry) => `${entry.kind}:${entry.id}`).join('|')
         const stableQueuedMessages = isSameArrayElements(queuedMessages, prevSnapshot.meta.queuedMessages)
             ? prevSnapshot.meta.queuedMessages
             : Object.freeze(queuedMessages)
@@ -868,6 +898,7 @@ export class SessionEntityStore {
             visibleMessages: stableVisibleMessages,
             normalizedMessages: stableNormalizedMessages,
             timelineIndex,
+            timelineStructureKey,
             blocks: stableBlocks,
             byId: reconciledById,
             visibleBlocks: stableVisibleBlocks,
@@ -878,6 +909,7 @@ export class SessionEntityStore {
             hasReadyEvent: meta.hasReadyEvent,
             hasRunningChildAgent: meta.hasRunningChildAgent,
             activityLabel: meta.activityLabel,
+            hasLiveStreamingMessage: hasUnsettledPrefixMessages(stableNormalizedMessages),
             reductionMode,
             splitIndex,
         }
@@ -915,6 +947,9 @@ export class SessionEntityStore {
         }
 
         const prefixMessages = normalized.slice(0, splitIndex + 1)
+        if (hasUnsettledPrefixMessages(prefixMessages)) {
+            return null
+        }
         const prefixReduced = reduceChatBlocks(prefixMessages, agentState)
         if (prefixReduced.blocks.length !== prefixBlocks.length) {
             return null

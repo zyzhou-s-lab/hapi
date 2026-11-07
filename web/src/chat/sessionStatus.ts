@@ -211,8 +211,12 @@ export function areSessionStatusDataEqual(
     if (a.goal !== b.goal) {
         if (!a.goal || !b.goal) return false
         if (
-            a.goal.text !== b.goal.text
+            a.goal.threadId !== b.goal.threadId
+            || a.goal.objective !== b.goal.objective
             || a.goal.status !== b.goal.status
+            || a.goal.tokenBudget !== b.goal.tokenBudget
+            || a.goal.tokensUsed !== b.goal.tokensUsed
+            || a.goal.timeUsedSeconds !== b.goal.timeUsedSeconds
             || a.goal.updatedAt !== b.goal.updatedAt
         ) {
             return false
@@ -229,7 +233,8 @@ export function areSessionStatusDataEqual(
                 || t1.content !== t2.content
                 || t1.status !== t2.status
                 || t1.priority !== t2.priority
-                || t1.phaseId !== t2.phaseId
+                || t1.activeForm !== t2.activeForm
+                || t1.blocked !== t2.blocked
             )
         ) {
             return false

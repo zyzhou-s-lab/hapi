@@ -779,7 +779,7 @@ function applyLatestResponse(
             ) {
                 return existing
             }
-            if (existing && message.status === undefined && existing.status && (existing.status !== 'queued' || message.invokedAt == null)) {
+            if (existing && existing.status && (existing.status !== 'queued' || message.invokedAt == null)) {
                 return {
                     ...message,
                     status: existing.status,

@@ -1,4 +1,4 @@
-import type { AgentEvent, CodexReview, CodexReviewFinding, NormalizedAgentContent, NormalizedMessage, RoundModelUsage, RoundSummary, ToolResultPermission, ToolUseStatus, UsageData } from '@/chat/types'
+import type { AgentEvent, AssistantContentPhase, CodexReview, CodexReviewFinding, NormalizedAgentContent, NormalizedMessage, RoundModelUsage, RoundSummary, ToolResultPermission, ToolUseStatus, UsageData } from '@/chat/types'
 import { inlineMediaSourceFromWire } from '@/chat/inlineMediaSource'
 import { AGENT_MESSAGE_PAYLOAD_TYPE, asNumber, asString, isObject } from '@hapi/protocol'
 import { isClaudeChatVisibleMessage } from '@hapi/protocol/messages'
@@ -302,6 +302,12 @@ function parseCodexReviewMessage(message: string): CodexReview | null {
     }
 }
 
+function normalizeAssistantContentPhase(value: unknown): AssistantContentPhase | undefined {
+    if (value === 'execution' || value === 'commentary') return 'execution'
+    if (value === 'final_answer') return 'final_answer'
+    return undefined
+}
+
 function normalizeAssistantOutput(
     messageId: string,
     localId: string | null,
@@ -327,7 +333,14 @@ function normalizeAssistantOutput(
         for (const block of modelContent) {
             if (!isObject(block) || typeof block.type !== 'string') continue
             if (block.type === 'text' && typeof block.text === 'string') {
-                blocks.push({ type: 'text', text: block.text, uuid, parentUUID })
+                const phase = normalizeAssistantContentPhase(block.phase)
+                blocks.push({
+                    type: 'text',
+                    text: block.text,
+                    uuid,
+                    parentUUID,
+                    ...(phase ? { phase } : {})
+                })
                 continue
             }
             if (block.type === 'thinking' && typeof block.thinking === 'string') {
@@ -348,6 +361,7 @@ function normalizeAssistantOutput(
     const outputTokens = usage ? asNumber(usage.output_tokens) : null
     const model = asString(message.model) ?? null
     const generationDurationMs = nonNegativeNumber(usage?.generation_duration_ms)
+    const turnId = asString(data.turnId ?? data.turn_id ?? message.turnId ?? message.turn_id) ?? undefined
 
     return {
         id: messageId,
@@ -358,6 +372,8 @@ function normalizeAssistantOutput(
         ...(data.streamSnapshot === true ? {
             streamSnapshot: { id: `output:assistant:${uuid}`, live: data.live === true }
         } : {}),
+        ...(data.live === true ? { live: true } : {}),
+        ...(turnId ? { turnId } : {}),
         isSidechain,
         parentToolUseId,
         content: blocks,
@@ -1144,6 +1160,8 @@ export function normalizeAgentRecord(
                     meta
                 }
             }
+            const phase = normalizeAssistantContentPhase(data.phase)
+            const turnId = asString(data.turnId ?? data.turn_id) ?? undefined
             return {
                 id: messageId,
                 localId,
@@ -1152,11 +1170,14 @@ export function normalizeAgentRecord(
                 usage,
                 role: 'agent',
                 isSidechain: false,
+                ...(data.live === true ? { live: true } : {}),
+                ...(turnId ? { turnId } : {}),
                 content: [{
                     type: 'text',
                     text: data.message,
                     uuid: messageId,
                     ...(streamId !== null ? { streamId } : {}),
+                    ...(phase ? { phase } : {}),
                     parentUUID: null
                 }],
                 meta
@@ -1165,6 +1186,7 @@ export function normalizeAgentRecord(
 
         if (data.type === 'reasoning' && typeof data.message === 'string') {
             const streamId = asString(data.id) ?? messageId
+            const turnId = asString(data.turnId ?? data.turn_id) ?? undefined
             return {
                 id: messageId,
                 localId,
@@ -1173,6 +1195,8 @@ export function normalizeAgentRecord(
                 usage: normalizeCodexTokenUsage(data.usage) ?? undefined,
                 role: 'agent',
                 isSidechain: false,
+                ...(data.live === true ? { live: true } : {}),
+                ...(turnId ? { turnId } : {}),
                 content: [{ type: 'reasoning', text: data.message, uuid: messageId, streamId, parentUUID: null }],
                 meta
             }
@@ -1281,6 +1305,7 @@ export function normalizeAgentRecord(
         if (data.type === 'tool-call' && typeof data.callId === 'string') {
             const uuid = asString(data.id) ?? messageId
             const status = normalizeToolUseStatus(data.status)
+            const turnId = asString(data.turnId ?? data.turn_id) ?? undefined
             return {
                 id: messageId,
                 localId,
@@ -1289,6 +1314,7 @@ export function normalizeAgentRecord(
                 usage: normalizeCodexTokenUsage(data.usage) ?? undefined,
                 role: 'agent',
                 isSidechain: false,
+                ...(turnId ? { turnId } : {}),
                 content: [{
                     type: 'tool-call',
                     id: data.callId,

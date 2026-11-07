@@ -1,4 +1,4 @@
-import type { ChatToolCall, GeneratedFileBlock, GeneratedImageBlock, RoundSummary, ToolCallBlock } from '@/chat/types'
+import type { AssistantContentPhase, ChatToolCall, GeneratedFileBlock, GeneratedImageBlock, RoundSummary, ToolCallBlock } from '@/chat/types'
 import type { ToolGroupBlock } from '@/chat/toolGroups'
 import { isSubagentToolName } from '@/chat/subagentTool'
 import { isAskUserQuestionToolName } from '@/components/ToolCard/askUserQuestion'
@@ -20,6 +20,7 @@ import type { SessionMetadataSummary, TodoItem } from '@/types/api'
 export type TurnContentPart = {
     type: string
     text?: string
+    phase?: AssistantContentPhase
     toolCallId?: string
     toolName?: string
     result?: unknown
@@ -34,6 +35,7 @@ export type TurnTextRow = {
     text: string
     /** Tool commentary stays inside the fold. The answer after the last tool does not. */
     trailing: boolean
+    phase?: AssistantContentPhase
 }
 
 export type TurnToolRow = {
@@ -427,7 +429,7 @@ function areTurnRowsEqual(a: TurnRow, b: TurnRow): boolean {
             return a.text === (b as TurnReasoningRow).text
         case 'text': {
             const other = b as TurnTextRow
-            return a.text === other.text && a.trailing === other.trailing
+            return a.text === other.text && a.trailing === other.trailing && a.phase === other.phase
         }
         case 'tool': {
             const other = b as TurnToolRow
@@ -472,7 +474,14 @@ export function partitionTurn(
             return
         }
         if (part.type === 'text' && typeof part.text === 'string' && part.text.trim()) {
-            rows.push({ kind: 'text', key: `text:${index}`, text: part.text.trim(), trailing: false })
+            const phase = part.phase === 'execution' || part.phase === 'final_answer' ? part.phase : undefined
+            rows.push({
+                kind: 'text',
+                key: `text:${index}`,
+                text: part.text.trim(),
+                trailing: false,
+                ...(phase !== undefined ? { phase } : {}),
+            })
             return
         }
         if (isToolGroup(part)) {
@@ -502,6 +511,10 @@ export function partitionTurn(
 
     rows.forEach((row, index) => {
         if (row.kind !== 'text') return
+        if (row.phase === 'execution') {
+            row.trailing = false
+            return
+        }
         let boundaryIndex = rows.length
         for (let cursor = index + 1; cursor < rows.length; cursor += 1) {
             if (isCompactionBoundary(rows[cursor]!)) {
@@ -512,6 +525,10 @@ export function partitionTurn(
         const hasStepBeforeBoundary = rows
             .slice(index + 1, boundaryIndex)
             .some(isSubRoundStep)
+        if (row.phase === 'final_answer') {
+            row.trailing = !hasStepBeforeBoundary
+            return
+        }
         if (!hasStepBeforeBoundary) {
             row.trailing = true
         }
@@ -585,7 +602,7 @@ export function partitionTurn(
         title,
         hasFoldable: foldable.length > 0,
         hasPinned: stabilizedRows.some((row) => row.kind === 'tool' && row.pinned),
-        hasActivity: stabilizedRows.some((row) => row.kind === 'reasoning' || row.kind === 'tool' || row.kind === 'image' || row.kind === 'file'),
+        hasActivity: stabilizedRows.some((row) => row.kind === 'reasoning' || row.kind === 'tool' || row.kind === 'image' || row.kind === 'file' || (row.kind === 'text' && row.phase === 'execution')),
         streaming,
     }
     if (
@@ -1655,6 +1672,9 @@ export function hasTurnContentActivity(parts: readonly TurnContentPart[]): boole
         if (part.type === 'reasoning' && typeof part.text === 'string' && part.text.trim().length > 0) {
             return true
         }
+        if (part.type === 'text' && part.phase === 'execution' && typeof part.text === 'string' && part.text.trim().length > 0) {
+            return true
+        }
         if (isToolGroup(part)) {
             if (part.artifact.tools.length > 0) return true
             continue
@@ -1706,9 +1726,9 @@ function areTodoCardItemsEqual(a: readonly TodoCardItem[], b: readonly TodoCardI
         const right = b[i]!
         if (
             left.id !== right.id
-            || left.content !== right.content
+            || left.text !== right.text
+            || left.activeForm !== right.activeForm
             || left.status !== right.status
-            || left.priority !== right.priority
         ) {
             return false
         }
@@ -1752,7 +1772,7 @@ export function projectTurn(
     const stepRows: TurnDisplayStepRow[] = viewMode === 'verbose'
         ? stepCandidates
         : coalesceTurnStepRows(stepCandidates, { absorbTransitionalThoughts: viewMode === 'normal' })
-    const hasSteps = stepRows.some((row) => row.kind !== 'text') || isInitialStreamingWait
+    const hasSteps = stepRows.some((row) => row.kind !== 'text' || row.phase === 'execution') || isInitialStreamingWait
 
     const fallbackChecklistItems: TodoCardItem[] =
         streaming && options?.fallbackTodos && options.fallbackTodos.length > 0

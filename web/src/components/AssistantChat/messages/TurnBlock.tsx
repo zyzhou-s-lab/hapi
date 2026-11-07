@@ -19,20 +19,12 @@ function contentParts(content: readonly { type: string }[]): TurnContentPart[] {
     return content.flatMap((part): TurnContentPart[] => {
         if (part.type === 'text' || part.type === 'reasoning') {
             const text = 'text' in part && typeof part.text === 'string' ? part.text : ''
-            const status = 'status' in part && part.status && typeof part.status === 'object'
-                ? part.status as { type?: string }
-                : undefined
-            return [{ type: part.type, text, status }]
+            const status = 'status' in part && part.status && typeof part.status === 'object' ? part.status as { type?: string } : undefined
+            const phase = 'phase' in part && (part.phase === 'execution' || part.phase === 'final_answer') ? part.phase : undefined
+            return [{ type: part.type, text, status, ...(phase !== undefined ? { phase } : {}) }]
         }
         if (part.type !== 'tool-call') return []
-        const tool = part as {
-            toolCallId?: string
-            toolName?: string
-            result?: unknown
-            isError?: boolean
-            artifact?: unknown
-            status?: { type?: string }
-        }
+        const tool = part as { toolCallId?: string; toolName?: string; result?: unknown; isError?: boolean; artifact?: unknown; status?: { type?: string } }
         return [{
             type: 'tool-call',
             toolCallId: tool.toolCallId,

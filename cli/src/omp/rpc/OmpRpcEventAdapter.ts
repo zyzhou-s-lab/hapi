@@ -836,10 +836,18 @@ export class OmpRpcEventAdapter {
         const modelLabel = `${assistant.provider}/${assistant.model}`;
         const content = assistant.content.flatMap((block): JsonObject[] => {
             if (block.type === 'text' && typeof block.text === 'string' && block.text.length > 0) {
-                return [{ type: 'text', text: block.text }];
+                return [{
+                    type: 'text',
+                    text: block.text,
+                    ...(typeof block.phase === 'string' && block.phase.length > 0 ? { phase: block.phase } : {})
+                }];
             }
             if (block.type === 'thinking' && typeof block.thinking === 'string' && block.thinking.length > 0) {
-                return [{ type: 'thinking', thinking: block.thinking }];
+                return [{
+                    type: 'thinking',
+                    thinking: block.thinking,
+                    ...(typeof block.phase === 'string' && block.phase.length > 0 ? { phase: block.phase } : {})
+                }];
             }
             if (block.type === 'toolCall') {
                 if (

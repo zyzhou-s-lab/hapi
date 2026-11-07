@@ -244,7 +244,7 @@ export { buildGoalStateMessages, hasAbortableAgentRun }
  * abort-restore event, so we never replay a prompt the user already resubmitted.
  */
 export function AbortRestoreConsumer(props: {
-    messages: NormalizedMessage[]
+    messages: readonly NormalizedMessage[]
     onAbortRestore: (text: string) => void
 }) {
     const lastHandledIdRef = useRef<string | null>(null)
@@ -440,12 +440,12 @@ export function useSessionChatPipeline(props: UseSessionChatPipelineParams & {
 }) {
     const { t } = useTranslation()
     const { addToast } = useToast()
-    const { collapsed: codexExplorationCollapsed } = useCodexExplorationCollapse()
+    const { codexExplorationCollapsed } = useCodexExplorationCollapse()
     const modelRefusalFallbackToastIdsRef = useRef<Set<string>>(new Set())
     const onResetSessionViewRef = useRef(props.onResetSessionView)
     onResetSessionViewRef.current = props.onResetSessionView
-    const entityStore = useMemo(() => new SessionEntityStore(), [])
-    const prevOutlineItemsRef = useRef<readonly ConversationOutlineItem[]>([])
+    const entityStore = useMemo(() => createSessionEntityStore(), [])
+    const prevOutlineItemsRef = useRef<ConversationOutlineItem[]>([])
     const prevSessionStatusRef = useRef<SessionStatusData | null>(null)
     const structureVersionTrackerRef = useRef({
         sessionId: props.session.id,

@@ -167,6 +167,8 @@ function areAgentTextBlocksEqual(left: AgentTextBlock, right: AgentTextBlock): b
         && left.invokedAt === right.invokedAt
         && left.durationMs === right.durationMs
         && left.model === right.model
+        && left.phase === right.phase
+        && left.turnId === right.turnId
         && areUsageDataEqual(left.usage, right.usage)
         && areRoundSummariesEqual(left.roundSummary, right.roundSummary)
 }
@@ -179,6 +181,8 @@ function areAgentReasoningBlocksEqual(left: AgentReasoningBlock, right: AgentRea
         && left.invokedAt === right.invokedAt
         && left.durationMs === right.durationMs
         && left.model === right.model
+        && left.phase === right.phase
+        && left.turnId === right.turnId
         && areUsageDataEqual(left.usage, right.usage)
         && areRoundSummariesEqual(left.roundSummary, right.roundSummary)
 }

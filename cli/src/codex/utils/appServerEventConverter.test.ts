@@ -1143,4 +1143,53 @@ describe('AppServerEventConverter', () => {
             message: 'Hello world'
         }]);
     });
+
+    it('preserves agentMessage phase across item/started, delta, and item/completed', () => {
+        const converter = new AppServerEventConverter();
+
+        converter.handleNotification('item/started', {
+            threadId: 'thread-1',
+            turnId: 'turn-1',
+            item: {
+                id: 'msg-commentary-1',
+                type: 'agentMessage',
+                phase: 'commentary',
+                text: '',
+            }
+        });
+
+        const deltaEvents = converter.handleNotification('item/agentMessage/delta', {
+            threadId: 'thread-1',
+            turnId: 'turn-1',
+            itemId: 'msg-commentary-1',
+            delta: 'Checking files...'
+        });
+        expect(deltaEvents).toEqual([{
+            type: 'agent_message_delta',
+            thread_id: 'thread-1',
+            turn_id: 'turn-1',
+            item_id: 'msg-commentary-1',
+            delta: 'Checking files...',
+            message: 'Checking files...',
+            phase: 'commentary'
+        }]);
+
+        const completedEvents = converter.handleNotification('item/completed', {
+            threadId: 'thread-1',
+            turnId: 'turn-1',
+            item: {
+                id: 'msg-commentary-1',
+                type: 'agentMessage',
+                phase: 'commentary',
+                text: 'Checking files...'
+            }
+        });
+        expect(completedEvents).toEqual([{
+            type: 'agent_message',
+            thread_id: 'thread-1',
+            turn_id: 'turn-1',
+            message: 'Checking files...',
+            phase: 'commentary'
+        }]);
+    });
 });
