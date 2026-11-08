@@ -516,7 +516,9 @@ export function projectToolTodoSnapshot(
         : extractUpdatePlanChecklist(block.tool.input, block.tool.result)
 
     let items = rawItems
-    if ((allTurnToolBlocks || fallbackItems) && block.tool.result == null) {
+    const isFullTodoWritePayload =
+        isObject(block.tool.input) && Object.prototype.hasOwnProperty.call(block.tool.input, 'todos')
+    if ((allTurnToolBlocks || fallbackItems) && block.tool.result == null && !isFullTodoWritePayload) {
         let baseItems: CanonicalTodoItem[] = fallbackItems ? [...fallbackItems] : []
         for (const candidate of allTurnToolBlocks ?? []) {
             if (candidate.id === block.id) break

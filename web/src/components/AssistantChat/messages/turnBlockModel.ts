@@ -1785,9 +1785,13 @@ export function projectTurn(
         : coalesceTurnStepRows(stepCandidates, { absorbTransitionalThoughts: viewMode === 'normal' })
     const hasSteps = stepRows.some((row) => row.kind !== 'text' || row.phase === 'execution') || isInitialStreamingWait
 
-    const fallbackChecklistItems: TodoCardItem[] =
-        streaming && options?.fallbackTodos && options.fallbackTodos.length > 0
+    const rawFallbackChecklistItems: TodoCardItem[] =
+        options?.fallbackTodos && options.fallbackTodos.length > 0
             ? [...projectSessionTodoSnapshot(options.fallbackTodos).items]
+            : []
+    const fallbackChecklistItems: TodoCardItem[] =
+        rawFallbackChecklistItems.length > 0 && !rawFallbackChecklistItems.every((item) => item.status === 'blocked')
+            ? rawFallbackChecklistItems
             : []
     const allToolBlocks = stepCandidates
         .filter((r): r is TurnToolRow => r.kind === 'tool')
@@ -1812,9 +1816,14 @@ export function projectTurn(
             todoChecklists.push({ key, items })
         }
     } else if (
-        streaming
-        && fallbackChecklistItems.length > 0
-        && fallbackChecklistItems.some((item) => item.status === 'in_progress' || item.status === 'pending')
+        fallbackChecklistItems.length > 0
+        && (
+            (streaming && fallbackChecklistItems.some((item) => item.status === 'in_progress' || item.status === 'pending'))
+            || (previousProjected?.subturns[0]?.todoChecklists.some((checklist) => checklist.key === 'session-fallback-todos')
+                && !fallbackChecklistItems.every((item) => item.status === 'blocked' || item.status === 'completed')
+                || previousProjected?.subturns[0]?.todoChecklists.some((checklist) => checklist.key === 'session-fallback-todos')
+                    && fallbackChecklistItems.every((item) => item.status === 'completed'))
+        )
     ) {
         todoChecklists.push({ key: 'session-fallback-todos', items: fallbackChecklistItems })
     }

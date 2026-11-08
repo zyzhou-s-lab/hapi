@@ -1095,6 +1095,80 @@ describe('TimelineTurnBlock & summarizeTurnActivity', () => {
         expect(screen.queryByText('Old completed task')).not.toBeInTheDocument()
     })
 
+    it('retains fallbackTodos checklist on truncated turn completion and resolves incremental todo tool snapshots when streaming is false', () => {
+        const truncatedTurnWithoutTodoTool = partitionTurn(
+            [
+                { type: 'reasoning', text: 'Inspecting scroll jitter in AssistantChat.tsx' },
+                call(tool('r1', 'Read', { input: { file_path: 'web/src/components/AssistantChat.tsx' } })),
+            ],
+            null
+        )
+
+        const { rerender, unmount } = render(
+            <I18nProvider>
+                <TimelineTurnBlockView
+                    partition={truncatedTurnWithoutTodoTool}
+                    streaming={true}
+                    durationMs={12000}
+                    initiallyOpen={false}
+                    fallbackTodos={[
+                        { id: 'Phase 2:1', content: 'Reproduce scroll jump', status: 'completed', priority: 'medium' },
+                        { id: 'Phase 2:2', content: 'Anchor viewport during prepend', status: 'in_progress', priority: 'medium' },
+                    ]}
+                />
+            </I18nProvider>
+        )
+        expect(screen.getByTestId('turn-todo-checklist-card')).toBeInTheDocument()
+
+        rerender(
+            <I18nProvider>
+                <TimelineTurnBlockView
+                    partition={truncatedTurnWithoutTodoTool}
+                    streaming={false}
+                    durationMs={15000}
+                    initiallyOpen={false}
+                    fallbackTodos={[
+                        { id: 'Phase 2:1', content: 'Reproduce scroll jump', status: 'completed', priority: 'medium' },
+                        { id: 'Phase 2:2', content: 'Anchor viewport during prepend', status: 'completed', priority: 'medium' },
+                    ]}
+                />
+            </I18nProvider>
+        )
+        expect(screen.getByTestId('turn-todo-checklist-card')).toBeInTheDocument()
+        expect(screen.getByText('Anchor viewport during prepend')).toBeInTheDocument()
+        unmount()
+
+        const incrementalDoneTurn = partitionTurn(
+            [
+                call(tool('todo-inc', 'todo', {
+                    state: 'completed',
+                    input: {
+                        input: '*** Begin Todo\nDONE "Anchor viewport during prepend"\n*** End Todo',
+                    },
+                })),
+                { type: 'text', text: 'Completed the viewport anchor fix.' },
+            ],
+            null
+        )
+        render(
+            <I18nProvider>
+                <TimelineTurnBlockView
+                    partition={incrementalDoneTurn}
+                    streaming={false}
+                    durationMs={9000}
+                    initiallyOpen={false}
+                    fallbackTodos={[
+                        { id: 'Phase 2:1', content: 'Reproduce scroll jump', status: 'completed', priority: 'medium' },
+                        { id: 'Phase 2:2', content: 'Anchor viewport during prepend', status: 'completed', priority: 'medium' },
+                    ]}
+                />
+            </I18nProvider>
+        )
+        expect(screen.getByTestId('turn-todo-checklist-card')).toBeInTheDocument()
+        expect(screen.getByText('Reproduce scroll jump')).toBeInTheDocument()
+        expect(screen.getByText('Anchor viewport during prepend')).toBeInTheDocument()
+    })
+
     it('hides paused-only fallback tasks and restores a paused turn checklist when expanded', () => {
         const pausedTurn = partitionTurn(
             [
