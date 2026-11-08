@@ -15,6 +15,11 @@ import { useSessionComposerSendBridge } from '@/components/AssistantChat/compose
 import { HappyThread } from '@/components/AssistantChat/HappyThread'
 import { measureComposerDockInset } from '@/components/AssistantChat/threadScrollHelpers'
 import { COMPOSER_DOCK_SLOTS, ChatSlotHost } from '@/components/AssistantChat/slotRegistry'
+import {
+    useSessionHeaderSlice,
+    useSessionRunState,
+    useSessionTodoSnapshot,
+} from '@/hooks/queries/useSession'
 import { useSessions } from '@/hooks/queries/useSessions'
 import { useGitStatusFiles } from '@/hooks/queries/useGitStatusFiles'
 import { getSessionTitle } from '@/lib/sessionTitle'
@@ -40,6 +45,7 @@ import { SessionStatusPanel } from '@/components/SessionStatusPanel'
 import { AgentTerminalView } from '@/components/AgentTerminal/AgentTerminalView'
 import { isRemoteTerminalSupported } from '@/utils/terminalSupport'
 import { VoiceBackendSession, useSessionVoiceBridge } from '@/hooks/useSessionVoiceBridge'
+import { SessionEntityStoreProvider } from '@/hooks/useSessionEntityStore'
 import { AbortRestoreConsumer, chatComposerGridPlacement, useSessionChatPipeline } from '@/components/sessionChatHelpers'
 
 type SessionChatProps = {
@@ -144,20 +150,28 @@ function SessionChatInner(props: SessionChatProps) {
             setHistoryActionPending(false)
         }
     }, [props.api, props.onRefresh, props.session.id])
-    const sessionInactive = !props.session.active
+    const runStateSlice = useSessionRunState(props.api, props.session.id, props.session)
+    const todoSlice = useSessionTodoSnapshot(props.api, props.session.id, props.session)
+    const headerSlice = useSessionHeaderSlice(props.api, props.session.id, props.session, props.session.metadata)
+    const sessionActive = runStateSlice?.active ?? props.session.active
+    const sessionThinking = runStateSlice?.thinking ?? props.session.thinking
+    const sessionMetadata = headerSlice?.metadata ?? props.session.metadata
+    const sessionTodos = todoSlice?.todos ?? props.session.todos
+    const sessionBackgroundTaskCount = runStateSlice?.backgroundTaskCount ?? props.session.backgroundTaskCount
+    const sessionInactive = !sessionActive
     const inactiveCanResume = inactiveSessionCanResume(
         props.session,
         props.messages.length,
         props.cursorChatOnDisk
     )
-    const terminalSupported = isRemoteTerminalSupported(props.session.metadata)
+    const terminalSupported = isRemoteTerminalSupported(sessionMetadata)
     // Offer the agent terminal only for an ACTIVE PTY session: a 'remote'/SDK
     // session has no agent PTY, and an archived/inactive one has no live PTY (and
     // no buffer once the runner exits), so its terminal would just be an empty,
     // misleadingly "connected" view. Matches the composer terminal button, which
     // is likewise gated on `session.active`.
     const canViewAgentTerminal =
-        props.session.metadata?.startingMode === 'pty' && props.session.active
+        sessionMetadata?.startingMode === 'pty' && sessionActive
     const [forceScrollToken, setForceScrollToken] = useState(0)
     const uploadDraftSnapshotRef = useRef<{ text: string; attachments: AttachmentDraftInput[] }>({
         text: '',
@@ -237,6 +251,7 @@ function SessionChatInner(props: SessionChatProps) {
         onRefresh: props.onRefresh,
     })
     const {
+        entityStore,
         timelineStructureKey,
         structureMessagesVersion,
         visibleMessages,
@@ -246,6 +261,7 @@ function SessionChatInner(props: SessionChatProps) {
         hasRunningChildAgent,
         activityLabel,
         visibleBlocks,
+        blocksWithThreadIds,
         isLatestCompletedBoundary,
         unseenCount,
         outlineItems,
@@ -328,13 +344,14 @@ function SessionChatInner(props: SessionChatProps) {
     const runtime = useHappyRuntime({
         session: props.session,
         blocks: visibleBlocks,
+        blocksWithThreadIds,
         messagesVersion: structureMessagesVersion,
         historyVersion: props.historyVersion,
         viewMode: props.viewMode,
         isSyncingTail: props.isSyncingTail,
         isLoadingMore: props.isLoadingMoreMessages,
         isSending: props.isSending,
-        isRunning: props.session.thinking || hasRunningChildAgent,
+        isRunning: sessionThinking || hasRunningChildAgent,
         onSendMessage: handleSend,
         attachmentOrderRef,
         onAbort: handleAbort,
@@ -451,9 +468,9 @@ function SessionChatInner(props: SessionChatProps) {
                 </div>
             ) : null}
 
+            <SessionEntityStoreProvider store={entityStore}>
             <AssistantRuntimeProvider runtime={runtime}>
                 <ShareSeedConsumer sessionId={props.session.id} sessionActive={props.session.active} />
-                <AbortRestoreConsumer messages={normalizedMessages} onAbortRestore={props.onAbortRestore ?? (() => {})} />
                 <DragDropZone disabled={(!props.session.active && !inactiveCanResume) || props.isSending || pendingSchedule != null || isScratchlistParking}>
                     <div className="relative flex min-h-0 flex-1 flex-col">
                         {canViewAgentTerminal && (
@@ -544,8 +561,8 @@ function SessionChatInner(props: SessionChatProps) {
                             ctx={{
                                 sessionId: props.session.id,
                                 api: props.api,
-                                todos: props.session.todos,
-                                sessionThinking: Boolean(props.session.thinking),
+                                todos: sessionTodos,
+                                sessionThinking: Boolean(sessionThinking),
                                 scratchlistMode,
                                 scratchlistEntries: scratchlist.entries,
                                 onScratchlistMove: scratchlist.move,
@@ -587,10 +604,10 @@ function SessionChatInner(props: SessionChatProps) {
                         active={props.session.active}
                         allowSendWhenInactive
                         onResumeStoredDraft={() => handleSend('', undefined, null)}
-                        thinking={props.session.thinking}
+                        thinking={sessionThinking}
                         agentState={props.session.agentState}
                         activityLabel={activityLabel}
-                        backgroundTaskCount={props.session.backgroundTaskCount}
+                        backgroundTaskCount={sessionBackgroundTaskCount}
                         contextSize={reduced.latestUsage?.contextSize}
                         contextCacheRead={reduced.latestUsage?.cacheRead}
                         contextWindow={reduced.latestUsage?.contextWindow ?? piContextWindow}
@@ -622,8 +639,8 @@ function SessionChatInner(props: SessionChatProps) {
                     </div>
                 </DragDropZone>
             </AssistantRuntimeProvider>
+            </SessionEntityStoreProvider>
             </div>
-
             {/* Voice session component - renders nothing but initializes voice backend */}
             {voice && (
                 <VoiceBackendSession

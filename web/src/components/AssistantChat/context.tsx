@@ -3,7 +3,12 @@ import type { ApiClient } from '@/api/client'
 import type { TerminalToolDisplayMode } from '@/hooks/useTerminalToolDisplayMode'
 import type { SessionMetadataSummary } from '@/types/api'
 import type { TodoItem } from '@hapi/protocol/types'
+import {
+    areSessionMetadataSummariesEqual,
+    stabilizeSessionMetadataForId,
+} from '@/hooks/queries/useSession'
 
+export { areSessionMetadataSummariesEqual }
 export type OlderHistoryLoadResult = 'loaded' | 'transient-stop' | 'terminal-stop'
 
 export type HappyChatContextValue = {
@@ -59,117 +64,14 @@ export const HappyChatTodosContext = createContext<HappyChatTodosContextValue | 
 export const HappyChatSessionStateContext = createContext<HappyChatSessionStateContextValue | null>(null)
 export const HappyChatHistoryContext = createContext<HappyChatHistoryContextValue | null>(null)
 
-function sameSummary(
-    a: SessionMetadataSummary['summary'],
-    b: SessionMetadataSummary['summary']
-): boolean {
-    if (a === b) return true
-    if (!a || !b) return false
-    return a.text === b.text && a.updatedAt === b.updatedAt
-}
-
-function sameStringArray(
-    a: readonly string[] | undefined,
-    b: readonly string[] | undefined
-): boolean {
-    if (a === b) return true
-    if (!a || !b || a.length !== b.length) return false
-    for (let i = 0; i < a.length; i += 1) {
-        if (a[i] !== b[i]) return false
-    }
-    return true
-}
-
-function sameConversationHistoryCapabilities(
-    a: NonNullable<SessionMetadataSummary['capabilities']>['conversationHistory'],
-    b: NonNullable<SessionMetadataSummary['capabilities']>['conversationHistory']
-): boolean {
-    if (a === b) return true
-    if (!a || !b) return false
-    return a.forkCurrent === b.forkCurrent
-        && a.forkAtMessage === b.forkAtMessage
-        && a.rewindToMessage === b.rewindToMessage
-}
-
-function sameCapabilities(
-    a: SessionMetadataSummary['capabilities'],
-    b: SessionMetadataSummary['capabilities']
-): boolean {
-    if (a === b) return true
-    if (!a || !b) return false
-    return a.terminal === b.terminal
-        && sameConversationHistoryCapabilities(a.conversationHistory, b.conversationHistory)
-}
-
-function sameShallowRecord<T extends string | number | boolean>(
-    a: Record<string, T> | undefined,
-    b: Record<string, T> | undefined
-): boolean {
-    if (a === b) return true
-    if (!a || !b) return false
-    const aKeys = Object.keys(a)
-    const bKeys = Object.keys(b)
-    if (aKeys.length !== bKeys.length) return false
-    for (const key of aKeys) {
-        if (!Object.prototype.hasOwnProperty.call(b, key) || a[key] !== b[key]) {
-            return false
-        }
-    }
-    return true
-}
-
-function sameWorktree(
-    a: SessionMetadataSummary['worktree'],
-    b: SessionMetadataSummary['worktree']
-): boolean {
-    if (a === b) return true
-    if (!a || !b) return false
-    return a.basePath === b.basePath
-        && a.branch === b.branch
-        && a.name === b.name
-        && a.worktreePath === b.worktreePath
-        && a.createdAt === b.createdAt
-}
-
-export function areSessionMetadataSummariesEqual(
-    a: SessionMetadataSummary | null | undefined,
-    b: SessionMetadataSummary | null | undefined
-): boolean {
-    if (a === b) return true
-    if (!a || !b) return false
-    return a.path === b.path
-        && a.host === b.host
-        && a.version === b.version
-        && a.name === b.name
-        && a.os === b.os
-        && sameSummary(a.summary, b.summary)
-        && a.machineId === b.machineId
-        && sameStringArray(a.tools, b.tools)
-        && a.flavor === b.flavor
-        && a.startingMode === b.startingMode
-        && sameCapabilities(a.capabilities, b.capabilities)
-        && sameShallowRecord(a.conversationHistoryPoints, b.conversationHistoryPoints)
-        && sameShallowRecord(a.conversationHistoryIndexes, b.conversationHistoryIndexes)
-        && sameShallowRecord(a.conversationHistoryTurns, b.conversationHistoryTurns)
-        && sameShallowRecord(a.conversationHistoryEntryIds, b.conversationHistoryEntryIds)
-        && a.conversationHistoryDiverged === b.conversationHistoryDiverged
-        && sameWorktree(a.worktree, b.worktree)
-}
-
-export function useStableSessionMetadata(
-    metadata: SessionMetadataSummary | null
-): SessionMetadataSummary | null {
-    const ref = useRef<SessionMetadataSummary | null>(metadata)
-    if (!areSessionMetadataSummariesEqual(ref.current, metadata)) {
-        ref.current = metadata
-    }
-    return ref.current
-}
-
 export function HappyChatProvider(props: { value: HappyChatContextValue; children: ReactNode }) {
     const { value, children } = props
-    const stableMetadata = useStableSessionMetadata(value.metadata)
-
+    const metadataCacheRef = useRef<{ sessionId: string; metadata: SessionMetadataSummary | null } | null>(null)
+    const stableMetadata = stabilizeSessionMetadataForId(
+        metadataCacheRef,
+        value.sessionId,
+        value.metadata
+    )
     const staticValue = useMemo<HappyChatStaticContextValue>(() => ({
         api: value.api,
         sessionId: value.sessionId,

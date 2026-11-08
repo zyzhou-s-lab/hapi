@@ -1,12 +1,14 @@
 import { describe, expect, it, vi } from 'vitest'
-import { fireEvent, render, screen } from '@testing-library/react'
+import { act, fireEvent, render, screen } from '@testing-library/react'
 import type { ReactNode } from 'react'
 import { I18nProvider } from '@/lib/i18n-context'
+import { SessionEntityStore } from '@/chat/store/sessionEntityStore'
 import { HappyChatProvider, type HappyChatContextValue } from '@/components/AssistantChat/context'
+import { SessionEntityStoreProvider } from '@/hooks/useSessionEntityStore'
 import { partitionTurn } from '@/components/AssistantChat/messages/turnBlockModel'
 import { TurnBlock, TurnBlockView } from '@/components/AssistantChat/messages/TurnBlock'
 import type { ToolCallBlock } from '@/chat/types'
-
+import type { DecryptedMessage } from '@/types/api'
 const { mockAuiMessage } = vi.hoisted(() => ({
     mockAuiMessage: {
         role: 'assistant' as const,
@@ -446,5 +448,194 @@ describe('TurnBlockView', () => {
 
         expect(screen.getByTestId('turn-level0-header')).toHaveAttribute('aria-expanded', 'false')
         expect(screen.getByTestId('turn-level1-shell')).toHaveAttribute('data-open', 'false')
+    })
+
+    it('subscribes TurnBlock and leaf rows to SessionEntityStore by entity id without re-rendering completed turns on tail deltas', () => {
+        const store = new SessionEntityStore()
+        const baseMessages: DecryptedMessage[] = [
+            {
+                id: 'u1',
+                seq: 1,
+                localId: null,
+                CreatedAt: 1000,
+                createdAt: 1000,
+                content: { role: 'user', content: { type: 'text', text: 'First question' } },
+            } as unknown as DecryptedMessage,
+            {
+                id: 'a1-tool',
+                seq: 2,
+                localId: null,
+                CreatedAt: 1001,
+                createdAt: 1001,
+                content: {
+                    role: 'agent',
+                    content: {
+                        type: 'output',
+                        data: {
+                            type: 'assistant',
+                            uuid: 'a1-tool-uuid',
+                            message: {
+                                role: 'assistant',
+                                model: 'claude-sonnet',
+                                content: [{ type: 'tool_use', id: 'call-1', name: 'Read', input: { file_path: 'a.ts' } }],
+                            },
+                        },
+                    },
+                },
+            } as unknown as DecryptedMessage,
+            {
+                id: 'a1-res',
+                seq: 3,
+                localId: null,
+                CreatedAt: 1002,
+                createdAt: 1002,
+                content: {
+                    role: 'agent',
+                    content: {
+                        type: 'output',
+                        data: {
+                            type: 'user',
+                            uuid: 'a1-res-uuid',
+                            message: {
+                                role: 'user',
+                                content: [{ type: 'tool_result', tool_use_id: 'call-1', content: 'ok' }],
+                            },
+                        },
+                    },
+                },
+            } as unknown as DecryptedMessage,
+            {
+                id: 'a1-ans',
+                seq: 4,
+                localId: null,
+                CreatedAt: 1003,
+                createdAt: 1003,
+                content: {
+                    role: 'agent',
+                    content: {
+                        type: 'output',
+                        data: {
+                            type: 'assistant',
+                            uuid: 'a1-ans-uuid',
+                            message: {
+                                role: 'assistant',
+                                model: 'claude-sonnet',
+                                content: [{ type: 'text', text: 'First turn completed answer.' }],
+                            },
+                        },
+                    },
+                },
+            } as unknown as DecryptedMessage,
+            {
+                id: 'u2',
+                seq: 5,
+                localId: null,
+                CreatedAt: 2000,
+                createdAt: 2000,
+                content: { role: 'user', content: { type: 'text', text: 'Second question' } },
+            } as unknown as DecryptedMessage,
+            {
+                id: 'a2-think',
+                seq: 6,
+                localId: null,
+                CreatedAt: 2001,
+                createdAt: 2001,
+                content: {
+                    role: 'agent',
+                    content: {
+                        type: 'output',
+                        data: {
+                            type: 'assistant',
+                            uuid: 'a2-think-uuid',
+                            message: {
+                                role: 'assistant',
+                                model: 'claude-sonnet',
+                                content: [{ type: 'thinking', thinking: 'Initial thought step' }],
+                            },
+                        },
+                    },
+                },
+            } as unknown as DecryptedMessage,
+            {
+                id: 'a2-ans',
+                seq: 7,
+                localId: null,
+                CreatedAt: 2002,
+                createdAt: 2002,
+                content: {
+                    role: 'agent',
+                    content: {
+                        type: 'output',
+                        data: {
+                            type: 'assistant',
+                            uuid: 'a2-ans-uuid',
+                            streamSnapshot: true,
+                            live: true,
+                            message: {
+                                role: 'assistant',
+                                model: 'claude-sonnet',
+                                content: [{ type: 'text', text: 'Stream chunk 1' }],
+                            },
+                        },
+                    },
+                },
+            } as unknown as DecryptedMessage,
+        ]
+
+        const snap1 = store.reconcileInput({ sessionId: 's1', messages: baseMessages })
+        const turnIds = Array.from(snap1.turnsById.keys())
+        expect(turnIds.length).toBe(2)
+        const [turn1Id, turn2Id] = turnIds as [string, string]
+
+        // Point mockAuiMessage at turn2 with empty content to prove TurnBlock reads from SessionEntityStore
+        ;(mockAuiMessage as { id?: string }).id = turn2Id
+        mockAuiMessage.status = { type: 'running' }
+        mockAuiMessage.isLast = true
+        mockAuiMessage.content = []
+
+        let turn1SelectorCalls = 0
+        const unsubTurn1 = store.subscribe(() => {
+            turn1SelectorCalls += 1
+        })
+        const turn1InitialRef = store.getTurnEntity(turn1Id)
+
+        renderBlock(
+            <SessionEntityStoreProvider store={store}>
+                <TurnBlock />
+            </SessionEntityStoreProvider>
+        )
+
+        expect(screen.getByText('Stream chunk 1')).toBeInTheDocument()
+
+        const deltaMessages = baseMessages.slice(0, -1).concat({
+            ...baseMessages[baseMessages.length - 1]!,
+            content: {
+                role: 'agent',
+                content: {
+                    type: 'output',
+                    data: {
+                        type: 'assistant',
+                        uuid: 'a2-ans-uuid',
+                        streamSnapshot: true,
+                        live: true,
+                        message: {
+                            role: 'assistant',
+                            model: 'claude-sonnet',
+                            content: [{ type: 'text', text: 'Stream chunk 1 + chunk 2' }],
+                        },
+                    },
+                },
+            },
+        } as unknown as DecryptedMessage)
+
+        act(() => {
+            store.reconcileInput({ sessionId: 's1', messages: deltaMessages })
+        })
+
+        expect(screen.getByText('Stream chunk 1 + chunk 2')).toBeInTheDocument()
+        // Turn 1 entity reference is strictly preserved (Object.is equal -> 0 Turn 1 re-renders)
+        expect(store.getTurnEntity(turn1Id)).toBe(turn1InitialRef)
+        expect(turn1SelectorCalls).toBe(1)
+        unsubTurn1()
     })
 })

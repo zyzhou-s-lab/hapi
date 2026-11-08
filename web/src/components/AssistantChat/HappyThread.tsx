@@ -7,10 +7,12 @@ import type { HappyRuntimeExtras } from '@/lib/assistant-runtime'
 import type { Session, SessionMetadataSummary } from '@/types/api'
 import type { ConversationOutlineItem } from '@/chat/outline'
 import { formatMessageTimestampTitle, formatOutlineTimestamp } from '@/chat/presentation'
+import { HappyChatProvider } from '@/components/AssistantChat/context'
 import {
-    HappyChatProvider,
-    useStableSessionMetadata,
-} from '@/components/AssistantChat/context'
+    useSessionHeaderSlice,
+    useSessionRunState,
+    useSessionTodoSnapshot,
+} from '@/hooks/queries/useSession'
 import { HappyAssistantMessage } from '@/components/AssistantChat/messages/AssistantMessage'
 import { HappyUserMessage } from '@/components/AssistantChat/messages/UserMessage'
 import { HappySystemMessage } from '@/components/AssistantChat/messages/SystemMessage'
@@ -338,15 +340,17 @@ export function HappyThread(props: {
     const showLoadEarlierButton = (props.hasMoreMessages || isAwaitingHistoryRender)
         && !props.isSyncingTail
         && !showSkeleton
-    const stableMetadata = useStableSessionMetadata(props.metadata)
+    const headerSlice = useSessionHeaderSlice(props.api, props.sessionId, props.session, props.metadata)
+    const todoSlice = useSessionTodoSnapshot(props.api, props.sessionId, props.session)
+    const runStateSlice = useSessionRunState(props.api, props.sessionId, props.session)
     return (
         <HappyChatProvider value={{
             api: props.api,
             sessionId: props.sessionId,
-            metadata: stableMetadata,
-            todos: props.session?.todos,
-            sessionThinking: props.session?.thinking,
-            activeTurnStartedAt: props.session?.activeTurnStartedAt ?? null,
+            metadata: headerSlice?.metadata ?? props.metadata ?? null,
+            todos: todoSlice?.todos ?? props.session?.todos,
+            sessionThinking: runStateSlice?.thinking ?? props.session?.thinking,
+            activeTurnStartedAt: runStateSlice?.activeTurnStartedAt ?? props.session?.activeTurnStartedAt ?? null,
             terminalToolDisplayMode,
             showSessionSummaryInChat,
             disabled: props.disabled,

@@ -1,8 +1,27 @@
-import type { ProjectedSubturn } from '@/components/AssistantChat/messages/turnBlockModel'
+import { memo } from 'react'
+import type { ProjectedSubturn, TurnTextRow } from '@/components/AssistantChat/messages/turnBlockModel'
 import { renderSimpleMarkdownText } from '@/components/AssistantChat/messages/TimelineStepRows'
 import { GeneratedFileCard, GeneratedImageCard } from '@/components/AssistantChat/messages/ToolMessage'
+import { useOptionalSessionVisibleEntity } from '@/hooks/useSessionEntityStore'
 import { cn } from '@/lib/utils'
 
+const TurnEntityTextBody = memo(function TurnEntityTextBody(props: {
+    row: TurnTextRow
+    streaming: boolean
+    renderTrailingText?: (text: string, streaming: boolean) => React.ReactNode
+}) {
+    const entity = useOptionalSessionVisibleEntity(props.row.blockId)
+    const text = entity && 'text' in entity && typeof entity.text === 'string'
+        ? entity.text.trim()
+        : props.row.text
+    return (
+        <>
+            {props.renderTrailingText
+                ? props.renderTrailingText(text, props.streaming)
+                : renderSimpleMarkdownText(text)}
+        </>
+    )
+})
 export function TurnAnswerSection(props: {
     subturn: ProjectedSubturn
     streaming: boolean
@@ -31,7 +50,11 @@ export function TurnAnswerSection(props: {
                             key={row.key}
                             className="py-1.5 text-[15px] leading-relaxed text-[var(--app-fg)]"
                         >
-                            {renderTrailingText ? renderTrailingText(row.text, false) : renderSimpleMarkdownText(row.text)}
+                            <TurnEntityTextBody
+                                row={row}
+                                streaming={false}
+                                renderTrailingText={renderTrailingText}
+                            />
                         </div>
                     ))}
                 </div>
@@ -64,11 +87,11 @@ export function TurnAnswerSection(props: {
                         className="mt-3 text-[15px] leading-relaxed text-[var(--app-fg)]"
                         data-testid="turn-trailing-answer"
                     >
-                        {renderTrailingText ? (
-                            renderTrailingText(row.text, isRowStreaming)
-                        ) : (
-                            renderSimpleMarkdownText(row.text)
-                        )}
+                        <TurnEntityTextBody
+                            row={row}
+                            streaming={isRowStreaming}
+                            renderTrailingText={renderTrailingText}
+                        />
                     </div>
                 )
             })}

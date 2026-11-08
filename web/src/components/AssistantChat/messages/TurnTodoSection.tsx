@@ -1,9 +1,10 @@
+import { memo } from 'react'
 import type { ProjectedTodoChecklist } from '@/components/AssistantChat/messages/turnBlockModel'
 import { ChecklistList, type ChecklistItem } from '@/components/ToolCard/checklist'
 import { Card } from '@/components/ui/card'
 
-export function TimelineTodoChecklistCard(props: {
-    items: readonly ChecklistItem[]
+export const TimelineTodoChecklistCard = memo(function TimelineTodoChecklistCard(props: {
+    items: ChecklistItem[]
     className?: string
     accentColor?: string
     suppressRunningShimmer?: boolean
@@ -25,10 +26,10 @@ export function TimelineTodoChecklistCard(props: {
             />
         </Card>
     )
-}
+})
 
-export function TurnTodoSection(props: {
-    checklists: readonly ProjectedTodoChecklist[]
+export const TurnTodoSection = memo(function TurnTodoSection(props: {
+    checklists: ProjectedTodoChecklist[]
     accentColor?: string
     suppressRunningShimmer?: boolean
     open?: boolean
@@ -61,4 +62,4 @@ export function TurnTodoSection(props: {
             </div>
         </div>
     )
-}
+})

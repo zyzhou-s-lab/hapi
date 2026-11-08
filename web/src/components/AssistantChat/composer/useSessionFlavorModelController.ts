@@ -28,17 +28,24 @@ import { usePiModels } from '@/hooks/queries/usePiModels'
 import { useOpencodeReasoningEffortOptions } from '@/hooks/queries/useOpencodeReasoningEffortOptions'
 import { useOmpModels } from '@/hooks/queries/useOmpModels'
 import { useOmpThinkingOptions } from '@/hooks/queries/useOmpThinkingOptions'
+import { useSessionComposerConfig } from '@/hooks/queries/useSession'
 import { getCodexModelReasoningEfforts, supportsCodexReasoningEffort } from '@/lib/codexModelCapabilities'
 import { createSerialAsyncQueue } from '@/lib/serialAsyncQueue'
 import { codexModelAdvertisesFastTier, getEffectiveCodexServiceTier } from '../codexFastMode'
 import { applyModelChangeWithReasoningRollback, resolvePiContextWindow } from '@/components/sessionChatHelpers'
 import type { SessionFlavorModelController, SessionModelSelection } from './types'
 
-export function useSessionFlavorModelController(props: {
+export function useSessionFlavorModelController(rawProps: {
     api: ApiClient
     session: Session
     onRefresh: () => void
 }): SessionFlavorModelController {
+    const composerConfig = useSessionComposerConfig(rawProps.api, rawProps.session.id, rawProps.session)
+    const session = useMemo(
+        () => (composerConfig ? { ...rawProps.session, ...composerConfig } : rawProps.session),
+        [composerConfig, rawProps.session]
+    )
+    const props = { ...rawProps, session }
     const { haptic } = usePlatform()
     const navigate = useNavigate()
     const [cursorSelectedBase, setCursorSelectedBase] = useState('auto')

@@ -9,30 +9,40 @@ import {
     type ComposerSendIntent,
 } from '@/lib/messageDelivery'
 import { safeStringify } from '@hapi/protocol'
-import { isInlineCompactionEvent, isLegacyCompactionStartEvent } from '@/chat/reducerEvents'
+import { isInlineCompactionEvent } from '@/chat/reducerEvents'
 import { renderEventLabel } from '@/chat/presentation'
 import { filterVisibleBlocksForFlavor } from '@/fork-features/omp-product/eventVisibility'
-import type { ChatBlock, CliOutputBlock, CodexReview, RoundSummary, UsageData } from '@/chat/types'
+import type { CliOutputBlock, CodexReview, RoundSummary, UsageData } from '@/chat/types'
 import type { AgentEvent, ToolCallBlock } from '@/chat/types'
 import type { ToolGroupBlock, VisibleChatBlock } from '@/chat/toolGroups'
 import { visibleBlockRole } from '@/chat/toolGroups'
 import type { AttachmentMetadata, MessageStatus as HappyMessageStatus, Session } from '@/types/api'
 import { orderItemsById } from '@/lib/attachmentOrder'
+import {
+    type AggregatedAssistantMeta,
+    type BlockWithThreadMessageId,
+    aggregateResponseGroups,
+    assignThreadMessageIds,
+    assignThreadMessageIdsWithStableWrappers,
+    findLatestCompletedBoundaryId,
+    formatCodexReviewText,
+    getBlockPresentationTimestamp,
+    getResponseGroupTimestamps,
+    hoistMidTurnTitleEvents,
+    toCompactionToolCallBlock,
+} from '@/lib/assistant-runtime-blocks'
 
-/**
- * Aggregated metadata for a multi-turn response group, surfaced on the
- * group's first visible block so the `@assistant-ui/react` converter
- * preserves it after joining adjacent assistant messages.
- */
-export type AggregatedAssistantMeta = {
-    usage?: UsageData
-    model: string | null
-    invokedAt: number | null
-    durationMs: undefined
-    turnCount: number
-    roundSummary?: RoundSummary
+export {
+    type AggregatedAssistantMeta,
+    type BlockWithThreadMessageId,
+    aggregateResponseGroups,
+    assignThreadMessageIds,
+    assignThreadMessageIdsWithStableWrappers,
+    findLatestCompletedBoundaryId,
+    getBlockPresentationTimestamp,
+    getResponseGroupTimestamps,
+    hoistMidTurnTitleEvents,
 }
-
 export type HappyChatMessageMetadata = {
     kind: 'user' | 'assistant' | 'tool' | 'event' | 'cli-output' | 'codex-review' | 'compact-summary'
     status?: HappyMessageStatus
@@ -72,596 +82,9 @@ export type HappyRuntimeExtras = Readonly<{
     historyVersion: number
 }>
 
-function formatCodexReviewText(review: CodexReview): string {
-    const lines = ['Codex review']
-    if (review.overallCorrectness) {
-        lines.push(`Overall: ${review.overallCorrectness}`)
-    }
-    if (review.overallExplanation) {
-        lines.push('', review.overallExplanation)
-    }
-    if (review.findings.length > 0) {
-        lines.push('', 'Findings:')
-        for (const finding of review.findings) {
-            const priority = finding.priority === null ? '' : `[P${finding.priority}] `
-            const location = finding.filePath
-                ? ` (${finding.filePath}${finding.lineStart === null ? '' : `:${finding.lineStart}${finding.lineEnd !== null && finding.lineEnd !== finding.lineStart ? `-${finding.lineEnd}` : ''}`})`
-                : ''
-            lines.push(`- ${priority}${finding.title}${location}`)
-            lines.push(`  ${finding.body}`)
-        }
-    }
-    return lines.join('\n')
-}
-
-
-export function getBlockPresentationTimestamp(block: VisibleChatBlock): number {
-    if (visibleBlockRole(block) === 'user') {
-        return block.invokedAt ?? block.createdAt
-    }
-    if (block.kind === 'tool-group') {
-        return block.tools.reduce(
-            (latest, tool) => Math.max(latest, tool.tool.completedAt ?? tool.createdAt),
-            block.createdAt
-        )
-    }
-    if (block.kind === 'tool-call') {
-        return Math.max(block.createdAt, block.tool.completedAt ?? block.createdAt)
-    }
-    return block.createdAt
-}
-
-/**
- * `@assistant-ui/react` joins adjacent assistant-role blocks into one card and
- * takes its timestamp from the first block. Use the response's final activity
- * time so prepending an older page cannot change an existing card's timestamp.
- */
-export function getResponseGroupTimestamps(
-    blocks: readonly VisibleChatBlock[]
-): Map<VisibleChatBlock, number> {
-    const timestamps = new Map<VisibleChatBlock, number>()
-    let first: VisibleChatBlock | null = null
-    let latestTimestamp = 0
-
-    const flush = () => {
-        if (first) timestamps.set(first, latestTimestamp)
-        first = null
-    }
-
-    for (const block of blocks) {
-        if (visibleBlockRole(block) !== 'assistant') {
-            flush()
-            continue
-        }
-        const timestamp = getBlockPresentationTimestamp(block)
-        if (!first) {
-            first = block
-            latestTimestamp = timestamp
-        } else {
-            latestTimestamp = Math.max(latestTimestamp, timestamp)
-        }
-    }
-    flush()
-    return timestamps
-}
-
-function isMidTurnHoistableEventBlock(block: VisibleChatBlock): boolean {
-    return block.kind === 'agent-event' && block.event.type === 'title-changed'
-}
-
-function toCompactionToolCallBlock(
-    block: Extract<VisibleChatBlock, { kind: 'agent-event' }>
-): ToolCallBlock {
-    const event = block.event
-    const record = event as Record<string, unknown>
-    const frame = typeof record.frame === 'object' && record.frame !== null
-        ? (record.frame as Record<string, unknown>)
-        : null
-    const isStarted = (event.type === 'omp-compaction' && (record.phase === 'started' || frame?.type === 'auto_compaction_start'))
-        || isLegacyCompactionStartEvent(event)
-    const isFailed = event.type === 'omp-compaction'
-        && !isStarted
-        && (
-            record.outcome === 'failed'
-            || (
-                record.outcome === undefined
-                && frame?.aborted !== true
-                && frame?.skipped !== true
-                && typeof (record.errorMessage ?? frame?.errorMessage) === 'string'
-            )
-        )
-    const state: ToolCallBlock['tool']['state'] = isStarted
-        ? 'running'
-        : isFailed
-            ? 'error'
-            : 'completed'
-    return {
-        kind: 'tool-call',
-        id: block.id,
-        localId: null,
-        createdAt: block.createdAt,
-        invokedAt: block.invokedAt,
-        model: block.model,
-        children: [],
-        tool: {
-            id: block.id,
-            name: 'ContextCompaction',
-            state,
-            input: event,
-            createdAt: block.createdAt,
-            startedAt: block.createdAt,
-            completedAt: isStarted ? null : block.createdAt,
-            execStartedAt: block.createdAt,
-            execCompletedAt: isStarted ? null : block.createdAt,
-            description: renderEventLabel(event),
-            result: isStarted ? undefined : event,
-        },
-    }
-}
-
-/**
- * A title change emitted mid-turn would end the assistant run that
- * assistant-ui joins into one card, splitting a single turn into two.
- * Move each such event to the start of its run, so the "Title changed"
- * line sits between the prompt and the turn it belongs to.
- */
-export function hoistMidTurnTitleEvents(blocks: readonly VisibleChatBlock[]): readonly VisibleChatBlock[] {
-    if (!blocks.some(isMidTurnHoistableEventBlock)) return blocks
-    const result: VisibleChatBlock[] = []
-    let runStart = -1
-    for (const block of blocks) {
-        if (visibleBlockRole(block) === 'assistant') {
-            if (runStart < 0) runStart = result.length
-            result.push(block)
-            continue
-        }
-        if (runStart >= 0 && isMidTurnHoistableEventBlock(block)) {
-            result.splice(runStart, 0, block)
-            runStart += 1
-            continue
-        }
-        runStart = -1
-        result.push(block)
-    }
-    return result
-}
-
-type TurnSource = {
-    localId: string | null
-    turnId?: string
-    invokedAt: number | null
-    durationMs: number | undefined
-    model: string | null
-    usage: UsageData | undefined
-    createdAt: number
-}
-
-// Return one turn source per claude-SDK message that the visible block
-// represents. `tool-group` is a derived view: `buildVisibleChatBlocks` merges
-// adjacent eligible tool-calls without checking that they share a turn, so
-// each underlying tool-call contributes its own source. Other assistant-role
-// kinds map to a single source.
-function turnSourcesFromBlock(block: VisibleChatBlock): TurnSource[] {
-    if (block.kind === 'tool-group') {
-        return block.tools.map((tool) => ({
-            localId: tool.localId,
-            turnId: tool.turnId,
-            invokedAt: tool.invokedAt ?? null,
-            durationMs: tool.durationMs,
-            model: tool.model ?? null,
-            usage: tool.usage,
-            createdAt: tool.createdAt
-        }))
-    }
-    if (
-        block.kind === 'agent-text'
-        || block.kind === 'agent-reasoning'
-        || block.kind === 'cli-output'
-        || block.kind === 'tool-call'
-    ) {
-        return [{
-            localId: block.localId,
-            turnId: 'turnId' in block ? block.turnId : undefined,
-            invokedAt: block.invokedAt ?? null,
-            durationMs: block.durationMs,
-            model: block.model ?? null,
-            usage: block.usage,
-            createdAt: block.createdAt
-        }]
-    }
-    return []
-}
-
-/**
- * Fallback turn key for environments where the CLI does not stamp a
- * non-null `localId` on each turn's blocks (e.g. claude code spawn
- * sessions today). The key combines `(model, usage totals, createdAt)`:
- * the reducer copies `msg.createdAt` onto every derived `ChatBlock`, so
- * blocks from the same SDK message share createdAt and collapse to one
- * turn, while blocks from different SDK messages stay distinct even
- * when their `(model, usage)` happens to coincide. Limitation: two SDK
- * messages stamped at the same wall-clock millisecond would still
- * collide, but the hub stamp resolution makes that vanishingly rare.
- */
-function turnFingerprint(
-    model: string | null,
-    usage: UsageData | undefined,
-    createdAt: number
-): string {
-    if (!usage) return `m=${model ?? ''}|u=|c=${createdAt}`
-    return [
-        `m=${model ?? ''}`,
-        `i=${usage.input_tokens}`,
-        `o=${usage.output_tokens}`,
-        `r=${usage.reasoning_output_tokens ?? ''}`,
-        `cc=${usage.cache_creation_input_tokens ?? ''}`,
-        `cr=${usage.cache_read_input_tokens ?? ''}`,
-        `t=${usage.service_tier ?? ''}`,
-        `c=${createdAt}`
-    ].join('|')
-}
-
-/**
- * Sum two optional token counters. Returns `undefined` only when both
- * operands are absent; an explicit `0` on either side participates in
- * the sum (so a `0 + 0` total stays `0` instead of collapsing to
- * `undefined` via JavaScript's falsy `||`).
- */
-function sumOptional(a: number | undefined, b: number | undefined): number | undefined {
-    if (a === undefined && b === undefined) return undefined
-    return (a ?? 0) + (b ?? 0)
-}
-
-function addUsage(target: UsageData, addend: UsageData): UsageData {
-    return {
-        input_tokens: target.input_tokens + addend.input_tokens,
-        output_tokens: target.output_tokens + addend.output_tokens,
-        reasoning_output_tokens: sumOptional(
-            target.reasoning_output_tokens,
-            addend.reasoning_output_tokens
-        ),
-        cache_creation_input_tokens: sumOptional(
-            target.cache_creation_input_tokens,
-            addend.cache_creation_input_tokens
-        ),
-        cache_read_input_tokens: sumOptional(
-            target.cache_read_input_tokens,
-            addend.cache_read_input_tokens
-        ),
-        cost_usd: sumOptional(target.cost_usd, addend.cost_usd),
-        ...(target.generation_duration_ms !== undefined && addend.generation_duration_ms !== undefined
-            ? { generation_duration_ms: target.generation_duration_ms + addend.generation_duration_ms }
-            : {}),
-        // service_tier dedup follows the rule documented in the plan: pick
-        // the first turn's tier when the group is mixed. We keep it on the
-        // target so downstream label logic sees a stable value.
-        service_tier: target.service_tier
-    }
-}
-
-/**
- * Walk the visible block list, identify response groups (runs of
- * assistant-role blocks separated by user-text / agent-event /
- * user-source cli-output boundaries), and return a map keyed by the
- * id of each group's first visible block whose value is the summed
- * metadata for that group. Only groups spanning two or more distinct
- * turns produce an entry so single-turn cards remain byte-for-byte
- * unchanged at the call site.
- */
-export function aggregateResponseGroups(
-    blocks: readonly VisibleChatBlock[]
-): Map<string, AggregatedAssistantMeta> {
-    const aggregates = new Map<string, AggregatedAssistantMeta>()
-    let groupFirstBlockId: string | null = null
-    // Ordering-based turn dedup: we compare each block's turn key against
-    // the immediately previous turn's key. A `Set` of all seen keys would
-    // collapse a third turn whose `(model, usage)` fingerprint happens to
-    // match a non-adjacent earlier turn — claude code spawn sessions
-    // legitimately produce repeated fingerprints when token totals
-    // coincide, and merging them under-counts the visible turn count.
-    let prevTurnKey: string | null = null
-    const seenModels: string[] = []
-    let groupInvokedAt: number | null = null
-    let groupUsage: UsageData | undefined
-    let groupTurnCount = 0
-    let groupRoundSummary: RoundSummary | undefined
-
-    const flush = () => {
-        if (groupFirstBlockId !== null && (groupTurnCount >= 2 || groupRoundSummary)) {
-            const joinedModel = seenModels.length > 0 ? seenModels.join(', ') : null
-            aggregates.set(groupFirstBlockId, {
-                usage: groupUsage,
-                model: joinedModel,
-                invokedAt: groupInvokedAt,
-                durationMs: undefined,
-                turnCount: groupTurnCount,
-                roundSummary: groupRoundSummary
-            })
-        }
-        groupFirstBlockId = null
-        prevTurnKey = null
-        seenModels.length = 0
-        groupInvokedAt = null
-        groupUsage = undefined
-        groupTurnCount = 0
-        groupRoundSummary = undefined
-    }
-
-    for (const block of blocks) {
-        const role = visibleBlockRole(block)
-        if (role !== 'assistant') {
-            // Boundary: close the open group, if any.
-            flush()
-            continue
-        }
-
-        if (groupFirstBlockId === null) {
-            groupFirstBlockId = block.id
-        }
-
-        const roundSummary = block.kind === 'tool-group'
-            ? block.roundSummary
-            : block.kind === 'user-text' || block.kind === 'agent-event'
-                ? undefined
-                : block.roundSummary
-        groupRoundSummary ??= roundSummary
-
-        for (const turn of turnSourcesFromBlock(block)) {
-            // Prefer the CLI-stamped `localId` when present. When it is null
-            // (today's claude code spawn flow) fall back to a fingerprint
-            // built from `(model, usage totals, createdAt)` — see
-            // `turnFingerprint` for the createdAt rationale.
-            const turnKey = turn.localId !== null
-                ? `id:${turn.localId}`
-                : `fp:${turnFingerprint(turn.model, turn.usage, turn.createdAt)}`
-
-            // Skip blocks with no turn signal at all (no localId, no usage,
-            // no model) so they don't inflate the turn count.
-            if (turn.localId === null && !turn.usage && !turn.model) continue
-
-            // Only the immediately previous turn's key dedups — see prevTurnKey
-            // comment above. Non-adjacent matches keep their separate counts.
-            if (turnKey === prevTurnKey) continue
-            prevTurnKey = turnKey
-
-            groupTurnCount += 1
-            if (turn.invokedAt != null && (groupInvokedAt === null || turn.invokedAt < groupInvokedAt)) {
-                groupInvokedAt = turn.invokedAt
-            }
-            if (turn.model && !seenModels.includes(turn.model)) {
-                seenModels.push(turn.model)
-            }
-            if (turn.usage) {
-                groupUsage = groupUsage ? addUsage(groupUsage, turn.usage) : { ...turn.usage }
-            }
-        }
-    }
-
-    flush()
-    return aggregates
-}
-
-export type BlockWithThreadMessageId = {
-    block: VisibleChatBlock
-    threadMessageId: string
-    timestamp?: number
-    aggregate?: AggregatedAssistantMeta
-}
-
-function isSameUsage(a: UsageData | undefined, b: UsageData | undefined): boolean {
-    if (a === b) return true
-    if (!a || !b) return false
-    return a.input_tokens === b.input_tokens
-        && a.output_tokens === b.output_tokens
-        && a.reasoning_output_tokens === b.reasoning_output_tokens
-        && a.cache_creation_input_tokens === b.cache_creation_input_tokens
-        && a.cache_read_input_tokens === b.cache_read_input_tokens
-        && a.context_tokens === b.context_tokens
-        && a.context_window === b.context_window
-        && a.thread_id === b.thread_id
-        && a.scope_role === b.scope_role
-        && a.service_tier === b.service_tier
-        && a.cost_usd === b.cost_usd
-        && a.generation_duration_ms === b.generation_duration_ms
-}
-
-function isSameAggregate(
-    a: AggregatedAssistantMeta | undefined,
-    b: AggregatedAssistantMeta | undefined
-): boolean {
-    if (a === b) return true
-    if (!a || !b) return false
-    return a.model === b.model
-        && a.invokedAt === b.invokedAt
-        && a.durationMs === b.durationMs
-        && a.turnCount === b.turnCount
-        && a.roundSummary === b.roundSummary
-        && isSameUsage(a.usage, b.usage)
-}
-
-/**
- * Stable, unique IDs for assistant-ui's linear MessageRepository.
- * Uses `${kind}:${block.id}`, with `localId ?? id` for user-text so server
- * echoes preserve optimistic identity. Suffixes `~1`, `~2`, … when the same
- * key appears more than once, so duplicate rows cannot crash the thread.
- *
- * Reuses `{ block, threadMessageId }` objects from `wrapperCache` when the
- * reconciled `block` reference and computed id match, so
- * `useExternalMessageConverter`'s WeakMap caches stay warm across streaming
- * appends (see PR review).
- */
-const assistantGroupIdCache = new WeakMap<
-    WeakMap<VisibleChatBlock, BlockWithThreadMessageId>,
-    Map<string, string>
->()
-
-export function assignThreadMessageIdsWithStableWrappers(
-    blocks: readonly VisibleChatBlock[],
-    wrapperCache: WeakMap<VisibleChatBlock, BlockWithThreadMessageId>
-): BlockWithThreadMessageId[] {
-    const seen = new Map<string, number>()
-    const rawIds = blocks.map((block) => {
-        const id = block.kind === 'user-text' ? block.localId || block.id : block.id
-        const base = `${block.kind}:${id}`
-        const occurrence = seen.get(base) ?? 0
-        seen.set(base, occurrence + 1)
-        return occurrence === 0 ? base : `${base}~${occurrence}`
-    })
-
-    const previousGroupByRawId = assistantGroupIdCache.get(wrapperCache)
-    const nextGroupByRawId = new Map<string, string>()
-    const assignedIds = [...rawIds]
-    const usedGroupIds = new Set<string>()
-    for (let index = 0; index < blocks.length; index += 1) {
-        if (visibleBlockRole(blocks[index]!) !== 'assistant') {
-            usedGroupIds.add(rawIds[index]!)
-        }
-    }
-
-    let index = 0
-    while (index < blocks.length) {
-        if (visibleBlockRole(blocks[index]!) !== 'assistant') {
-            index += 1
-            continue
-        }
-        const runStart = index
-        while (index < blocks.length && visibleBlockRole(blocks[index]!) === 'assistant') {
-            index += 1
-        }
-        const runEnd = index - 1
-
-        let groupId: string | undefined
-        if (previousGroupByRawId) {
-            const startCandidate = previousGroupByRawId.get(rawIds[runStart]!)
-            const endCandidate = previousGroupByRawId.get(rawIds[runEnd]!)
-            if (startCandidate && !usedGroupIds.has(startCandidate)) {
-                groupId = startCandidate
-            } else if (endCandidate && !usedGroupIds.has(endCandidate)) {
-                groupId = endCandidate
-            } else {
-                for (let cursor = runStart; cursor <= runEnd; cursor += 1) {
-                    const candidate = previousGroupByRawId.get(rawIds[cursor]!)
-                    if (candidate && !usedGroupIds.has(candidate)) {
-                        groupId = candidate
-                        break
-                    }
-                }
-            }
-        }
-
-        const resolvedGroupId = groupId ?? rawIds[runStart]!
-        usedGroupIds.add(resolvedGroupId)
-        if (resolvedGroupId !== assignedIds[runStart]!) {
-            const existingHolder = assignedIds.findIndex(
-                (id, cursor) => cursor !== runStart && id === resolvedGroupId
-            )
-            const displacedId = assignedIds[runStart]!
-            assignedIds[runStart] = resolvedGroupId
-            if (existingHolder >= 0) {
-                assignedIds[existingHolder] = displacedId
-            }
-        }
-        for (let cursor = runStart; cursor <= runEnd; cursor += 1) {
-            nextGroupByRawId.set(rawIds[cursor]!, resolvedGroupId)
-        }
-    }
-    assistantGroupIdCache.set(wrapperCache, nextGroupByRawId)
-
-    const responseGroupTimestamps = getResponseGroupTimestamps(blocks)
-    const aggregates = aggregateResponseGroups(blocks)
-
-    return blocks.map((block, blockIndex) => {
-        const threadMessageId = assignedIds[blockIndex]!
-        const timestamp = responseGroupTimestamps.get(block) ?? getBlockPresentationTimestamp(block)
-        const aggregate = aggregates.get(block.id)
-        const cached = wrapperCache.get(block)
-        if (
-            cached?.threadMessageId === threadMessageId
-            && cached.timestamp === timestamp
-            && isSameAggregate(cached.aggregate, aggregate)
-        ) {
-            return cached
-        }
-        const stableAggregate = cached && isSameAggregate(cached.aggregate, aggregate)
-            ? cached.aggregate
-            : aggregate
-        const next: BlockWithThreadMessageId = {
-            block,
-            threadMessageId,
-            timestamp,
-            aggregate: stableAggregate,
-        }
-        wrapperCache.set(block, next)
-        return next
-    })
-}
-
-export function assignThreadMessageIds(
-    blocks: readonly VisibleChatBlock[]
-): BlockWithThreadMessageId[] {
-    return assignThreadMessageIdsWithStableWrappers(blocks, new WeakMap())
-}
-
-/**
- * Finds the latest conversation-history boundary that is safe to fork.
- * While the main agent is running, every block from the latest invoked user
- * message onward belongs to the active turn and must not become a transient
- * "completed" boundary as streaming events reshape the visible block list.
- */
-export function findLatestCompletedBoundaryId(
-    blocks: readonly VisibleChatBlock[],
-    isRunning: boolean,
-    activeTurnStartedAt: number | null
-): string | null {
-    const assigned = assignThreadMessageIds(blocks)
-    let limit = assigned.length
-
-    if (isRunning) {
-        const activeTurnStart = activeTurnStartedAt === null
-            ? assigned.findLastIndex(({ block }) => (
-                visibleBlockRole(block) === 'user' && block.invokedAt != null
-            ))
-            : assigned.findIndex(({ block }) => (
-                visibleBlockRole(block) === 'user'
-                && (block.invokedAt ?? block.createdAt) >= activeTurnStartedAt
-            ))
-        if (activeTurnStart >= 0) {
-            limit = activeTurnStart
-        } else if (activeTurnStartedAt === null) {
-            return null
-        } else {
-            const lastBlock = assigned[assigned.length - 1]?.block
-            const activeTurnId = lastBlock && 'turnId' in lastBlock ? lastBlock.turnId : undefined
-            const firstActiveBlock = activeTurnId
-                ? assigned.findIndex(({ block }) => 'turnId' in block && block.turnId === activeTurnId)
-                : assigned.findIndex(({ block }) => (
-                    (block.invokedAt ?? block.createdAt) >= activeTurnStartedAt
-                ))
-            if (firstActiveBlock >= 0) {
-                limit = firstActiveBlock
-            }
-        }
-    }
-
-    let candidate: string | null = null
-    let previousRole: ReturnType<typeof visibleBlockRole> | null = null
-    for (let index = 0; index < limit; index += 1) {
-        const { block, threadMessageId } = assigned[index]
-        const role = visibleBlockRole(block)
-        if (
-            (role === 'user' && block.invokedAt != null)
-            || (role === 'assistant' && previousRole !== 'assistant')
-        ) {
-            candidate = threadMessageId
-        }
-        previousRole = role
-    }
-    return candidate
-}
-
-function findTailAssistantBlock(blocks: readonly VisibleChatBlock[]): VisibleChatBlock | null {
-    for (let index = blocks.length - 1; index >= 0; index -= 1) {
-        const block = blocks[index]
+function findTailAssistantBlock(entries: readonly BlockWithThreadMessageId[]): VisibleChatBlock | null {
+    for (let index = entries.length - 1; index >= 0; index -= 1) {
+        const block = entries[index].block
         const role = visibleBlockRole(block)
         if (role === 'user') {
             return null
@@ -753,8 +176,8 @@ function toThreadMessageLike(
 
     if (block.kind === 'agent-text') {
         const textPart = block.phase !== undefined
-            ? ({ type: 'text', text: block.text, phase: block.phase } as const)
-            : ({ type: 'text', text: block.text } as const)
+            ? ({ type: 'text', text: block.text, phase: block.phase, blockId: block.id } as const)
+            : ({ type: 'text', text: block.text, blockId: block.id } as const)
         return {
             role: 'assistant',
             id: threadMessageId,
@@ -821,7 +244,7 @@ function toThreadMessageLike(
             role: 'assistant',
             id: threadMessageId,
             createdAt: new Date(timestamp),
-            content: [{ type: 'reasoning', text: block.text }],
+            content: [{ type: 'reasoning', text: block.text, blockId: block.id } as { type: 'reasoning'; text: string }],
             metadata: {
                 custom: {
                     kind: 'assistant',
@@ -920,7 +343,7 @@ function toThreadMessageLike(
             role: block.source === 'user' ? 'user' : 'assistant',
             id: threadMessageId,
             createdAt: new Date(timestamp),
-            content: [{ type: 'text', text: block.text }],
+            content: [{ type: 'text', text: block.text, blockId: block.id } as { type: 'text'; text: string }],
             metadata: {
                 custom: {
                     kind: 'cli-output',
@@ -1044,6 +467,7 @@ function extractMessageContent(message: AppendMessage): { text: string; attachme
 export function useHappyRuntime(props: {
     session: Session
     blocks: readonly VisibleChatBlock[]
+    blocksWithThreadIds?: readonly BlockWithThreadMessageId[]
     messagesVersion: number
     historyVersion: number
     viewMode?: 'tail' | 'history'
@@ -1072,14 +496,25 @@ export function useHappyRuntime(props: {
     const isRunning = props.isRunning ?? props.session.thinking
     const flavor = props.session.metadata?.flavor
 
-    const visibleBlocks = useMemo(
-        () => hoistMidTurnTitleEvents(filterVisibleBlocksForFlavor(props.blocks, flavor)),
-        [flavor, props.blocks]
+    // Compute response-group aggregates once per block list so we can
+    // inject the summed metadata onto each group's first visible block.
+    // The library's `joinExternalMessages` only preserves
+    // `metadata.custom` from the first block of a joined chunk, so this
+    // is the surface that survives the join.
+    const threadIdWrapperCacheRef = useRef(
+        new WeakMap<VisibleChatBlock, BlockWithThreadMessageId>()
+    )
+    const blocksWithThreadIds = useMemo(
+        () => props.blocksWithThreadIds ?? assignThreadMessageIdsWithStableWrappers(
+            hoistMidTurnTitleEvents(filterVisibleBlocksForFlavor(props.blocks, flavor)),
+            threadIdWrapperCacheRef.current
+        ),
+        [props.blocksWithThreadIds, props.blocks, flavor]
     )
 
     const tailAssistantBlock = useMemo(
-        () => findTailAssistantBlock(visibleBlocks),
-        [visibleBlocks]
+        () => findTailAssistantBlock(blocksWithThreadIds),
+        [blocksWithThreadIds]
     )
     const tailAssistantMarker = useMemo(
         () => getTailAssistantMarker(tailAssistantBlock),
@@ -1118,22 +553,6 @@ export function useHappyRuntime(props: {
         settledTailRef.current.settledMarker
     )
 
-    // Compute response-group aggregates once per block list so we can
-    // inject the summed metadata onto each group's first visible block.
-    // The library's `joinExternalMessages` only preserves
-    // `metadata.custom` from the first block of a joined chunk, so this
-    // is the surface that survives the join.
-    const threadIdWrapperCacheRef = useRef(
-        new WeakMap<VisibleChatBlock, BlockWithThreadMessageId>()
-    )
-    const blocksWithThreadIds = useMemo(
-        () => assignThreadMessageIdsWithStableWrappers(
-            visibleBlocks,
-            threadIdWrapperCacheRef.current
-        ),
-        [visibleBlocks]
-    )
-
     const convertBlock = useCallback(
         ({ block, threadMessageId, timestamp, aggregate }: BlockWithThreadMessageId): ThreadMessageLike => {
             const message = toThreadMessageLike(
@@ -1166,7 +585,7 @@ export function useHappyRuntime(props: {
     // This prevents re-converting all messages on every render
     const convertedMessages = useExternalMessageConverter<BlockWithThreadMessageId>({
         callback: convertBlock,
-        messages: blocksWithThreadIds,
+        messages: blocksWithThreadIds as BlockWithThreadMessageId[],
         isRunning: isRunningForMessages,
     })
 

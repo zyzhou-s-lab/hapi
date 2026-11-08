@@ -3,9 +3,7 @@ import { flushSync } from 'react-dom'
 import { useAui } from '@assistant-ui/react'
 import type { ApiClient } from '@/api/client'
 import type { AttachmentMetadata, DecryptedMessage, PiModelSummary, Session } from '@/types/api'
-import type { ChatBlock, ModelRefusalFallbackEvent, NormalizedMessage } from '@/chat/types'
-import { buildConversationOutline, type ConversationOutlineItem } from '@/chat/outline'
-import { areSessionStatusDataEqual, buildSessionStatusData, type SessionStatusData } from '@/chat/sessionStatus'
+import type { ModelRefusalFallbackEvent, NormalizedMessage } from '@/chat/types'
 import {
     buildGoalStateMessages,
     createSessionEntityStore,
@@ -445,8 +443,6 @@ export function useSessionChatPipeline(props: UseSessionChatPipelineParams & {
     const onResetSessionViewRef = useRef(props.onResetSessionView)
     onResetSessionViewRef.current = props.onResetSessionView
     const entityStore = useMemo(() => createSessionEntityStore(), [])
-    const prevOutlineItemsRef = useRef<ConversationOutlineItem[]>([])
-    const prevSessionStatusRef = useRef<SessionStatusData | null>(null)
     const structureVersionTrackerRef = useRef({
         sessionId: props.session.id,
         structureVersion: 0,
@@ -461,8 +457,6 @@ export function useSessionChatPipeline(props: UseSessionChatPipelineParams & {
 
     useEffect(() => {
         modelRefusalFallbackToastIdsRef.current.clear()
-        prevSessionStatusRef.current = null
-        prevOutlineItemsRef.current = []
         onResetSessionViewRef.current?.()
     }, [props.session.id])
 
@@ -471,16 +465,20 @@ export function useSessionChatPipeline(props: UseSessionChatPipelineParams & {
             sessionId: props.session.id,
             messages: props.messages,
             agentState: props.session.agentState,
+            metadata: props.session.metadata,
+            backgroundTaskCount: props.session.backgroundTaskCount,
             hasMoreMessages: props.hasMoreMessages,
             codexExplorationCollapsed,
-        }),
+        }, { deferNotifications: true }),
         [
             codexExplorationCollapsed,
             entityStore,
             props.hasMoreMessages,
             props.messages,
             props.session.agentState,
+            props.session.backgroundTaskCount,
             props.session.id,
+            props.session.metadata,
         ]
     )
 
@@ -488,10 +486,13 @@ export function useSessionChatPipeline(props: UseSessionChatPipelineParams & {
         visibleMessages,
         normalizedMessages,
         visibleBlocks,
+        blocksWithThreadIds,
         timelineIndex,
         timelineStructureKey,
         hasRunningChildAgent,
         activityLabel,
+        sessionStatus,
+        outlineItems,
     } = snapshot
 
     const structureMessagesVersion = useMemo(() => {
@@ -557,26 +558,6 @@ export function useSessionChatPipeline(props: UseSessionChatPipelineParams & {
         }
     }, [addToast, normalizedMessages, props.session.id, t])
 
-    const sessionStatus = useMemo(() => {
-        const next = buildSessionStatusData({
-            goal: snapshot.latestGoal,
-            blocks: snapshot.blocks,
-            messages: normalizedMessages,
-            backgroundTaskCount: props.session.backgroundTaskCount,
-            includeSubagents: false,
-        })
-        if (prevSessionStatusRef.current && areSessionStatusDataEqual(prevSessionStatusRef.current, next)) {
-            return prevSessionStatusRef.current
-        }
-        prevSessionStatusRef.current = next
-        return next
-    }, [
-        normalizedMessages,
-        props.session.backgroundTaskCount,
-        snapshot.blocks,
-        snapshot.latestGoal,
-    ])
-
     // Fork-current must compare against assistant-ui message ids (`kind:id`),
     // not raw hub message ids — MessageActions receive the rendered card id,
     // and adjacent assistant blocks join under the first block's id.
@@ -619,12 +600,6 @@ export function useSessionChatPipeline(props: UseSessionChatPipelineParams & {
     // tool_result pair is one card.
     const unseenCount = useUnseenBlockCount(props.viewMode, visibleBlocks)
 
-    const outlineItems = useMemo(() => {
-        const next = buildConversationOutline(snapshot.blocks, prevOutlineItemsRef.current)
-        prevOutlineItemsRef.current = next
-        return next
-    }, [snapshot.blocks])
-
     return {
         entityStore,
         timelineIndex,
@@ -637,6 +612,7 @@ export function useSessionChatPipeline(props: UseSessionChatPipelineParams & {
         hasRunningChildAgent,
         activityLabel,
         visibleBlocks,
+        blocksWithThreadIds,
         isLatestCompletedBoundary,
         unseenCount,
         outlineItems,

@@ -2,8 +2,9 @@ import { memo, useEffect, useMemo, useRef, useState } from 'react'
 import { TextMessagePartProvider, useAuiState } from '@assistant-ui/react'
 import { projectSessionTodoSnapshot } from '@/chat/projections/todoProjection'
 import { useOptionalHappyChatSessionStateContext, useOptionalHappyChatStaticContext, useOptionalHappyChatTodosContext } from '@/components/AssistantChat/context'
-import type { TodoItem } from '@/types/api'
 import { NotifySummaryText } from '@/components/AssistantChat/messages/NotifySummaryText'
+import { useOptionalSessionEntityStore, useOptionalSessionTurnEntity } from '@/hooks/useSessionEntityStore'
+import type { TodoItem } from '@/types/api'
 import {
     hasTurnContentActivity,
     partitionTurn,
@@ -21,18 +22,17 @@ function contentParts(content: readonly { type: string }[]): TurnContentPart[] {
             const text = 'text' in part && typeof part.text === 'string' ? part.text : ''
             const status = 'status' in part && part.status && typeof part.status === 'object' ? part.status as { type?: string } : undefined
             const phase = 'phase' in part && (part.phase === 'execution' || part.phase === 'final_answer') ? part.phase : undefined
-            return [{ type: part.type, text, status, ...(phase !== undefined ? { phase } : {}) }]
+            const blockId = 'blockId' in part && typeof part.blockId === 'string' ? part.blockId : undefined
+            return [{
+                type: part.type, text, status,
+                ...(phase !== undefined ? { phase } : {}),
+                ...(blockId !== undefined ? { blockId } : {}),
+            }]
         }
-        if (part.type !== 'tool-call') return []
         const tool = part as { toolCallId?: string; toolName?: string; result?: unknown; isError?: boolean; artifact?: unknown; status?: { type?: string } }
         return [{
-            type: 'tool-call',
-            toolCallId: tool.toolCallId,
-            toolName: tool.toolName,
-            result: tool.result,
-            isError: tool.isError,
-            artifact: tool.artifact,
-            status: tool.status,
+            type: 'tool-call', toolCallId: tool.toolCallId, toolName: tool.toolName,
+            result: tool.result, isError: tool.isError, artifact: tool.artifact, status: tool.status,
         }]
     })
 }
@@ -59,17 +59,7 @@ export function TurnBlockView(props: {
     lang?: 'en' | 'zh-CN'
 }) {
     return (
-        <TimelineTurnBlockView
-            partition={props.partition}
-            streaming={props.streaming}
-            durationMs={props.durationMs}
-            initiallyOpen={props.initiallyOpen}
-            activeTodoText={props.activeTodoText}
-            fallbackTodos={props.fallbackTodos}
-            viewMode={props.viewMode}
-            lang={props.lang}
-            renderTrailingText={renderTurnText}
-        />
+        <TimelineTurnBlockView {...props} renderTrailingText={renderTurnText} />
     )
 }
 
@@ -91,7 +81,6 @@ function HistoricalTurnBlockBody(props: {
         }),
         [props.custom?.roundSummary, props.custom?.invokedAt, props.createdAt]
     )
-
     return (
         <MemoizedTurnBlockView
             activeTodoText={null}
@@ -116,7 +105,6 @@ function LiveTailTurnBlockBody(props: {
 }) {
     const sessionStateCtx = useOptionalHappyChatSessionStateContext()
     const todosCtx = useOptionalHappyChatTodosContext()
-
     const isActiveSessionTailTurn = Boolean(
         props.isLastMessage
         && sessionStateCtx?.sessionThinking
@@ -127,10 +115,7 @@ function LiveTailTurnBlockBody(props: {
     )
     const streaming = props.auiRunning || props.hasRunningTool || isActiveSessionTailTurn
     const [now, setNow] = useState(() => Date.now())
-
-    const activeTodoText = streaming
-        ? projectSessionTodoSnapshot(todosCtx?.todos).activeLabel
-        : null
+    const activeTodoText = streaming ? projectSessionTodoSnapshot(todosCtx?.todos).activeLabel : null
     const fallbackTodos = streaming ? (todosCtx?.todos ?? null) : null
 
     useEffect(() => {
@@ -161,18 +146,35 @@ function LiveTailTurnBlockBody(props: {
 export function TurnBlock() {
     const staticCtx = useOptionalHappyChatStaticContext()
     const { locale } = useTranslation()
-    const content = useAuiState((state) => state.message.role === 'assistant' ? state.message.content : [])
+    const store = useOptionalSessionEntityStore()
+    const messageId = useAuiState((state) => state.message.id)
+    const turnEntity = useOptionalSessionTurnEntity(messageId)
+    const hasStoreTurn = Boolean(turnEntity || store?.getTurnEntity(messageId))
+    const fallbackContent = useAuiState((state) => (
+        !hasStoreTurn && state.message.role === 'assistant' ? state.message.content : null
+    ))
     const auiRunning = useAuiState((state) => state.message.status?.type === 'running')
     const isLastMessage = useAuiState((state) => state.message.isLast)
-    const createdAt = useAuiState((state) => state.message.createdAt.getTime())
-    const custom = useAuiState((state) => state.message.metadata.custom as Partial<HappyChatMessageMetadata> | undefined)
+    const auiCreatedAt = useAuiState((state) => state.message.createdAt.getTime())
+    const auiCustom = useAuiState((state) => state.message.metadata.custom as Partial<HappyChatMessageMetadata> | undefined)
+    const createdAt = turnEntity?.timestamp ?? auiCreatedAt
+    const custom = turnEntity ? {
+        ...auiCustom,
+        invokedAt: turnEntity.invokedAt ?? auiCustom?.invokedAt,
+        durationMs: turnEntity.durationMs ?? auiCustom?.durationMs,
+        usage: turnEntity.usage ?? auiCustom?.usage,
+        model: turnEntity.model ?? auiCustom?.model,
+        roundSummary: turnEntity.roundSummary ?? auiCustom?.roundSummary,
+        turnCount: turnEntity.turnCount ?? auiCustom?.turnCount,
+    } : auiCustom
 
     const prevPartitionRef = useRef<TurnPartition | null>(null)
     const partition = useMemo(() => {
-        const next = partitionTurn(contentParts(content), staticCtx?.metadata ?? null, prevPartitionRef.current)
+        const parts = turnEntity ? turnEntity.parts : contentParts(fallbackContent ?? [])
+        const next = partitionTurn(parts, staticCtx?.metadata ?? null, prevPartitionRef.current)
         prevPartitionRef.current = next
         return next
-    }, [content, staticCtx?.metadata])
+    }, [fallbackContent, staticCtx?.metadata, turnEntity])
     const hasRunningTool = useMemo(
         () => partition.rows.some(
             (row) => row.kind === 'tool'
@@ -180,19 +182,10 @@ export function TurnBlock() {
         ),
         [partition.rows]
     )
-
     const lang = locale === 'zh-CN' ? 'zh-CN' : 'en'
     if (!isLastMessage && !auiRunning && !hasRunningTool) {
-        return (
-            <HistoricalTurnBlockBody
-                partition={partition}
-                createdAt={createdAt}
-                custom={custom}
-                lang={lang}
-            />
-        )
+        return <HistoricalTurnBlockBody partition={partition} createdAt={createdAt} custom={custom} lang={lang} />
     }
-
     return (
         <LiveTailTurnBlockBody
             partition={partition}

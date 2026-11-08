@@ -60,12 +60,39 @@ function compareMessages(a: DecryptedMessage, b: DecryptedMessage): number {
 // queued. A message delivered immediately — e.g. steered into the active turn —
 // can carry a stale optimistic 'queued' status while its invokedAt is already
 // set; normalize so the queued clock never lingers on a delivered message.
+function normalizeSingleMessageStatus(msg: DecryptedMessage): DecryptedMessage {
+    return msg.status === 'queued' && msg.invokedAt != null
+        ? { ...msg, status: 'sent' as DecryptedMessage['status'] }
+        : msg
+}
+
 function clearStaleQueuedStatus(list: DecryptedMessage[]): DecryptedMessage[] {
-    return list.map((msg) =>
-        msg.status === 'queued' && msg.invokedAt != null
-            ? { ...msg, status: 'sent' as DecryptedMessage['status'] }
-            : msg
-    )
+    return list.map(normalizeSingleMessageStatus)
+}
+
+function mergeExistingAndIncomingMessage(
+    existingItem: DecryptedMessage,
+    msg: DecryptedMessage
+): DecryptedMessage {
+    // Preserve client-only signals the incoming (server) copy can't carry:
+    // a late ack timestamp and the live 'steered' marker (not persisted).
+    const preserved: Partial<DecryptedMessage> = {}
+    if (existingItem.invokedAt != null && msg.invokedAt == null) {
+        preserved.invokedAt = existingItem.invokedAt
+    }
+    if (existingItem.steered && !msg.steered) {
+        preserved.steered = true
+    }
+    const effectiveInvokedAt = preserved.invokedAt ?? msg.invokedAt
+    if (existingItem.status && !msg.status) {
+        if (existingItem.status !== 'queued' || effectiveInvokedAt == null) {
+            preserved.status = existingItem.status
+        }
+    }
+    if (existingItem.queuedWhileSending && !msg.queuedWhileSending && effectiveInvokedAt == null) {
+        preserved.queuedWhileSending = true
+    }
+    return Object.keys(preserved).length > 0 ? { ...msg, ...preserved } : msg
 }
 
 export function mergeMessages(existing: DecryptedMessage[], incoming: DecryptedMessage[]): DecryptedMessage[] {
@@ -76,32 +103,56 @@ export function mergeMessages(existing: DecryptedMessage[], incoming: DecryptedM
         return clearStaleQueuedStatus([...existing]).sort(compareMessages)
     }
 
+    if (incoming.length === 1) {
+        const nextRaw = incoming[0]!
+        let matchIdx = -1
+        let canUseFastPath = true
+        for (let i = 0; i < existing.length; i++) {
+            const cur = existing[i]!
+            if (isOptimisticMessage(cur) || (cur.status === 'queued' && cur.invokedAt != null)) {
+                canUseFastPath = false
+                break
+            }
+            if (i > 0 && compareMessages(existing[i - 1]!, cur) >= 0) {
+                canUseFastPath = false
+                break
+            }
+            if (cur.id === nextRaw.id) {
+                matchIdx = i
+            }
+        }
+        if (canUseFastPath) {
+            if (matchIdx >= 0) {
+                const mergedItem = normalizeSingleMessageStatus(
+                    mergeExistingAndIncomingMessage(existing[matchIdx]!, nextRaw)
+                )
+                const prevOk = matchIdx === 0 || compareMessages(existing[matchIdx - 1]!, mergedItem) < 0
+                const nextOk = matchIdx === existing.length - 1 || compareMessages(mergedItem, existing[matchIdx + 1]!) < 0
+                if (prevOk && nextOk) {
+                    if (mergedItem === existing[matchIdx]) {
+                        return existing
+                    }
+                    const nextList = existing.slice()
+                    nextList[matchIdx] = mergedItem
+                    return nextList
+                }
+            } else if (!isOptimisticMessage(nextRaw)) {
+                const normalizedNext = normalizeSingleMessageStatus(nextRaw)
+                const last = existing[existing.length - 1]!
+                if (compareMessages(last, normalizedNext) < 0) {
+                    return [...existing, normalizedNext]
+                }
+            }
+        }
+    }
     const byId = new Map<string, DecryptedMessage>()
     for (const msg of existing) {
         byId.set(msg.id, msg)
     }
     for (const msg of incoming) {
-        const existing = byId.get(msg.id)
-        if (existing) {
-            // Preserve client-only signals the incoming (server) copy can't carry:
-            // a late ack timestamp and the live 'steered' marker (not persisted).
-            const preserved: Partial<DecryptedMessage> = {}
-            if (existing.invokedAt != null && msg.invokedAt == null) {
-                preserved.invokedAt = existing.invokedAt
-            }
-            if (existing.steered && !msg.steered) {
-                preserved.steered = true
-            }
-            const effectiveInvokedAt = preserved.invokedAt ?? msg.invokedAt
-            if (existing.status && !msg.status) {
-                if (existing.status !== 'queued' || effectiveInvokedAt == null) {
-                    preserved.status = existing.status
-                }
-            }
-            if (existing.queuedWhileSending && !msg.queuedWhileSending && effectiveInvokedAt == null) {
-                preserved.queuedWhileSending = true
-            }
-            byId.set(msg.id, Object.keys(preserved).length > 0 ? { ...msg, ...preserved } : msg)
+        const existingItem = byId.get(msg.id)
+        if (existingItem) {
+            byId.set(msg.id, mergeExistingAndIncomingMessage(existingItem, msg))
         } else {
             byId.set(msg.id, msg)
         }

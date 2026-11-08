@@ -1,6 +1,12 @@
 // Pure domain session entity store (no React imports).
 import { isCliOutputText } from '@/chat/reducerCliOutput'
 import { normalizeDecryptedMessage } from '@/chat/normalize'
+import { buildConversationOutline, type ConversationOutlineItem } from '@/chat/outline'
+import {
+    areSessionStatusDataEqual,
+    buildSessionStatusData,
+    type SessionStatusData,
+} from '@/chat/sessionStatus'
 import { reduceChatBlocks, type LatestUsage } from '@/chat/reducer'
 import {
     isLegacyCompactionEndEvent,
@@ -19,9 +25,19 @@ import {
     type VisibleChatBlockRole,
 } from '@/chat/toolGroups'
 import type { ChatBlock, NormalizedMessage } from '@/chat/types'
+import {
+    assignThreadMessageIdsWithStableWrappers,
+    buildTurnEntitiesById,
+    filterVisibleBlocksForFlavor,
+    hoistMidTurnTitleEvents,
+    type BlockWithThreadMessageId,
+    type TurnEntityContentPart,
+    type TurnEntitySnapshot,
+} from '@/lib/assistant-runtime-blocks'
 import { isDisplayedInQueueBar } from '@/lib/messages'
 import type { AgentState, DecryptedMessage, SessionMetadataSummary, ThreadGoal } from '@/types/api'
 
+export type { TurnEntityContentPart, TurnEntitySnapshot }
 export type TimelineEntryRef = {
     readonly id: string
     readonly kind: VisibleChatBlock['kind']
@@ -37,16 +53,19 @@ export type SessionEntityMetaSnapshot = {
     readonly activityLabel: string | null
     readonly isSending: boolean
     readonly queuedMessages: readonly DecryptedMessage[]
+    readonly outlineItems: readonly ConversationOutlineItem[]
+    readonly sessionStatus: SessionStatusData | null
 }
 
 export type SessionEntityStoreInput = {
     readonly sessionId: string | null
     readonly messages: readonly DecryptedMessage[]
     readonly goalSourceMessages?: readonly DecryptedMessage[]
-    readonly agentState: AgentState | null | undefined
+    readonly agentState?: AgentState | null | undefined
     readonly metadata?: SessionMetadataSummary | null
-    readonly hasMoreMessages: boolean
-    readonly codexExplorationCollapsed: boolean
+    readonly backgroundTaskCount?: number
+    readonly hasMoreMessages?: boolean
+    readonly codexExplorationCollapsed?: boolean
 }
 
 export type SessionEntityStoreSnapshot = {
@@ -59,6 +78,10 @@ export type SessionEntityStoreSnapshot = {
     readonly byId: ChatBlocksById
     readonly visibleBlocks: readonly VisibleChatBlock[]
     readonly visibleById: ReadonlyMap<string, VisibleChatBlock>
+    readonly blocksWithThreadIds: readonly BlockWithThreadMessageId[]
+    readonly turnsById: ReadonlyMap<string, TurnEntitySnapshot>
+    readonly outlineItems: readonly ConversationOutlineItem[]
+    readonly sessionStatus: SessionStatusData | null
     readonly meta: SessionEntityMetaSnapshot
     readonly latestUsage: LatestUsage | null
     readonly latestGoal: ThreadGoal | null
@@ -96,9 +119,12 @@ const EMPTY_BLOCKS: readonly ChatBlock[] = Object.freeze([])
 const EMPTY_BY_ID: ChatBlocksById = new Map()
 const EMPTY_VISIBLE_BLOCKS: readonly VisibleChatBlock[] = Object.freeze([])
 const EMPTY_VISIBLE_BY_ID: ReadonlyMap<string, VisibleChatBlock> = new Map()
+const EMPTY_BLOCKS_WITH_THREAD_IDS: readonly BlockWithThreadMessageId[] = Object.freeze([])
+const EMPTY_TURNS_BY_ID: ReadonlyMap<string, TurnEntitySnapshot> = new Map()
 const EMPTY_VISIBLE_MESSAGES: readonly DecryptedMessage[] = Object.freeze([])
 const EMPTY_NORMALIZED_MESSAGES: readonly NormalizedMessage[] = Object.freeze([])
 const EMPTY_QUEUED_MESSAGES: readonly DecryptedMessage[] = Object.freeze([])
+const EMPTY_OUTLINE_ITEMS: readonly ConversationOutlineItem[] = Object.freeze([])
 const EMPTY_META: SessionEntityMetaSnapshot = Object.freeze({
     latestUsage: null,
     contextSize: undefined,
@@ -108,6 +134,8 @@ const EMPTY_META: SessionEntityMetaSnapshot = Object.freeze({
     activityLabel: null,
     isSending: false,
     queuedMessages: EMPTY_QUEUED_MESSAGES,
+    outlineItems: EMPTY_OUTLINE_ITEMS,
+    sessionStatus: null,
 })
 
 function isSilentGoalCommandText(text: string): boolean {
@@ -507,6 +535,8 @@ function isSameMeta(a: SessionEntityMetaSnapshot, b: SessionEntityMetaSnapshot):
         && a.isSending === b.isSending
         && isSameLatestUsage(a.latestUsage, b.latestUsage)
         && isSameArrayElements(a.queuedMessages, b.queuedMessages)
+        && isSameArrayElements(a.outlineItems, b.outlineItems)
+        && a.sessionStatus === b.sessionStatus
 }
 
 function isUninvokedScheduledMessage(message: DecryptedMessage): boolean {
@@ -548,11 +578,16 @@ export function findActiveToolActivityLabel(blocks: readonly ChatBlock[]): strin
 
 export class SessionEntityStore {
     private normalizedCache = new WeakMap<DecryptedMessage, NormalizedMessage | null>()
+    private threadIdWrapperCache = new WeakMap<VisibleChatBlock, BlockWithThreadMessageId>()
+    private turnPartCache = new WeakMap<VisibleChatBlock, TurnEntityContentPart>()
     private settledPrefixCache: SettledPrefixCache | null = null
     private prevTailById: ChatBlocksById = new Map()
     private prevTailToolGroups: ToolGroupBlock[] = []
     private prevFullToolGroups: ToolGroupBlock[] = []
+    private prevOutlineItems: ConversationOutlineItem[] = []
+    private prevSessionStatus: SessionStatusData | null = null
     private lastInput: SessionEntityStoreInput | null = null
+    private pendingNotificationBaseline: SessionEntityStoreSnapshot | null = null
 
     private snapshot: SessionEntityStoreSnapshot = {
         sessionId: null,
@@ -564,6 +599,10 @@ export class SessionEntityStore {
         byId: EMPTY_BY_ID,
         visibleBlocks: EMPTY_VISIBLE_BLOCKS,
         visibleById: EMPTY_VISIBLE_BY_ID,
+        blocksWithThreadIds: EMPTY_BLOCKS_WITH_THREAD_IDS,
+        turnsById: EMPTY_TURNS_BY_ID,
+        outlineItems: EMPTY_OUTLINE_ITEMS,
+        sessionStatus: null,
         meta: EMPTY_META,
         latestUsage: null,
         latestGoal: null,
@@ -594,6 +633,9 @@ export class SessionEntityStore {
 
     getBlockEntity = (id: string): ChatBlock | undefined => {
         return this.snapshot.byId.get(id)
+    }
+    getTurnEntity = (id: string): TurnEntitySnapshot | undefined => {
+        return this.snapshot.turnsById.get(id)
     }
 
     getMeta = (): SessionEntityMetaSnapshot => {
@@ -641,10 +683,15 @@ export class SessionEntityStore {
     reset(sessionId: string | null = null): void {
         const prevSnapshot = this.snapshot
         this.settledPrefixCache = null
+        this.threadIdWrapperCache = new WeakMap()
+        this.turnPartCache = new WeakMap()
         this.prevTailById = new Map()
         this.prevTailToolGroups = []
         this.prevFullToolGroups = []
+        this.prevOutlineItems = []
+        this.prevSessionStatus = null
         this.lastInput = null
+        this.pendingNotificationBaseline = null
         this.snapshot = {
             sessionId,
             visibleMessages: EMPTY_VISIBLE_MESSAGES,
@@ -655,6 +702,10 @@ export class SessionEntityStore {
             byId: EMPTY_BY_ID,
             visibleBlocks: EMPTY_VISIBLE_BLOCKS,
             visibleById: EMPTY_VISIBLE_BY_ID,
+            blocksWithThreadIds: EMPTY_BLOCKS_WITH_THREAD_IDS,
+            turnsById: EMPTY_TURNS_BY_ID,
+            outlineItems: EMPTY_OUTLINE_ITEMS,
+            sessionStatus: null,
             meta: EMPTY_META,
             latestUsage: null,
             latestGoal: null,
@@ -688,13 +739,22 @@ export class SessionEntityStore {
         return result
     }
 
-    reconcileInput(input: SessionEntityStoreInput): SessionEntityStoreSnapshot {
-        if (this.snapshot.sessionId !== input.sessionId) {
+    reconcileInput(
+        input: SessionEntityStoreInput,
+        options?: { deferNotifications?: boolean }
+    ): SessionEntityStoreSnapshot {
+        const sessionChanged = this.snapshot.sessionId !== input.sessionId
+        if (sessionChanged) {
             this.settledPrefixCache = null
+            this.threadIdWrapperCache = new WeakMap()
+            this.turnPartCache = new WeakMap()
             this.prevTailById = new Map()
             this.prevTailToolGroups = []
             this.prevFullToolGroups = []
+            this.prevOutlineItems = []
+            this.prevSessionStatus = null
             this.lastInput = null
+            this.pendingNotificationBaseline = null
         }
 
         const prevInput = this.lastInput
@@ -705,6 +765,7 @@ export class SessionEntityStore {
             && prevInput.goalSourceMessages === input.goalSourceMessages
             && prevInput.agentState === input.agentState
             && prevInput.metadata === input.metadata
+            && prevInput.backgroundTaskCount === input.backgroundTaskCount
             && prevInput.hasMoreMessages === input.hasMoreMessages
             && prevInput.codexExplorationCollapsed === input.codexExplorationCollapsed
         ) {
@@ -746,12 +807,15 @@ export class SessionEntityStore {
         let reductionMode: 'incremental-tail' | 'full'
         let splitIndex: number
 
+        const hasMoreMessages = input.hasMoreMessages ?? false
+        const codexExplorationCollapsed = input.codexExplorationCollapsed ?? false
+
         if (
             canReuseSettledPrefix(
                 normalized,
                 input.agentState,
-                input.hasMoreMessages,
-                input.codexExplorationCollapsed,
+                hasMoreMessages,
+                codexExplorationCollapsed,
                 this.settledPrefixCache
             )
         ) {
@@ -769,7 +833,7 @@ export class SessionEntityStore {
             const tailVisible = buildVisibleChatBlocks(tailReconciled.blocks, {
                 hasMoreMessages: false,
                 previousGroups: this.prevTailToolGroups,
-                codexExplorationCollapsed: input.codexExplorationCollapsed,
+                codexExplorationCollapsed,
             })
             this.prevTailToolGroups = tailVisible.filter(isToolGroupBlock)
 
@@ -805,9 +869,9 @@ export class SessionEntityStore {
             reconciledById = fullReconciled.byId
 
             const fullVisible = buildVisibleChatBlocks(reconciledBlocks, {
-                hasMoreMessages: input.hasMoreMessages,
+                hasMoreMessages,
                 previousGroups: this.prevFullToolGroups,
-                codexExplorationCollapsed: input.codexExplorationCollapsed,
+                codexExplorationCollapsed,
             })
             const allGroups = fullVisible.filter(isToolGroupBlock)
             this.prevFullToolGroups = allGroups
@@ -823,8 +887,8 @@ export class SessionEntityStore {
                 splitIndex,
                 reconciledBlocks,
                 input.agentState,
-                input.hasMoreMessages,
-                input.codexExplorationCollapsed,
+                hasMoreMessages,
+                codexExplorationCollapsed,
                 allGroups
             )
             if (this.settledPrefixCache) {
@@ -862,6 +926,31 @@ export class SessionEntityStore {
             visibleById.set(block.id, block)
         }
 
+        const canReuseTurnEntities =
+            !sessionChanged
+            && stableVisibleBlocks === prevSnapshot.visibleBlocks
+            && input.metadata?.flavor === prevInput?.metadata?.flavor
+        const blocksWithThreadIds = canReuseTurnEntities
+            ? prevSnapshot.blocksWithThreadIds
+            : assignThreadMessageIdsWithStableWrappers(
+                hoistMidTurnTitleEvents(
+                    filterVisibleBlocksForFlavor(stableVisibleBlocks, input.metadata?.flavor)
+                ),
+                this.threadIdWrapperCache
+            )
+        const turnsById = canReuseTurnEntities
+            ? prevSnapshot.turnsById
+            : buildTurnEntitiesById(
+                blocksWithThreadIds,
+                prevSnapshot.turnsById,
+                this.turnPartCache
+            )
+
+        const outlineItems = (!sessionChanged && stableBlocks === prevSnapshot.blocks)
+            ? prevSnapshot.outlineItems
+            : buildConversationOutline([...stableBlocks], this.prevOutlineItems)
+        this.prevOutlineItems = [...outlineItems]
+
         const timelineIndex = buildTimelineIndex(stableVisibleBlocks, prevSnapshot.timelineIndex)
         const timelineStructureKey = timelineIndex === prevSnapshot.timelineIndex
             ? prevSnapshot.timelineStructureKey
@@ -879,6 +968,20 @@ export class SessionEntityStore {
         const hasRunningChildAgent = hasAbortableAgentRun(stableBlocks)
         const activityLabel = findActiveToolActivityLabel(stableBlocks)
 
+        const rawSessionStatus = buildSessionStatusData({
+            goal: stableLatestGoal,
+            blocks: [...stableBlocks],
+            messages: [...stableNormalizedMessages],
+            backgroundTaskCount: input.backgroundTaskCount,
+            includeSubagents: false,
+        })
+        const sessionStatus = (
+            this.prevSessionStatus && areSessionStatusDataEqual(this.prevSessionStatus, rawSessionStatus)
+        )
+            ? this.prevSessionStatus
+            : rawSessionStatus
+        this.prevSessionStatus = sessionStatus
+
         const candidateMeta: SessionEntityMetaSnapshot = {
             latestUsage: stableLatestUsage,
             contextSize,
@@ -888,6 +991,8 @@ export class SessionEntityStore {
             activityLabel,
             isSending,
             queuedMessages: stableQueuedMessages,
+            outlineItems,
+            sessionStatus,
         }
         const meta = isSameMeta(candidateMeta, prevSnapshot.meta)
             ? prevSnapshot.meta
@@ -903,6 +1008,10 @@ export class SessionEntityStore {
             byId: reconciledById,
             visibleBlocks: stableVisibleBlocks,
             visibleById,
+            blocksWithThreadIds,
+            turnsById,
+            outlineItems: meta.outlineItems,
+            sessionStatus: meta.sessionStatus,
             meta,
             latestUsage: meta.latestUsage,
             latestGoal: meta.latestGoal,
@@ -914,8 +1023,23 @@ export class SessionEntityStore {
             splitIndex,
         }
         this.snapshot = nextSnapshot
-        this.notifyChangedListeners(prevSnapshot, nextSnapshot)
+        if (options?.deferNotifications) {
+            if (!this.pendingNotificationBaseline) {
+                this.pendingNotificationBaseline = prevSnapshot
+            }
+        } else {
+            const baseline = this.pendingNotificationBaseline ?? prevSnapshot
+            this.pendingNotificationBaseline = null
+            this.notifyChangedListeners(baseline, nextSnapshot)
+        }
         return nextSnapshot
+    }
+
+    flushNotifications(): void {
+        const baseline = this.pendingNotificationBaseline
+        if (!baseline) return
+        this.pendingNotificationBaseline = null
+        this.notifyChangedListeners(baseline, this.snapshot)
     }
 
     private tryBuildSettledPrefixCache(
@@ -1034,7 +1158,13 @@ export class SessionEntityStore {
                 const nextVisible = next.visibleById.get(id)
                 const prevBlock = prev.byId.get(id)
                 const nextBlock = next.byId.get(id)
-                if (prevVisible !== nextVisible || prevBlock !== nextBlock) {
+                const prevTurn = prev.turnsById.get(id)
+                const nextTurn = next.turnsById.get(id)
+                if (
+                    prevVisible !== nextVisible
+                    || prevBlock !== nextBlock
+                    || prevTurn !== nextTurn
+                ) {
                     changedEntityIds.add(id)
                 }
             }

@@ -19,6 +19,7 @@ import { isObject } from '@hapi/protocol'
 import type { SessionMetadataSummary, TodoItem } from '@/types/api'
 export type TurnContentPart = {
     type: string
+    blockId?: string
     text?: string
     phase?: AssistantContentPhase
     toolCallId?: string
@@ -32,6 +33,7 @@ export type TurnContentPart = {
 export type TurnTextRow = {
     kind: 'text'
     key: string
+    blockId?: string
     text: string
     /** Tool commentary stays inside the fold. The answer after the last tool does not. */
     trailing: boolean
@@ -53,6 +55,7 @@ export type TurnToolRow = {
 export type TurnReasoningRow = {
     kind: 'reasoning'
     key: string
+    blockId?: string
     text: string
 }
 
@@ -425,11 +428,13 @@ function areTurnRowsEqual(a: TurnRow, b: TurnRow): boolean {
     if (a === b) return true
     if (a.kind !== b.kind || a.key !== b.key) return false
     switch (a.kind) {
-        case 'reasoning':
-            return a.text === (b as TurnReasoningRow).text
+        case 'reasoning': {
+            const other = b as TurnReasoningRow
+            return a.text === other.text && a.blockId === other.blockId
+        }
         case 'text': {
             const other = b as TurnTextRow
-            return a.text === other.text && a.trailing === other.trailing && a.phase === other.phase
+            return a.text === other.text && a.trailing === other.trailing && a.phase === other.phase && a.blockId === other.blockId
         }
         case 'tool': {
             const other = b as TurnToolRow
@@ -470,7 +475,12 @@ export function partitionTurn(
         if (titled) titles.push(titled)
 
         if (part.type === 'reasoning' && typeof part.text === 'string' && part.text.trim()) {
-            rows.push({ kind: 'reasoning', key: `reasoning:${index}`, text: part.text.trim() })
+            rows.push({
+                kind: 'reasoning',
+                key: `reasoning:${index}`,
+                text: part.text.trim(),
+                ...(part.blockId !== undefined ? { blockId: part.blockId } : {}),
+            })
             return
         }
         if (part.type === 'text' && typeof part.text === 'string' && part.text.trim()) {
@@ -481,6 +491,7 @@ export function partitionTurn(
                 text: part.text.trim(),
                 trailing: false,
                 ...(phase !== undefined ? { phase } : {}),
+                ...(part.blockId !== undefined ? { blockId: part.blockId } : {}),
             })
             return
         }

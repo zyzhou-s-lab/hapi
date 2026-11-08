@@ -635,5 +635,19 @@ describe('HappyChatContext split and subscription boundaries', () => {
         )
         expect(staticCommits).toBe(2)
         expect(staticPlusHistoryCommits).toBe(3)
+
+        // Switching sessionId immediately invalidates previous session metadata cache
+        rerender(
+            <HappyChatProvider
+                value={makeValue({
+                    sessionId: 'session-next',
+                    metadata: null,
+                })}
+            >
+                <StaticConsumer />
+                <StaticAndHistoryConsumer />
+            </HappyChatProvider>
+        )
+        expect(staticCommits).toBe(3)
     })
 })

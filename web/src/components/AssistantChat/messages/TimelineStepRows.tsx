@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import {
     describeCoalescedTurnStep,
     describeTurnToolStep,
@@ -21,6 +21,7 @@ import type { ChecklistItem } from '@/components/ToolCard/checklist'
 import type { ToolCallBlock } from '@/chat/types'
 import { useOptionalHappyChatStaticContext } from '@/components/AssistantChat/context'
 import { SmallChevron } from '@/components/ui/card'
+import { useOptionalSessionBlockEntity, useOptionalSessionVisibleEntity } from '@/hooks/useSessionEntityStore'
 import { cn } from '@/lib/utils'
 
 export { SmallChevron }
@@ -435,7 +436,7 @@ export function RailInlineActiveSpinner(props: {
     )
 }
 
-export function TimelineThoughtRow(props: {
+export const TimelineThoughtRow = memo(function TimelineThoughtRow(props: {
     row: TurnReasoningRow
     isActiveStreaming: boolean
     suppressRunningShimmer?: boolean
@@ -443,6 +444,10 @@ export function TimelineThoughtRow(props: {
     lang: 'en' | 'zh-CN'
     accentColor?: string
 }) {
+    const entity = useOptionalSessionVisibleEntity(props.row.blockId)
+    const reasoningText = entity && entity.kind === 'agent-reasoning'
+        ? entity.text.trim()
+        : props.row.text
     const [open, setOpen] = useState(props.defaultExpanded)
     const [hasOpened, setHasOpened] = useState(props.defaultExpanded)
     useEffect(() => {
@@ -454,10 +459,9 @@ export function TimelineThoughtRow(props: {
         ? (props.isActiveStreaming ? '正在思考...' : '思考过程')
         : (props.isActiveStreaming ? 'Thinking...' : 'Thought')
     const thoughtSummary = useMemo(
-        () => (!props.isActiveStreaming ? extractThoughtSummary(props.row.text) : ''),
-        [props.isActiveStreaming, props.row.text]
+        () => (!props.isActiveStreaming ? extractThoughtSummary(reasoningText) : ''),
+        [props.isActiveStreaming, reasoningText]
     )
-
     return (
         <div data-hapi-share-exclude="true" className="relative py-0.5">
             <button
@@ -501,16 +505,16 @@ export function TimelineThoughtRow(props: {
                 <div className="turn-collapsible-body">
                     {open || hasOpened ? (
                         <div className="ml-2 mt-1 mb-1.5 border-l border-[var(--app-border)]/70 pl-3 text-[13px] leading-relaxed text-[var(--app-hint)] whitespace-pre-wrap">
-                            {props.row.text}
+                            {reasoningText}
                         </div>
                     ) : null}
                 </div>
             </div>
         </div>
     )
-}
+})
 
-export function TimelineToolStepRow(props: {
+export const TimelineToolStepRow = memo(function TimelineToolStepRow(props: {
     row: TurnToolRow
     rowIndex?: number
     defaultExpanded: boolean
@@ -521,6 +525,14 @@ export function TimelineToolStepRow(props: {
     suppressRunningShimmer?: boolean
 }) {
     const ctx = useOptionalHappyChatStaticContext()
+    const blockEntity = useOptionalSessionBlockEntity(props.row.block.id)
+    const liveToolBlock = blockEntity && blockEntity.kind === 'tool-call'
+        ? blockEntity
+        : props.row.block
+    const effectiveRow = useMemo(
+        () => (liveToolBlock === props.row.block ? props.row : { ...props.row, block: liveToolBlock }),
+        [liveToolBlock, props.row]
+    )
     const [open, setOpen] = useState(props.defaultExpanded)
     const [hasOpened, setHasOpened] = useState(props.defaultExpanded)
     useEffect(() => {
@@ -529,14 +541,13 @@ export function TimelineToolStepRow(props: {
     }, [props.defaultExpanded])
 
     const descriptor = useMemo(
-        () => describeTurnToolStep(props.row, props.lang),
-        [props.row, props.lang]
+        () => describeTurnToolStep(effectiveRow, props.lang),
+        [effectiveRow, props.lang]
     )
 
-    const asks = isAskUserQuestionToolName(props.row.block.tool.name)
-    const requestsInput = isRequestUserInputToolName(props.row.block.tool.name)
-    const interactive = Boolean((asks || requestsInput) && props.row.permission && ctx)
-
+    const asks = isAskUserQuestionToolName(effectiveRow.block.tool.name)
+    const requestsInput = isRequestUserInputToolName(effectiveRow.block.tool.name)
+    const interactive = Boolean((asks || requestsInput) && effectiveRow.permission && ctx)
     return (
         <div data-hapi-share-exclude="true" className="relative py-0.5">
             {props.showInlineRailSpinner && descriptor.isRunning && !props.suppressRunningShimmer ? (
@@ -559,13 +570,13 @@ export function TimelineToolStepRow(props: {
                 }}
                 className="group flex w-full items-center gap-1.5 rounded-md px-1.5 py-1 text-left text-[13.5px] leading-5 transition-colors hover:bg-[var(--app-subtle-bg)]/60"
             >
-                {props.row.error ? (
+                {effectiveRow.error ? (
                     <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-[var(--app-badge-error-text)]" />
                 ) : null}
                 <span
                     className={cn(
                         'shrink-0 transition-opacity duration-200',
-                        props.row.error
+                        effectiveRow.error
                             ? 'text-[var(--app-badge-error-text)]'
                             : descriptor.isRunning && !props.suppressRunningShimmer
                                 ? 'turn-text-shimmer font-medium'
@@ -605,7 +616,7 @@ export function TimelineToolStepRow(props: {
                         <AskUserQuestionFooter
                             api={ctx.api}
                             sessionId={ctx.sessionId}
-                            tool={props.row.block.tool}
+                            tool={effectiveRow.block.tool}
                             disabled={ctx.disabled}
                             onDone={ctx.onRefresh}
                         />
@@ -613,7 +624,7 @@ export function TimelineToolStepRow(props: {
                         <RequestUserInputFooter
                             api={ctx.api}
                             sessionId={ctx.sessionId}
-                            tool={props.row.block.tool}
+                            tool={effectiveRow.block.tool}
                             disabled={ctx.disabled}
                             onDone={ctx.onRefresh}
                         />
@@ -629,13 +640,13 @@ export function TimelineToolStepRow(props: {
                     {open || hasOpened ? <StepInlinePreviewCard preview={descriptor.preview} /> : null}
                 </div>
             </div>
-            {props.row.permission && !interactive && ctx ? (
+            {effectiveRow.permission && !interactive && ctx ? (
                 <div className="mt-1.5 mb-2 pl-2">
                     <PermissionFooter
                         api={ctx.api}
                         sessionId={ctx.sessionId}
                         metadata={ctx.metadata}
-                        tool={props.row.block.tool}
+                        tool={effectiveRow.block.tool}
                         disabled={ctx.disabled}
                         onDone={ctx.onRefresh}
                     />
@@ -643,9 +654,9 @@ export function TimelineToolStepRow(props: {
             ) : null}
         </div>
     )
-}
+})
 
-export function TimelineCoalescedStepRow(props: {
+export const TimelineCoalescedStepRow = memo(function TimelineCoalescedStepRow(props: {
     row: TurnCoalescedRow
     lang: 'en' | 'zh-CN'
     accentColor?: string
@@ -726,7 +737,7 @@ export function TimelineCoalescedStepRow(props: {
             </div>
         </div>
     )
-}
+})
 
 export function renderSimpleMarkdownText(text: string): React.ReactNode {
     const tokens = text.split(/(\*\*[^*]+\*\*|`[^`]+`)/g)

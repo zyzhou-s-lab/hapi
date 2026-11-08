@@ -6,7 +6,6 @@ import { TurnAnswerSection } from '@/components/AssistantChat/messages/TurnAnswe
 import {
     TurnActivityIndicator,
     TurnActivitySparkleIcon,
-    renderSimpleMarkdownText,
     type TurnActivityIndicatorVariant,
 } from '@/components/AssistantChat/messages/TimelineStepRows'
 import {
@@ -114,18 +113,11 @@ export function TimelineTurnBlockView(props: {
     if (!props.partition.hasActivity && !isInitialStreamingWait) {
         if (subturn.answerRows.length === 0) return null
         return (
-            <div className="my-2 space-y-3">
-                {subturn.answerRows.map((row) => {
-                    const isRowStreaming = props.streaming && row === subturn.lastRow
-                    return (
-                        <div key={row.key} className="text-[15px] leading-relaxed text-[var(--app-fg)]">
-                            {props.renderTrailingText
-                                ? props.renderTrailingText(row.text, isRowStreaming)
-                                : renderSimpleMarkdownText(row.text)}
-                        </div>
-                    )
-                })}
-            </div>
+            <TurnAnswerSection
+                subturn={subturn}
+                streaming={props.streaming}
+                renderTrailingText={props.renderTrailingText}
+            />
         )
     }
 
