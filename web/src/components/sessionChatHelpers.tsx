@@ -1,18 +1,21 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { flushSync } from 'react-dom'
 import { useAui } from '@assistant-ui/react'
 import type { ApiClient } from '@/api/client'
 import type { AttachmentMetadata, DecryptedMessage, PiModelSummary, Session } from '@/types/api'
 import type { ModelRefusalFallbackEvent, NormalizedMessage } from '@/chat/types'
+import type { VisibleChatBlock } from '@/chat/toolGroups'
 import {
     buildGoalStateMessages,
     createSessionEntityStore,
     hasAbortableAgentRun,
     type SessionEntityStore,
+    type SessionEntityStoreSnapshot,
 } from '@/chat/store/sessionEntityStore'
 import { useUnseenBlockCount } from '@/hooks/useUnseenBlockCount'
 import { useCodexExplorationCollapse } from '@/hooks/useCodexExplorationCollapse'
-import { findLatestCompletedBoundaryId } from '@/lib/assistant-runtime'
+import { findLatestCompletedBoundaryId, type BlockWithThreadMessageId } from '@/lib/assistant-runtime'
+import { getMessageWindowState, subscribeMessageWindow } from '@/lib/message-window-store'
 import { useToast } from '@/lib/toast-context'
 import { resolveStructureMessagesVersion } from '@/components/AssistantChat/threadScrollHelpers'
 import { useTranslation } from '@/lib/use-translation'
@@ -423,9 +426,41 @@ export function chatComposerGridPlacement(input: {
     }
 }
 
+const EMPTY_DEC_MESSAGES: DecryptedMessage[] = []
+
+function getLastEventMessageId(messages: readonly NormalizedMessage[]): string | null {
+    for (let i = messages.length - 1; i >= 0; i -= 1) {
+        const msg = messages[i]
+        if (msg?.role === 'event') {
+            return msg.id
+        }
+    }
+    return null
+}
+
+type StructuralPipelineSnapshot = {
+    sessionId: string | null
+    rawSnapshot: SessionEntityStoreSnapshot
+    visibleMessages: readonly DecryptedMessage[]
+    normalizedMessages: readonly NormalizedMessage[]
+    visibleBlocks: readonly VisibleChatBlock[]
+    blocksWithThreadIds: readonly BlockWithThreadMessageId[]
+    turnsById: SessionEntityStoreSnapshot['turnsById']
+    timelineIndex: SessionEntityStoreSnapshot['timelineIndex']
+    timelineStructureKey: string
+    structureMessagesVersion: number
+    historyVersion: number
+    hasRunningChildAgent: boolean
+    activityLabel: string | null
+    sessionStatus: SessionEntityStoreSnapshot['sessionStatus']
+    outlineItems: SessionEntityStoreSnapshot['outlineItems']
+    hasAbortableRun: boolean
+    lastEventMessageId: string | null
+}
+
 export type UseSessionChatPipelineParams = {
     session: Session
-    messages: DecryptedMessage[]
+    messages?: DecryptedMessage[]
     hasMoreMessages: boolean
     viewMode: 'tail' | 'history'
     tailRevision: number
@@ -450,6 +485,7 @@ export function useSessionChatPipeline(props: UseSessionChatPipelineParams & {
         historyVersion: 0,
         rawMessagesCount: 0,
     })
+    const prevStructuralRef = useRef<StructuralPipelineSnapshot | null>(null)
     const [rememberedTailBoundary, setRememberedTailBoundary] = useState<{
         id: string | null
         tailRevision: number
@@ -460,71 +496,176 @@ export function useSessionChatPipeline(props: UseSessionChatPipelineParams & {
         onResetSessionViewRef.current?.()
     }, [props.session.id])
 
-    const snapshot = useMemo(
-        () => entityStore.reconcileInput({
-            sessionId: props.session.id,
-            messages: props.messages,
-            agentState: props.session.agentState,
-            metadata: props.session.metadata,
-            backgroundTaskCount: props.session.backgroundTaskCount,
-            hasMoreMessages: props.hasMoreMessages,
-            codexExplorationCollapsed,
-        }, { deferNotifications: true }),
-        [
-            codexExplorationCollapsed,
-            entityStore,
-            props.hasMoreMessages,
-            props.messages,
-            props.session.agentState,
-            props.session.backgroundTaskCount,
-            props.session.id,
-            props.session.metadata,
-        ]
+    const directWindowState = props.messages === undefined
+        ? getMessageWindowState(props.session.id)
+        : null
+    const renderMessages = props.messages ?? directWindowState?.messages ?? EMPTY_DEC_MESSAGES
+    const renderHasMore = props.messages !== undefined
+        ? props.hasMoreMessages
+        : (directWindowState?.hasMore ?? props.hasMoreMessages)
+
+    const latestSessionInputRef = useRef({
+        sessionId: props.session.id,
+        agentState: props.session.agentState,
+        metadata: props.session.metadata,
+        backgroundTaskCount: props.session.backgroundTaskCount,
+        codexExplorationCollapsed,
+    })
+    latestSessionInputRef.current = {
+        sessionId: props.session.id,
+        agentState: props.session.agentState,
+        metadata: props.session.metadata,
+        backgroundTaskCount: props.session.backgroundTaskCount,
+        codexExplorationCollapsed,
+    }
+
+    entityStore.reconcileInput({
+        sessionId: props.session.id,
+        messages: renderMessages,
+        agentState: props.session.agentState,
+        metadata: props.session.metadata,
+        backgroundTaskCount: props.session.backgroundTaskCount,
+        hasMoreMessages: renderHasMore,
+        codexExplorationCollapsed,
+    }, { deferNotifications: true })
+
+    useEffect(() => {
+        entityStore.flushNotifications()
+    })
+
+    useEffect(() => {
+        if (props.messages !== undefined) {
+            return
+        }
+        const sessionId = props.session.id
+        const syncFromWindow = () => {
+            const latest = latestSessionInputRef.current
+            if (latest.sessionId !== sessionId) {
+                return
+            }
+            const currentWindow = getMessageWindowState(sessionId)
+            entityStore.reconcileInput({
+                sessionId,
+                messages: currentWindow.messages,
+                agentState: latest.agentState,
+                metadata: latest.metadata,
+                backgroundTaskCount: latest.backgroundTaskCount,
+                hasMoreMessages: currentWindow.hasMore,
+                codexExplorationCollapsed: latest.codexExplorationCollapsed,
+            })
+        }
+        syncFromWindow()
+        return subscribeMessageWindow(sessionId, syncFromWindow)
+    }, [entityStore, props.messages, props.session.id])
+
+    const propsMessagesDefined = props.messages !== undefined
+    const propsMessagesVersion = props.messagesVersion
+    const propsHistoryVersion = props.historyVersion
+    const currentSessionId = props.session.id
+
+    const getStructuralPipelineSnapshot = useCallback((): StructuralPipelineSnapshot => {
+        const snap = entityStore.getSnapshot()
+        const liveWindow = !propsMessagesDefined
+            ? getMessageWindowState(currentSessionId)
+            : null
+        const rawVersion = propsMessagesDefined
+            ? (propsMessagesVersion ?? 0)
+            : (propsMessagesVersion ?? liveWindow?.messagesVersion ?? 0)
+        const historyVer = propsMessagesDefined
+            ? (propsHistoryVersion ?? 0)
+            : (propsHistoryVersion ?? liveWindow?.historyVersion ?? 0)
+        const hasAbortableRun = hasAbortableAgentRun(snap.blocks)
+        const lastEventMessageId = getLastEventMessageId(snap.normalizedMessages)
+        const prev = prevStructuralRef.current
+
+        if (
+            prev !== null
+            && prev.sessionId === snap.sessionId
+            && prev.blocksWithThreadIds === snap.blocksWithThreadIds
+            && prev.turnsById === snap.turnsById
+            && prev.timelineStructureKey === snap.timelineStructureKey
+            && prev.historyVersion === historyVer
+            && (prev.visibleMessages.length === 0) === (snap.visibleMessages.length === 0)
+            && prev.sessionStatus === snap.sessionStatus
+            && prev.hasRunningChildAgent === snap.hasRunningChildAgent
+            && prev.activityLabel === snap.activityLabel
+            && prev.outlineItems === snap.outlineItems
+            && prev.hasAbortableRun === hasAbortableRun
+            && prev.lastEventMessageId === lastEventMessageId
+        ) {
+            return prev
+        }
+
+        const tracker = structureVersionTrackerRef.current
+        const sameSession = tracker.sessionId === (snap.sessionId ?? currentSessionId)
+        const nextStructureVersion = resolveStructureMessagesVersion({
+            messagesVersion: rawVersion,
+            previousStructureVersion: sameSession ? tracker.structureVersion : 0,
+            previousStructureKey: sameSession ? tracker.structureKey : '',
+            nextStructureKey: snap.timelineStructureKey,
+            previousHistoryVersion: sameSession ? tracker.historyVersion : 0,
+            nextHistoryVersion: historyVer,
+            previousRawMessagesCount: sameSession ? tracker.rawMessagesCount : 0,
+            nextRawMessagesCount: snap.visibleMessages.length,
+        })
+        structureVersionTrackerRef.current = {
+            sessionId: snap.sessionId ?? currentSessionId,
+            structureVersion: nextStructureVersion,
+            structureKey: snap.timelineStructureKey,
+            historyVersion: historyVer,
+            rawMessagesCount: snap.visibleMessages.length,
+        }
+
+        const nextStructural: StructuralPipelineSnapshot = {
+            sessionId: snap.sessionId,
+            rawSnapshot: snap,
+            visibleMessages: snap.visibleMessages,
+            normalizedMessages: snap.normalizedMessages,
+            visibleBlocks: snap.visibleBlocks,
+            blocksWithThreadIds: snap.blocksWithThreadIds,
+            turnsById: snap.turnsById,
+            timelineIndex: snap.timelineIndex,
+            timelineStructureKey: snap.timelineStructureKey,
+            structureMessagesVersion: nextStructureVersion,
+            historyVersion: historyVer,
+            hasRunningChildAgent: snap.hasRunningChildAgent,
+            activityLabel: snap.activityLabel,
+            sessionStatus: snap.sessionStatus,
+            outlineItems: snap.outlineItems,
+            hasAbortableRun,
+            lastEventMessageId,
+        }
+        prevStructuralRef.current = nextStructural
+        return nextStructural
+    }, [
+        currentSessionId,
+        entityStore,
+        propsHistoryVersion,
+        propsMessagesDefined,
+        propsMessagesVersion,
+    ])
+
+    const structuralSnapshot = useSyncExternalStore(
+        entityStore.subscribe,
+        getStructuralPipelineSnapshot,
+        getStructuralPipelineSnapshot
     )
 
     const {
+        rawSnapshot: snapshot,
         visibleMessages,
         normalizedMessages,
         visibleBlocks,
         blocksWithThreadIds,
         timelineIndex,
         timelineStructureKey,
+        structureMessagesVersion,
         hasRunningChildAgent,
         activityLabel,
         sessionStatus,
         outlineItems,
-    } = snapshot
+    } = structuralSnapshot
 
-    const structureMessagesVersion = useMemo(() => {
-        const rawVersion = props.messagesVersion ?? 0
-        const historyVer = props.historyVersion ?? 0
-        const prev = structureVersionTrackerRef.current
-        const sameSession = prev.sessionId === props.session.id
-        const nextVersion = resolveStructureMessagesVersion({
-            messagesVersion: rawVersion,
-            previousStructureVersion: sameSession ? prev.structureVersion : 0,
-            previousStructureKey: sameSession ? prev.structureKey : '',
-            nextStructureKey: timelineStructureKey,
-            previousHistoryVersion: sameSession ? prev.historyVersion : 0,
-            nextHistoryVersion: historyVer,
-            previousRawMessagesCount: sameSession ? prev.rawMessagesCount : 0,
-            nextRawMessagesCount: visibleMessages.length,
-        })
-        structureVersionTrackerRef.current = {
-            sessionId: props.session.id,
-            structureVersion: nextVersion,
-            structureKey: timelineStructureKey,
-            historyVersion: historyVer,
-            rawMessagesCount: visibleMessages.length,
-        }
-        return nextVersion
-    }, [
-        props.historyVersion,
-        props.messagesVersion,
-        props.session.id,
-        timelineStructureKey,
-        visibleMessages.length,
-    ])
     const reduced = useMemo(
         () => ({
             blocks: snapshot.blocks,
@@ -571,9 +712,16 @@ export function useSessionChatPipeline(props: UseSessionChatPipelineParams & {
         return findLatestCompletedBoundaryId(
             visibleBlocks,
             props.session.thinking,
-            props.session.activeTurnStartedAt ?? null
+            props.session.activeTurnStartedAt ?? null,
+            blocksWithThreadIds
         )
-    }, [props.viewMode, props.session.activeTurnStartedAt, props.session.thinking, visibleBlocks])
+    }, [
+        blocksWithThreadIds,
+        props.viewMode,
+        props.session.activeTurnStartedAt,
+        props.session.thinking,
+        visibleBlocks,
+    ])
 
     useEffect(() => {
         if (props.viewMode !== 'tail') return

@@ -27,6 +27,8 @@ import { reconcileChatBlocks } from '../src/chat/reconcile'
 import { buildVisibleChatBlocks } from '../src/chat/toolGroups'
 import type { ChatBlock } from '../src/chat/types'
 import { useHappyRuntime } from '../src/lib/assistant-runtime'
+import { createSessionEntityStore } from '../src/chat/store/sessionEntityStore'
+import { SessionEntityStoreProvider, useOptionalSessionTurnEntity } from '../src/hooks/useSessionEntityStore'
 import type { ApiClient } from '../src/api/client'
 import type {
     ClaudeEffort,
@@ -238,6 +240,32 @@ function TailFixtureTurn(props: { index: number; partition: TurnPartition }) {
     )
 }
 
+const EntityStoreFixtureTurn = memo(function EntityStoreFixtureTurn(props: { turnId: string }) {
+    const turnEntity = useOptionalSessionTurnEntity(props.turnId)
+    const staticCtx = useOptionalHappyChatStaticContext()
+    const renderCountRef = useRef(0)
+    renderCountRef.current += 1
+
+    const partition = useMemo(
+        () => partitionTurn(turnEntity?.parts ?? [], staticCtx?.metadata ?? null),
+        [turnEntity?.parts, staticCtx?.metadata]
+    )
+
+    return (
+        <div
+            data-testid="fixture-entity-turn"
+            data-turn-render-count={String(renderCountRef.current)}
+        >
+            <TimelineTurnBlockView
+                partition={partition}
+                streaming={Boolean(turnEntity?.isStreaming)}
+                durationMs={400}
+                initiallyOpen={false}
+            />
+        </div>
+    )
+})
+
 function StreamingIsolationFixture() {
     const [todos, setTodos] = useState<TodoItem[]>([
         { id: 't1', content: 'Step 1: Static context setup', status: 'completed' },
@@ -246,6 +274,47 @@ function StreamingIsolationFixture() {
     const [sessionThinking, setSessionThinking] = useState(true)
     const [tick, setTick] = useState(0)
     const [lifecycleStep, setLifecycleStep] = useState<'default' | 'execution_only' | 'tool_running' | 'final_answer'>('default')
+    const entityDeltaCounterRef = useRef(0)
+    const { entityStore, entityTurnId } = useMemo(() => {
+        const store = createSessionEntityStore()
+        const userMsg: DecryptedMessage = {
+            id: 'u-e2e-stream',
+            seq: 1,
+            localId: null,
+            createdAt: 1000,
+            content: { role: 'user', content: { type: 'text', text: 'Stream via entity store' } },
+        }
+        const liveMsg: DecryptedMessage = {
+            id: 'a-e2e-stream',
+            seq: 2,
+            localId: null,
+            createdAt: 1100,
+            content: {
+                role: 'agent',
+                content: {
+                    type: 'codex',
+                    data: {
+                        type: 'message',
+                        id: 'stream-item-e2e',
+                        turn_id: 'turn-e2e',
+                        phase: 'final_answer',
+                        streamSnapshot: true,
+                        live: true,
+                        message: 'Entity leaf delta 0',
+                    },
+                },
+            },
+        }
+        const snap = store.reconcileInput({
+            sessionId: 'session-stream-iso',
+            messages: [userMsg, liveMsg],
+            agentState: null,
+            hasMoreMessages: false,
+            codexExplorationCollapsed: false,
+        })
+        const turnId = snap.blocksWithThreadIds.find((e) => e.block.kind === 'agent-text')!.threadMessageId
+        return { entityStore: store, entityTurnId: turnId }
+    }, [])
 
     const noopRefresh = useMemo(() => () => {}, [])
     const noopLoadOlder = useMemo(() => async () => 'terminal-stop' as const, [])
@@ -356,57 +425,107 @@ function StreamingIsolationFixture() {
     )
 
     return (
-        <HappyChatProvider value={providerValue}>
-            <div className="min-h-screen bg-[var(--app-bg)] p-6 text-[var(--app-fg)]" data-testid="streaming-isolation-fixture">
-                <div className="mx-auto max-w-3xl space-y-4">
-                    <div className="flex flex-wrap items-center gap-2">
-                        <button
-                            type="button"
-                            data-testid="advance-todo-tick"
-                            onClick={() => {
-                                const next = tick + 1
-                                setTick(next)
-                                setTodos([
-                                    { id: 't1', content: 'Step 1: Static context setup', status: 'completed' },
-                                    { id: 't2', content: `Step 2: Streaming tick ${next}`, status: 'in_progress' },
-                                ])
-                            }}
-                            className="rounded border border-[var(--app-border)] bg-[var(--app-subtle-bg)] px-3 py-1.5 text-xs font-medium"
-                        >
-                            Advance Streaming + Todo Tick ({tick})
-                        </button>
-                        <button
-                            type="button"
-                            data-testid="toggle-session-thinking"
-                            onClick={() => setSessionThinking((v) => !v)}
-                            className="rounded border border-[var(--app-border)] bg-[var(--app-subtle-bg)] px-3 py-1.5 text-xs font-medium"
-                        >
-                            Toggle Thinking ({String(sessionThinking)})
-                        </button>
-                        <button
-                            type="button"
-                            data-testid="advance-lifecycle-step"
-                            onClick={() => {
-                                setLifecycleStep((prev) => {
-                                    if (prev === 'default') return 'execution_only'
-                                    if (prev === 'execution_only') return 'tool_running'
-                                    if (prev === 'tool_running') return 'final_answer'
-                                    return 'default'
-                                })
-                            }}
-                            className="rounded border border-[var(--app-border)] bg-[var(--app-subtle-bg)] px-3 py-1.5 text-xs font-medium"
-                        >
-                            Lifecycle Step ({lifecycleStep})
-                        </button>
-                    </div>
+        <SessionEntityStoreProvider store={entityStore}>
+            <HappyChatProvider value={providerValue}>
+                <div className="min-h-screen bg-[var(--app-bg)] p-6 text-[var(--app-fg)]" data-testid="streaming-isolation-fixture">
+                    <div className="mx-auto max-w-3xl space-y-4">
+                        <div className="flex flex-wrap items-center gap-2">
+                            <button
+                                type="button"
+                                data-testid="advance-todo-tick"
+                                onClick={() => {
+                                    const next = tick + 1
+                                    setTick(next)
+                                    setTodos([
+                                        { id: 't1', content: 'Step 1: Static context setup', status: 'completed' },
+                                        { id: 't2', content: `Step 2: Streaming tick ${next}`, status: 'in_progress' },
+                                    ])
+                                }}
+                                className="rounded border border-[var(--app-border)] bg-[var(--app-subtle-bg)] px-3 py-1.5 text-xs font-medium"
+                            >
+                                Advance Streaming + Todo Tick ({tick})
+                            </button>
+                            <button
+                                type="button"
+                                data-testid="toggle-session-thinking"
+                                onClick={() => setSessionThinking((v) => !v)}
+                                className="rounded border border-[var(--app-border)] bg-[var(--app-subtle-bg)] px-3 py-1.5 text-xs font-medium"
+                            >
+                                Toggle Thinking ({String(sessionThinking)})
+                            </button>
+                            <button
+                                type="button"
+                                data-testid="advance-lifecycle-step"
+                                onClick={() => {
+                                    setLifecycleStep((prev) => {
+                                        if (prev === 'default') return 'execution_only'
+                                        if (prev === 'execution_only') return 'tool_running'
+                                        if (prev === 'tool_running') return 'final_answer'
+                                        return 'default'
+                                    })
+                                }}
+                                className="rounded border border-[var(--app-border)] bg-[var(--app-subtle-bg)] px-3 py-1.5 text-xs font-medium"
+                            >
+                                Lifecycle Step ({lifecycleStep})
+                            </button>
+                            <button
+                                type="button"
+                                data-testid="advance-entity-delta"
+                                onClick={() => {
+                                    entityDeltaCounterRef.current += 1
+                                    const nextDelta = entityDeltaCounterRef.current
+                                    const userMsg: DecryptedMessage = {
+                                        id: 'u-e2e-stream',
+                                        seq: 1,
+                                        localId: null,
+                                        createdAt: 1000,
+                                        content: { role: 'user', content: { type: 'text', text: 'Stream via entity store' } },
+                                    }
+                                    const liveMsg: DecryptedMessage = {
+                                        id: 'a-e2e-stream',
+                                        seq: 2,
+                                        localId: null,
+                                        createdAt: 1100,
+                                        content: {
+                                            role: 'agent',
+                                            content: {
+                                                type: 'codex',
+                                                data: {
+                                                    type: 'message',
+                                                    id: 'stream-item-e2e',
+                                                    turn_id: 'turn-e2e',
+                                                    phase: 'final_answer',
+                                                    streamSnapshot: true,
+                                                    live: true,
+                                                    message: `Entity leaf delta ${nextDelta}`,
+                                                },
+                                            },
+                                        },
+                                    }
+                                    entityStore.reconcileInput({
+                                        sessionId: 'session-stream-iso',
+                                        messages: [userMsg, liveMsg],
+                                        agentState: null,
+                                        hasMoreMessages: false,
+                                        codexExplorationCollapsed: false,
+                                    })
+                                    entityStore.flushNotifications()
+                                }}
+                                className="rounded border border-[var(--app-border)] bg-[var(--app-subtle-bg)] px-3 py-1.5 text-xs font-medium"
+                            >
+                                Advance Entity Leaf Delta
+                            </button>
+                        </div>
 
-                    {historicalPartitions.map((part, idx) => (
-                        <HistoricalFixtureTurn key={idx} index={idx} partition={part} />
-                    ))}
-                    <TailFixtureTurn index={5} partition={tailPartition} />
+                        {historicalPartitions.map((part, idx) => (
+                            <HistoricalFixtureTurn key={idx} index={idx} partition={part} />
+                        ))}
+                        <TailFixtureTurn index={5} partition={tailPartition} />
+                        <EntityStoreFixtureTurn turnId={entityTurnId} />
+                    </div>
                 </div>
-            </div>
-        </HappyChatProvider>
+            </HappyChatProvider>
+        </SessionEntityStoreProvider>
     )
 }
 

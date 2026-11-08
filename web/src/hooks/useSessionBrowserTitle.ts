@@ -4,7 +4,9 @@ import { getSessionTitle } from '@/lib/sessionTitle'
 
 const APP_TITLE = 'HAPI'
 
-export function useSessionBrowserTitle(session: Session | null): void {
+export function useSessionBrowserTitle(
+    session: Pick<Session, 'id' | 'metadata'> | { id: string; metadata?: { name?: string; summary?: { text: string }; path?: string } | null } | null
+): void {
     const sessionTitle = session ? getSessionTitle(session) : null
 
     useEffect(() => {

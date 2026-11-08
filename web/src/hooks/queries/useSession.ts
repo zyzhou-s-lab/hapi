@@ -1,7 +1,9 @@
 import { useCallback, useMemo, useRef } from 'react'
 import { useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query'
 import type { ApiClient } from '@/api/client'
-import type { Session, SessionMetadataSummary, SessionSummary } from '@/types/api'
+import type { Session, SessionSummary } from '@/types/api'
+
+export type SessionMetadataSummary = NonNullable<Session['metadata']>
 import { queryClient as defaultQueryClient } from '@/lib/query-client'
 import { queryKeys } from '@/lib/query-keys'
 
@@ -150,12 +152,7 @@ function sameForkedFrom(
     a: SessionMetadataSummary['forkedFrom'],
     b: SessionMetadataSummary['forkedFrom']
 ): boolean {
-    if (a === b) return true
-    if (!a || !b) return false
-    return a.sessionId === b.sessionId
-        && a.mode === b.mode
-        && a.seq === b.seq
-        && a.messageId === b.messageId
+    return a === b
 }
 
 export function sameWorktree(
@@ -274,6 +271,7 @@ export type SessionTodoSlice = {
 export type SessionHeaderSlice = {
     sessionId: string
     active: boolean
+    createdAt: number
     pinned: boolean | undefined
     globalPinned: boolean | undefined
     metadata: SessionMetadataSummary | null
@@ -281,6 +279,7 @@ export type SessionHeaderSlice = {
     modelReasoningEffort: Session['modelReasoningEffort'] | undefined
     effort: Session['effort'] | undefined
     serviceTier: Session['serviceTier'] | undefined
+    teamState?: Session['teamState']
 }
 
 export type SessionComposerConfigSlice = {
@@ -314,11 +313,11 @@ export type SessionRouteMetadataSlice = {
     summary?: { text: string; updatedAt: number }
     machineId?: string
     flavor?: string | null
-    startingMode?: 'local' | 'remote'
+    startingMode?: SessionMetadataSummary['startingMode']
     capabilities?: SessionMetadataSummary['capabilities']
     worktree?: SessionMetadataSummary['worktree']
     lifecycleState?: SessionMetadataSummary['lifecycleState']
-    archivedAt?: number | null
+    archivedAt?: SessionMetadataSummary['archivedAt']
     hapiMcpUrl?: string
     supersededBySessionId?: string
     forkedFrom?: SessionMetadataSummary['forkedFrom']
@@ -378,6 +377,7 @@ export function selectSessionHeaderSlice(
     return {
         sessionId: session.id,
         active: session.active,
+        createdAt: session.createdAt,
         pinned: session.pinned,
         globalPinned: session.globalPinned,
         metadata: metadataOverride !== undefined ? metadataOverride : session.metadata,
@@ -385,6 +385,7 @@ export function selectSessionHeaderSlice(
         modelReasoningEffort: session.modelReasoningEffort,
         effort: session.effort,
         serviceTier: session.serviceTier,
+        teamState: session.teamState,
     }
 }
 
@@ -568,9 +569,9 @@ export function buildPlaceholderSessionFromSummary(summary: SessionSummary): Ses
                 machineId: summary.metadata.machineId,
                 flavor: summary.metadata.flavor,
                 worktree: summary.metadata.worktree,
-                lifecycleState: summary.metadata.lifecycleState,
                 hapiMcpUrl: summary.metadata.hapiMcpUrl,
                 archivedAt: summary.metadata.archivedAt,
+                lifecycleState: summary.metadata.lifecycleState,
             }
             : null,
         metadataVersion: summary.metadataVersion,
@@ -818,6 +819,7 @@ export function useSessionRunState(
             }
             return await api.getSession(sessionId)
         },
+        placeholderData: () => fallbackSession ? undefined : resolvePlaceholderSessionData(queryClient, sessionId, resolvedSessionId),
         enabled: isSessionSliceObserverEnabled(queryClient, resolvedSessionId, api, sessionId, fallbackSession),
         staleTime: Infinity,
         select: selectSlice,
@@ -877,6 +879,7 @@ export function useSessionTodoSnapshot(
             }
             return await api.getSession(sessionId)
         },
+        placeholderData: () => fallbackSession ? undefined : resolvePlaceholderSessionData(queryClient, sessionId, resolvedSessionId),
         enabled: isSessionSliceObserverEnabled(queryClient, resolvedSessionId, api, sessionId, fallbackSession),
         staleTime: Infinity,
         select: selectSlice,
@@ -934,6 +937,7 @@ export function useSessionHeaderSlice(
             }
             return await api.getSession(sessionId)
         },
+        placeholderData: () => fallbackSession ? undefined : resolvePlaceholderSessionData(queryClient, sessionId, resolvedSessionId),
         enabled: isSessionSliceObserverEnabled(queryClient, resolvedSessionId, api, sessionId, fallbackSession),
         staleTime: Infinity,
         select: selectSlice,
@@ -955,6 +959,7 @@ export function useSessionHeaderSlice(
             return {
                 sessionId: resolvedSessionId,
                 active: false,
+                createdAt: 0,
                 pinned: undefined,
                 globalPinned: undefined,
                 metadata: stableFallbackMetadata,
@@ -962,11 +967,13 @@ export function useSessionHeaderSlice(
                 modelReasoningEffort: undefined,
                 effort: undefined,
                 serviceTier: undefined,
+                teamState: undefined,
             }
         }
         return {
             sessionId: fallbackSession.id,
             active: fallbackSession.active,
+            createdAt: fallbackSession.createdAt,
             pinned: fallbackSession.pinned,
             globalPinned: fallbackSession.globalPinned,
             metadata: stableFallbackMetadata,
@@ -974,17 +981,20 @@ export function useSessionHeaderSlice(
             modelReasoningEffort: fallbackSession.modelReasoningEffort,
             effort: fallbackSession.effort,
             serviceTier: fallbackSession.serviceTier,
+            teamState: fallbackSession.teamState,
         }
     }, [
         fallbackMetadata,
         fallbackSession?.id,
         fallbackSession?.active,
+        fallbackSession?.createdAt,
         fallbackSession?.pinned,
         fallbackSession?.globalPinned,
         fallbackSession?.model,
         fallbackSession?.modelReasoningEffort,
         fallbackSession?.effort,
         fallbackSession?.serviceTier,
+        fallbackSession?.teamState,
         resolvedSessionId,
         stableFallbackMetadata,
     ])
@@ -1058,6 +1068,7 @@ export function useSessionComposerConfig(
             }
             return await api.getSession(sessionId)
         },
+        placeholderData: () => fallbackSession ? undefined : resolvePlaceholderSessionData(queryClient, sessionId, resolvedSessionId),
         enabled: isSessionSliceObserverEnabled(queryClient, resolvedSessionId, api, sessionId, fallbackSession),
         staleTime: Infinity,
         select: selectSlice,

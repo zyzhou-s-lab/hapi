@@ -86,4 +86,34 @@ test.describe('PR 3 4-context split & historical turn streaming isolation', () =
         expect(await getHistoricalCounts()).toEqual(initialHistorical)
         expect(errors).toEqual([])
     })
+
+    test('Audit closure: body-text deltas via SessionEntityStore update leaf TurnAnswerSection with zero TurnEntitySnapshot re-renders and preserve fallbackTodos on completed truncated turns', async ({ page }) => {
+        const errors: string[] = []
+        page.on('pageerror', (err) => errors.push(err.message))
+
+        await page.goto('/e2e-fixtures/turn-timeline-demo.html?fixture=streaming-isolation')
+        await page.locator('[data-testid="streaming-isolation-fixture"]').waitFor()
+
+        const entityTurn = page.locator('[data-testid="fixture-entity-turn"]')
+        await expect(entityTurn.locator('[data-testid="turn-trailing-answer"]')).toContainText('Entity leaf delta 0')
+        const initialTurnRenders = Number((await entityTurn.getAttribute('data-turn-render-count')) ?? '0')
+        expect(initialTurnRenders).toBeGreaterThanOrEqual(1)
+
+        // Click advance-entity-delta 3 times: leaf answer updates while EntityStoreFixtureTurn has 0 re-renders
+        await page.locator('[data-testid="advance-entity-delta"]').click()
+        await page.locator('[data-testid="advance-entity-delta"]').click()
+        await page.locator('[data-testid="advance-entity-delta"]').click()
+
+        await expect(entityTurn.locator('[data-testid="turn-trailing-answer"]')).toContainText('Entity leaf delta 3')
+        const afterTurnRenders = Number((await entityTurn.getAttribute('data-turn-render-count')) ?? '0')
+        expect(afterTurnRenders).toBe(initialTurnRenders)
+
+        // Toggle sessionThinking from true -> false on truncated tail turn 5: fallbackTodos checklist card remains visible
+        const tailTurn = page.locator('[data-testid="fixture-turn-5"]')
+        await expect(tailTurn.locator('[data-testid="turn-todo-checklist-card"]')).toHaveCount(1)
+        await page.locator('[data-testid="toggle-session-thinking"]').click()
+        await expect(tailTurn.locator('[data-testid="turn-todo-checklist-card"]')).toHaveCount(1)
+        await expect(tailTurn.locator('[data-testid="turn-todo-checklist-card"]')).toContainText('Step 2: Streaming tick 0')
+        expect(errors).toEqual([])
+    })
 })

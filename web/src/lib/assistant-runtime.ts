@@ -466,7 +466,7 @@ function extractMessageContent(message: AppendMessage): { text: string; attachme
 
 export function useHappyRuntime(props: {
     session: Session
-    blocks: readonly VisibleChatBlock[]
+    blocks?: readonly VisibleChatBlock[]
     blocksWithThreadIds?: readonly BlockWithThreadMessageId[]
     messagesVersion: number
     historyVersion: number
@@ -506,7 +506,7 @@ export function useHappyRuntime(props: {
     )
     const blocksWithThreadIds = useMemo(
         () => props.blocksWithThreadIds ?? assignThreadMessageIdsWithStableWrappers(
-            hoistMidTurnTitleEvents(filterVisibleBlocksForFlavor(props.blocks, flavor)),
+            hoistMidTurnTitleEvents(filterVisibleBlocksForFlavor(props.blocks ?? [], flavor)),
             threadIdWrapperCacheRef.current
         ),
         [props.blocksWithThreadIds, props.blocks, flavor]
@@ -553,16 +553,25 @@ export function useHappyRuntime(props: {
         settledTailRef.current.settledMarker
     )
 
+    const convertedBlockCacheRef = useRef(
+        new WeakMap<BlockWithThreadMessageId, ThreadMessageLike>()
+    )
     const convertBlock = useCallback(
-        ({ block, threadMessageId, timestamp, aggregate }: BlockWithThreadMessageId): ThreadMessageLike => {
+        (entry: BlockWithThreadMessageId): ThreadMessageLike => {
+            const cached = convertedBlockCacheRef.current.get(entry)
+            if (cached) return cached
+            const { block, threadMessageId, timestamp, aggregate } = entry
             const message = toThreadMessageLike(
                 block,
                 threadMessageId,
                 timestamp ?? getBlockPresentationTimestamp(block)
             )
-            if (!aggregate) return message
+            if (!aggregate) {
+                convertedBlockCacheRef.current.set(entry, message)
+                return message
+            }
             const existing = message.metadata?.custom as HappyChatMessageMetadata | undefined
-            return {
+            const withAggregate: ThreadMessageLike = {
                 ...message,
                 metadata: {
                     ...message.metadata,
@@ -577,6 +586,8 @@ export function useHappyRuntime(props: {
                     } satisfies HappyChatMessageMetadata
                 }
             }
+            convertedBlockCacheRef.current.set(entry, withAggregate)
+            return withAggregate
         },
         []
     )

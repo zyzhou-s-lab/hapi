@@ -3,6 +3,7 @@ import type { ApiClient } from '@/api/client'
 import type { AttachmentMetadata, DecryptedMessage, Session } from '@/types/api'
 import type { MessageDeliveryMode } from '@hapi/protocol'
 import type { SendMessageAcceptance } from '@/hooks/mutations/useSendMessage'
+import { getMessageWindowState, subscribeMessageWindow } from '@/lib/message-window-store'
 import { useVoiceOptional, type VoiceContextValue } from '@/lib/voice-context'
 import { VoiceBackendSession, registerSessionStore, registerVoiceHooksStore, voiceHooks } from '@/realtime'
 
@@ -11,13 +12,13 @@ export { VoiceBackendSession }
 export function useSessionVoiceBridge(props: {
     api: ApiClient
     session: Session
-    messages: DecryptedMessage[]
+    messages?: DecryptedMessage[]
     onSend: (
         text: string,
         attachments?: AttachmentMetadata[],
         scheduledAt?: number | null,
         deliveryMode?: MessageDeliveryMode,
-    ) => Promise<SendMessageAcceptance | false>
+    ) => Promise<SendMessageAcceptance | boolean>
     onRefresh: () => void
 }): {
     voice: VoiceContextValue | null
@@ -50,23 +51,49 @@ export function useSessionVoiceBridge(props: {
     useEffect(() => {
         registerVoiceHooksStore(
             (sessionId) => (sessionId === props.session.id ? props.session : null),
-            (sessionId) => (sessionId === props.session.id ? props.messages : [])
+            (sessionId) => (
+                sessionId === props.session.id
+                    ? (props.messages ?? getMessageWindowState(props.session.id).messages)
+                    : []
+            )
         )
     }, [props.session, props.messages])
 
     // Track and report new messages to voice assistant
     // Note: voiceHooks internally checks isVoiceSessionStarted() so we don't need to check voice.status here
-    const prevMessagesRef = useRef<DecryptedMessage[]>([])
+    const seenMessageIdsRef = useRef<{ sessionId: string; ids: Set<string> }>({
+        sessionId: props.session.id,
+        ids: new Set(),
+    })
 
     useEffect(() => {
-        const prevIds = new Set(prevMessagesRef.current.map(m => m.id))
-        const newMessages = props.messages.filter(m => !prevIds.has(m.id))
-
-        if (newMessages.length > 0) {
-            voiceHooks.onMessages(props.session.id, newMessages)
+        if (seenMessageIdsRef.current.sessionId !== props.session.id) {
+            seenMessageIdsRef.current = {
+                sessionId: props.session.id,
+                ids: new Set(),
+            }
         }
-
-        prevMessagesRef.current = props.messages
+        const reportMessages = (messages: readonly DecryptedMessage[]) => {
+            const seen = seenMessageIdsRef.current.ids
+            const newMessages: DecryptedMessage[] = []
+            for (const msg of messages) {
+                if (!seen.has(msg.id)) {
+                    seen.add(msg.id)
+                    newMessages.push(msg)
+                }
+            }
+            if (newMessages.length > 0) {
+                voiceHooks.onMessages(props.session.id, newMessages)
+            }
+        }
+        if (props.messages !== undefined) {
+            reportMessages(props.messages)
+            return
+        }
+        reportMessages(getMessageWindowState(props.session.id).messages)
+        return subscribeMessageWindow(props.session.id, () => {
+            reportMessages(getMessageWindowState(props.session.id).messages)
+        })
     }, [props.messages, props.session.id])
 
     // Report ready event when thinking stops

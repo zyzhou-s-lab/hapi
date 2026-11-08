@@ -412,7 +412,7 @@ describe('domain-specific session selector hooks', () => {
                                 ? {
                                     ...old.session.metadata,
                                     summary: { text: 'Initial summary', updatedAt: 9_000 },
-                                    ompThinking: { thinkingLevel: 'high', configured: true, resolved: true },
+                                    ompThinking: { thinkingLevel: 'high', configured: 'high', resolved: 'high' },
                                 }
                                 : null,
                         },
@@ -486,7 +486,7 @@ describe('domain-specific session selector hooks', () => {
                                     flavor: 'cursor',
                                     cursorSessionId: 'cursor-chat-99',
                                     cursorSessionProtocol: 'acp',
-                                    cursorMigrationState: 'prompt_pending',
+                                    cursorMigrationState: 'in_progress',
                                 }
                                 : null,
                         },
@@ -499,7 +499,7 @@ describe('domain-specific session selector hooks', () => {
             expect(routeHook.result.current.session?.active).toBe(false)
         })
         expect(routeHook.result.current.session?.metadata?.cursorSessionId).toBe('cursor-chat-99')
-        expect(routeHook.result.current.session?.metadata?.cursorMigrationState).toBe('prompt_pending')
+        expect(routeHook.result.current.session?.metadata?.cursorMigrationState).toBe('in_progress')
         expect(routeRenders).toBe(4)
     })
 
@@ -525,10 +525,16 @@ describe('domain-specific session selector hooks', () => {
             metadataVersion: 1,
             agentStateVersion: 1,
             thinking: false,
-            thinkingAt: 0,
-            todosUpdatedAt: undefined,
+            todosUpdatedAt: 0,
+            todoProgress: null,
             pendingRequestsCount: 0,
+            pendingRequestKinds: [],
+            pendingRequests: [],
+            backgroundTaskCount: 0,
+            futureScheduledMessageCount: 0,
+            nextScheduledAt: null,
             model: 'claude-3-7-sonnet',
+            effort: null,
         }
         queryClient.setQueryData(queryKeys.sessions, { sessions: [summary] })
 
@@ -564,10 +570,10 @@ describe('domain-specific session selector hooks', () => {
             path: '/work/repo',
             host: 'c1',
             flavor: 'omp',
-            ompThinking: { thinkingLevel: 'medium', configured: true, resolved: true },
+            ompThinking: { thinkingLevel: 'medium', configured: 'medium', resolved: 'medium' },
             piSelectedModel: { provider: 'anthropic', modelId: 'claude-sonnet-4' },
             piAvailableModels: [
-                { provider: 'anthropic', id: 'claude-sonnet-4', name: 'Claude Sonnet 4', reasoning: true, contextWindow: 200_000 },
+                { provider: 'anthropic', id: 'claude-sonnet-4', modelId: 'claude-sonnet-4', name: 'Claude Sonnet 4', reasoning: true, contextWindow: 200_000, maxTokens: 8_192 },
             ],
             ccSwitchProviderId: 'provider-1',
         }
@@ -575,7 +581,7 @@ describe('domain-specific session selector hooks', () => {
         expect(
             areSessionMetadataSummariesEqual(baseMeta, {
                 ...baseMeta,
-                ompThinking: { thinkingLevel: 'high', configured: true, resolved: true },
+                ompThinking: { thinkingLevel: 'high', configured: 'high', resolved: 'high' },
             })
         ).toBe(false)
         expect(
@@ -630,7 +636,7 @@ describe('domain-specific session selector hooks', () => {
                             updatedAt: 5_000,
                             metadata: {
                                 ...baseMeta,
-                                ompThinking: { thinkingLevel: 'high', configured: true, resolved: true },
+                                ompThinking: { thinkingLevel: 'high', configured: 'high', resolved: 'high' },
                                 piSelectedModel: { provider: 'openai', modelId: 'gpt-5' },
                                 ccSwitchProviderId: 'provider-2',
                             },

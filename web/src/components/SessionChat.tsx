@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from '@tanstack/react-router'
 import { PRESERVE_SESSION_SIDEBAR_SCROLL } from '@/lib/sessionNavigation'
 import { AssistantRuntimeProvider } from '@assistant-ui/react'
@@ -16,6 +16,7 @@ import { HappyThread } from '@/components/AssistantChat/HappyThread'
 import { measureComposerDockInset } from '@/components/AssistantChat/threadScrollHelpers'
 import { COMPOSER_DOCK_SLOTS, ChatSlotHost } from '@/components/AssistantChat/slotRegistry'
 import {
+    useSessionComposerSlice,
     useSessionHeaderSlice,
     useSessionRunState,
     useSessionTodoSnapshot,
@@ -50,12 +51,13 @@ import { AbortRestoreConsumer, chatComposerGridPlacement, useSessionChatPipeline
 
 type SessionChatProps = {
     api: ApiClient
+    sessionId?: string
     titleSuggestionAvailable?: boolean
-    session: Session
+    session?: Session
     cursorChatOnDisk?: boolean
     reopenDisabledReason?: string
     reopenHint?: string
-    messages: DecryptedMessage[]
+    messages?: DecryptedMessage[]
     messagesWarning: string | null
     hasMoreMessages: boolean
     isSyncingTail: boolean
@@ -63,7 +65,7 @@ type SessionChatProps = {
     isSending: boolean
     sendSettlement: SendMessageSettlement | null
     viewMode: 'tail' | 'history'
-    messagesVersion: number
+    messagesVersion?: number
     historyVersion: number
     tailRevision: number
     onBack: () => void
@@ -118,10 +120,12 @@ type SessionChatProps = {
  * SessionChatInner.
  */
 export function SessionChat(props: SessionChatProps) {
-    return <SessionChatInner key={props.session.id} {...props} />
+    const sessionId = props.sessionId ?? props.session?.id ?? ''
+    return <SessionChatInner key={sessionId} {...props} />
 }
 
 function SessionChatInner(props: SessionChatProps) {
+    const sessionId = props.sessionId ?? props.session?.id ?? ''
     const { t } = useTranslation()
     const navigate = useNavigate()
     const [historyActionPending, setHistoryActionPending] = useState(false)
@@ -130,7 +134,7 @@ function SessionChatInner(props: SessionChatProps) {
     const onForkConversation = useCallback(async (messageLocalId?: string) => {
         setHistoryActionPending(true)
         try {
-            const result = await props.api.forkConversation(props.session.id, messageLocalId)
+            const result = await props.api.forkConversation(sessionId, messageLocalId)
             await navigate({
                 to: '/sessions/$sessionId',
                 params: { sessionId: result.sessionId },
@@ -139,31 +143,69 @@ function SessionChatInner(props: SessionChatProps) {
         } finally {
             setHistoryActionPending(false)
         }
-    }, [navigate, props.api, props.session.id])
+    }, [navigate, props.api, sessionId])
 
     const onRewindConversation = useCallback(async (messageLocalId: string) => {
         setHistoryActionPending(true)
         try {
-            await props.api.rewindConversation(props.session.id, messageLocalId)
+            await props.api.rewindConversation(sessionId, messageLocalId)
             props.onRefresh()
         } finally {
             setHistoryActionPending(false)
         }
-    }, [props.api, props.onRefresh, props.session.id])
-    const runStateSlice = useSessionRunState(props.api, props.session.id, props.session)
-    const todoSlice = useSessionTodoSnapshot(props.api, props.session.id, props.session)
-    const headerSlice = useSessionHeaderSlice(props.api, props.session.id, props.session, props.session.metadata)
-    const sessionActive = runStateSlice?.active ?? props.session.active
-    const sessionThinking = runStateSlice?.thinking ?? props.session.thinking
-    const sessionMetadata = headerSlice?.metadata ?? props.session.metadata
-    const sessionTodos = todoSlice?.todos ?? props.session.todos
-    const sessionBackgroundTaskCount = runStateSlice?.backgroundTaskCount ?? props.session.backgroundTaskCount
+    }, [props.api, props.onRefresh, sessionId])
+    const runStateSlice = useSessionRunState(props.api, sessionId, props.session)
+    const todoSlice = useSessionTodoSnapshot(props.api, sessionId, props.session)
+    const headerSlice = useSessionHeaderSlice(props.api, sessionId, props.session, props.session?.metadata)
+    const composerSlice = useSessionComposerSlice(props.api, sessionId, props.session)
+    const resolvedSession = useMemo<Session>(() => {
+        const base = props.session
+        const createdAt = headerSlice?.createdAt ?? base?.createdAt ?? 0
+        const metadata = (headerSlice?.metadata ?? base?.metadata ?? null) as Session['metadata']
+        return {
+            id: sessionId,
+            namespace: base?.namespace ?? 'default',
+            seq: base?.seq ?? 0,
+            createdAt,
+            updatedAt: base?.updatedAt ?? createdAt,
+            active: runStateSlice?.active ?? headerSlice?.active ?? base?.active ?? false,
+            activeAt: base?.activeAt ?? createdAt,
+            pinned: headerSlice?.pinned ?? base?.pinned,
+            globalPinned: headerSlice?.globalPinned ?? base?.globalPinned,
+            metadata,
+            metadataVersion: base?.metadataVersion ?? 0,
+            agentState: runStateSlice?.agentState !== undefined ? runStateSlice.agentState : (base?.agentState ?? null),
+            agentStateVersion: base?.agentStateVersion ?? 0,
+            todos: todoSlice?.todos !== undefined ? todoSlice.todos : base?.todos,
+            todosUpdatedAt: todoSlice?.todosUpdatedAt !== undefined ? todoSlice.todosUpdatedAt : base?.todosUpdatedAt,
+            teamState: headerSlice?.teamState !== undefined ? headerSlice.teamState : base?.teamState,
+            teamStateUpdatedAt: base?.teamStateUpdatedAt,
+            thinking: runStateSlice?.thinking ?? base?.thinking ?? false,
+            thinkingAt: base?.thinkingAt ?? 0,
+            lifecycleState: runStateSlice?.lifecycleState !== undefined ? runStateSlice.lifecycleState : base?.lifecycleState,
+            activeTurnId: runStateSlice?.activeTurnId !== undefined ? runStateSlice.activeTurnId : base?.activeTurnId,
+            activeTurnStartedAt: runStateSlice?.activeTurnStartedAt !== undefined ? runStateSlice.activeTurnStartedAt : base?.activeTurnStartedAt,
+            backgroundTaskCount: runStateSlice?.backgroundTaskCount !== undefined ? runStateSlice.backgroundTaskCount : base?.backgroundTaskCount,
+            permissionMode: composerSlice?.permissionMode ?? base?.permissionMode,
+            collaborationMode: composerSlice?.collaborationMode ?? base?.collaborationMode,
+            copilotAgentMode: composerSlice?.copilotAgentMode ?? base?.copilotAgentMode,
+            model: composerSlice?.model ?? headerSlice?.model ?? base?.model ?? null,
+            modelReasoningEffort: composerSlice?.modelReasoningEffort !== undefined
+                ? composerSlice.modelReasoningEffort
+                : (headerSlice?.modelReasoningEffort !== undefined ? headerSlice.modelReasoningEffort : (base?.modelReasoningEffort ?? null)),
+            effort: composerSlice?.effort ?? headerSlice?.effort ?? base?.effort ?? null,
+            serviceTier: composerSlice?.serviceTier !== undefined
+                ? composerSlice.serviceTier
+                : (headerSlice?.serviceTier !== undefined ? headerSlice.serviceTier : (base?.serviceTier ?? null)),
+            resumeWithSessionModel: composerSlice?.resumeWithSessionModel ?? base?.resumeWithSessionModel ?? false,
+        }
+    }, [composerSlice, headerSlice, props.session, runStateSlice, sessionId, todoSlice])
+    const sessionActive = resolvedSession.active
+    const sessionThinking = resolvedSession.thinking
+    const sessionMetadata = resolvedSession.metadata
+    const sessionTodos = resolvedSession.todos
+    const sessionBackgroundTaskCount = resolvedSession.backgroundTaskCount
     const sessionInactive = !sessionActive
-    const inactiveCanResume = inactiveSessionCanResume(
-        props.session,
-        props.messages.length,
-        props.cursorChatOnDisk
-    )
     const terminalSupported = isRemoteTerminalSupported(sessionMetadata)
     // Offer the agent terminal only for an ACTIVE PTY session: a 'remote'/SDK
     // session has no agent PTY, and an archived/inactive one has no live PTY (and
@@ -224,7 +266,7 @@ function SessionChatInner(props: SessionChatProps) {
 
     const flavorController = useSessionFlavorModelController({
         api: props.api,
-        session: props.session,
+        session: resolvedSession,
         onRefresh: props.onRefresh,
     })
     const {
@@ -240,12 +282,12 @@ function SessionChatInner(props: SessionChatProps) {
     const {
         voice,
         voiceBackendReady,
-         setVoiceBackendReady,
+        setVoiceBackendReady,
         handleVoiceToggle,
         handleVoiceMicToggle,
     } = useSessionVoiceBridge({
         api: props.api,
-        session: props.session,
+        session: resolvedSession,
         messages: props.messages,
         onSend: props.onSend,
         onRefresh: props.onRefresh,
@@ -266,7 +308,7 @@ function SessionChatInner(props: SessionChatProps) {
         unseenCount,
         outlineItems,
     } = useSessionChatPipeline({
-        session: props.session,
+        session: resolvedSession,
         messages: props.messages,
         hasMoreMessages: props.hasMoreMessages,
         viewMode: props.viewMode,
@@ -275,28 +317,33 @@ function SessionChatInner(props: SessionChatProps) {
         historyVersion: props.historyVersion,
         onResetSessionView: () => setOutlineOpen(false),
     })
+    const inactiveCanResume = inactiveSessionCanResume(
+        resolvedSession,
+        props.messages ? props.messages.length : visibleMessages.length,
+        props.cursorChatOnDisk
+    )
 
     const handleToggleFiles = useCallback(() => {
         setOutlineOpen(false)
         navigate({
             to: '/sessions/$sessionId/files',
-            params: { sessionId: props.session.id },
+            params: { sessionId },
             ...PRESERVE_SESSION_SIDEBAR_SCROLL,
         })
-    }, [navigate, props.session.id])
+    }, [navigate, sessionId])
     const { status: composerGitStatus } = useGitStatusFiles(
         props.api,
-        props.session.active ? props.session.id : null
+        sessionActive ? sessionId : null
     )
 
     const handleToggleConfig = useCallback(() => {
         setOutlineOpen(false)
         navigate({
             to: '/sessions/$sessionId/config',
-            params: { sessionId: props.session.id },
+            params: { sessionId },
             ...PRESERVE_SESSION_SIDEBAR_SCROLL,
         })
-    }, [navigate, props.session.id])
+    }, [navigate, sessionId])
 
     const handleToggleOutline = useCallback(() => {
         setOutlineOpen((open) => !open)
@@ -305,11 +352,10 @@ function SessionChatInner(props: SessionChatProps) {
     const handleViewTerminal = useCallback(() => {
         navigate({
             to: '/sessions/$sessionId/terminal',
-            params: { sessionId: props.session.id },
+            params: { sessionId },
             ...PRESERVE_SESSION_SIDEBAR_SCROLL,
         })
-    }, [navigate, props.session.id])
-
+    }, [navigate, sessionId])
     const {
         scratchlist,
         scratchlistMode,
@@ -330,7 +376,7 @@ function SessionChatInner(props: SessionChatProps) {
         attachmentAdapter,
     } = useSessionComposerSendBridge({
         api: props.api,
-        session: props.session,
+        session: resolvedSession,
         agentFlavor,
         inactiveCanResume,
         onSend: props.onSend,
@@ -342,8 +388,7 @@ function SessionChatInner(props: SessionChatProps) {
     })
 
     const runtime = useHappyRuntime({
-        session: props.session,
-        blocks: visibleBlocks,
+        session: resolvedSession,
         blocksWithThreadIds,
         messagesVersion: structureMessagesVersion,
         historyVersion: props.historyVersion,
@@ -418,10 +463,10 @@ function SessionChatInner(props: SessionChatProps) {
     return (
         <div className="flex h-full min-h-0 flex-col">
             <SessionHeader
-                session={props.session}
+                session={resolvedSession}
                 serviceTier={effectiveCodexServiceTier}
                 onBack={props.onBack}
-                onToggleFiles={props.session.metadata?.path ? handleToggleFiles : undefined}
+                onToggleFiles={sessionMetadata?.path ? handleToggleFiles : undefined}
                 filesActive={false}
                 onToggleOutline={handleToggleOutline}
                 outlineActive={outlineOpen}
@@ -437,7 +482,7 @@ function SessionChatInner(props: SessionChatProps) {
                 onSessionDeleted={props.onBack}
                 onSessionReopened={async (newSessionId) => {
                     await transferComposerDraftThenNavigate(
-                        props.session.id,
+                        sessionId,
                         newSessionId,
                         () => navigate({
                             to: '/sessions/$sessionId',
@@ -449,14 +494,14 @@ function SessionChatInner(props: SessionChatProps) {
                 }}
             />
 
-            <CursorMigrationBanner metadata={props.session.metadata} />
+            <CursorMigrationBanner metadata={sessionMetadata} />
 
             {sessionStatus ? <SessionStatusPanel data={sessionStatus} /> : null}
 
             <div className="flex flex-col min-h-0 flex-1">
-            {props.session.teamState && (
-                <FeatureErrorBoundary name="team-panel" resetKey={props.session.id}>
-                    <TeamPanel teamState={props.session.teamState} />
+            {resolvedSession.teamState && (
+                <FeatureErrorBoundary name="team-panel" resetKey={sessionId}>
+                    <TeamPanel teamState={resolvedSession.teamState} />
                 </FeatureErrorBoundary>
             )}
 
@@ -470,13 +515,13 @@ function SessionChatInner(props: SessionChatProps) {
 
             <SessionEntityStoreProvider store={entityStore}>
             <AssistantRuntimeProvider runtime={runtime}>
-                <ShareSeedConsumer sessionId={props.session.id} sessionActive={props.session.active} />
-                <DragDropZone disabled={(!props.session.active && !inactiveCanResume) || props.isSending || pendingSchedule != null || isScratchlistParking}>
+                <ShareSeedConsumer sessionId={sessionId} sessionActive={sessionActive} />
+                <DragDropZone disabled={(!sessionActive && !inactiveCanResume) || props.isSending || pendingSchedule != null || isScratchlistParking}>
                     <div className="relative flex min-h-0 flex-1 flex-col">
                         {canViewAgentTerminal && (
                             // SessionChatInner is keyed by session.id, so switching sessions remounts this subtree.
                             <AgentTerminalView
-                                sessionId={props.session.id}
+                                sessionId={sessionId}
                                 visible={terminalVisible}
                                 className={terminalVisible ? 'flex-1 min-h-0' : 'hidden'}
                             />
@@ -489,15 +534,14 @@ function SessionChatInner(props: SessionChatProps) {
                         // (thread, scratchlist, composer) must have distinct keys to avoid
                         // React reconciliation issues when switching sessions rapidly.
                         // Without prefixes, React may reuse the wrong component's DOM/localStorage.
-                        key={`thread-${props.session.id}`}
+                        key={`thread-${sessionId}`}
                         api={props.api}
-                        session={props.session}
+                        session={resolvedSession}
                         serviceTier={effectiveCodexServiceTier}
-                        sessionId={props.session.id}
-                        metadata={props.session.metadata}
+                        sessionId={sessionId}
+                        metadata={sessionMetadata}
                         disabled={sessionInactive}
                         onRefresh={props.onRefresh}
-                        onRetryMessage={props.onRetryMessage}
                         historyActionPending={historyActionPending}
                         onForkConversation={controlledByUser ? undefined : onForkConversation}
                         onRewindConversation={controlledByUser ? undefined : onRewindConversation}
@@ -557,9 +601,9 @@ function SessionChatInner(props: SessionChatProps) {
                     <div className="px-3">
                         <ChatSlotHost
                             slots={COMPOSER_DOCK_SLOTS}
-                            resetKey={props.session.id}
+                            resetKey={sessionId}
                             ctx={{
-                                sessionId: props.session.id,
+                                sessionId,
                                 api: props.api,
                                 todos: sessionTodos,
                                 sessionThinking: Boolean(sessionThinking),
@@ -573,10 +617,10 @@ function SessionChatInner(props: SessionChatProps) {
                                 pendingSchedule,
                                 pendingScheduleRevision,
                                 onRestorePendingSchedule: updatePendingSchedule,
-                                canSteer: isSteeringSupportedForSession(props.session.metadata)
+                                canSteer: isSteeringSupportedForSession(sessionMetadata)
                                     && (agentFlavor === 'pi'
-                                        ? props.session.thinking
-                                        : props.session.agentState?.steeringActive === true)
+                                        ? sessionThinking
+                                        : resolvedSession.agentState?.steeringActive === true)
                                     && !controlledByUser,
                             }}
                         />
@@ -585,9 +629,9 @@ function SessionChatInner(props: SessionChatProps) {
 
                     <HappyComposer
                         onExpandedChange={handleComposerExpandedChange}
-                        key={`composer-${props.session.id}`}
-                        sessionId={props.session.id}
-                        canRestoreAttachments={props.session.active}
+                        key={`composer-${sessionId}`}
+                        sessionId={sessionId}
+                        canRestoreAttachments={sessionActive}
                         onUploadDraftSnapshot={(text, attachments) => {
                             uploadDraftSnapshotRef.current = { text, attachments }
                         }}
@@ -601,20 +645,20 @@ function SessionChatInner(props: SessionChatProps) {
                         onClearSchedule={() => updatePendingSchedule(null)}
                         threadGoal={reduced.latestGoal}
                         flavorController={flavorController}
-                        active={props.session.active}
+                        active={sessionActive}
                         allowSendWhenInactive
                         onResumeStoredDraft={() => handleSend('', undefined, null)}
                         thinking={sessionThinking}
-                        agentState={props.session.agentState}
+                        agentState={resolvedSession.agentState}
                         activityLabel={activityLabel}
                         backgroundTaskCount={sessionBackgroundTaskCount}
                         contextSize={reduced.latestUsage?.contextSize}
                         contextCacheRead={reduced.latestUsage?.cacheRead}
                         contextWindow={reduced.latestUsage?.contextWindow ?? piContextWindow}
-                        contextModel={reduced.latestUsage?.model ?? props.session.model}
+                        contextModel={reduced.latestUsage?.model ?? resolvedSession.model}
                         onSwitchToRemote={handleSwitchToRemote}
-                        onTerminal={props.session.active && terminalSupported ? handleViewTerminal : undefined}
-                        terminalUnsupported={props.session.active && !terminalSupported}
+                        onTerminal={sessionActive && terminalSupported ? handleViewTerminal : undefined}
+                        terminalUnsupported={sessionActive && !terminalSupported}
                         autocompleteSuggestions={props.autocompleteSuggestions}
                         voiceStatus={voice?.status}
                         voiceMicMuted={voice?.micMuted}
@@ -630,9 +674,9 @@ function SessionChatInner(props: SessionChatProps) {
                         onClearSendError={handleClearSendError}
                         onSuppressSendErrorRestore={props.onSuppressSendErrorRestore}
                         pendingSendIntentRef={pendingSendIntentRef}
-                        gitBranch={props.session.metadata?.worktree?.branch ?? null}
+                        gitBranch={sessionMetadata?.worktree?.branch ?? null}
                         gitStatus={composerGitStatus}
-                        onViewFiles={props.session.active ? handleToggleFiles : undefined}
+                        onViewFiles={sessionActive ? handleToggleFiles : undefined}
                         />
                     </div>
                     </div>

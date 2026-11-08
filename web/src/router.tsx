@@ -418,6 +418,11 @@ function toResumeCandidateSession(
         agentStateVersion: 0,
         thinking: false,
         thinkingAt: 0,
+        model: null,
+        modelReasoningEffort: null,
+        effort: null,
+        serviceTier: null,
+        resumeWithSessionModel: false,
     }
 }
 
