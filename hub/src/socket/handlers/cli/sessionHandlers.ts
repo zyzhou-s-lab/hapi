@@ -218,6 +218,28 @@ export function registerSessionHandlers(socket: CliSocketWithData, deps: Session
         if (bgDelta) {
             onBackgroundTaskDelta?.(sid, bgDelta)
         }
+        if (msg.turnId) {
+            const msgPhase = msg.turnPhase ?? msg.phase
+            const nextLifecycleState = msgPhase === 'final_answer'
+                ? (msg.lifecycleState === 'streaming' ? 'streaming-answer' : 'completed')
+                : 'thinking'
+            store.sessions.setSessionLifecycle(
+                sid,
+                msg.turnId,
+                nextLifecycleState,
+                session.namespace
+            )
+            if (!liveSnapshot) {
+                onWebappEvent?.({
+                    type: 'session-updated',
+                    sessionId: sid,
+                    data: {
+                        activeTurnId: msg.turnId,
+                        lifecycleState: nextLifecycleState
+                    }
+                })
+            }
+        }
 
         const update = {
             id: randomUUID(),
@@ -231,7 +253,10 @@ export function registerSessionHandlers(socket: CliSocketWithData, deps: Session
                     seq: msg.seq,
                     createdAt: msg.createdAt,
                     localId: msg.localId,
-                    content: msg.content
+                    content: msg.content,
+                    ...(msg.turnId ? { turnId: msg.turnId } : {}),
+                    ...((msg.turnPhase ?? msg.phase) ? { phase: (msg.turnPhase ?? msg.phase) } : {}),
+                    ...(msg.lifecycleState ? { lifecycleState: msg.lifecycleState } : {})
                 }
             }
         }
@@ -246,7 +271,10 @@ export function registerSessionHandlers(socket: CliSocketWithData, deps: Session
                 localId: msg.localId,
                 content: msg.content,
                 createdAt: msg.createdAt,
-                invokedAt: msg.invokedAt
+                invokedAt: msg.invokedAt,
+                ...(msg.turnId ? { turnId: msg.turnId } : {}),
+                ...((msg.turnPhase ?? msg.phase) ? { phase: (msg.turnPhase ?? msg.phase) } : {}),
+                ...(msg.lifecycleState ? { lifecycleState: msg.lifecycleState } : {})
             }
         })
     })

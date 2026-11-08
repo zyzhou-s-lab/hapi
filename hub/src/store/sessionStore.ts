@@ -21,6 +21,7 @@ import {
     setSessionTodos,
     replaceSessionTodos,
     touchSessionUpdatedAt,
+    setSessionLifecycle,
     updateSessionAgentState,
     updateSessionMetadata
 } from './sessions'
@@ -124,6 +125,15 @@ export class SessionStore {
 
     touchSessionUpdatedAt(id: string, updatedAt: number, namespace: string): boolean {
         return touchSessionUpdatedAt(this.db, id, updatedAt, namespace)
+    }
+
+    setSessionLifecycle(
+        id: string,
+        activeTurnId: string | null,
+        lifecycleState: import('@hapi/protocol').SessionLifecycleState,
+        namespace: string
+    ): boolean {
+        return setSessionLifecycle(this.db, id, activeTurnId, lifecycleState, namespace)
     }
 
     getSession(id: string): StoredSession | null {

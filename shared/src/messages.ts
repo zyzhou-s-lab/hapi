@@ -101,6 +101,45 @@ export function getLiveMessageStreamId(value: unknown): string | null {
     return readMessageStreamId(value, true)
 }
 
+export function getMessageTurnId(value: unknown): string | null {
+    const record = unwrapRoleWrappedRecordEnvelope(value)
+    if (!record) return null
+    if (isObject(record.meta) && typeof record.meta.turnId === 'string' && record.meta.turnId.trim().length > 0) {
+        return record.meta.turnId.trim()
+    }
+    const content = record.content
+    if (!isObject(content)) return null
+    if (typeof content.turnId === 'string' && content.turnId.trim().length > 0) {
+        return content.turnId.trim()
+    }
+    const data = isObject(content.data) ? content.data : null
+    if (!data) return null
+    if (typeof data.turnId === 'string' && data.turnId.trim().length > 0) {
+        return data.turnId.trim()
+    }
+    return null
+}
+
+export function getMessageTurnPhase(value: unknown): 'execution' | 'final_answer' | null {
+    const record = unwrapRoleWrappedRecordEnvelope(value)
+    if (!record) return null
+    const content = record.content
+    if (!isObject(content)) return null
+    const data = isObject(content.data) ? content.data : null
+    const rawPhase = data?.phase ?? content.phase
+    if (rawPhase === 'execution' || rawPhase === 'commentary') {
+        return 'execution'
+    }
+    if (rawPhase === 'final_answer') {
+        return 'final_answer'
+    }
+    return null
+}
+
+export function getMessageLifecycleState(value: unknown): 'streaming' | 'settled' {
+    return getLiveMessageStreamId(value) !== null ? 'streaming' : 'settled'
+}
+
 export function isRedundantGoalStatusEventContent(value: unknown): boolean {
     const record = unwrapRoleWrappedRecordEnvelope(value)
     if (record?.role !== 'agent') return false

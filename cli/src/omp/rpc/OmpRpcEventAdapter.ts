@@ -447,10 +447,11 @@ class OmpEventProjection {
 export class OmpRpcEventAdapter {
     private activeMessage: MainMessageAccumulator | null = null;
     private lastDisplayId: string | null = null;
+    private currentTurnId: string | null = null;
+    private turnSequence = 0;
     private readonly tools = new Map<string, ToolLifecycle>();
     private readonly completedToolIds = new Set<string>();
     private readonly subagents = new Map<string, SubagentState>();
-
     private snapshotTimer: NodeJS.Timeout | null = null;
     private liveSuppressed = false;
     private lastCanonicalJson: string | null = null;
@@ -612,15 +613,28 @@ export class OmpRpcEventAdapter {
             case 'agent_start':
                 this.reconcileBoundary('agent_start');
                 this.liveSuppressed = false;
+                this.currentTurnId = typeof event.raw.turnId === 'string' && event.raw.turnId.length > 0
+                    ? event.raw.turnId
+                    : typeof event.raw.turn_id === 'string' && event.raw.turn_id.length > 0
+                        ? event.raw.turn_id
+                        : `omp-turn-${++this.turnSequence}`;
                 this.callbacks.onTurnStarted();
                 return;
             case 'agent_end':
                 this.reconcileBoundary('agent_end');
+                this.currentTurnId = null;
                 this.callbacks.onTurnFinished();
                 return;
             case 'turn_start':
                 this.reconcileBoundary('turn_start');
                 this.liveSuppressed = false;
+                if (typeof event.raw.turnId === 'string' && event.raw.turnId.length > 0) {
+                    this.currentTurnId = event.raw.turnId;
+                } else if (typeof event.raw.turn_id === 'string' && event.raw.turn_id.length > 0) {
+                    this.currentTurnId = event.raw.turn_id;
+                } else if (!this.currentTurnId) {
+                    this.currentTurnId = `omp-turn-${++this.turnSequence}`;
+                }
                 return;
             case 'tool_stream_update':
             case 'config_warnings_changed':
@@ -883,11 +897,15 @@ export class OmpRpcEventAdapter {
         const generationDurationMs = typeof duration === 'number' && Number.isFinite(duration) && duration > 0
             ? duration
             : undefined;
+        const hasToolUse = content.some((block) => block.type === 'tool_use');
+        const canonicalPhase: 'execution' | 'final_answer' = hasToolUse ? 'execution' : 'final_answer';
         const canonical = {
             type: 'assistant' as const,
             uuid: displayId,
             streamSnapshot: true,
             ...(live ? { live: true } : {}),
+            ...(this.currentTurnId ? { turnId: this.currentTurnId } : {}),
+            phase: canonicalPhase,
             parentUuid,
             isSidechain: false,
             providerMessageId: assistant.responseId,
@@ -932,6 +950,8 @@ export class OmpRpcEventAdapter {
         output.onCanonicalMessage({
             type: 'user',
             uuid: displayId,
+            ...(this.currentTurnId ? { turnId: this.currentTurnId } : {}),
+            phase: 'execution',
             parentUuid,
             isSidechain: false,
             timestamp,

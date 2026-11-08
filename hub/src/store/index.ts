@@ -396,6 +396,7 @@ export class Store {
                     if (!step) throw this.buildSchemaMismatchError(currentVersion)
                     step()
                 }
+                this.ensureLifecycleColumns()
                 this.assertRequiredTablesPresent()
                 this.setUserVersion(SCHEMA_VERSION)
             })()
@@ -406,6 +407,7 @@ export class Store {
             throw this.buildSchemaMismatchError(currentVersion)
         }
 
+        this.ensureLifecycleColumns()
         this.assertRequiredTablesPresent()
     }
 
@@ -435,9 +437,10 @@ export class Store {
                 global_pinned INTEGER NOT NULL DEFAULT 0,
                 active INTEGER DEFAULT 0,
                 active_at INTEGER,
+                active_turn_id TEXT,
+                lifecycle_state TEXT,
                 seq INTEGER DEFAULT 0
             );
-            CREATE INDEX IF NOT EXISTS idx_sessions_tag ON sessions(tag);
             CREATE INDEX IF NOT EXISTS idx_sessions_tag_namespace ON sessions(tag, namespace);
 
             CREATE TABLE IF NOT EXISTS machines (
@@ -467,9 +470,10 @@ export class Store {
                 delivery_state TEXT NOT NULL DEFAULT 'queued',
                 stream_id TEXT,
                 stream_live INTEGER NOT NULL DEFAULT 0,
+                turn_id TEXT,
+                turn_phase TEXT,
                 FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
             );
-            CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id, seq);
             CREATE UNIQUE INDEX IF NOT EXISTS idx_messages_local_id ON messages(session_id, local_id) WHERE local_id IS NOT NULL;
             CREATE INDEX IF NOT EXISTS idx_messages_session_position
                 ON messages(session_id, COALESCE(invoked_at, created_at) DESC, seq DESC);
@@ -478,7 +482,8 @@ export class Store {
                 WHERE scheduled_at IS NOT NULL AND invoked_at IS NULL;
             CREATE INDEX IF NOT EXISTS idx_messages_stream
                 ON messages(session_id, stream_id, stream_live, seq DESC);
-
+            CREATE INDEX IF NOT EXISTS idx_messages_turn
+                ON messages(session_id, turn_id, seq ASC);
             CREATE TABLE IF NOT EXISTS message_epochs (
                 session_id TEXT PRIMARY KEY,
                 epoch INTEGER NOT NULL DEFAULT 0,
@@ -1075,8 +1080,31 @@ export class Store {
         if (!columns.has('hypothesis')) this.db.exec('ALTER TABLE work_lines ADD COLUMN hypothesis TEXT')
         this.db.exec(WORK_LINES_SCHEMA_SQL)
         backfillTrainingCardInstanceIds(this.db)
+        this.ensureLifecycleColumns()
     }
 
+    private ensureLifecycleColumns(): void {
+        const sessionColumns = this.getSessionColumnNames()
+        if (sessionColumns.size > 0) {
+            if (!sessionColumns.has('active_turn_id')) {
+                this.db.exec('ALTER TABLE sessions ADD COLUMN active_turn_id TEXT')
+            }
+            if (!sessionColumns.has('lifecycle_state')) {
+                this.db.exec('ALTER TABLE sessions ADD COLUMN lifecycle_state TEXT')
+            }
+        }
+        const messageColumns = this.getMessageColumnNames()
+        if (messageColumns.size > 0) {
+            if (!messageColumns.has('turn_id')) {
+                this.db.exec('ALTER TABLE messages ADD COLUMN turn_id TEXT')
+            }
+            if (!messageColumns.has('turn_phase')) {
+                this.db.exec('ALTER TABLE messages ADD COLUMN turn_phase TEXT')
+            }
+            this.db.exec(`CREATE INDEX IF NOT EXISTS idx_messages_turn
+                ON messages(session_id, turn_id, seq ASC)`)
+        }
+    }
     /** Standalone copy, not a WAL sidecar. Downgrade by replacing the live db
      * with this file and deleting its -wal/-shm siblings. */
     private backupV25Database(): void {

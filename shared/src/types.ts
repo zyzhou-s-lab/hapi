@@ -10,12 +10,14 @@ export type {
     MachineMetadata,
     MachinePatch,
     MachineUpdatedData,
+    MessageLifecycleState,
     OmpNativeSession,
     OmpInputMode,
     RunnerState,
     Session,
     SessionInventory,
     SessionInventorySource,
+    SessionLifecycleState,
     SessionPatch,
     SessionUpdatedData,
     SyncEvent,
@@ -26,6 +28,7 @@ export type {
     ThreadGoal,
     ThreadGoalStatus,
     TodoItem,
+    TurnPhase,
     WorktreeMetadata
 } from './schemas'
 

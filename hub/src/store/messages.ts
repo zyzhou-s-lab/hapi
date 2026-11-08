@@ -2,7 +2,12 @@ import type { Database } from 'bun:sqlite'
 import { randomUUID } from 'node:crypto'
 import { isDeepStrictEqual } from 'node:util'
 
-import { getLiveMessageStreamId, getMessageStreamId } from '@hapi/protocol/messages'
+import {
+    getLiveMessageStreamId,
+    getMessageStreamId,
+    getMessageTurnId,
+    getMessageTurnPhase
+} from '@hapi/protocol/messages'
 
 import type { StoredMessage } from './types'
 import { decodeMessageContent, encodeMessageContent, truncateOversizedMessageContent } from './contentCodec'
@@ -18,6 +23,10 @@ type DbMessageRow = {
     invoked_at: number | null
     scheduled_at: number | null
     delivery_state: string | null
+    stream_id?: string | null
+    stream_live?: number
+    turn_id?: string | null
+    turn_phase?: string | null
 }
 
 export type MessagePosition = {
@@ -38,10 +47,18 @@ export class ImportedMessageConflictError extends Error {
  * runs in the writer's transaction: final beats live, then arrival seq wins. */
 function indexMessageStream(db: Database, sessionId: string, id: string, content: unknown): string {
     const streamId = getMessageStreamId(content)
-    if (streamId === null) return id
+    const turnId = getMessageTurnId(content)
+    const turnPhase = getMessageTurnPhase(content)
     const live = getLiveMessageStreamId(content) !== null
-    db.prepare('UPDATE messages SET stream_id = ?, stream_live = ? WHERE id = ?')
-        .run(streamId, live ? 1 : 0, id)
+    if (streamId === null) {
+        if (turnId !== null || turnPhase !== null) {
+            db.prepare('UPDATE messages SET turn_id = ?, turn_phase = ? WHERE id = ?')
+                .run(turnId, turnPhase, id)
+        }
+        return id
+    }
+    db.prepare('UPDATE messages SET stream_id = ?, stream_live = ?, turn_id = COALESCE(?, turn_id), turn_phase = COALESCE(?, turn_phase) WHERE id = ?')
+        .run(streamId, live ? 1 : 0, turnId, turnPhase, id)
     const winner = db.prepare(`
         SELECT id FROM messages WHERE session_id = ? AND stream_id = ?
         ORDER BY stream_live ASC, seq DESC LIMIT 1
@@ -162,7 +179,14 @@ function toStoredMessage(row: DbMessageRow): StoredMessage {
         localId: row.local_id,
         invokedAt: row.invoked_at ?? null,
         scheduledAt: row.scheduled_at ?? null,
-        ...(row.delivery_state && row.delivery_state !== 'queued' ? { deliveryState: 'indeterminate' as const } : {})
+        ...(row.delivery_state && row.delivery_state !== 'queued' ? { deliveryState: 'indeterminate' as const } : {}),
+        ...(row.turn_id ? { turnId: row.turn_id } : {}),
+        ...(row.turn_phase === 'execution' || row.turn_phase === 'final_answer' ? { phase: row.turn_phase } : {}),
+        ...(row.stream_live === 1
+            ? { lifecycleState: 'streaming' as const }
+            : (row.stream_id || row.turn_id || row.turn_phase
+                ? { lifecycleState: 'settled' as const }
+                : {}))
     }
 }
 

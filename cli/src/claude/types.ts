@@ -51,6 +51,8 @@ const RawJSONLinesBaseSchema = z.object({
   gitBranch: z.string().optional(),
   timestamp: z.string().optional(),
   providerMessageId: z.string().optional(),
+  turnId: z.string().optional(),
+  phase: z.enum(["execution", "final_answer"]).optional(),
 });
 
 // Main schema with validation for the fields used in the app

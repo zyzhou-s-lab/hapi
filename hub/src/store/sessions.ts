@@ -178,6 +178,8 @@ type DbSessionRow = {
     team_state_updated_at: number | null
     active: number
     active_at: number | null
+    active_turn_id?: string | null
+    lifecycle_state?: string | null
     seq: number
 }
 
@@ -206,6 +208,8 @@ function toStoredSession(row: DbSessionRow): StoredSession {
         teamStateUpdatedAt: row.team_state_updated_at,
         active: row.active === 1,
         activeAt: row.active_at,
+        ...(row.active_turn_id ? { activeTurnId: row.active_turn_id } : {}),
+        ...(row.lifecycle_state ? { lifecycleState: row.lifecycle_state as import('@hapi/protocol').SessionLifecycleState } : {}),
         seq: row.seq
     }
 }
@@ -700,6 +704,33 @@ export function setSessionResumeWithSessionModel(
             touch_updated_at: touchUpdatedAt ? 1 : 0
         })
 
+        return result.changes === 1
+    } catch {
+        return false
+    }
+}
+
+export function setSessionLifecycle(
+    db: Database,
+    id: string,
+    activeTurnId: string | null,
+    lifecycleState: import('@hapi/protocol').SessionLifecycleState,
+    namespace: string
+): boolean {
+    try {
+        const result = db.prepare(`
+            UPDATE sessions
+            SET active_turn_id = @active_turn_id,
+                lifecycle_state = @lifecycle_state
+            WHERE id = @id
+              AND namespace = @namespace
+              AND (active_turn_id IS NOT @active_turn_id OR lifecycle_state IS NOT @lifecycle_state)
+        `).run({
+            id,
+            namespace,
+            active_turn_id: activeTurnId,
+            lifecycle_state: lifecycleState
+        })
         return result.changes === 1
     } catch {
         return false

@@ -22,6 +22,8 @@ export type StoredSession = {
     teamStateUpdatedAt: number | null
     active: boolean
     activeAt: number | null
+    activeTurnId?: string | null
+    lifecycleState?: import('@hapi/protocol').SessionLifecycleState
     seq: number
 }
 
@@ -52,6 +54,10 @@ export type StoredMessage = {
     scheduledAt: number | null
     /** Omitted for ordinary queued/delivered rows; set when steer outcome is unknown. */
     deliveryState?: MessageDeliveryState
+    turnId?: string | null
+    turnPhase?: import('@hapi/protocol').TurnPhase | null
+    phase?: import('@hapi/protocol').TurnPhase | null
+    lifecycleState?: import('@hapi/protocol').MessageLifecycleState
 }
 
 export type StoredUser = {

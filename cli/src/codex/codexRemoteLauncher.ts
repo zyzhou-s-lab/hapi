@@ -752,6 +752,7 @@ class CodexRemoteLauncher extends RemoteLauncherBase {
         let activeAgentMessageStream: {
             id: string;
             itemId: string | null;
+            turnId: string | null;
             message: string;
             phase: string | null;
             lastSnapshotAt: number;
@@ -2984,6 +2985,7 @@ class CodexRemoteLauncher extends RemoteLauncherBase {
                         activeAgentMessageStream = {
                             id: randomUUID(),
                             itemId: itemId ?? null,
+                            turnId: eventTurnId ?? this.currentTurnId ?? null,
                             message: cumulative ?? delta ?? '',
                             phase: phase ?? null,
                             lastSnapshotAt: 0
@@ -2991,6 +2993,9 @@ class CodexRemoteLauncher extends RemoteLauncherBase {
                     } else {
                         if (itemId && !activeAgentMessageStream.itemId) {
                             activeAgentMessageStream.itemId = itemId;
+                        }
+                        if ((eventTurnId ?? this.currentTurnId) && !activeAgentMessageStream.turnId) {
+                            activeAgentMessageStream.turnId = eventTurnId ?? this.currentTurnId ?? null;
                         }
                         if (phase) {
                             activeAgentMessageStream.phase = phase;
@@ -3002,6 +3007,7 @@ class CodexRemoteLauncher extends RemoteLauncherBase {
                         && (activeAgentMessageStream.lastSnapshotAt === 0 || now - activeAgentMessageStream.lastSnapshotAt >= 40)
                     ) {
                         activeAgentMessageStream.lastSnapshotAt = now;
+                        const activeTurnId = activeAgentMessageStream.turnId ?? eventTurnId ?? this.currentTurnId;
                         session.sendAgentMessage({
                             type: 'message',
                             message: activeAgentMessageStream.message,
@@ -3009,6 +3015,7 @@ class CodexRemoteLauncher extends RemoteLauncherBase {
                             id: activeAgentMessageStream.id,
                             streamSnapshot: true,
                             live: true,
+                            ...(activeTurnId ? { turn_id: activeTurnId } : {}),
                             ...(activeAgentMessageStream.phase ? { phase: activeAgentMessageStream.phase } : {})
                         });
                     }
@@ -3295,12 +3302,14 @@ class CodexRemoteLauncher extends RemoteLauncherBase {
                     const settled = activeAgentMessageStream;
                     activeAgentMessageStream = null;
                     if (settled.message) {
+                        const settledTurnId = settled.turnId ?? eventTurnId;
                         session.sendAgentMessage({
                             type: 'message',
                             message: settled.message,
                             model: session.getModel(),
                             id: settled.id,
                             streamSnapshot: true,
+                            ...(settledTurnId ? { turn_id: settledTurnId } : {}),
                             ...(settled.phase ? { phase: settled.phase } : {})
                         });
                     }
@@ -3357,6 +3366,7 @@ class CodexRemoteLauncher extends RemoteLauncherBase {
                 const settledStream = activeAgentMessageStream;
                 activeAgentMessageStream = null;
                 const phase = asString(msg.phase) ?? settledStream?.phase ?? null;
+                const resolvedTurnId = eventTurnId ?? settledStream?.turnId ?? this.currentTurnId;
                 if (message) {
                     session.sendAgentMessage({
                         type: 'message',
@@ -3364,6 +3374,7 @@ class CodexRemoteLauncher extends RemoteLauncherBase {
                         model: session.getModel(),
                         id: settledStream?.id ?? randomUUID(),
                         ...(settledStream ? { streamSnapshot: true } : {}),
+                        ...(resolvedTurnId ? { turn_id: resolvedTurnId } : {}),
                         ...(phase ? { phase } : {})
                     });
                 }
@@ -3404,11 +3415,14 @@ class CodexRemoteLauncher extends RemoteLauncherBase {
                     delete inputs.call_id;
                     delete inputs.callId;
 
+                    const activeTurnId = eventTurnId ?? this.currentTurnId;
                     session.sendAgentMessage({
                         type: 'tool-call',
                         name: 'CodexBash',
                         callId: callId,
                         input: inputs,
+                        ...(activeTurnId ? { turn_id: activeTurnId } : {}),
+                        phase: 'execution',
                         id: randomUUID()
                     });
                 }

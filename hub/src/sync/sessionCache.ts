@@ -221,6 +221,12 @@ export class SessionCache {
             thinking: existing?.thinking ?? false,
             thinkingAt: existing?.thinkingAt ?? 0,
             activeTurnStartedAt: existing?.activeTurnStartedAt ?? null,
+            ...(existing?.activeTurnId !== undefined || stored.activeTurnId !== undefined
+                ? { activeTurnId: existing?.activeTurnId ?? stored.activeTurnId ?? null }
+                : {}),
+            ...(existing?.lifecycleState !== undefined || stored.lifecycleState !== undefined
+                ? { lifecycleState: existing?.lifecycleState ?? stored.lifecycleState }
+                : {}),
             backgroundTaskCount: existing?.backgroundTaskCount ?? 0,
             todos,
             teamState,
@@ -333,6 +339,9 @@ export class SessionCache {
 
         if (patch.active !== undefined) session.active = patch.active
         if (patch.thinking !== undefined) session.thinking = patch.thinking
+        if (patch.activeTurnStartedAt !== undefined) session.activeTurnStartedAt = patch.activeTurnStartedAt
+        if (patch.activeTurnId !== undefined) session.activeTurnId = patch.activeTurnId
+        if (patch.lifecycleState !== undefined) session.lifecycleState = patch.lifecycleState
         if (patch.activeAt !== undefined) session.activeAt = patch.activeAt
         if (patch.updatedAt !== undefined) session.updatedAt = Math.max(session.updatedAt, patch.updatedAt)
         if (patch.model !== undefined) session.model = patch.model
@@ -409,6 +418,8 @@ export class SessionCache {
             session.activeTurnStartedAt = hubNow
         } else if (wasThinking && !session.thinking) {
             session.activeTurnStartedAt = null
+            if (session.activeTurnId !== undefined) session.activeTurnId = null
+            if (session.lifecycleState !== undefined) session.lifecycleState = 'idle'
         }
         if (requestedThinking || pendingThinkingUntil <= hubNow) {
             this.pendingThinkingUntilBySessionId.delete(session.id)
@@ -638,6 +649,8 @@ export class SessionCache {
         session.thinking = false
         session.thinkingAt = t
         session.activeTurnStartedAt = null
+        if (session.activeTurnId !== undefined) session.activeTurnId = null
+        if (session.lifecycleState !== undefined) session.lifecycleState = 'idle'
         session.backgroundTaskCount = 0
         this.pendingThinkingUntilBySessionId.delete(session.id)
 

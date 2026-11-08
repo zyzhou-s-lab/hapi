@@ -368,6 +368,28 @@ export const OmpInputModeSchema = z.enum([
 
 export type OmpInputMode = z.infer<typeof OmpInputModeSchema>
 
+export const TurnPhaseSchema = z.enum([
+    'execution',
+    'final_answer'
+])
+export type TurnPhase = z.infer<typeof TurnPhaseSchema>
+
+export const MessageLifecycleStateSchema = z.enum([
+    'streaming',
+    'settled'
+])
+export type MessageLifecycleState = z.infer<typeof MessageLifecycleStateSchema>
+
+export const SessionLifecycleStateSchema = z.enum([
+    'idle',
+    'thinking',
+    'tool-executing',
+    'streaming-answer',
+    'awaiting-permission',
+    'completed'
+])
+export type SessionLifecycleState = z.infer<typeof SessionLifecycleStateSchema>
+
 export const DecryptedMessageSchema = z.object({
     id: z.string(),
     seq: z.number().nullable(),
@@ -380,7 +402,11 @@ export const DecryptedMessageSchema = z.object({
     // The row stays uninvoked and requires an explicit user resolution.
     deliveryState: z.literal('indeterminate').optional(),
     // Live signal via messages-consumed (steered:true); not persisted by the hub.
-    steered: z.boolean().optional()
+    steered: z.boolean().optional(),
+    // Explicit turn and phase identity persisted in SQLite messages table.
+    turnId: z.string().nullable().optional(),
+    phase: TurnPhaseSchema.nullable().optional(),
+    lifecycleState: MessageLifecycleStateSchema.optional()
 })
 
 export type DecryptedMessage = z.infer<typeof DecryptedMessageSchema>
@@ -403,6 +429,8 @@ export const SessionSchema = z.object({
     thinking: z.boolean(),
     thinkingAt: z.number(),
     activeTurnStartedAt: z.number().nullable().optional(),
+    activeTurnId: z.string().nullable().optional(),
+    lifecycleState: SessionLifecycleStateSchema.optional(),
     backgroundTaskCount: z.number().optional(),
     todos: TodosSchema.optional(),
     teamState: TeamStateSchema.optional(),
@@ -457,6 +485,8 @@ export const SessionPatchSchema = z.object({
     active: z.boolean().optional(),
     thinking: z.boolean().optional(),
     activeTurnStartedAt: z.number().nullable().optional(),
+    activeTurnId: z.string().nullable().optional(),
+    lifecycleState: SessionLifecycleStateSchema.optional(),
     activeAt: z.number().optional(),
     updatedAt: z.number().optional(),
     // Structured-patch fields for the second half of #884. Letting the four

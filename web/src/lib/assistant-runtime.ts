@@ -659,45 +659,72 @@ export function findLatestCompletedBoundaryId(
     return candidate
 }
 
-function getAssistantBlockSignatures(blocks: readonly VisibleChatBlock[]): string[] {
-    return blocks
-        .filter((block) => visibleBlockRole(block) === 'assistant')
-        .map((block) => {
-            const text = 'text' in block ? block.text : ''
-            const toolCount = block.kind === 'tool-group' ? block.tools.length : 0
-            const textMarker = text.length <= 64 ? text : `${text.length}:${text.slice(-32)}`
-            return `${block.id}:${getBlockPresentationTimestamp(block)}:${textMarker}:${toolCount}`
-        })
+function findTailAssistantBlock(blocks: readonly VisibleChatBlock[]): VisibleChatBlock | null {
+    for (let index = blocks.length - 1; index >= 0; index -= 1) {
+        const block = blocks[index]
+        const role = visibleBlockRole(block)
+        if (role === 'user') {
+            return null
+        }
+        if (role === 'assistant') {
+            return block
+        }
+    }
+    return null
 }
 
-function haveSameAssistantBlockSignatures(
-    first: readonly string[],
-    second: readonly string[]
+function getTailAssistantMarker(block: VisibleChatBlock | null): string | null {
+    if (!block) return null
+    const textLength = 'text' in block ? block.text.length : 0
+    const toolCount = block.kind === 'tool-group' ? block.tools.length : 0
+    const toolState = block.kind === 'tool-call'
+        ? block.tool.state
+        : block.kind === 'tool-group'
+            ? `${block.summary.runningCount}:${block.summary.pendingCount}`
+            : ''
+    return `${block.id}:${getBlockPresentationTimestamp(block)}:${textLength}:${toolCount}:${toolState}`
+}
+
+function isTailAssistantBlockActivelyRunning(
+    tailBlock: VisibleChatBlock | null,
+    session: Session,
+    settledTailMarker: string | null
 ): boolean {
-    return first.length === second.length
-        && first.every((value, index) => value === second[index])
+    if (!tailBlock) return false
+    if (session.activeTurnId && 'turnId' in tailBlock && tailBlock.turnId === session.activeTurnId) {
+        return true
+    }
+    if (
+        session.lifecycleState === 'tool-executing'
+        || session.lifecycleState === 'streaming-answer'
+        || session.lifecycleState === 'awaiting-permission'
+    ) {
+        return true
+    }
+    if (
+        tailBlock.kind === 'tool-call'
+        && (tailBlock.tool.state === 'running' || tailBlock.tool.state === 'pending')
+    ) {
+        return true
+    }
+    if (
+        tailBlock.kind === 'tool-group'
+        && (tailBlock.summary.runningCount > 0 || tailBlock.summary.pendingCount > 0)
+    ) {
+        return true
+    }
+    const activeTurnStartedAt = session.activeTurnStartedAt ?? null
+    if (
+        activeTurnStartedAt !== null
+        && getBlockPresentationTimestamp(tailBlock) >= activeTurnStartedAt
+    ) {
+        return true
+    }
+    if (settledTailMarker === null) {
+        return activeTurnStartedAt === null
+    }
+    return getTailAssistantMarker(tailBlock) !== settledTailMarker
 }
-
-function isOlderAssistantHistoryPrepended(
-    current: readonly string[],
-    baseline: readonly string[]
-): boolean {
-    if (baseline.length === 0 || current.length <= baseline.length) return false
-    const suffixStart = current.length - baseline.length
-    return baseline.every((value, index) => current[suffixStart + index] === value)
-}
-
-function containsActiveAssistantOutput(
-    blocks: readonly VisibleChatBlock[],
-    activeTurnStartedAt: number | null
-): boolean {
-    return activeTurnStartedAt !== null
-        && blocks.some((block) => (
-            visibleBlockRole(block) === 'assistant'
-            && getBlockPresentationTimestamp(block) >= activeTurnStartedAt
-        ))
-}
-
 function toThreadMessageLike(
     block: VisibleChatBlock,
     threadMessageId: string,
@@ -1043,106 +1070,52 @@ export function useHappyRuntime(props: {
     pendingSendIntentRef?: React.MutableRefObject<ComposerSendIntent>
 }) {
     const isRunning = props.isRunning ?? props.session.thinking
-    const activeTurnStartedAt = props.session.activeTurnStartedAt ?? null
-    const hydratingWindow = props.viewMode === 'history'
-        || props.isSyncingTail === true
-        || props.isLoadingMore === true
-    const assistantBlockSignatures = useMemo(
-        () => getAssistantBlockSignatures(props.blocks),
-        [props.blocks]
-    )
-    const hasActiveAssistantOutput = containsActiveAssistantOutput(props.blocks, activeTurnStartedAt)
-    const awaitingInitialSnapshot = isRunning && props.blocks.length === 0
-    const runningHandoffRef = useRef({
-        sessionId: props.session.id,
-        wasRunning: isRunning,
-        historyVersion: props.historyVersion,
-        assistantBlockSignatures: isRunning ? assistantBlockSignatures : null,
-        awaitingExistingRunHydration: awaitingInitialSnapshot,
-        wasHydratingWindow: hydratingWindow,
-        // A running session can mount before its first message page arrives.
-        // Treat that first non-empty snapshot as hydration, not as new stream
-        // output, so a resumed reasoning part cannot start from an empty view.
-        hasObservedAssistantBlocks: !isRunning || !awaitingInitialSnapshot
-    })
-    // assistant-ui derives the last message's status from the thread-level
-    // isRunning flag. On a send, that flag can become true before the new
-    // assistant block is visible, so keep the previous materialized response
-    // complete until the block list proves that the new turn has produced
-    // output. Reset the baseline when the viewed session changes so switching
-    // from one running session to another gets the same protection.
-    const runningHandoff = runningHandoffRef.current
-    if (runningHandoff.sessionId !== props.session.id) {
-        runningHandoff.sessionId = props.session.id
-        runningHandoff.wasRunning = isRunning
-        runningHandoff.historyVersion = props.historyVersion
-        runningHandoff.assistantBlockSignatures = isRunning ? assistantBlockSignatures : null
-        runningHandoff.awaitingExistingRunHydration = awaitingInitialSnapshot
-        runningHandoff.wasHydratingWindow = hydratingWindow
-        runningHandoff.hasObservedAssistantBlocks = !isRunning || !awaitingInitialSnapshot
-    } else if (!isRunning) {
-        runningHandoff.historyVersion = props.historyVersion
-        runningHandoff.assistantBlockSignatures = null
-        runningHandoff.awaitingExistingRunHydration = false
-    } else if (!runningHandoff.wasRunning) {
-        runningHandoff.historyVersion = props.historyVersion
-        runningHandoff.assistantBlockSignatures = hasActiveAssistantOutput
-            ? null
-            : assistantBlockSignatures
-        runningHandoff.awaitingExistingRunHydration = false
-        runningHandoff.hasObservedAssistantBlocks = props.blocks.length > 0
-    } else if (runningHandoff.historyVersion !== props.historyVersion) {
-        // A bounded older-history prepend can drop the previous tail, so the
-        // new signature list is not necessarily a suffix of the old one.
-        runningHandoff.historyVersion = props.historyVersion
-        if (runningHandoff.assistantBlockSignatures !== null) {
-            runningHandoff.assistantBlockSignatures = assistantBlockSignatures
-            runningHandoff.hasObservedAssistantBlocks = props.blocks.length > 0
-        }
-    } else if (hydratingWindow || runningHandoff.wasHydratingWindow) {
-        if (runningHandoff.assistantBlockSignatures !== null) {
-            runningHandoff.assistantBlockSignatures = assistantBlockSignatures
-            runningHandoff.hasObservedAssistantBlocks = props.blocks.length > 0
-        }
-    } else if (!runningHandoff.hasObservedAssistantBlocks && props.blocks.length > 0) {
-        runningHandoff.assistantBlockSignatures = (
-            runningHandoff.awaitingExistingRunHydration || !hasActiveAssistantOutput
-        )
-            ? assistantBlockSignatures
-            : null
-        runningHandoff.awaitingExistingRunHydration = false
-        runningHandoff.hasObservedAssistantBlocks = true
-    } else if (
-        runningHandoff.assistantBlockSignatures !== null
-        && !haveSameAssistantBlockSignatures(
-            runningHandoff.assistantBlockSignatures,
-            assistantBlockSignatures
-        )
-    ) {
-        if (isOlderAssistantHistoryPrepended(
-            assistantBlockSignatures,
-            runningHandoff.assistantBlockSignatures
-        )) {
-            runningHandoff.assistantBlockSignatures = assistantBlockSignatures
-        } else {
-            runningHandoff.assistantBlockSignatures = null
-        }
-    }
-    runningHandoff.wasRunning = isRunning
-    runningHandoff.wasHydratingWindow = hydratingWindow
-
-    const waitingForAssistantOutput = isRunning
-        && runningHandoff.assistantBlockSignatures !== null
-        && haveSameAssistantBlockSignatures(
-            runningHandoff.assistantBlockSignatures,
-            assistantBlockSignatures
-        )
-    const isRunningForMessages = isRunning && !waitingForAssistantOutput
     const flavor = props.session.metadata?.flavor
 
     const visibleBlocks = useMemo(
         () => hoistMidTurnTitleEvents(filterVisibleBlocksForFlavor(props.blocks, flavor)),
         [flavor, props.blocks]
+    )
+
+    const tailAssistantBlock = useMemo(
+        () => findTailAssistantBlock(visibleBlocks),
+        [visibleBlocks]
+    )
+    const tailAssistantMarker = useMemo(
+        () => getTailAssistantMarker(tailAssistantBlock),
+        [tailAssistantBlock]
+    )
+    const settledTailRef = useRef<{
+        sessionId: string
+        wasRunning: boolean
+        settledMarker: string | null
+    }>({
+        sessionId: props.session.id,
+        wasRunning: isRunning,
+        settledMarker: isRunning ? null : tailAssistantMarker
+    })
+    if (settledTailRef.current.sessionId !== props.session.id) {
+        settledTailRef.current = {
+            sessionId: props.session.id,
+            wasRunning: isRunning,
+            settledMarker: isRunning ? tailAssistantMarker : tailAssistantMarker
+        }
+    } else if (!isRunning) {
+        settledTailRef.current.wasRunning = false
+        settledTailRef.current.settledMarker = tailAssistantMarker
+    } else if (!settledTailRef.current.wasRunning) {
+        settledTailRef.current.wasRunning = true
+    } else if (
+        settledTailRef.current.settledMarker !== null
+        && tailAssistantMarker !== settledTailRef.current.settledMarker
+    ) {
+        settledTailRef.current.settledMarker = null
+    }
+
+    const isRunningForMessages = isRunning && isTailAssistantBlockActivelyRunning(
+        tailAssistantBlock,
+        props.session,
+        settledTailRef.current.settledMarker
     )
 
     // Compute response-group aggregates once per block list so we can
