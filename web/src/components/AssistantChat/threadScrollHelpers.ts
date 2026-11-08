@@ -1,4 +1,6 @@
 import { getConversationMessageAnchorId } from '@/chat/outline'
+import type { OlderHistoryLoadResult } from '@/components/AssistantChat/context'
+
 export type ScrollAnchor = {
     id: string
     topOffset: number
@@ -21,12 +23,38 @@ export type ThreadScrollMode =
     | 'user-reading'
     | 'pagination-restore'
 
+export type ThreadScrollState = {
+    mode: ThreadScrollMode
+    autoScrollEnabled: boolean
+    atBottom: boolean
+    tailScrollInProgress: boolean
+    lastScrollTop: number
+    pendingRestore: PendingScrollRestore | null
+}
+
+export type AnchorPinState = {
+    anchor: ScrollAnchor | null
+    startedAt: number
+    until: number
+    wheelGestureUntil: number
+}
+
+export type InitialScrollSettleState = {
+    sessionId: string | null
+    deadline: number
+    timers: number[]
+}
+
 export type HistoryLoaderState = {
     runId: number
     phase: 'idle' | 'loading' | 'backoff' | 'awaiting-render'
     source: HistoryLoadSource | null
     failureCount: number
     autoPaused: boolean
+    pendingPromise?: Promise<OlderHistoryLoadResult> | null
+    pendingResolve?: ((value: OlderHistoryLoadResult) => void) | null
+    coverageCheckTimer?: number | null
+    failureRetryTimer?: number | null
 }
 
 export const MESSAGE_ANCHOR_SELECTOR = '.happy-thread-messages > [id]'
@@ -134,6 +162,81 @@ export function resolveThreadScrollMode(params: {
 
 export function shouldFollowTailInScrollMode(mode: ThreadScrollMode): boolean {
     return mode === 'tail-follow'
+}
+
+export function createInitialThreadScrollState(lastScrollTop = 0): ThreadScrollState {
+    return {
+        mode: 'tail-follow',
+        autoScrollEnabled: true,
+        atBottom: true,
+        tailScrollInProgress: false,
+        lastScrollTop,
+        pendingRestore: null,
+    }
+}
+
+export function createInitialAnchorPinState(): AnchorPinState {
+    return {
+        anchor: null,
+        startedAt: 0,
+        until: 0,
+        wheelGestureUntil: 0,
+    }
+}
+
+export function createInitialScrollSettleState(): InitialScrollSettleState {
+    return {
+        sessionId: null,
+        deadline: 0,
+        timers: [],
+    }
+}
+
+export function createInitialHistoryLoaderState(runId = 0): HistoryLoaderState {
+    return {
+        runId,
+        phase: 'idle',
+        source: null,
+        failureCount: 0,
+        autoPaused: false,
+        pendingPromise: null,
+        pendingResolve: null,
+        coverageCheckTimer: null,
+        failureRetryTimer: null,
+    }
+}
+
+export function applyThreadScrollStatePatch(
+    current: ThreadScrollState,
+    patch: Partial<Omit<ThreadScrollState, 'mode'>>
+): ThreadScrollState {
+    const autoScrollEnabled = patch.autoScrollEnabled !== undefined
+        ? patch.autoScrollEnabled
+        : current.autoScrollEnabled
+    const atBottom = patch.atBottom !== undefined
+        ? patch.atBottom
+        : current.atBottom
+    const tailScrollInProgress = patch.tailScrollInProgress !== undefined
+        ? patch.tailScrollInProgress
+        : current.tailScrollInProgress
+    const lastScrollTop = patch.lastScrollTop !== undefined
+        ? patch.lastScrollTop
+        : current.lastScrollTop
+    const pendingRestore = patch.pendingRestore !== undefined
+        ? patch.pendingRestore
+        : current.pendingRestore
+    return {
+        mode: resolveThreadScrollMode({
+            autoScrollEnabled,
+            atBottom,
+            hasPendingRestore: pendingRestore !== null,
+        }),
+        autoScrollEnabled,
+        atBottom,
+        tailScrollInProgress,
+        lastScrollTop,
+        pendingRestore,
+    }
 }
 
 export type ViewportScrollTransition = {
