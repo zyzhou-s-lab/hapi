@@ -19,6 +19,7 @@ export type MessageHistoryAction = {
 type MessageActionsProps = {
     align: 'start' | 'end'
     copyText?: string
+    getCopyText?: () => string
     metadata?: Omit<MessageMetadataProps, 'className'>
     messageElementId?: string
     showFork?: boolean
@@ -48,6 +49,7 @@ export function selectThreadIsRunning(state: MessageActionsAuiState): boolean {
 export function MessageActions({
     align,
     copyText,
+    getCopyText,
     metadata,
     messageElementId,
     showFork = false,
@@ -59,7 +61,7 @@ export function MessageActions({
     const { copied, copy } = useCopyToClipboard()
     const { t } = useTranslation()
     const threadIsRunning = useAuiState((state) => selectThreadIsRunning(state))
-    const canCopy = Boolean(copyText)
+    const canCopy = Boolean(copyText || getCopyText)
     const hasMetadata = metadata ? buildMessageMetadataLabels(metadata).length > 0 : false
     const [forkOpen, setForkOpen] = useState(false)
     const [rewindOpen, setRewindOpen] = useState(false)
@@ -71,6 +73,7 @@ export function MessageActions({
         <ShareTurnButton
             messageElementId={messageElementId}
             fallbackText={copyText}
+            getFallbackText={getCopyText}
         />
     ) : null
 
@@ -98,7 +101,10 @@ export function MessageActions({
     const copyButton = canCopy ? (
         <MessageActionButton
             label={copied ? t('message.copied') : t('message.copy')}
-            onClick={() => copy(copyText!)}
+            onClick={() => {
+                const resolved = getCopyText ? getCopyText() : (copyText ?? '')
+                if (resolved) copy(resolved)
+            }}
         >
             {copied ? <CheckIcon className="h-3.5 w-3.5 text-green-500" /> : <CopyIcon className="h-3.5 w-3.5" />}
         </MessageActionButton>

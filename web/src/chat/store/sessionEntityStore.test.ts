@@ -440,6 +440,120 @@ describe('SessionEntityStore', () => {
             expect(settledBlock.text).toBe('Checking workspace files completed.')
         }
     })
+
+    it('keeps TurnEntitySnapshot reference stable across body-text streaming deltas and refreshes on settlement', () => {
+        const store = createSessionEntityStore()
+        const userPrompt = makeUserMessage('u-prompt', 'Explain the architecture', 1000)
+        const liveDelta1: DecryptedMessage = {
+            id: 'a-stream',
+            seq: 2,
+            localId: null,
+            createdAt: 1100,
+            content: {
+                role: 'agent',
+                content: {
+                    type: 'codex',
+                    data: {
+                        type: 'message',
+                        id: 'stream-item-ans',
+                        turn_id: 'turn-ans',
+                        phase: 'final_answer',
+                        streamSnapshot: true,
+                        live: true,
+                        message: 'First token',
+                    },
+                },
+            },
+        }
+        const snap1 = store.reconcileInput({
+            sessionId: 'sess-turn-eq',
+            messages: [userPrompt, liveDelta1],
+            agentState: null,
+            hasMoreMessages: false,
+            codexExplorationCollapsed: false,
+        })
+        const turnId = snap1.blocksWithThreadIds.find((e) => e.block.kind === 'agent-text')!.threadMessageId
+        const turn1 = store.getTurnEntity(turnId)!
+        expect(turn1).toBeDefined()
+        expect(store.getPrecedingUserText(turnId)).toBe('Explain the architecture')
+
+        let turnNotified = 0
+        let blockNotified = 0
+        const textBlockId = turn1.blocks[0]!.id
+        store.subscribeEntity(turnId, () => {
+            turnNotified += 1
+        })
+        store.subscribeEntity(textBlockId, () => {
+            blockNotified += 1
+        })
+
+        const liveDelta2: DecryptedMessage = {
+            ...liveDelta1,
+            content: {
+                role: 'agent',
+                content: {
+                    type: 'codex',
+                    data: {
+                        type: 'message',
+                        id: 'stream-item-ans',
+                        turn_id: 'turn-ans',
+                        phase: 'final_answer',
+                        streamSnapshot: true,
+                        live: true,
+                        message: 'First token and second token',
+                    },
+                },
+            },
+        }
+        const snap2 = store.reconcileInput({
+            sessionId: 'sess-turn-eq',
+            messages: [userPrompt, liveDelta2],
+            agentState: null,
+            hasMoreMessages: false,
+            codexExplorationCollapsed: false,
+        })
+
+        // TurnEntitySnapshot and blocksWithThreadIds references stay stable during body-text delta while leaf block notifies
+        expect(turnNotified).toBe(0)
+        expect(blockNotified).toBe(1)
+        expect(store.getTurnEntity(turnId)).toBe(turn1)
+        expect(snap2.blocksWithThreadIds).toBe(snap1.blocksWithThreadIds)
+        expect(store.getLiveTurnParts(turnId)?.[0]).toMatchObject({
+            type: 'text',
+            text: 'First token and second token',
+        })
+
+        // Settling the stream (live: false) with the exact same text refreshes TurnEntitySnapshot once
+        const settledMsg: DecryptedMessage = {
+            ...liveDelta2,
+            content: {
+                role: 'agent',
+                content: {
+                    type: 'codex',
+                    data: {
+                        type: 'message',
+                        id: 'stream-item-ans',
+                        turn_id: 'turn-ans',
+                        phase: 'final_answer',
+                        streamSnapshot: true,
+                        message: 'First token and second token',
+                    },
+                },
+            },
+        }
+        store.reconcileInput({
+            sessionId: 'sess-turn-eq',
+            messages: [userPrompt, settledMsg],
+            agentState: null,
+            hasMoreMessages: false,
+            codexExplorationCollapsed: false,
+        })
+        expect(turnNotified).toBe(1)
+        expect(store.getTurnEntity(turnId)?.parts[0]).toMatchObject({
+            type: 'text',
+            text: 'First token and second token',
+        })
+    })
 })
 
 describe('partitionTurn and projectTurn reference stabilization', () => {

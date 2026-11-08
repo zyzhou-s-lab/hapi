@@ -529,11 +529,11 @@ export function assignThreadMessageIds(
 export function findLatestCompletedBoundaryId(
     blocks: readonly VisibleChatBlock[],
     isRunning: boolean,
-    activeTurnStartedAt: number | null
+    activeTurnStartedAt: number | null,
+    assignedEntries?: readonly BlockWithThreadMessageId[]
 ): string | null {
-    const assigned = assignThreadMessageIds(blocks)
+    const assigned = assignedEntries ?? assignThreadMessageIds(blocks)
     let limit = assigned.length
-
     if (isRunning) {
         const activeTurnStart = activeTurnStartedAt === null
             ? assigned.findLastIndex(({ block }) => (
@@ -665,12 +665,85 @@ function isSameBlockArray(
     return true
 }
 
+export function areTurnBlocksStructurallyEquivalent(
+    a: readonly VisibleChatBlock[],
+    b: readonly VisibleChatBlock[]
+): boolean {
+    if (a === b) return true
+    if (a.length !== b.length) return false
+    for (let i = 0; i < a.length; i += 1) {
+        const left = a[i]!
+        const right = b[i]!
+        if (left === right) continue
+        const leftLocalId = left.kind === 'user-text' ? left.localId : undefined
+        const rightLocalId = right.kind === 'user-text' ? right.localId : undefined
+        if (left.kind !== right.kind || left.id !== right.id || leftLocalId !== rightLocalId) {
+            return false
+        }
+        if (left.kind === 'agent-text' && right.kind === 'agent-text') {
+            if (
+                left.turnId !== right.turnId
+                || left.phase !== right.phase
+                || left.model !== right.model
+                || left.durationMs !== right.durationMs
+                || left.roundSummary !== right.roundSummary
+                || !isSameUsage(left.usage, right.usage)
+                || Boolean(left.text.trim()) !== Boolean(right.text.trim())
+            ) {
+                return false
+            }
+            continue
+        }
+        if (left.kind === 'agent-reasoning' && right.kind === 'agent-reasoning') {
+            if (
+                left.turnId !== right.turnId
+                || left.model !== right.model
+                || left.durationMs !== right.durationMs
+                || left.roundSummary !== right.roundSummary
+                || !isSameUsage(left.usage, right.usage)
+                || Boolean(left.text.trim()) !== Boolean(right.text.trim())
+            ) {
+                return false
+            }
+            continue
+        }
+        return false
+    }
+    return true
+}
+
+export function areThreadEntriesStructurallyEquivalent(
+    a: readonly BlockWithThreadMessageId[],
+    b: readonly BlockWithThreadMessageId[]
+): boolean {
+    if (a === b) return true
+    if (a.length !== b.length) return false
+    for (let i = 0; i < a.length; i += 1) {
+        const left = a[i]!
+        const right = b[i]!
+        if (left === right) continue
+        if (
+            visibleBlockRole(left.block) !== 'assistant'
+            || visibleBlockRole(right.block) !== 'assistant'
+            || left.threadMessageId !== right.threadMessageId
+            || left.timestamp !== right.timestamp
+            || !isSameAggregate(left.aggregate, right.aggregate)
+        ) {
+            return false
+        }
+    }
+    return true
+}
+
 export function buildTurnEntitiesById(
     entries: readonly BlockWithThreadMessageId[],
     previousTurnsById: ReadonlyMap<string, TurnEntitySnapshot>,
-    partCache: WeakMap<VisibleChatBlock, TurnEntityContentPart>
+    partCache: WeakMap<VisibleChatBlock, TurnEntityContentPart>,
+    options?: { allowStreamingTextEquivalence?: boolean }
 ): Map<string, TurnEntitySnapshot> {
+    const allowStreamingTextEquivalence = options?.allowStreamingTextEquivalence ?? true
     const nextTurnsById = new Map<string, TurnEntitySnapshot>()
+    let reusedCount = 0
     let index = 0
     while (index < entries.length) {
         const current = entries[index]!
@@ -709,7 +782,11 @@ export function buildTurnEntitiesById(
         const prevTurn = previousTurnsById.get(turnId)
         if (
             prevTurn
-            && isSameBlockArray(prevTurn.blocks, runBlocks)
+            && (
+                allowStreamingTextEquivalence
+                    ? areTurnBlocksStructurallyEquivalent(prevTurn.blocks, runBlocks)
+                    : isSameBlockArray(prevTurn.blocks, runBlocks)
+            )
             && prevTurn.timestamp === timestamp
             && prevTurn.invokedAt === invokedAt
             && prevTurn.durationMs === durationMs
@@ -719,9 +796,9 @@ export function buildTurnEntitiesById(
             && prevTurn.turnCount === turnCount
         ) {
             nextTurnsById.set(turnId, prevTurn)
+            reusedCount += 1
             continue
         }
-
         const parts = runBlocks.map((block) => visibleBlockToTurnContentPart(block, partCache))
         nextTurnsById.set(turnId, {
             id: turnId,
@@ -735,6 +812,9 @@ export function buildTurnEntitiesById(
             roundSummary,
             turnCount,
         })
+    }
+    if (reusedCount === nextTurnsById.size && nextTurnsById.size === previousTurnsById.size) {
+        return previousTurnsById as Map<string, TurnEntitySnapshot>
     }
     return nextTurnsById
 }

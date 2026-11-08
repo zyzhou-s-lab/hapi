@@ -1,5 +1,6 @@
 import { useAuiState } from '@assistant-ui/react'
 import { useOptionalHappyChatStaticContext } from '@/components/AssistantChat/context'
+import { useOptionalSessionEntityStore } from '@/hooks/useSessionEntityStore'
 import { useTranslation } from '@/lib/use-translation'
 import { MessageActionButton } from './MessageActionButton'
 
@@ -28,10 +29,15 @@ export function ShareTurnButton(props: {
     messageElementId: string
     className?: string
     fallbackText?: string
+    getFallbackText?: () => string
 }) {
     const ctx = useOptionalHappyChatStaticContext()
+    const store = useOptionalSessionEntityStore()
     const { t } = useTranslation()
-    const fallbackUserText = useAuiState(({ message, thread }) => {
+    const messageId = useAuiState((s) => s.message.id)
+    const hasStoreData = Boolean(store && store.getSnapshot().blocksWithThreadIds.length > 0)
+    const auiFallbackUserText = useAuiState(({ message, thread }) => {
+        if (hasStoreData) return ''
         const currentIndex = thread.messages.findIndex((candidate) => candidate.id === message.id)
         if (currentIndex < 0) return ''
         for (let index = currentIndex; index >= 0; index -= 1) {
@@ -47,7 +53,6 @@ export function ShareTurnButton(props: {
     })
     const onShareTurn = ctx?.onShareTurn
     if (!onShareTurn) return null
-    const fallbackText = props.fallbackText?.trim() ?? ''
 
     return (
         <MessageActionButton
@@ -56,6 +61,11 @@ export function ShareTurnButton(props: {
             className={props.className}
             onClick={(event) => {
                 event.stopPropagation()
+                const fallbackUserText = hasStoreData && store
+                    ? (store.getPrecedingUserText(messageId) ?? '')
+                    : auiFallbackUserText
+                const rawFallback = props.getFallbackText ? props.getFallbackText() : props.fallbackText
+                const fallbackText = rawFallback?.trim() ?? ''
                 const messageElement = event.currentTarget.closest('[data-hapi-message-role]')
                 onShareTurn(
                     messageElement instanceof HTMLElement ? messageElement : props.messageElementId,

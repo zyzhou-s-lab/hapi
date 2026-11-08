@@ -5,7 +5,7 @@ import { GeneratedFileCard, GeneratedImageCard } from '@/components/AssistantCha
 import { useOptionalSessionVisibleEntity } from '@/hooks/useSessionEntityStore'
 import { cn } from '@/lib/utils'
 
-const TurnEntityTextBody = memo(function TurnEntityTextBody(props: {
+export const TurnEntityTextBody = memo(function TurnEntityTextBody(props: {
     row: TurnTextRow
     streaming: boolean
     renderTrailingText?: (text: string, streaming: boolean) => React.ReactNode

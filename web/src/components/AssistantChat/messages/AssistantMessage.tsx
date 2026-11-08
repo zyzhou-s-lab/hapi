@@ -9,10 +9,13 @@ import { getConversationMessageAnchorId } from '@/chat/outline'
 import { CodexReviewCard } from '@/components/AssistantChat/messages/CodexReviewCard'
 import { MessageActions } from '@/components/AssistantChat/messages/MessageActions'
 import { useHappyChatHistoryContext, useHappyChatStaticContext } from '@/components/AssistantChat/context'
+import {
+    useOptionalSessionEntityStore,
+    useOptionalSessionTurnEntity,
+} from '@/hooks/useSessionEntityStore'
 import { NotifySummaryText } from '@/components/AssistantChat/messages/NotifySummaryText'
 import { useSessionSummaryInChat } from '@/hooks/useSessionSummaryInChat'
 import { SpeakSummaryButton } from '@/components/AssistantChat/messages/SpeakSummaryButton'
-
 const TOOL_COMPONENTS = {
     Fallback: HappyToolMessage
 } as const
@@ -27,50 +30,96 @@ const MESSAGE_PART_COMPONENTS = {
 export function HappyAssistantMessage() {
     const staticCtx = useHappyChatStaticContext()
     const historyCtx = useHappyChatHistoryContext()
+    const store = useOptionalSessionEntityStore()
     const showSessionSummaryInChat = useSessionSummaryInChat()
     const messageId = useAuiState((s) => s.message.id)
+    const isMessageRunning = useAuiState((s) => s.message.status?.type === 'running')
+    const turnEntity = useOptionalSessionTurnEntity(messageId)
+    const hasStoreTurn = Boolean(turnEntity)
+    const firstBlock = turnEntity?.blocks[0]
     const elementId = getConversationMessageAnchorId(messageId)
-    const isCliOutput = useAuiState((s) => {
+    const auiIsCliOutput = useAuiState((s) => {
+        if (hasStoreTurn) return false
         const custom = s.message.metadata.custom as Partial<HappyChatMessageMetadata> | undefined
         return custom?.kind === 'cli-output'
     })
-    const codexReview = useAuiState((s) => {
+    const auiCodexReview = useAuiState((s) => {
+        if (hasStoreTurn) return undefined
         const custom = s.message.metadata.custom as Partial<HappyChatMessageMetadata> | undefined
         return custom?.kind === 'codex-review' ? custom.review : undefined
     })
-    const cliText = useAuiState((s) => {
+    const auiCliText = useAuiState((s) => {
+        if (hasStoreTurn) return ''
         const custom = s.message.metadata.custom as Partial<HappyChatMessageMetadata> | undefined
         if (custom?.kind !== 'cli-output') return ''
         return s.message.content.find((part): part is TextMessagePart => part.type === 'text')?.text ?? ''
     })
-    const toolOnly = useAuiState((s) => {
-        if (s.message.role !== 'assistant') return false
+    const auiToolOnly = useAuiState((s) => {
+        if (hasStoreTurn || s.message.role !== 'assistant') return false
         const parts = s.message.content
         return parts.length > 0 && parts.every((part) => part.type === 'tool-call')
     })
-    const turnActivity = useAuiState((s) => {
-        if (s.message.role !== 'assistant') return false
+    const auiTurnActivity = useAuiState((s) => {
+        if (hasStoreTurn || s.message.role !== 'assistant') return false
         if (messageHasTurnActivity(s.message.content)) return true
         if (s.message.status?.type !== 'running') return false
         return !s.message.content.some(
             (part) => part.type === 'text' && typeof part.text === 'string' && part.text.trim().length > 0
         )
     })
-    const copyText = useAuiState((s) => {
-        if (s.message.role !== 'assistant') return ''
+    const auiCopyText = useAuiState((s) => {
+        if (hasStoreTurn || s.message.role !== 'assistant') return ''
         return getAssistantCopyText(s.message.content, {
             stripNotifySummary: !showSessionSummaryInChat
         })
     })
 
-    const durationMs = useAuiState(({ message }) => (message.metadata.custom as Partial<HappyChatMessageMetadata> | undefined)?.durationMs)
-    const usage = useAuiState(({ message }) => (message.metadata.custom as Partial<HappyChatMessageMetadata> | undefined)?.usage)
-    const messageModel = useAuiState(({ message }) => (message.metadata.custom as Partial<HappyChatMessageMetadata> | undefined)?.model)
-    const turnCount = useAuiState(({ message }) => (message.metadata.custom as Partial<HappyChatMessageMetadata> | undefined)?.turnCount)
-    const roundSummary = useAuiState(({ message }) => (message.metadata.custom as Partial<HappyChatMessageMetadata> | undefined)?.roundSummary)
+    const auiDurationMs = useAuiState(({ message }) => hasStoreTurn ? undefined : (message.metadata.custom as Partial<HappyChatMessageMetadata> | undefined)?.durationMs)
+    const auiUsage = useAuiState(({ message }) => hasStoreTurn ? undefined : (message.metadata.custom as Partial<HappyChatMessageMetadata> | undefined)?.usage)
+    const auiMessageModel = useAuiState(({ message }) => hasStoreTurn ? undefined : (message.metadata.custom as Partial<HappyChatMessageMetadata> | undefined)?.model)
+    const auiTurnCount = useAuiState(({ message }) => hasStoreTurn ? undefined : (message.metadata.custom as Partial<HappyChatMessageMetadata> | undefined)?.turnCount)
+    const auiRoundSummary = useAuiState(({ message }) => hasStoreTurn ? undefined : (message.metadata.custom as Partial<HappyChatMessageMetadata> | undefined)?.roundSummary)
+
+    const isCliOutput = hasStoreTurn ? firstBlock?.kind === 'cli-output' : auiIsCliOutput
+    const codexReview = hasStoreTurn
+        ? (firstBlock?.kind === 'codex-review' ? firstBlock.review : undefined)
+        : auiCodexReview
+    const cliText = hasStoreTurn
+        ? (firstBlock?.kind === 'cli-output' ? firstBlock.text : '')
+        : auiCliText
+    const toolOnly = hasStoreTurn && turnEntity
+        ? (turnEntity.parts.length > 0 && turnEntity.parts.every((part) => part.type === 'tool-call'))
+        : auiToolOnly
+    const turnActivity = hasStoreTurn && turnEntity
+        ? (
+            messageHasTurnActivity(turnEntity.parts)
+            || (
+                isMessageRunning
+                && !turnEntity.parts.some(
+                    (part) => part.type === 'text' && typeof part.text === 'string' && part.text.trim().length > 0
+                )
+            )
+        )
+        : auiTurnActivity
+    const copyText = hasStoreTurn && turnEntity
+        ? getAssistantCopyText(turnEntity.parts, {
+            stripNotifySummary: !showSessionSummaryInChat
+        })
+        : auiCopyText
+    const getCopyText = hasStoreTurn && turnEntity
+        ? () => getAssistantCopyText(
+            store?.getLiveTurnParts(messageId) ?? turnEntity.parts,
+            { stripNotifySummary: !showSessionSummaryInChat }
+        )
+        : undefined
+
+    const durationMs = hasStoreTurn ? turnEntity?.durationMs : auiDurationMs
+    const usage = hasStoreTurn ? turnEntity?.usage : auiUsage
+    const messageModel = hasStoreTurn ? turnEntity?.model : auiMessageModel
+    const turnCount = hasStoreTurn ? turnEntity?.turnCount : auiTurnCount
+    const roundSummary = hasStoreTurn ? turnEntity?.roundSummary : auiRoundSummary
 
     const metadata = { durationMs, usage, model: messageModel ?? null, turnCount, roundSummary }
-
     const history = staticCtx.metadata?.capabilities?.conversationHistory
     const showForkCurrent = Boolean(
         history?.forkCurrent
@@ -100,6 +149,7 @@ export function HappyAssistantMessage() {
                 <MessageActions
                     align="start"
                     copyText={copyText || undefined}
+                    getCopyText={getCopyText}
                     metadata={metadata}
                     messageElementId={elementId}
                     showFork={showForkCurrent}
@@ -107,7 +157,7 @@ export function HappyAssistantMessage() {
                     onFork={showForkCurrent ? () => staticCtx.onForkConversation!() : undefined}
                 />
                 {!isCliOutput && !codexReview && copyText ? (
-                    <SpeakSummaryButton messageId={messageId} text={copyText} />
+                    <SpeakSummaryButton messageId={messageId} text={copyText} getText={getCopyText} />
                 ) : null}
             </div>
         </MessagePrimitive.Root>

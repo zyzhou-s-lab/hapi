@@ -11,7 +11,7 @@ import {
     subscribeSpeaker
 } from '@/realtime/messageSummarySpeaker'
 
-export function SpeakSummaryButton(props: { messageId: string; text: string }) {
+export function SpeakSummaryButton(props: { messageId: string; text: string; getText?: () => string }) {
     const ctx = useOptionalHappyChatStaticContext()
     const { t } = useTranslation()
     const [available, setAvailable] = useState(false)
@@ -42,7 +42,14 @@ export function SpeakSummaryButton(props: { messageId: string; text: string }) {
             title={title}
             aria-label={title}
             className="p-0.5 rounded hover:bg-[var(--app-subtle-bg)] transition-colors"
-            onClick={() => busy ? stopSpeaking() : void speakSummary(ctx.api, props.messageId, props.text)}
+            onClick={() => {
+                if (busy) {
+                    stopSpeaking()
+                    return
+                }
+                const resolvedText = props.getText ? props.getText() : props.text
+                if (resolvedText) void speakSummary(ctx.api, props.messageId, resolvedText)
+            }}
         >
             {phase === 'speaking'
                 ? <StopIcon className="h-3.5 w-3.5 text-[var(--app-accent,#3b82f6)]" />

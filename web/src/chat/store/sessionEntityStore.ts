@@ -26,10 +26,12 @@ import {
 } from '@/chat/toolGroups'
 import type { ChatBlock, NormalizedMessage } from '@/chat/types'
 import {
+    areThreadEntriesStructurallyEquivalent,
     assignThreadMessageIdsWithStableWrappers,
     buildTurnEntitiesById,
     filterVisibleBlocksForFlavor,
     hoistMidTurnTitleEvents,
+    visibleBlockToTurnContentPart,
     type BlockWithThreadMessageId,
     type TurnEntityContentPart,
     type TurnEntitySnapshot,
@@ -638,10 +640,37 @@ export class SessionEntityStore {
         return this.snapshot.turnsById.get(id)
     }
 
+    getLiveTurnParts = (turnId: string): readonly TurnEntityContentPart[] | undefined => {
+        const turn = this.snapshot.turnsById.get(turnId)
+        if (!turn) return undefined
+        return turn.blocks.map((block) => {
+            const liveBlock = this.snapshot.visibleById.get(block.id) ?? block
+            return visibleBlockToTurnContentPart(liveBlock, this.turnPartCache)
+        })
+    }
+
+    getPrecedingUserText = (threadMessageId: string): string => {
+        const entries = this.snapshot.blocksWithThreadIds
+        let currentIndex = -1
+        for (let i = entries.length - 1; i >= 0; i -= 1) {
+            if (entries[i]!.threadMessageId === threadMessageId) {
+                currentIndex = i
+                break
+            }
+        }
+        if (currentIndex < 0) return ''
+        for (let i = currentIndex; i >= 0; i -= 1) {
+            const candidate = entries[i]!.block
+            if (candidate.kind === 'user-text') {
+                return candidate.text.trim()
+            }
+        }
+        return ''
+    }
+
     getMeta = (): SessionEntityMetaSnapshot => {
         return this.snapshot.meta
     }
-
     subscribe = (listener: () => void): (() => void) => {
         this.storeListeners.add(listener)
         return () => {
@@ -737,6 +766,28 @@ export class SessionEntityStore {
             }
         }
         return result
+    }
+
+    reconcileMessages(
+        sessionId: string | null,
+        messages: readonly DecryptedMessage[],
+        hasMoreMessages?: boolean,
+        options?: { deferNotifications?: boolean }
+    ): SessionEntityStoreSnapshot {
+        const prev = this.lastInput
+        const sameSession = prev?.sessionId === sessionId
+        return this.reconcileInput(
+            {
+                sessionId,
+                messages,
+                agentState: sameSession ? prev?.agentState : undefined,
+                metadata: sameSession ? prev?.metadata : undefined,
+                backgroundTaskCount: sameSession ? prev?.backgroundTaskCount : undefined,
+                hasMoreMessages: hasMoreMessages ?? (sameSession ? prev?.hasMoreMessages : false),
+                codexExplorationCollapsed: sameSession ? prev?.codexExplorationCollapsed : undefined,
+            },
+            options
+        )
     }
 
     reconcileInput(
@@ -926,11 +977,15 @@ export class SessionEntityStore {
             visibleById.set(block.id, block)
         }
 
-        const canReuseTurnEntities =
+        const hasLiveStreamingMessage = hasUnsettledPrefixMessages(stableNormalizedMessages)
+        const allowStreamingTextEquivalence = !(prevSnapshot.hasLiveStreamingMessage && !hasLiveStreamingMessage)
+        const canReuseBlocksWithThreadIds =
             !sessionChanged
+            && allowStreamingTextEquivalence
             && stableVisibleBlocks === prevSnapshot.visibleBlocks
             && input.metadata?.flavor === prevInput?.metadata?.flavor
-        const blocksWithThreadIds = canReuseTurnEntities
+        const canReuseTurnEntities = canReuseBlocksWithThreadIds
+        const candidateBlocksWithThreadIds = canReuseBlocksWithThreadIds
             ? prevSnapshot.blocksWithThreadIds
             : assignThreadMessageIdsWithStableWrappers(
                 hoistMidTurnTitleEvents(
@@ -938,14 +993,27 @@ export class SessionEntityStore {
                 ),
                 this.threadIdWrapperCache
             )
+        for (const entry of candidateBlocksWithThreadIds) {
+            if (visibleBlockRole(entry.block) !== 'assistant' && !visibleById.has(entry.threadMessageId)) {
+                visibleById.set(entry.threadMessageId, entry.block)
+            }
+        }
         const turnsById = canReuseTurnEntities
             ? prevSnapshot.turnsById
             : buildTurnEntitiesById(
-                blocksWithThreadIds,
+                candidateBlocksWithThreadIds,
                 prevSnapshot.turnsById,
-                this.turnPartCache
+                this.turnPartCache,
+                { allowStreamingTextEquivalence }
             )
-
+        const blocksWithThreadIds = (
+            !sessionChanged
+            && allowStreamingTextEquivalence
+            && turnsById === prevSnapshot.turnsById
+            && areThreadEntriesStructurallyEquivalent(candidateBlocksWithThreadIds, prevSnapshot.blocksWithThreadIds)
+        )
+            ? prevSnapshot.blocksWithThreadIds
+            : candidateBlocksWithThreadIds
         const outlineItems = (!sessionChanged && stableBlocks === prevSnapshot.blocks)
             ? prevSnapshot.outlineItems
             : buildConversationOutline([...stableBlocks], this.prevOutlineItems)
@@ -1018,7 +1086,7 @@ export class SessionEntityStore {
             hasReadyEvent: meta.hasReadyEvent,
             hasRunningChildAgent: meta.hasRunningChildAgent,
             activityLabel: meta.activityLabel,
-            hasLiveStreamingMessage: hasUnsettledPrefixMessages(stableNormalizedMessages),
+            hasLiveStreamingMessage,
             reductionMode,
             splitIndex,
         }

@@ -1,10 +1,11 @@
 import { MessagePrimitive, useAuiState } from '@assistant-ui/react'
 import { isLegacyCompactionStartEvent } from '@/chat/reducerEvents'
-import { getEventPresentation } from '@/chat/presentation'
+import { getEventPresentation, renderEventLabel } from '@/chat/presentation'
 import type { AgentEvent } from '@/chat/types'
 import type { HappyChatMessageMetadata } from '@/lib/assistant-runtime'
 import { getConversationMessageAnchorId } from '@/chat/outline'
 import { useOptionalHappyChatSessionStateContext } from '@/components/AssistantChat/context'
+import { useOptionalSessionVisibleEntity } from '@/hooks/useSessionEntityStore'
 import { MessageTimestamp } from '@/components/AssistantChat/messages/MessageTimestamp'
 import { MarkdownRenderer } from '@/components/MarkdownRenderer'
 import { cn } from '@/lib/utils'
@@ -28,24 +29,37 @@ export function HappySystemMessage() {
     const ctx = useOptionalHappyChatSessionStateContext()
     const role = useAuiState((s) => s.message.role)
     const messageId = useAuiState((s) => s.message.id)
-    const text = useAuiState((s) => {
-        if (s.message.role !== 'system') return ''
+    const visibleEntity = useOptionalSessionVisibleEntity(messageId)
+    const hasStoreSystemEntity = Boolean(visibleEntity && visibleEntity.kind === 'agent-event')
+    const auiText = useAuiState((s) => {
+        if (hasStoreSystemEntity || s.message.role !== 'system') return ''
         return s.message.content[0]?.type === 'text' ? s.message.content[0].text : ''
     })
-    const event = useAuiState((s) => {
-        if (s.message.role !== 'system') return undefined
+    const auiEvent = useAuiState((s) => {
+        if (hasStoreSystemEntity || s.message.role !== 'system') return undefined
         const custom = s.message.metadata.custom as Partial<HappyChatMessageMetadata> | undefined
         return custom?.kind === 'event' ? custom.event : undefined
     })
-    const icon = event ? getEventPresentation(event).icon : null
-    const isSessionRunning = ctx?.sessionThinking !== undefined ? Boolean(ctx.sessionThinking) : true
-    const showActiveSpinner = isActiveSystemEvent(event) && isSessionRunning
-    const compactSummary = useAuiState((s) => {
-        if (s.message.role !== 'system') return undefined
+    const auiCompactSummary = useAuiState((s) => {
+        if (hasStoreSystemEntity || s.message.role !== 'system') return undefined
         const custom = s.message.metadata.custom as Partial<HappyChatMessageMetadata> | undefined
         return custom?.kind === 'compact-summary' ? custom.event : undefined
     })
-
+    const storeEvent = hasStoreSystemEntity && visibleEntity?.kind === 'agent-event'
+        ? visibleEntity.event
+        : undefined
+    const event = hasStoreSystemEntity
+        ? (storeEvent?.type === 'compact-summary' ? undefined : storeEvent)
+        : auiEvent
+    const compactSummary = hasStoreSystemEntity
+        ? (storeEvent?.type === 'compact-summary' ? storeEvent : undefined)
+        : auiCompactSummary
+    const text: string = hasStoreSystemEntity && storeEvent
+        ? (storeEvent.type === 'compact-summary' && typeof storeEvent.summary === 'string' ? storeEvent.summary : renderEventLabel(storeEvent))
+        : auiText
+    const icon = event ? getEventPresentation(event).icon : null
+    const isSessionRunning = ctx?.sessionThinking !== undefined ? Boolean(ctx.sessionThinking) : true
+    const showActiveSpinner = isActiveSystemEvent(event) && isSessionRunning
     if (role !== 'system') return null
 
     // Pi compaction summaries are real content, not status: render them as an

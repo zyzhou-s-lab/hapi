@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useNavigate } from '@tanstack/react-router'
 import { MessagePrimitive, useAuiState, type TextMessagePart } from '@assistant-ui/react'
 import { useHappyChatStaticContext } from '@/components/AssistantChat/context'
+import { useOptionalSessionVisibleEntity } from '@/hooks/useSessionEntityStore'
 import type { HappyChatMessageMetadata } from '@/lib/assistant-runtime'
 import { MessageStatusIndicator } from '@/components/AssistantChat/messages/MessageStatusIndicator'
 import { MessageAttachments } from '@/components/AssistantChat/messages/MessageAttachments'
@@ -55,46 +56,78 @@ export function HappyUserMessage() {
     )
     const role = useAuiState(({ message }) => message.role)
     const messageId = useAuiState(({ message }) => message.id)
+    const visibleEntity = useOptionalSessionVisibleEntity(messageId)
+    const hasStoreUserEntity = Boolean(
+        visibleEntity && (visibleEntity.kind === 'user-text' || visibleEntity.kind === 'cli-output')
+    )
     const elementId = getConversationMessageAnchorId(messageId)
     // The hub's fork endpoint matches the stored ID in metadata.custom.hubMessageId;
     // assistant-ui message.id is a separate presentation key.
-    const hubMessageId = useAuiState(({ message }) => {
-        if (message.role !== 'user') return undefined
+    const auiHubMessageId = useAuiState(({ message }) => {
+        if (hasStoreUserEntity || message.role !== 'user') return undefined
         const custom = message.metadata.custom as Partial<HappyChatMessageMetadata> | undefined
         return custom?.hubMessageId
     })
-    const text = useAuiState(({ message }) => {
-        if (message.role !== 'user') return ''
+    const auiText = useAuiState(({ message }) => {
+        if (hasStoreUserEntity || message.role !== 'user') return ''
         return message.content.find((part) => part.type === 'text')?.text ?? ''
     })
-    const status = useAuiState((s) => {
-        if (s.message.role !== 'user') return undefined
+    const auiStatus = useAuiState((s) => {
+        if (hasStoreUserEntity || s.message.role !== 'user') return undefined
         const custom = s.message.metadata.custom as Partial<HappyChatMessageMetadata> | undefined
         return custom?.status
     })
-    const localId = useAuiState((s) => {
-        if (s.message.role !== 'user') return null
+    const auiLocalId = useAuiState((s) => {
+        if (hasStoreUserEntity || s.message.role !== 'user') return null
         const custom = s.message.metadata.custom as Partial<HappyChatMessageMetadata> | undefined
         return custom?.localId ?? null
     })
-    const attachments = useAuiState((s) => {
-        if (s.message.role !== 'user') return undefined
+    const auiAttachments = useAuiState((s) => {
+        if (hasStoreUserEntity || s.message.role !== 'user') return undefined
         const custom = s.message.metadata.custom as Partial<HappyChatMessageMetadata> | undefined
         return custom?.attachments
     })
-    const isCliOutput = useAuiState((s) => {
+    const auiIsCliOutput = useAuiState((s) => {
+        if (hasStoreUserEntity) return false
         const custom = s.message.metadata.custom as Partial<HappyChatMessageMetadata> | undefined
         return custom?.kind === 'cli-output'
     })
-    const steered = useAuiState(({ message }) => (
-        message.metadata.custom as Partial<HappyChatMessageMetadata> | undefined
-    )?.steered === true)
-    const cliText = useAuiState((s) => {
+    const auiSteered = useAuiState(({ message }) => (
+        hasStoreUserEntity
+            ? false
+            : (message.metadata.custom as Partial<HappyChatMessageMetadata> | undefined)?.steered === true
+    ))
+    const auiCliText = useAuiState((s) => {
+        if (hasStoreUserEntity) return ''
         const custom = s.message.metadata.custom as Partial<HappyChatMessageMetadata> | undefined
         if (custom?.kind !== 'cli-output') return ''
         return s.message.content.find((part): part is TextMessagePart => part.type === 'text')?.text ?? ''
     })
     if (role !== 'user') return null
+    const hubMessageId = hasStoreUserEntity && visibleEntity
+        ? (visibleEntity.kind === 'user-text' ? visibleEntity.id : undefined)
+        : auiHubMessageId
+    const text = hasStoreUserEntity && visibleEntity
+        ? (visibleEntity.kind === 'user-text' ? visibleEntity.text : '')
+        : auiText
+    const status = hasStoreUserEntity && visibleEntity
+        ? (visibleEntity.kind === 'user-text' ? visibleEntity.status : undefined)
+        : auiStatus
+    const localId = hasStoreUserEntity && visibleEntity
+        ? (visibleEntity.kind === 'user-text' ? (visibleEntity.localId ?? null) : null)
+        : auiLocalId
+    const attachments = hasStoreUserEntity && visibleEntity
+        ? (visibleEntity.kind === 'user-text' ? visibleEntity.attachments : undefined)
+        : auiAttachments
+    const isCliOutput = hasStoreUserEntity && visibleEntity
+        ? visibleEntity.kind === 'cli-output'
+        : auiIsCliOutput
+    const steered = hasStoreUserEntity && visibleEntity
+        ? (visibleEntity.kind === 'user-text' && visibleEntity.steered === true)
+        : auiSteered
+    const cliText = hasStoreUserEntity && visibleEntity
+        ? (visibleEntity.kind === 'cli-output' ? visibleEntity.text : '')
+        : auiCliText
     const canRetry = status === 'failed' && typeof localId === 'string' && Boolean(ctx.onRetryMessage)
     const onRetry = canRetry ? () => ctx.onRetryMessage!(localId) : undefined
     const showStatus = shouldShowMessageStatus(status)

@@ -5,6 +5,7 @@ import {
     type ProjectedSubturn,
     type TurnPartition,
     type TurnReasoningRow,
+    type TurnTextRow,
     type TurnToolRow,
 } from '@/components/AssistantChat/messages/turnBlockModel'
 import {
@@ -13,9 +14,23 @@ import {
     TimelineCoalescedStepRow,
     TimelineThoughtRow,
     TimelineToolStepRow,
-    renderSimpleMarkdownText,
 } from '@/components/AssistantChat/messages/TimelineStepRows'
+import { useOptionalSessionVisibleEntity } from '@/hooks/useSessionEntityStore'
 import { cn } from '@/lib/utils'
+import { MarkdownRenderer } from '@/components/MarkdownRenderer'
+
+function RailEntityTextBody(props: {
+    row: TurnTextRow
+    streaming: boolean
+    renderTrailingText?: (text: string, streaming: boolean) => React.ReactNode
+}) {
+    const entity = useOptionalSessionVisibleEntity(props.row.blockId ?? null)
+    const liveText = entity?.kind === 'agent-text' ? entity.text : props.row.text
+    if (props.renderTrailingText) {
+        return <>{props.renderTrailingText(liveText, props.streaming)}</>
+    }
+    return <MarkdownRenderer content={liveText} />
+}
 
 export function TurnExecutionRail(props: {
     subturn: ProjectedSubturn
@@ -51,9 +66,32 @@ export function TurnExecutionRail(props: {
         [subturn.nonTrailingRows]
     )
 
+    const lastStepRow = subturn.stepRows[subturn.stepRows.length - 1]
+    const trailingReasoningBlockId = lastStepRow?.kind === 'reasoning' ? lastStepRow.blockId : undefined
+    const liveTrailingReasoningEntity = useOptionalSessionVisibleEntity(trailingReasoningBlockId)
+    const effectiveNonTrailingRows = useMemo(() => {
+        if (
+            !liveTrailingReasoningEntity
+            || liveTrailingReasoningEntity.kind !== 'agent-reasoning'
+            || subturn.nonTrailingRows.length === 0
+        ) {
+            return subturn.nonTrailingRows
+        }
+        const liveText = liveTrailingReasoningEntity.text.trim()
+        let changed = false
+        const nextRows = subturn.nonTrailingRows.map((row) => {
+            if (row.kind === 'reasoning' && row.blockId === trailingReasoningBlockId && row.text !== liveText) {
+                changed = true
+                return { ...row, text: liveText }
+            }
+            return row
+        })
+        return changed ? nextRows : subturn.nonTrailingRows
+    }, [liveTrailingReasoningEntity, subturn.nonTrailingRows, trailingReasoningBlockId])
+
     const summary = useMemo(
         () => summarizeTurnActivity({
-            rows: subturn.nonTrailingRows,
+            rows: effectiveNonTrailingRows,
             title: partition.title,
             hasFoldable: partition.hasFoldable,
             hasPinned: partition.hasPinned,
@@ -64,7 +102,7 @@ export function TurnExecutionRail(props: {
             lang,
         }),
         [
-            subturn.nonTrailingRows,
+            effectiveNonTrailingRows,
             partition.title,
             partition.hasFoldable,
             partition.hasPinned,
@@ -74,7 +112,6 @@ export function TurnExecutionRail(props: {
             lang,
         ]
     )
-
     const { stepRows, nonTrailingRows, hasSteps, collapsedPinnedRailRows, quietTextRows, lastRow } = subturn
     const headerText = streaming ? summary.workingHeader : summary.completedHeader
 
@@ -421,7 +458,11 @@ export function TurnExecutionRail(props: {
                                         data-rail-row-index={idx}
                                         className="px-1.5 py-1 text-[13.5px] leading-relaxed text-[var(--app-fg)]"
                                     >
-                                        {renderTrailingText ? renderTrailingText(row.text, false) : renderSimpleMarkdownText(row.text)}
+                                        <RailEntityTextBody
+                                            row={row}
+                                            streaming={false}
+                                            renderTrailingText={renderTrailingText}
+                                        />
                                     </div>
                                 )
                             }
@@ -508,7 +549,11 @@ export function TurnExecutionRail(props: {
                                 className="hidden py-1.5 text-[15px] leading-relaxed text-[var(--app-fg)]"
                                 data-hapi-turn-quiet="true"
                             >
-                                {renderTrailingText ? renderTrailingText(row.text, false) : renderSimpleMarkdownText(row.text)}
+                                <RailEntityTextBody
+                                    row={row}
+                                    streaming={false}
+                                    renderTrailingText={renderTrailingText}
+                                />
                             </div>
                         ))}
                 </>
