@@ -4,6 +4,8 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import type { ReactNode } from 'react'
 import { useSendMessage, type SendMessageAcceptance } from './useSendMessage'
 import { ApiError, type ApiClient } from '@/api/client'
+import { queryKeys } from '@/lib/query-keys'
+import { appendOptimisticMessage, updateMessageStatus } from '@/lib/message-window-store'
 
 vi.mock('@/lib/message-window-store', () => ({
     appendOptimisticMessage: vi.fn(),
@@ -938,5 +940,80 @@ describe('useSendMessage', () => {
                 'queue',
             )
         })
+    })
+
+    it('reads latest cached session thinking state imperatively at send invocation time without subscribing to thinking prop', async () => {
+        const sendMock = vi.fn(async () => {})
+        const api = createMockApi(sendMock)
+        const queryClient = new QueryClient({
+            defaultOptions: { mutations: { retry: false } },
+        })
+        queryClient.setQueryData(queryKeys.session('session-A'), {
+            session: {
+                id: 'session-A',
+                namespace: 'default',
+                seq: 1,
+                createdAt: 1_000,
+                updatedAt: 1_000,
+                active: true,
+                activeAt: 1_000,
+                metadata: null,
+                metadataVersion: 1,
+                agentState: null,
+                agentStateVersion: 1,
+                thinking: false,
+                thinkingAt: 0,
+            },
+        })
+        const wrapper = ({ children }: { children: ReactNode }) => (
+            <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+        )
+
+        let hookRenders = 0
+        const { result } = renderHook(
+            () => {
+                hookRenders += 1
+                return useSendMessage(api, 'session-A')
+            },
+            { wrapper },
+        )
+        expect(hookRenders).toBe(1)
+
+        // Patch cached session thinking -> true without re-rendering useSendMessage
+        act(() => {
+            queryClient.setQueryData(queryKeys.session('session-A'), {
+                session: {
+                    id: 'session-A',
+                    namespace: 'default',
+                    seq: 2,
+                    createdAt: 1_000,
+                    updatedAt: 2_000,
+                    active: true,
+                    activeAt: 2_000,
+                    metadata: null,
+                    metadataVersion: 1,
+                    agentState: null,
+                    agentStateVersion: 1,
+                    thinking: true,
+                    thinkingAt: 2_000,
+                },
+            })
+        })
+        expect(hookRenders).toBe(1)
+
+        await act(async () => {
+            await result.current.sendMessage('send while thinking')
+        })
+
+        await waitFor(() => {
+            expect(updateMessageStatus).toHaveBeenCalledWith('session-A', 'local-id-1', 'queued')
+        })
+        expect(appendOptimisticMessage).toHaveBeenCalledWith(
+            'session-A',
+            expect.objectContaining({
+                status: 'sending',
+                queuedWhileSending: true,
+            }),
+        )
     })
 })

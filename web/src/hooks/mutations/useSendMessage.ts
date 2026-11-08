@@ -1,7 +1,9 @@
-import { useMutation } from '@tanstack/react-query'
+import { useMutation, useQueryClient, type QueryClient } from '@tanstack/react-query'
 import { useRef, useState } from 'react'
 import type { ApiClient } from '@/api/client'
 import type { AttachmentMetadata, DecryptedMessage } from '@/types/api'
+import { queryClient as defaultQueryClient } from '@/lib/query-client'
+import { getCachedSessionOrPlaceholder } from '@/hooks/queries/useSession'
 import { makeClientSideId } from '@/lib/messages'
 import {
     appendOptimisticMessage,
@@ -188,6 +190,32 @@ function getMessageDeliveryMode(message: DecryptedMessage): MessageDeliveryMode 
         : 'queue'
 }
 
+function useResolvedQueryClient(): QueryClient {
+    try {
+        return useQueryClient()
+    } catch {
+        return defaultQueryClient
+    }
+}
+
+export function readCachedSessionThinking(
+    queryClient: QueryClient,
+    targetSessionId: string,
+    sourceSessionId?: string | null,
+    fallbackThinking?: boolean
+): boolean {
+    const targetSession = getCachedSessionOrPlaceholder(queryClient, targetSessionId)
+    if (targetSession) {
+        return Boolean(targetSession.thinking)
+    }
+    if (sourceSessionId && sourceSessionId !== targetSessionId) {
+        const sourceSession = getCachedSessionOrPlaceholder(queryClient, sourceSessionId)
+        if (sourceSession) {
+            return Boolean(sourceSession.thinking)
+        }
+    }
+    return Boolean(fallbackThinking)
+}
 export function useSendMessage(
     api: ApiClient | null,
     sessionId: string | null,
@@ -209,13 +237,13 @@ export function useSendMessage(
     isSending: boolean
     sendSettlement: SendMessageSettlement | null
 } {
+    const queryClient = useResolvedQueryClient()
     const { haptic } = usePlatform()
     const [isResolving, setIsResolving] = useState(false)
     const [sendSettlement, setSendSettlement] = useState<SendMessageSettlement | null>(null)
     const resolveGuardRef = useRef(false)
-    const isSessionThinkingRef = useRef(options?.isSessionThinking ?? false)
-    isSessionThinkingRef.current = options?.isSessionThinking ?? false
-
+    const isSessionThinkingRef = useRef(options?.isSessionThinking)
+    isSessionThinkingRef.current = options?.isSessionThinking
     const mutation = useMutation({
         mutationFn: async (input: SendMessageInput) => {
             if (!api) {
@@ -232,7 +260,13 @@ export function useSendMessage(
             )
         },
         onMutate: async (input) => {
-            const isQueuedSend = isSessionThinkingRef.current || input.scheduledAt != null
+            const isSessionThinking = readCachedSessionThinking(
+                queryClient,
+                input.sessionId,
+                sessionId,
+                isSessionThinkingRef.current,
+            )
+            const isQueuedSend = isSessionThinking || input.scheduledAt != null
             const successStatus = isQueuedSend ? 'queued' as const : 'sent' as const
             appendOptimisticMessage(input.sessionId, createOptimisticMessage(input, 'sending', isQueuedSend))
             return { successStatus }

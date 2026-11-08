@@ -30,10 +30,14 @@ import { isTelegramApp } from '@/hooks/useTelegram'
 import { useSidebarResize } from '@/hooks/useSidebarResize'
 import { useHideArchivedSessions } from '@/hooks/useHideArchivedSessions'
 import { filterVisibleSessions } from '@/lib/sessionListFilters'
-import { useMessages } from '@/hooks/queries/useMessages'
+import { useMessageWindowControls } from '@/hooks/queries/useMessages'
 import { useMachines } from '@/hooks/queries/useMachines'
 import { useMachineLabels } from '@/hooks/useMachineLabels'
-import { useSession } from '@/hooks/queries/useSession'
+import {
+    getCachedSessionOrPlaceholder,
+    useSessionRouteState,
+    type SessionRouteState,
+} from '@/hooks/queries/useSession'
 import { useCursorChatStoreStatus } from '@/hooks/queries/useCursorChatStoreStatus'
 import { useSessions } from '@/hooks/queries/useSessions'
 import { useSlashCommands } from '@/hooks/queries/useSlashCommands'
@@ -43,7 +47,7 @@ import { SessionTabsBar, useHasSessionTabs, useSessionTabsSync } from '@/fork-fe
 import { PhoneWorkPaneProvider, PhoneWorkToggle, usePhoneWorkPane, WorkOverview } from '@/fork-features/work-lines/WorkOverview'
 import { Workbench } from '@/fork-features/work-lines/Workbench'
 import { parseWorkSearch } from '@/fork-features/work-lines/workSearch'
-import type { SessionSummary } from '@/types/api'
+import type { Session, SessionSummary } from '@/types/api'
 import { buildSessionReferenceText, matchSessionsForMention } from '@/lib/sessionReference'
 import type { Suggestion } from '@/hooks/useActiveSuggestions'
 import { useSendMessage, type SendErrorInfo } from '@/hooks/mutations/useSendMessage'
@@ -387,6 +391,36 @@ function classifySendError(
     return { message: t('chat.sendError.fallback'), code: null }
 }
 
+function toResumeCandidateSession(
+    routeSession: SessionRouteState,
+    cachedSession?: Session | null
+): Session {
+    if (cachedSession && cachedSession.id === routeSession.id) {
+        return {
+            ...cachedSession,
+            active: routeSession.active,
+            permissionMode: routeSession.permissionMode ?? cachedSession.permissionMode,
+            metadata: routeSession.metadata ?? cachedSession.metadata,
+        }
+    }
+    return {
+        id: routeSession.id,
+        namespace: 'default',
+        seq: 0,
+        createdAt: 0,
+        updatedAt: 0,
+        active: routeSession.active,
+        activeAt: 0,
+        permissionMode: routeSession.permissionMode,
+        metadata: routeSession.metadata,
+        metadataVersion: 0,
+        agentState: null,
+        agentStateVersion: 0,
+        thinking: false,
+        thinkingAt: 0,
+    }
+}
+
 function SessionPage() {
     const { api, titleSuggestionAvailable = false } = useAppContext()
     const { t } = useTranslation()
@@ -400,7 +434,7 @@ function SessionPage() {
         session,
         error: sessionError,
         refetch: refetchSession,
-    } = useSession(api, sessionId)
+    } = useSessionRouteState(api, sessionId)
     const {
         status: cursorChatStoreStatus,
         isApplicable: cursorChatStoreApplicable,
@@ -408,7 +442,7 @@ function SessionPage() {
         isLoading: cursorChatStoreLoading,
     } = useCursorChatStoreStatus({ api, session })
     const {
-        messages,
+        hasMessages,
         warning: messagesWarning,
         isSyncingTail: messagesSyncingTail,
         isLoadingMore: messagesLoadingMore,
@@ -417,11 +451,10 @@ function SessionPage() {
         cancelLoadMore: cancelLoadMoreMessages,
         refetch: refetchMessages,
         viewMode: messagesViewMode,
-        messagesVersion,
         historyVersion,
         tailRevision,
         setViewMode,
-    } = useMessages(api, sessionId)
+    } = useMessageWindowControls(api, sessionId)
 
     // Tracks the most recent send the hub rejected (4xx/5xx/network), keyed
     // by the session the failed POST actually targeted (post-resolveSessionId).
@@ -538,7 +571,7 @@ function SessionPage() {
         ? t('session.action.reopenCursorUnverified')
         : undefined
     const canOfferInactiveReopen = session
-        ? inactiveSessionCanResume(session, messages.length, cursorChatStoreStatus?.onDisk)
+        ? inactiveSessionCanResume(toResumeCandidateSession(session), hasMessages ? 1 : 0, cursorChatStoreStatus?.onDisk)
         : false
     const rawSendError = sendErrors[sessionId] ?? null
     const sendError: ComposerSendError | null = rawSendError
@@ -567,14 +600,18 @@ function SessionPage() {
         resolvedSessionRef.current = null
     }, [session?.id, session?.active])
     const resolveSessionId = useCallback(async (currentSessionId: string) => {
-        if (!api || !session || session.active) {
+        const cachedFullSession = getCachedSessionOrPlaceholder(queryClient, currentSessionId)
+        const resumeCandidate = session && session.id === currentSessionId
+            ? toResumeCandidateSession(session, cachedFullSession)
+            : cachedFullSession
+        if (!api || !resumeCandidate || resumeCandidate.active) {
             return { sessionId: currentSessionId, resumed: false }
         }
         const cached = resolvedSessionRef.current
         if (cached?.source === currentSessionId) {
             return { sessionId: await cached.target, resumed: true }
         }
-        if (!inactiveSessionCanResume(session, messages.length, cursorChatStoreStatus?.onDisk)) {
+        if (!inactiveSessionCanResume(resumeCandidate, hasMessages ? 1 : 0, cursorChatStoreStatus?.onDisk)) {
             throw new ApiError(
                 t('chat.sendError.sessionInactive'),
                 409,
@@ -582,7 +619,7 @@ function SessionPage() {
             )
         }
         try {
-            const target = api.resumeSession(currentSessionId, { permissionMode: session.permissionMode ?? undefined })
+            const target = api.resumeSession(currentSessionId, { permissionMode: resumeCandidate.permissionMode ?? undefined })
             resolvedSessionRef.current = { source: currentSessionId, target }
             return { sessionId: await target, resumed: true }
         } catch (error) {
@@ -602,16 +639,19 @@ function SessionPage() {
                 'session_inactive',
             )
         }
-    }, [api, session, messages.length, cursorChatStoreStatus?.onDisk, t, addToast])
+    }, [api, queryClient, session, hasMessages, cursorChatStoreStatus?.onDisk, t, addToast])
 
     const handleSessionResolved = useCallback((resolvedSessionId: string) => {
-        if (session) {
-            if (resolvedSessionId !== session.id) {
-                retargetSharePendingTransfer(session.id, resolvedSessionId)
-                seedMessageWindowFromSession(session.id, resolvedSessionId)
-            }
-            queryClient.setQueryData(queryKeys.session(resolvedSessionId), (previous: { session?: typeof session } | undefined) => ({
-                session: { ...(previous?.session ?? session), id: resolvedSessionId, active: true }
+        const sourceSessionId = session?.id ?? sessionId
+        const cachedSourceSession = getCachedSessionOrPlaceholder(queryClient, sourceSessionId)
+            ?? (session ? toResumeCandidateSession(session) : null)
+        if (sourceSessionId && resolvedSessionId !== sourceSessionId) {
+            retargetSharePendingTransfer(sourceSessionId, resolvedSessionId)
+            seedMessageWindowFromSession(sourceSessionId, resolvedSessionId)
+        }
+        if (cachedSourceSession) {
+            queryClient.setQueryData(queryKeys.session(resolvedSessionId), (previous: { session?: Session } | undefined) => ({
+                session: { ...(previous?.session ?? cachedSourceSession), id: resolvedSessionId, active: true }
             }))
             void queryClient.invalidateQueries({ queryKey: queryKeys.sessions })
         }
@@ -629,7 +669,7 @@ function SessionPage() {
             )
             void syncTailMessages(api, resolvedSessionId).catch(() => {})
         }
-    }, [api, navigate, queryClient, session])
+    }, [api, navigate, queryClient, session, sessionId])
 
     const {
         sendMessage,
@@ -637,7 +677,6 @@ function SessionPage() {
         isSending,
         sendSettlement,
     } = useSendMessage(api, sessionId, {
-        isSessionThinking: session?.thinking ?? false,
         onSuccess: (sentSessionId) => {
             clearDraftsAfterSend(sentSessionId, sessionId)
             // A successful send supersedes any previously-rendered error
@@ -837,11 +876,10 @@ function SessionPage() {
         <SessionChat
             api={api}
             titleSuggestionAvailable={titleSuggestionAvailable}
-            session={session}
+            sessionId={session.id}
             cursorChatOnDisk={cursorChatStoreStatus?.onDisk}
             reopenDisabledReason={cursorReopenDisabledReason}
             reopenHint={cursorReopenUnverifiedHint}
-            messages={messages}
             messagesWarning={messagesWarning}
             hasMoreMessages={messagesHasMore}
             isSyncingTail={messagesSyncingTail}
@@ -849,7 +887,6 @@ function SessionPage() {
             isSending={isSending}
             sendSettlement={sendSettlement}
             viewMode={messagesViewMode}
-            messagesVersion={messagesVersion}
             historyVersion={historyVersion}
             tailRevision={tailRevision}
             onBack={goBack}
@@ -893,7 +930,7 @@ function SessionDetailRoute() {
     const pathname = useLocation({ select: location => location.pathname })
     const { sessionId } = useParams({ from: '/sessions/$sessionId' })
     const navigate = useNavigate()
-    const { session, isPlaceholderData: isSessionPlaceholder, notFound: sessionNotFound } = useSession(api, sessionId)
+    const { session, isPlaceholderData: isSessionPlaceholder, notFound: sessionNotFound } = useSessionRouteState(api, sessionId)
     useSessionBrowserTitle(session)
     const basePath = `/sessions/${sessionId}`
     const isChat = pathname === basePath || pathname === `${basePath}/`
