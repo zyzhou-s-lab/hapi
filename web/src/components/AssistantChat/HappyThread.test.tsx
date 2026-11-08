@@ -9,7 +9,9 @@ import {
 import { isNestedScrollEvent } from '@/components/AssistantChat/nestedScroll'
 import {
     ANCHOR_PIN_MAX_MS,
+    applyThreadScrollStatePatch,
     captureScrollAnchor,
+    createInitialThreadScrollState,
     getHistoryCoverageRetryDelay,
     getPullToLoadState,
     getScrollIntent,
@@ -880,6 +882,38 @@ describe('3-state scroll mode and structure version helpers', () => {
         expect(shouldFollowTailInScrollMode('tail-follow')).toBe(true)
         expect(shouldFollowTailInScrollMode('user-reading')).toBe(false)
         expect(shouldFollowTailInScrollMode('pagination-restore')).toBe(false)
+    })
+
+    it('derives authoritative ThreadScrollState.mode across patches including pagination cancel to user-reading', () => {
+        const initial = createInitialThreadScrollState(0)
+        expect(initial.mode).toBe('tail-follow')
+
+        const loading = applyThreadScrollStatePatch(initial, {
+            autoScrollEnabled: false,
+            pendingRestore: {
+                runId: 1,
+                anchor: null,
+                scrollTop: 0,
+                scrollHeight: 1200,
+                targetHistoryVersion: null,
+                pinOnRestore: false,
+            },
+        })
+        expect(loading.mode).toBe('pagination-restore')
+
+        const cancelledMidScroll = applyThreadScrollStatePatch(loading, {
+            pendingRestore: null,
+            atBottom: false,
+            autoScrollEnabled: false,
+        })
+        expect(cancelledMidScroll.mode).toBe('user-reading')
+
+        const smoothScrollingToBottom = applyThreadScrollStatePatch(cancelledMidScroll, {
+            autoScrollEnabled: true,
+            atBottom: true,
+            tailScrollInProgress: true,
+        })
+        expect(smoothScrollingToBottom.mode).toBe('tail-follow')
     })
 
     it('transitions between tail-follow, user-reading, and pagination-restore on viewport scroll', () => {
