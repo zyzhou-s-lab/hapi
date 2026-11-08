@@ -21,39 +21,33 @@ import {
     transitionScrollModeOnViewportScroll,
     UPWARD_SCROLL_KEYS,
     WHEEL_GESTURE_GAP_MS,
+    type AnchorPinState,
     type HistoryLoaderState,
     type HistoryLoadSource,
-    type PendingScrollRestore,
+    type InitialScrollSettleState,
     type PullToLoadState,
-    type ScrollAnchor,
     type ScrollIntent,
-    type ThreadScrollMode,
+    type ThreadScrollState,
 } from '@/components/AssistantChat/threadScrollHelpers'
 
 export type ThreadViewportEventBindings = {
     viewportRef: RefObject<HTMLDivElement | null>
-    lastScrollTopRef: MutableRefObject<number>
-    scrollModeRef: MutableRefObject<ThreadScrollMode>
-    autoScrollEnabledRef: MutableRefObject<boolean>
-    atBottomRef: MutableRefObject<boolean>
-    onViewModeChangeRef: MutableRefObject<(mode: 'tail' | 'history') => void>
-    loadOlderFromUserGestureRef: MutableRefObject<() => Promise<boolean>>
-    pendingScrollRef: MutableRefObject<PendingScrollRestore | null>
-    pinnedAnchorUntilRef: MutableRefObject<number>
-    pinnedAnchorRef: MutableRefObject<ScrollAnchor | null>
-    pinnedAnchorStartedAtRef: MutableRefObject<number>
+    scrollStateRef: MutableRefObject<ThreadScrollState>
+    anchorPinRef: MutableRefObject<AnchorPinState>
+    initialSettleRef: MutableRefObject<InitialScrollSettleState>
     historyLoaderRef: MutableRefObject<HistoryLoaderState>
+    updateScrollState: (
+        patch: Partial<Omit<ThreadScrollState, 'mode'>>,
+        options?: { forceNotifyViewMode?: boolean }
+    ) => ThreadScrollState
+    loadOlderFromUserGestureRef: MutableRefObject<() => Promise<boolean>>
     needsViewportCoverageRef: MutableRefObject<() => boolean>
     isInitialScrollSettling: () => boolean
-    initialScrollDeadlineRef: MutableRefObject<number>
     clearInitialScrollTimers: () => void
     requestOlderRef: MutableRefObject<(source: HistoryLoadSource) => Promise<OlderHistoryLoadResult>>
-    tailScrollInProgressRef: MutableRefObject<boolean>
     cancelActiveHistoryLoad: () => void
     pullToLoadStateRef: MutableRefObject<PullToLoadState>
     setPullToLoadState: Dispatch<SetStateAction<PullToLoadState>>
-    wheelGestureUntilRef: MutableRefObject<number>
-    pendingLoadPromiseRef: MutableRefObject<Promise<OlderHistoryLoadResult> | null>
     hasMoreMessagesRef: MutableRefObject<boolean>
     isSyncingTailRef: MutableRefObject<boolean>
     isLoadingMoreRef: MutableRefObject<boolean>
@@ -62,55 +56,29 @@ export type ThreadViewportEventBindings = {
 export function useThreadViewportEvents(bindings: ThreadViewportEventBindings): void {
     const {
         viewportRef,
-        lastScrollTopRef,
-        scrollModeRef,
-        autoScrollEnabledRef,
-        atBottomRef,
-        onViewModeChangeRef,
-        loadOlderFromUserGestureRef,
-        pendingScrollRef,
-        pinnedAnchorUntilRef,
-        pinnedAnchorRef,
-        pinnedAnchorStartedAtRef,
+        scrollStateRef,
+        anchorPinRef,
+        initialSettleRef,
         historyLoaderRef,
+        updateScrollState,
+        loadOlderFromUserGestureRef,
         needsViewportCoverageRef,
         isInitialScrollSettling,
-        initialScrollDeadlineRef,
         clearInitialScrollTimers,
         requestOlderRef,
-        tailScrollInProgressRef,
         cancelActiveHistoryLoad,
         pullToLoadStateRef,
         setPullToLoadState,
-        wheelGestureUntilRef,
-        pendingLoadPromiseRef,
         hasMoreMessagesRef,
         isSyncingTailRef,
         isLoadingMoreRef,
     } = bindings
-
     // Track scroll position to toggle autoScroll (stable listener using refs)
     useEffect(() => {
         const viewport = viewportRef.current
         if (!viewport) return
 
-        lastScrollTopRef.current = viewport.scrollTop
-
-        const setAutoScrollMode = (enabled: boolean) => {
-            if (autoScrollEnabledRef.current === enabled) {
-                return
-            }
-            autoScrollEnabledRef.current = enabled
-        }
-
-        const setAtBottomMode = (atBottom: boolean) => {
-            if (atBottom === atBottomRef.current) {
-                return
-            }
-            atBottomRef.current = atBottom
-            onViewModeChangeRef.current(atBottom ? 'tail' : 'history')
-        }
-
+        scrollStateRef.current.lastScrollTop = viewport.scrollTop
         let pointerResumeActive = false
         let pointerResumeUntil = 0
         let pointerResumeLatched = false
@@ -170,23 +138,24 @@ export function useThreadViewportEvents(bindings: ThreadViewportEventBindings): 
                 scrollTop: viewport.scrollTop,
                 scrollHeight: viewport.scrollHeight,
                 clientHeight: viewport.clientHeight,
-                previousScrollTop: lastScrollTopRef.current
+                previousScrollTop: scrollStateRef.current.lastScrollTop
             })
-            lastScrollTopRef.current = viewport.scrollTop
+            scrollStateRef.current.lastScrollTop = viewport.scrollTop
 
             // A slow older-page request must not restore the position from
             // when it started after the user has already scrolled elsewhere.
             // Keep the pending baseline aligned with the latest visible row;
             // the eventual prepend will preserve that row instead.
-            const pending = pendingScrollRef.current
+            const pending = scrollStateRef.current.pendingRestore
+            const anchorPin = anchorPinRef.current
             if (
-                pinnedAnchorUntilRef.current > Date.now()
-                && pinnedAnchorRef.current
+                anchorPin.until > Date.now()
+                && anchorPin.anchor
                 && historyLoaderRef.current.phase !== 'loading'
             ) {
                 if (intent.isScrollingUp) {
-                    restoreScrollAnchor(viewport, pinnedAnchorRef.current)
-                    lastScrollTopRef.current = viewport.scrollTop
+                    restoreScrollAnchor(viewport, anchorPin.anchor)
+                    scrollStateRef.current.lastScrollTop = viewport.scrollTop
                     return
                 }
                 clearPinnedAnchor()
@@ -235,17 +204,18 @@ export function useThreadViewportEvents(bindings: ThreadViewportEventBindings): 
                 intent,
                 isInitialSettling: isSettling,
                 hadExplicitUpwardIntent,
-                tailScrollInProgress: tailScrollInProgressRef.current,
+                tailScrollInProgress: scrollStateRef.current.tailScrollInProgress,
                 needsCoverage,
-                hasPendingRestore: pendingScrollRef.current !== null,
+                hasPendingRestore: scrollStateRef.current.pendingRestore !== null,
             })
 
             if (transition.cancelInitialSettling) {
-                initialScrollDeadlineRef.current = 0
+                initialSettleRef.current.deadline = 0
                 clearInitialScrollTimers()
-                setAutoScrollMode(false)
-                setAtBottomMode(false)
-                scrollModeRef.current = transition.nextMode
+                updateScrollState({
+                    autoScrollEnabled: false,
+                    atBottom: false,
+                })
                 if (explicitUpwardIntent) {
                     void loadOlderFromUserGestureRef.current()
                 }
@@ -258,14 +228,15 @@ export function useThreadViewportEvents(bindings: ThreadViewportEventBindings): 
             if (transition.cancelActiveHistoryLoad) {
                 cancelActiveHistoryLoad()
             }
-            if (transition.clearTailScrollInProgress) {
-                tailScrollInProgressRef.current = false
-            }
-            if (!transition.preserveTailDuringSmoothScroll) {
-                setAutoScrollMode(transition.autoScrollEnabled)
-                setAtBottomMode(transition.atBottom)
-            }
-            scrollModeRef.current = transition.nextMode
+            updateScrollState({
+                ...(transition.clearTailScrollInProgress ? { tailScrollInProgress: false } : {}),
+                ...(!transition.preserveTailDuringSmoothScroll
+                    ? {
+                        autoScrollEnabled: transition.autoScrollEnabled,
+                        atBottom: transition.atBottom,
+                    }
+                    : {}),
+            })
         }
 
         // Gesture fallback: at scrollTop=0 no further scroll events fire. Give
@@ -282,14 +253,13 @@ export function useThreadViewportEvents(bindings: ThreadViewportEventBindings): 
         }
 
         const clearPinnedAnchor = () => {
-            pinnedAnchorRef.current = null
-            pinnedAnchorUntilRef.current = 0
-            pinnedAnchorStartedAtRef.current = 0
-            if (pendingScrollRef.current) {
-                pendingScrollRef.current.pinOnRestore = false
+            anchorPinRef.current.anchor = null
+            anchorPinRef.current.until = 0
+            anchorPinRef.current.startedAt = 0
+            if (scrollStateRef.current.pendingRestore) {
+                scrollStateRef.current.pendingRestore.pinOnRestore = false
             }
         }
-
         const isEditableKeyTarget = (target: EventTarget | null): boolean => {
             return target instanceof HTMLInputElement
                 || target instanceof HTMLTextAreaElement
@@ -485,25 +455,26 @@ export function useThreadViewportEvents(bindings: ThreadViewportEventBindings): 
                 outerWheelClientY = event.clientY
             }
             lastOuterWheelAt = now
-            if (shouldSuppressPinnedWheel(event.deltaY, pinnedAnchorUntilRef.current, now)) {
+            if (shouldSuppressPinnedWheel(event.deltaY, anchorPinRef.current.until, now)) {
                 event.preventDefault()
-                const startedAt = pinnedAnchorStartedAtRef.current || now
-                pinnedAnchorStartedAtRef.current = startedAt
-                pinnedAnchorUntilRef.current = nextPinnedAnchorUntil(
+                const startedAt = anchorPinRef.current.startedAt || now
+                anchorPinRef.current.startedAt = startedAt
+                const until = nextPinnedAnchorUntil(
                     startedAt,
                     now,
                     WHEEL_GESTURE_GAP_MS,
                     ANCHOR_PIN_MAX_MS
                 )
+                anchorPinRef.current.until = until
+                anchorPinRef.current.wheelGestureUntil = until
                 lastWheelAt = now
                 wheelLatched = true
-                wheelIntentUntil = pinnedAnchorUntilRef.current
-                wheelGestureUntilRef.current = pinnedAnchorUntilRef.current
+                wheelIntentUntil = until
                 return
             }
             if (event.deltaY >= 0) {
                 wheelIntentUntil = 0
-                wheelGestureUntilRef.current = 0
+                anchorPinRef.current.wheelGestureUntil = 0
                 clearPinnedAnchor()
             }
             const shouldForwardVerticalWheel =
@@ -523,7 +494,7 @@ export function useThreadViewportEvents(bindings: ThreadViewportEventBindings): 
                 event.preventDefault()
                 if (nextScrollTop !== viewport.scrollTop) {
                     viewport.scrollTop = nextScrollTop
-                    const pending = pendingScrollRef.current
+                    const pending = scrollStateRef.current.pendingRestore
                     if (
                         pending
                         && historyLoaderRef.current.runId === pending.runId
@@ -544,15 +515,15 @@ export function useThreadViewportEvents(bindings: ThreadViewportEventBindings): 
             // as explicit user intent.
             if (
                 now - lastWheelAt > WHEEL_GESTURE_GAP_MS
-                || (!pendingLoadPromiseRef.current && now - wheelLatchStartedAt > ANCHOR_PIN_MAX_MS)
+                || (!historyLoaderRef.current.pendingPromise && now - wheelLatchStartedAt > ANCHOR_PIN_MAX_MS)
             ) {
                 wheelLatched = false
             }
             lastWheelAt = now
             wheelIntentUntil = now + WHEEL_GESTURE_GAP_MS
-            wheelGestureUntilRef.current = wheelIntentUntil
-            if (pendingScrollRef.current) {
-                pendingScrollRef.current.pinOnRestore = true
+            anchorPinRef.current.wheelGestureUntil = wheelIntentUntil
+            if (scrollStateRef.current.pendingRestore) {
+                scrollStateRef.current.pendingRestore.pinOnRestore = true
             }
             if (!needsViewportCoverageRef.current() || wheelLatched) {
                 return
@@ -577,7 +548,7 @@ export function useThreadViewportEvents(bindings: ThreadViewportEventBindings): 
                 && hasMoreMessagesRef.current
                 && !isSyncingTailRef.current
                 && !isLoadingMoreRef.current
-                && !pendingLoadPromiseRef.current
+                && !historyLoaderRef.current.pendingPromise
             )
                 ? event.touches[0]?.clientY ?? null
                 : null
