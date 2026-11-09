@@ -27,8 +27,13 @@ import { reconcileChatBlocks } from '../src/chat/reconcile'
 import { buildVisibleChatBlocks } from '../src/chat/toolGroups'
 import type { ChatBlock } from '../src/chat/types'
 import { useHappyRuntime } from '../src/lib/assistant-runtime'
-import { createSessionEntityStore } from '../src/chat/store/sessionEntityStore'
-import { SessionEntityStoreProvider, useOptionalSessionTurnEntity } from '../src/hooks/useSessionEntityStore'
+import { createSessionEntityStore, type SessionEntityStore } from '../src/chat/store/sessionEntityStore'
+import {
+    SessionEntityStoreProvider,
+    useOptionalSessionEntityStore,
+    useOptionalSessionTurnLayout,
+    useSessionTimelineIndex,
+} from '../src/hooks/useSessionEntityStore'
 import type { ApiClient } from '../src/api/client'
 import type {
     ClaudeEffort,
@@ -240,16 +245,33 @@ function TailFixtureTurn(props: { index: number; partition: TurnPartition }) {
     )
 }
 
+const TimelineListProbe = memo(function TimelineListProbe(props: { store: SessionEntityStore }) {
+    const timeline = useSessionTimelineIndex(props.store)
+    const renderCountRef = useRef(0)
+    renderCountRef.current += 1
+    return (
+        <div
+            data-testid="fixture-timeline-probe"
+            data-timeline-render-count={String(renderCountRef.current)}
+            data-timeline-ids={timeline.map((e) => e.id).join(',')}
+        />
+    )
+})
+
 const EntityStoreFixtureTurn = memo(function EntityStoreFixtureTurn(props: { turnId: string }) {
-    const turnEntity = useOptionalSessionTurnEntity(props.turnId)
+    const store = useOptionalSessionEntityStore()
+    const turnLayout = useOptionalSessionTurnLayout(props.turnId)
     const staticCtx = useOptionalHappyChatStaticContext()
     const renderCountRef = useRef(0)
     renderCountRef.current += 1
+    const prevPartitionRef = useRef<TurnPartition | null>(null)
 
-    const partition = useMemo(
-        () => partitionTurn(turnEntity?.parts ?? [], staticCtx?.metadata ?? null),
-        [turnEntity?.parts, staticCtx?.metadata]
-    )
+    const partition = useMemo(() => {
+        const parts = store?.getLiveTurnParts(props.turnId) ?? []
+        const next = partitionTurn(parts, staticCtx?.metadata ?? null, prevPartitionRef.current)
+        prevPartitionRef.current = next
+        return next
+    }, [props.turnId, staticCtx?.metadata, store, turnLayout])
 
     return (
         <div
@@ -258,13 +280,95 @@ const EntityStoreFixtureTurn = memo(function EntityStoreFixtureTurn(props: { tur
         >
             <TimelineTurnBlockView
                 partition={partition}
-                streaming={Boolean(turnEntity?.isStreaming)}
+                streaming={true}
                 durationMs={400}
-                initiallyOpen={false}
+                initiallyOpen={true}
             />
         </div>
     )
 })
+
+function buildEntityFixtureMessages(params: {
+    textDelta: number
+    toolDelta: number
+    toolCompleted: boolean
+}): DecryptedMessage[] {
+    const userMsg: DecryptedMessage = {
+        id: 'u-e2e-stream',
+        seq: 1,
+        localId: null,
+        createdAt: 1000,
+        content: { role: 'user', content: { type: 'text', text: 'Stream via entity store' } },
+    }
+    const assistantMsg: DecryptedMessage = {
+        id: 'a-e2e-tool-use',
+        seq: 2,
+        localId: null,
+        createdAt: 1050,
+        content: {
+            role: 'agent',
+            content: {
+                type: 'output',
+                data: {
+                    type: 'assistant',
+                    uuid: 'uuid-e2e-tool-use',
+                    streamSnapshot: true,
+                    live: true,
+                    message: {
+                        role: 'assistant',
+                        model: 'claude-sonnet-4-5',
+                        content: [
+                            {
+                                type: 'tool_use',
+                                id: 'tool-e2e-live',
+                                name: 'Read',
+                                input: {
+                                    file_path: `web/src/stream-target-${params.toolDelta}.ts`,
+                                    i: `Reading stream target ${params.toolDelta}`,
+                                },
+                            },
+                            {
+                                type: 'text',
+                                text: `Entity leaf delta ${params.textDelta}`,
+                            },
+                        ],
+                    },
+                },
+            },
+        },
+    }
+    if (!params.toolCompleted) {
+        return [userMsg, assistantMsg]
+    }
+    const toolResultMsg: DecryptedMessage = {
+        id: 'a-e2e-tool-res',
+        seq: 3,
+        localId: null,
+        createdAt: 1080,
+        content: {
+            role: 'agent',
+            content: {
+                type: 'output',
+                data: {
+                    type: 'user',
+                    uuid: 'uuid-e2e-tool-res',
+                    message: {
+                        role: 'user',
+                        content: [
+                            {
+                                type: 'tool_result',
+                                tool_use_id: 'tool-e2e-live',
+                                content: `export const delta = ${params.toolDelta}`,
+                                is_error: false,
+                            },
+                        ],
+                    },
+                },
+            },
+        },
+    }
+    return [userMsg, assistantMsg, toolResultMsg]
+}
 
 function StreamingIsolationFixture() {
     const [todos, setTodos] = useState<TodoItem[]>([
@@ -274,48 +378,19 @@ function StreamingIsolationFixture() {
     const [sessionThinking, setSessionThinking] = useState(true)
     const [tick, setTick] = useState(0)
     const [lifecycleStep, setLifecycleStep] = useState<'default' | 'execution_only' | 'tool_running' | 'final_answer'>('default')
-    const entityDeltaCounterRef = useRef(0)
+    const entityStateRef = useRef({ textDelta: 0, toolDelta: 0, toolCompleted: false })
     const { entityStore, entityTurnId } = useMemo(() => {
         const store = createSessionEntityStore()
-        const userMsg: DecryptedMessage = {
-            id: 'u-e2e-stream',
-            seq: 1,
-            localId: null,
-            createdAt: 1000,
-            content: { role: 'user', content: { type: 'text', text: 'Stream via entity store' } },
-        }
-        const liveMsg: DecryptedMessage = {
-            id: 'a-e2e-stream',
-            seq: 2,
-            localId: null,
-            createdAt: 1100,
-            content: {
-                role: 'agent',
-                content: {
-                    type: 'codex',
-                    data: {
-                        type: 'message',
-                        id: 'stream-item-e2e',
-                        turn_id: 'turn-e2e',
-                        phase: 'final_answer',
-                        streamSnapshot: true,
-                        live: true,
-                        message: 'Entity leaf delta 0',
-                    },
-                },
-            },
-        }
         const snap = store.reconcileInput({
             sessionId: 'session-stream-iso',
-            messages: [userMsg, liveMsg],
+            messages: buildEntityFixtureMessages({ textDelta: 0, toolDelta: 0, toolCompleted: false }),
             agentState: null,
             hasMoreMessages: false,
             codexExplorationCollapsed: false,
         })
-        const turnId = snap.blocksWithThreadIds.find((e) => e.block.kind === 'agent-text')!.threadMessageId
+        const turnId = snap.timelineIndex.find((e) => e.role === 'assistant')!.id
         return { entityStore: store, entityTurnId: turnId }
     }, [])
-
     const noopRefresh = useMemo(() => () => {}, [])
     const noopLoadOlder = useMemo(() => async () => 'terminal-stop' as const, [])
     const fakeApi = useMemo(() => ({}) as HappyChatContextValue['api'], [])
@@ -472,39 +547,10 @@ function StreamingIsolationFixture() {
                                 type="button"
                                 data-testid="advance-entity-delta"
                                 onClick={() => {
-                                    entityDeltaCounterRef.current += 1
-                                    const nextDelta = entityDeltaCounterRef.current
-                                    const userMsg: DecryptedMessage = {
-                                        id: 'u-e2e-stream',
-                                        seq: 1,
-                                        localId: null,
-                                        createdAt: 1000,
-                                        content: { role: 'user', content: { type: 'text', text: 'Stream via entity store' } },
-                                    }
-                                    const liveMsg: DecryptedMessage = {
-                                        id: 'a-e2e-stream',
-                                        seq: 2,
-                                        localId: null,
-                                        createdAt: 1100,
-                                        content: {
-                                            role: 'agent',
-                                            content: {
-                                                type: 'codex',
-                                                data: {
-                                                    type: 'message',
-                                                    id: 'stream-item-e2e',
-                                                    turn_id: 'turn-e2e',
-                                                    phase: 'final_answer',
-                                                    streamSnapshot: true,
-                                                    live: true,
-                                                    message: `Entity leaf delta ${nextDelta}`,
-                                                },
-                                            },
-                                        },
-                                    }
+                                    entityStateRef.current.textDelta += 1
                                     entityStore.reconcileInput({
                                         sessionId: 'session-stream-iso',
-                                        messages: [userMsg, liveMsg],
+                                        messages: buildEntityFixtureMessages(entityStateRef.current),
                                         agentState: null,
                                         hasMoreMessages: false,
                                         codexExplorationCollapsed: false,
@@ -515,12 +561,49 @@ function StreamingIsolationFixture() {
                             >
                                 Advance Entity Leaf Delta
                             </button>
+                            <button
+                                type="button"
+                                data-testid="advance-tool-payload-delta"
+                                onClick={() => {
+                                    entityStateRef.current.toolDelta += 1
+                                    entityStore.reconcileInput({
+                                        sessionId: 'session-stream-iso',
+                                        messages: buildEntityFixtureMessages(entityStateRef.current),
+                                        agentState: null,
+                                        hasMoreMessages: false,
+                                        codexExplorationCollapsed: false,
+                                    })
+                                    entityStore.flushNotifications()
+                                }}
+                                className="rounded border border-[var(--app-border)] bg-[var(--app-subtle-bg)] px-3 py-1.5 text-xs font-medium"
+                            >
+                                Advance Tool Payload Delta
+                            </button>
+                            <button
+                                type="button"
+                                data-testid="complete-entity-tool"
+                                onClick={() => {
+                                    entityStateRef.current.toolCompleted = true
+                                    entityStore.reconcileInput({
+                                        sessionId: 'session-stream-iso',
+                                        messages: buildEntityFixtureMessages(entityStateRef.current),
+                                        agentState: null,
+                                        hasMoreMessages: false,
+                                        codexExplorationCollapsed: false,
+                                    })
+                                    entityStore.flushNotifications()
+                                }}
+                                className="rounded border border-[var(--app-border)] bg-[var(--app-subtle-bg)] px-3 py-1.5 text-xs font-medium"
+                            >
+                                Complete Entity Tool
+                            </button>
                         </div>
 
                         {historicalPartitions.map((part, idx) => (
                             <HistoricalFixtureTurn key={idx} index={idx} partition={part} />
                         ))}
                         <TailFixtureTurn index={5} partition={tailPartition} />
+                        <TimelineListProbe store={entityStore} />
                         <EntityStoreFixtureTurn turnId={entityTurnId} />
                     </div>
                 </div>

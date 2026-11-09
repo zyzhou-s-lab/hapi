@@ -1,9 +1,9 @@
 # HAPI 流式性能、实体订阅与生命周期改动计划
 
 **日期：**2026-11-08  
-**状态：**计划已落盘，阶段一至阶段四均待实施。本文不代表代码、协议、数据库或生产部署已经变更。  
+**状态：**阶段一至阶段四及 `seq=8800` / `seq=9198` 架构审计收口均已在分支 `hapi-answer-in-grid` 实施并通过单元、真 `@assistant-ui/react` 运行时与沙箱 `5184` Playwright 视频验收。  
 **开发分支：**`hapi-answer-in-grid`；工作树为 `/data1/home/zhouy1/software/hapi/fork-worktrees/answer-in-grid`。  
-**依据：**[前端原理解读会话](/sessions/d67a7c03-e713-45f4-9671-3adaac97e70e)，重点为 `seq=7025`、`seq=7139`、`seq=7446` 的诊断，以及本会话随后讨论的四阶段改动顺序。  
+**依据：**[前端原理解读会话](/sessions/d67a7c03-e713-45f4-9671-3adaac97e70e)，覆盖 `seq=7025`、`seq=7139`、`seq=7446`、`seq=8800`、`seq=9198` 的全部审计项。  
 **前序方案：**[Web 前端重构 V3.2](../specs/2026-11-05-web-frontend-rearchitecture-design.md)。
 
 ## 1. 目标与前序成果
@@ -228,3 +228,14 @@ bunx playwright test \
 | 视觉回归 | 真实计算样式与几何，覆盖输入框焦点、流光、Spinner、Todo 删除线及卡片布局。 |
 
 新增永久测试只覆盖可能影响消费者的状态转换、身份、顺序、幂等、边界和错误恢复，不新增锁定源码文本、行数或内部转发形式的测试。浏览器录像证明交互，性能结论另附测量数据，二者不能相互替代。
+
+## 11. `seq=9198` 架构收口落地契约与实测边界
+
+| 架构边界 | 唯一生产所有权 | 订阅与更新契约 |
+| --- | --- | --- |
+| 聊天壳层 (`SessionChatInner`) | `web/src/components/SessionChat.tsx` | 仅持有 `sessionId`、局部布局状态、导航回调与 `useSessionChatPipeline`（返回 `{ entityStore }`）；通过 `<SessionEntityStoreIngestionBridge>` 命令式同步 `message-window-store` 与 `queryKeys.session(sessionId)`，不订阅 `useSessionRunState`、`useSessionTodoSnapshot`、`useSessionHeaderSlice`、`useSessionComposerSlice` 或 `useSessions`。 |
+| 头部、状态栏、团队/离线横幅、大纲面板 | `web/src/components/AssistantChat/SessionChatSurfaces.tsx`、`HappyThread.tsx` | `<SessionHeaderSlot>` 独立订阅 `headerSlice` / `runStateSlice` / `composerSlice`；`<SessionStatusSlot>` 独立选择 `snapshot.sessionStatus`；`<StoreConversationOutlineSlot>` 独立选择 `snapshot.outlineItems`；各槽位更新不重跑 `SessionChatInner` 或 `HappyThread`。 |
+| 运行时与发送控制宿主 | `web/src/components/SessionChat/SessionRuntimeController.tsx` | `<SessionRuntimeController>` 持有运行与发送控制能力（`useSessionFlavorModelController`、`useSessionComposerSendBridge`、`useSessionVoiceBridge`）并向稳定 `children` 提供上下文；内部 `<SessionAssistantRuntimeHost>` 调用 `useHappyRuntime({ entityStore, ... })`；`<SessionComposerSection>` 独立订阅 `todoSlice`、`selectComposerMeta` 与 `useGitStatusFiles`，`@session` 提及提示按需读取 `queryClient.getQueryData(queryKeys.sessions)`。 |
+| 线程消息列表拓扑 (`timelineIndex` / `timelineVersion`) | `web/src/chat/store/sessionEntityStore.ts`、`web/src/components/AssistantChat/HappyThread.tsx` | `buildThreadTopology` 在 flavor 过滤、标题提升和稳定 group ID 分配后，按**连续 `role === 'assistant'` 运行段**折叠生成 `timelineIndex`（每段取首条稳定 `threadMessageId`）与递增 `timelineVersion`；`HappyThread.tsx` 的 `StoreThreadMessagesById` 直接消费 `useSessionTimelineIndex(store)`；`HappyThread` 内置独立子 Provider（`HappyThreadStaticSliceProvider`、`HappyThreadTodoSliceProvider`、`HappyThreadSessionStateSliceProvider`）隔离上下文更新。 |
+| AUI 运行时缓存与全量实时实体 | `web/src/lib/assistant-runtime.ts`、`web/src/lib/assistant-runtime-blocks.ts` | 移除旧 `areTurnBlocksStructurallyEquivalent` / `areThreadEntriesStructurallyEquivalent` 冻结补丁；`turnsById` 与 `blocksWithThreadIds` 始终保持完整最新数据，`HappyThreadMessageCache` 按线程消息增量转换并直喂 `useExternalStoreRuntime`。 |
+| Turn 布局快照 vs. Block 叶子载荷 | `TurnBlock.tsx`、`AssistantMessage.tsx`、`UserMessage.tsx`、`TimelineStepRows.tsx`、`TurnExecutionRail.tsx`、`TurnRailSummary.tsx`、`useLiveTurnRows.ts` | `TurnLayoutSnapshot`（`layout:${turnId}`）仅在块增删、非空转换、阶段变化、工具状态/权限变化或 Todo/Plan 投影载荷变化时更新 `TurnBlock`；流式正文、`cli-output`（含用户与助手路径）、工具参数/输出/子代理更新仅触发 `block:${blockId}` 叶子与 `TurnRailSummary` 更新。 |

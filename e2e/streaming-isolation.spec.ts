@@ -87,28 +87,46 @@ test.describe('PR 3 4-context split & historical turn streaming isolation', () =
         expect(errors).toEqual([])
     })
 
-    test('Audit closure: body-text deltas via SessionEntityStore update leaf TurnAnswerSection with zero TurnEntitySnapshot re-renders and preserve fallbackTodos on completed truncated turns', async ({ page }) => {
+    test('Audit closure (seq 9198): body-text deltas and running tool payload deltas update leaf rows with zero TurnLayoutSnapshot or TimelineIndex re-renders, while tool completion updates only the turn layout', async ({ page }) => {
         const errors: string[] = []
         page.on('pageerror', (err) => errors.push(err.message))
 
         await page.goto('/e2e-fixtures/turn-timeline-demo.html?fixture=streaming-isolation')
         await page.locator('[data-testid="streaming-isolation-fixture"]').waitFor()
 
+        const timelineProbe = page.locator('[data-testid="fixture-timeline-probe"]')
         const entityTurn = page.locator('[data-testid="fixture-entity-turn"]')
         await expect(entityTurn.locator('[data-testid="turn-trailing-answer"]')).toContainText('Entity leaf delta 0')
+        await expect(entityTurn.locator('[data-testid="turn-level1-shell"]')).toContainText('Reading stream target 0')
+        const initialTimelineRenders = Number((await timelineProbe.getAttribute('data-timeline-render-count')) ?? '0')
         const initialTurnRenders = Number((await entityTurn.getAttribute('data-turn-render-count')) ?? '0')
+        expect(initialTimelineRenders).toBeGreaterThanOrEqual(1)
         expect(initialTurnRenders).toBeGreaterThanOrEqual(1)
 
-        // Click advance-entity-delta 3 times: leaf answer updates while EntityStoreFixtureTurn has 0 re-renders
+        // 1. Click advance-entity-delta 3 times: leaf answer updates while TurnLayoutSnapshot and TimelineIndex have 0 re-renders
         await page.locator('[data-testid="advance-entity-delta"]').click()
         await page.locator('[data-testid="advance-entity-delta"]').click()
         await page.locator('[data-testid="advance-entity-delta"]').click()
 
         await expect(entityTurn.locator('[data-testid="turn-trailing-answer"]')).toContainText('Entity leaf delta 3')
-        const afterTurnRenders = Number((await entityTurn.getAttribute('data-turn-render-count')) ?? '0')
-        expect(afterTurnRenders).toBe(initialTurnRenders)
+        expect(Number((await entityTurn.getAttribute('data-turn-render-count')) ?? '0')).toBe(initialTurnRenders)
+        expect(Number((await timelineProbe.getAttribute('data-timeline-render-count')) ?? '0')).toBe(initialTimelineRenders)
 
-        // Toggle sessionThinking from true -> false on truncated tail turn 5: fallbackTodos checklist card remains visible
+        // 2. Click advance-tool-payload-delta twice: running tool input updates live in DOM while TurnLayoutSnapshot and TimelineIndex still have 0 re-renders
+        await page.locator('[data-testid="advance-tool-payload-delta"]').click()
+        await page.locator('[data-testid="advance-tool-payload-delta"]').click()
+
+        await expect(entityTurn.locator('[data-testid="turn-level1-shell"]')).toContainText('Reading stream target 2')
+        expect(Number((await entityTurn.getAttribute('data-turn-render-count')) ?? '0')).toBe(initialTurnRenders)
+        expect(Number((await timelineProbe.getAttribute('data-timeline-render-count')) ?? '0')).toBe(initialTimelineRenders)
+
+        // 3. Click complete-entity-tool: tool state running -> completed updates only the turn layout while TimelineIndex still has 0 re-renders
+        await page.locator('[data-testid="complete-entity-tool"]').click()
+        await expect(entityTurn.locator('[data-testid="turn-level1-shell"]')).toContainText('stream-target-2.ts')
+        expect(Number((await entityTurn.getAttribute('data-turn-render-count')) ?? '0')).toBeGreaterThan(initialTurnRenders)
+        expect(Number((await timelineProbe.getAttribute('data-timeline-render-count')) ?? '0')).toBe(initialTimelineRenders)
+
+        // 4. Toggle sessionThinking from true -> false on truncated tail turn 5: fallbackTodos checklist card remains visible
         const tailTurn = page.locator('[data-testid="fixture-turn-5"]')
         await expect(tailTurn.locator('[data-testid="turn-todo-checklist-card"]')).toHaveCount(1)
         await page.locator('[data-testid="toggle-session-thinking"]').click()
