@@ -339,10 +339,9 @@ export function SessionThreadSection(props: {
     })
 
     const selectThreadSection = useCallback((snap: SessionEntityStoreSnapshot): ThreadSectionStoreSelection => {
-        const explicitTimelineVersion = (snap as SessionEntityStoreSnapshot & { timelineVersion?: number }).timelineVersion
         let resolvedTimelineVersion: number
-        if (typeof explicitTimelineVersion === 'number' && props.messagesVersion === undefined) {
-            resolvedTimelineVersion = explicitTimelineVersion
+        if (props.messagesVersion === undefined) {
+            resolvedTimelineVersion = snap.timelineVersion
         } else {
             const liveWindow = props.messagesVersion === undefined
                 ? getMessageWindowState(props.sessionId)

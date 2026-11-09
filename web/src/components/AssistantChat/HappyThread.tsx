@@ -7,12 +7,30 @@ import type { HappyRuntimeExtras } from '@/lib/assistant-runtime'
 import type { Session, SessionMetadataSummary } from '@/types/api'
 import type { ConversationOutlineItem } from '@/chat/outline'
 import { formatMessageTimestampTitle, formatOutlineTimestamp } from '@/chat/presentation'
-import { HappyChatProvider } from '@/components/AssistantChat/context'
+import type { SessionEntityStore, SessionEntityStoreSnapshot } from '@/chat/store/sessionEntityStore'
 import {
+    HappyChatHistoryContext,
+    HappyChatSessionStateContext,
+    HappyChatStaticContext,
+    HappyChatTodosContext,
+    type HappyChatHistoryContextValue,
+    type HappyChatSessionStateContextValue,
+    type HappyChatStaticContextValue,
+    type HappyChatTodosContextValue,
+    type OlderHistoryLoadResult,
+} from '@/components/AssistantChat/context'
+import { sameShallowSelection, useSessionCacheSelector } from '@/components/SessionChat/sessionState'
+import {
+    stabilizeSessionMetadataForId,
     useSessionHeaderSlice,
     useSessionRunState,
     useSessionTodoSnapshot,
 } from '@/hooks/queries/useSession'
+import {
+    useOptionalSessionEntityStore,
+    useSessionEntitySelector,
+    useSessionTimelineIndex,
+} from '@/hooks/useSessionEntityStore'
 import { HappyAssistantMessage } from '@/components/AssistantChat/messages/AssistantMessage'
 import { HappyUserMessage } from '@/components/AssistantChat/messages/UserMessage'
 import { HappySystemMessage } from '@/components/AssistantChat/messages/SystemMessage'
@@ -86,22 +104,193 @@ type ThreadMessageComponents = ComponentProps<typeof ThreadPrimitive.Unstable_Me
  * for message 0 while its lookup table is already empty. Stable id providers
  * unmount removed rows without consulting a stale index.
  */
-export function ThreadMessagesById({ components }: { components: ThreadMessageComponents }) {
-    const messageIds = unstable_useThreadMessageIds()
-
+function StoreThreadMessagesById(props: {
+    store: SessionEntityStore
+    components: ThreadMessageComponents
+}) {
+    const timelineEntries = useSessionTimelineIndex(props.store)
     return (
         <>
-            {messageIds.map((messageId) => (
+            {timelineEntries.map((entry) => (
                 <ThreadPrimitive.Unstable_MessageById
-                    key={messageId}
-                    messageId={messageId}
-                    components={components}
+                    key={entry.id}
+                    messageId={entry.id}
+                    components={props.components}
                 />
             ))}
         </>
     )
 }
 
+function RuntimeThreadMessagesById(props: { components: ThreadMessageComponents }) {
+    const messageIds = unstable_useThreadMessageIds()
+    return (
+        <>
+            {messageIds.map((messageId) => (
+                <ThreadPrimitive.Unstable_MessageById
+                    key={messageId}
+                    messageId={messageId}
+                    components={props.components}
+                />
+            ))}
+        </>
+    )
+}
+
+export function ThreadMessagesById({ components }: { components: ThreadMessageComponents }) {
+    const store = useOptionalSessionEntityStore()
+    if (store) {
+        return <StoreThreadMessagesById store={store} components={components} />
+    }
+    return <RuntimeThreadMessagesById components={components} />
+}
+
+const selectOutlineItems = (snapshot: SessionEntityStoreSnapshot): readonly ConversationOutlineItem[] => snapshot.outlineItems
+
+function StoreConversationOutlineSlot(props: {
+    store: SessionEntityStore
+    hasMoreMessages: boolean
+    isLoadingMoreMessages: boolean
+    onLoadMore: () => void
+    onSelect: (item: ConversationOutlineItem) => void
+    onClose: () => void
+    bottomInsetPx?: number
+}) {
+    const items = useSessionEntitySelector(props.store, selectOutlineItems)
+    return (
+        <ConversationOutlinePanel
+            items={items}
+            hasMoreMessages={props.hasMoreMessages}
+            isLoadingMoreMessages={props.isLoadingMoreMessages}
+            onLoadMore={props.onLoadMore}
+            onSelect={props.onSelect}
+            onClose={props.onClose}
+            bottomInsetPx={props.bottomInsetPx}
+        />
+    )
+}
+
+function selectThreadStaticControlFlags(session: Session | undefined): {
+    active: boolean | undefined
+    controlledByUser: boolean
+} {
+    return {
+        active: session?.active,
+        controlledByUser: session?.agentState?.controlledByUser === true,
+    }
+}
+
+function HappyThreadStaticSliceProvider(props: {
+    api: ApiClient
+    session: Session
+    sessionId: string
+    metadata: SessionMetadataSummary | null
+    terminalToolDisplayMode: HappyChatStaticContextValue['terminalToolDisplayMode']
+    showSessionSummaryInChat: boolean
+    disabled: boolean
+    onRefresh: () => void
+    onRetryMessage?: (localId: string) => void
+    onForkConversation?: (messageLocalId?: string) => Promise<void>
+    onRewindConversation?: (messageLocalId: string) => Promise<void>
+    isLatestCompletedBoundary?: (messageId: string) => boolean
+    onShareTurn: HappyChatStaticContextValue['onShareTurn']
+    onNestedScrollFollowChange: HappyChatStaticContextValue['onNestedScrollFollowChange']
+    loadOlderMessagesPreservingScroll: () => Promise<OlderHistoryLoadResult>
+    children: React.ReactNode
+}) {
+    const headerSlice = useSessionHeaderSlice(props.api, props.sessionId, props.session, props.metadata)
+    const controlFlags = useSessionCacheSelector(
+        props.sessionId,
+        props.session,
+        selectThreadStaticControlFlags,
+        sameShallowSelection
+    )
+    const metadataCacheRef = useRef<{ sessionId: string; metadata: SessionMetadataSummary | null } | null>(null)
+    const stableMetadata = stabilizeSessionMetadataForId(
+        metadataCacheRef,
+        props.sessionId,
+        headerSlice?.metadata ?? props.metadata ?? null
+    )
+    const effectiveDisabled = props.disabled || (controlFlags.active !== undefined ? !controlFlags.active : false)
+    const effectiveFork = controlFlags.controlledByUser ? undefined : props.onForkConversation
+    const effectiveRewind = controlFlags.controlledByUser ? undefined : props.onRewindConversation
+    const staticValue = useMemo<HappyChatStaticContextValue>(() => ({
+        api: props.api,
+        sessionId: props.sessionId,
+        metadata: stableMetadata,
+        terminalToolDisplayMode: props.terminalToolDisplayMode,
+        showSessionSummaryInChat: props.showSessionSummaryInChat,
+        disabled: effectiveDisabled,
+        onRefresh: props.onRefresh,
+        onRetryMessage: props.onRetryMessage,
+        onForkConversation: effectiveFork,
+        onRewindConversation: effectiveRewind,
+        isLatestCompletedBoundary: props.isLatestCompletedBoundary,
+        onShareTurn: props.onShareTurn,
+        onNestedScrollFollowChange: props.onNestedScrollFollowChange,
+        loadOlderMessagesPreservingScroll: props.loadOlderMessagesPreservingScroll,
+    }), [
+        effectiveDisabled,
+        effectiveFork,
+        effectiveRewind,
+        props.api,
+        props.isLatestCompletedBoundary,
+        props.loadOlderMessagesPreservingScroll,
+        props.onNestedScrollFollowChange,
+        props.onRefresh,
+        props.onRetryMessage,
+        props.onShareTurn,
+        props.sessionId,
+        props.showSessionSummaryInChat,
+        props.terminalToolDisplayMode,
+        stableMetadata,
+    ])
+    return (
+        <HappyChatStaticContext.Provider value={staticValue}>
+            {props.children}
+        </HappyChatStaticContext.Provider>
+    )
+}
+
+function HappyThreadTodoSliceProvider(props: {
+    api: ApiClient
+    sessionId: string
+    session: Session
+    children: React.ReactNode
+}) {
+    const todoSlice = useSessionTodoSnapshot(props.api, props.sessionId, props.session)
+    const todos = todoSlice?.todos !== undefined ? todoSlice.todos : props.session?.todos
+    const todosValue = useMemo<HappyChatTodosContextValue>(() => ({
+        todos,
+    }), [todos])
+    return (
+        <HappyChatTodosContext.Provider value={todosValue}>
+            {props.children}
+        </HappyChatTodosContext.Provider>
+    )
+}
+
+function HappyThreadSessionStateSliceProvider(props: {
+    api: ApiClient
+    sessionId: string
+    session: Session
+    children: React.ReactNode
+}) {
+    const runStateSlice = useSessionRunState(props.api, props.sessionId, props.session)
+    const sessionThinking = runStateSlice?.thinking ?? props.session?.thinking
+    const activeTurnStartedAt = runStateSlice?.activeTurnStartedAt !== undefined
+        ? runStateSlice.activeTurnStartedAt
+        : (props.session?.activeTurnStartedAt ?? null)
+    const sessionStateValue = useMemo<HappyChatSessionStateContextValue>(() => ({
+        sessionThinking,
+        activeTurnStartedAt,
+    }), [activeTurnStartedAt, sessionThinking])
+    return (
+        <HappyChatSessionStateContext.Provider value={sessionStateValue}>
+            {props.children}
+        </HappyChatSessionStateContext.Provider>
+    )
+}
 export function ConversationOutlinePanel(props: {
     items: readonly ConversationOutlineItem[]
     hasMoreMessages: boolean
@@ -340,33 +529,39 @@ export function HappyThread(props: {
     const showLoadEarlierButton = (props.hasMoreMessages || isAwaitingHistoryRender)
         && !props.isSyncingTail
         && !showSkeleton
-    const headerSlice = useSessionHeaderSlice(props.api, props.sessionId, props.session, props.metadata)
-    const todoSlice = useSessionTodoSnapshot(props.api, props.sessionId, props.session)
-    const runStateSlice = useSessionRunState(props.api, props.sessionId, props.session)
+    const entityStore = useOptionalSessionEntityStore()
+    const historyValue = useMemo<HappyChatHistoryContextValue>(() => ({
+        historyActionPending: props.historyActionPending,
+        hasMoreMessages: props.hasMoreMessages,
+        isSyncingTail: props.isSyncingTail,
+        isLoadingMoreMessages: props.isLoadingMoreMessages,
+    }), [
+        props.hasMoreMessages,
+        props.historyActionPending,
+        props.isLoadingMoreMessages,
+        props.isSyncingTail,
+    ])
     return (
-        <HappyChatProvider value={{
-            api: props.api,
-            sessionId: props.sessionId,
-            metadata: headerSlice?.metadata ?? props.metadata ?? null,
-            todos: todoSlice?.todos ?? props.session?.todos,
-            sessionThinking: runStateSlice?.thinking ?? props.session?.thinking,
-            activeTurnStartedAt: runStateSlice?.activeTurnStartedAt ?? props.session?.activeTurnStartedAt ?? null,
-            terminalToolDisplayMode,
-            showSessionSummaryInChat,
-            disabled: props.disabled,
-            onRefresh: props.onRefresh,
-            onRetryMessage: props.onRetryMessage,
-            historyActionPending: props.historyActionPending,
-            onForkConversation: props.onForkConversation,
-            onRewindConversation: props.onRewindConversation,
-            isLatestCompletedBoundary: props.isLatestCompletedBoundary,
-            onShareTurn: handleShareTurn,
-            hasMoreMessages: props.hasMoreMessages,
-            isSyncingTail: props.isSyncingTail,
-            isLoadingMoreMessages: props.isLoadingMoreMessages,
-            onNestedScrollFollowChange: handleNestedScrollFollowChange,
-            loadOlderMessagesPreservingScroll: loadOlderFromConsumer
-        }}>
+        <HappyThreadStaticSliceProvider
+            api={props.api}
+            session={props.session}
+            sessionId={props.sessionId}
+            metadata={props.metadata}
+            terminalToolDisplayMode={terminalToolDisplayMode}
+            showSessionSummaryInChat={showSessionSummaryInChat}
+            disabled={props.disabled}
+            onRefresh={props.onRefresh}
+            onRetryMessage={props.onRetryMessage}
+            onForkConversation={props.onForkConversation}
+            onRewindConversation={props.onRewindConversation}
+            isLatestCompletedBoundary={props.isLatestCompletedBoundary}
+            onShareTurn={handleShareTurn}
+            onNestedScrollFollowChange={handleNestedScrollFollowChange}
+            loadOlderMessagesPreservingScroll={loadOlderFromConsumer}
+        >
+            <HappyThreadTodoSliceProvider api={props.api} sessionId={props.sessionId} session={props.session}>
+                <HappyThreadSessionStateSliceProvider api={props.api} sessionId={props.sessionId} session={props.session}>
+                    <HappyChatHistoryContext.Provider value={historyValue}>
             <ThreadPrimitive.Root className="flex min-h-0 flex-1 flex-col relative">
                 {!props.isSyncingTail && (
                     isLoadingMoreOrApplying || pullToLoadState !== 'idle'
@@ -468,17 +663,31 @@ export function HappyThread(props: {
                             aria-label={t('session.outline.close')}
                             onClick={() => props.onOutlineOpenChange(false)}
                         />
-                        <ConversationOutlinePanel
-                            items={props.outlineItems}
-                            hasMoreMessages={props.hasMoreMessages}
-                            isLoadingMoreMessages={props.isLoadingMoreMessages}
-                            onLoadMore={() => {
-                                void loadOlderFromConsumer()
-                            }}
-                            onSelect={handleOutlineSelect}
-                            onClose={() => props.onOutlineOpenChange(false)}
-                            bottomInsetPx={bottomInsetPx}
-                        />
+                        {entityStore ? (
+                            <StoreConversationOutlineSlot
+                                store={entityStore}
+                                hasMoreMessages={props.hasMoreMessages}
+                                isLoadingMoreMessages={props.isLoadingMoreMessages}
+                                onLoadMore={() => {
+                                    void loadOlderFromConsumer()
+                                }}
+                                onSelect={handleOutlineSelect}
+                                onClose={() => props.onOutlineOpenChange(false)}
+                                bottomInsetPx={bottomInsetPx}
+                            />
+                        ) : (
+                            <ConversationOutlinePanel
+                                items={props.outlineItems}
+                                hasMoreMessages={props.hasMoreMessages}
+                                isLoadingMoreMessages={props.isLoadingMoreMessages}
+                                onLoadMore={() => {
+                                    void loadOlderFromConsumer()
+                                }}
+                                onSelect={handleOutlineSelect}
+                                onClose={() => props.onOutlineOpenChange(false)}
+                                bottomInsetPx={bottomInsetPx}
+                            />
+                        )}
                     </>
                 ) : null}
                 <ShareTurnDialog
@@ -491,6 +700,9 @@ export function HappyThread(props: {
                     onClose={closeShareTurn}
                 />
             </ThreadPrimitive.Root>
-        </HappyChatProvider>
+                    </HappyChatHistoryContext.Provider>
+                </HappyThreadSessionStateSliceProvider>
+            </HappyThreadTodoSliceProvider>
+        </HappyThreadStaticSliceProvider>
     )
 }

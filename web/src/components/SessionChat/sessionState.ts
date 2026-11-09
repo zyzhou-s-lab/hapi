@@ -1,7 +1,8 @@
 import { useCallback, useMemo, useRef, useSyncExternalStore } from 'react'
 import { useQueryClient, type QueryClient } from '@tanstack/react-query'
 import type { Session } from '@/types/api'
-import type { SessionEntityStore, SessionEntityStoreSnapshot } from '@/chat/store/sessionEntityStore'
+import type { SessionEntityStoreSnapshot } from '@/chat/store/sessionEntityStore'
+import { useSessionEntitySelector } from '@/hooks/useSessionEntityStore'
 import {
     areSessionMetadataSummariesEqual,
     type SessionMetadataSummary,
@@ -125,25 +126,8 @@ export function useSessionControlSession(api: import('@/api/client').ApiClient, 
     }), [config, fallback?.active, fallback?.agentState, fallback?.thinking, metadata, run, sessionId])
 }
 
-// Kept local until the concurrently implemented domain selector lands. This
-// selector returns only the selected live value; it never retains old payloads.
-export function useSessionSurfaceSelector<T>(
-    store: SessionEntityStore,
-    selector: (snapshot: SessionEntityStoreSnapshot) => T,
-    isEqual: (a: T, b: T) => boolean = Object.is,
-): T {
-    const selectedRef = useRef<{ store: SessionEntityStore; value: T } | null>(null)
-    const getSnapshot = useCallback(() => {
-        const next = selector(store.getSnapshot())
-        if (selectedRef.current?.store === store && isEqual(selectedRef.current.value, next)) return selectedRef.current.value
-        selectedRef.current = { store, value: next }
-        return next
-    }, [isEqual, selector, store])
-    return useSyncExternalStore(store.subscribe, getSnapshot, getSnapshot)
-}
+export const useSessionSurfaceSelector = useSessionEntitySelector
 
 export const selectVisibleMessageCount = (snapshot: SessionEntityStoreSnapshot): number => snapshot.visibleMessages.length
 export const selectHasRunningChildAgent = (snapshot: SessionEntityStoreSnapshot): boolean => snapshot.hasRunningChildAgent
-export function selectTimelineVersion(snapshot: SessionEntityStoreSnapshot): number {
-    return (snapshot as SessionEntityStoreSnapshot & { timelineVersion?: number }).timelineVersion ?? 0
-}
+export const selectTimelineVersion = (snapshot: SessionEntityStoreSnapshot): number => snapshot.timelineVersion

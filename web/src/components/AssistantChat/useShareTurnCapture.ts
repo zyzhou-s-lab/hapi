@@ -1,6 +1,8 @@
 import { useCallback, useMemo, useRef, useState, type RefObject } from 'react'
 import type { ApiClient } from '@/api/client'
 import type { Session } from '@/types/api'
+import { useSessionChatQueryClient } from '@/components/SessionChat/sessionState'
+import { queryKeys } from '@/lib/query-keys'
 import { useTranslation } from '@/lib/use-translation'
 import { getSessionModelLabel } from '@/lib/sessionModelLabel'
 import { getSessionTitle } from '@/lib/sessionTitle'
@@ -71,32 +73,36 @@ export function useShareTurnCapture(props: {
 }) {
     const { t, locale } = useTranslation()
     const { contentRef } = props
+    const queryClient = useSessionChatQueryClient()
     const shareTurnIdRef = useRef(0)
     const { preferences: headerMetadata } = useSessionHeaderMetadata()
     const { machines } = useMachines(props.api, true)
     const machineLabelsById = useMachineLabels(machines)
     const [shareTurn, setShareTurn] = useState<ShareTurnState>(null)
     const shareDialogOpen = shareTurn !== null
-    const shareTitle = shareTurn ? getSessionTitle(props.session) : ''
+    const liveSession = shareDialogOpen
+        ? (queryClient.getQueryData<{ session: Session }>(queryKeys.session(props.session.id))?.session ?? props.session)
+        : props.session
+    const shareTitle = shareTurn ? getSessionTitle(liveSession) : ''
     const shareRelativeTimeTick = useMinuteTick(headerMetadata.lastActive && shareDialogOpen)
     const shareMetadataItems = useMemo(() => {
-        const agentFlavor = props.session.metadata?.flavor ?? null
+        const agentFlavor = liveSession.metadata?.flavor ?? null
         const agentLabel = agentFlavor?.trim() || null
-        const machineLabel = resolveSessionHeaderMachineLabel(props.session, machineLabelsById)
-        const modelLabel = getSessionModelLabel(props.session)
+        const machineLabel = resolveSessionHeaderMachineLabel(liveSession, machineLabelsById)
+        const modelLabel = getSessionModelLabel(liveSession)
         const reasoningLabel = getShareTurnReasoningLabel(
             agentFlavor,
-            props.session.modelReasoningEffort,
-            props.session.effort,
+            liveSession.modelReasoningEffort,
+            liveSession.effort,
             headerMetadata.showLabels
         )
-        const lastActiveAt = props.session.activeAt || props.session.updatedAt || props.session.createdAt
+        const lastActiveAt = liveSession.activeAt || liveSession.updatedAt || liveSession.createdAt
         const lastActiveLabel = lastActiveAt > 0 ? formatRelativeTime(lastActiveAt, t) : null
-        const createdAtLabel = formatSessionHeaderTimestamp(props.session.createdAt, locale)
-        const updatedAtLabel = formatSessionHeaderTimestamp(props.session.updatedAt, locale)
-        const worktreeBranch = props.session.metadata?.worktree?.branch?.trim() || null
+        const createdAtLabel = formatSessionHeaderTimestamp(liveSession.createdAt, locale)
+        const updatedAtLabel = formatSessionHeaderTimestamp(liveSession.updatedAt, locale)
+        const worktreeBranch = liveSession.metadata?.worktree?.branch?.trim() || null
         const showFastBadge = agentFlavor === 'codex'
-            && isFastServiceTier(props.serviceTier ?? props.session.serviceTier)
+            && isFastServiceTier(props.serviceTier ?? liveSession.serviceTier)
 
         return selectShareTurnMetadata(headerMetadata, {
             agent: agentLabel ? { text: agentLabel, flavor: agentFlavor } : undefined,
@@ -119,7 +125,7 @@ export function useShareTurnCapture(props: {
                 text: `${headerMetadata.showLabels ? `${t('session.item.worktree')}: ` : ''}${worktreeBranch}`,
             } : undefined,
         })
-    }, [headerMetadata, locale, machineLabelsById, props.serviceTier, props.session, shareDialogOpen, shareRelativeTimeTick, t])
+    }, [headerMetadata, liveSession, locale, machineLabelsById, props.serviceTier, shareDialogOpen, shareRelativeTimeTick, t])
     const handleShareTurn = useCallback((
         messageTarget: HTMLElement | string | null,
         clientY?: number,
