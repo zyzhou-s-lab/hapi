@@ -1,7 +1,8 @@
-import { useCallback, useMemo, useRef } from 'react'
+import { useCallback, useMemo, useRef, useSyncExternalStore } from 'react'
 import type React from 'react'
-import type { AppendMessage, AttachmentAdapter, ThreadMessageLike } from '@assistant-ui/react'
-import { useExternalMessageConverter, useExternalStoreRuntime } from '@assistant-ui/react'
+import type { AppendMessage, AttachmentAdapter, ThreadMessage, ThreadMessageLike } from '@assistant-ui/react'
+import { fromThreadMessageLike, useExternalStoreRuntime } from '@assistant-ui/react'
+import type { SessionEntityStore, SessionEntityStoreSnapshot } from '@/chat/store/sessionEntityStore'
 import type { PendingSchedule } from '@/components/AssistantChat/ScheduleTimePicker'
 import { resolvePendingSchedule } from '@/components/AssistantChat/ScheduleTimePicker'
 import {
@@ -30,6 +31,10 @@ import {
     getResponseGroupTimestamps,
     hoistMidTurnTitleEvents,
     toCompactionToolCallBlock,
+    buildTurnEntitiesById,
+    threadMessageRuns,
+    type TurnEntitySnapshot,
+    type TurnEntityContentPart,
 } from '@/lib/assistant-runtime-blocks'
 
 export {
@@ -114,13 +119,17 @@ function isTailAssistantBlockActivelyRunning(
     settledTailMarker: string | null
 ): boolean {
     if (!tailBlock) return false
+    const activeTurnStartedAt = session.activeTurnStartedAt ?? null
+    if (session.activeTurnId && 'turnId' in tailBlock && tailBlock.turnId && tailBlock.turnId !== session.activeTurnId) return false
+    if (activeTurnStartedAt !== null && getBlockPresentationTimestamp(tailBlock) < activeTurnStartedAt) return false
     if (session.activeTurnId && 'turnId' in tailBlock && tailBlock.turnId === session.activeTurnId) {
         return true
     }
     if (
-        session.lifecycleState === 'tool-executing'
+        (session.lifecycleState === 'tool-executing'
         || session.lifecycleState === 'streaming-answer'
-        || session.lifecycleState === 'awaiting-permission'
+        || session.lifecycleState === 'awaiting-permission')
+        && (settledTailMarker === null || getTailAssistantMarker(tailBlock) !== settledTailMarker || activeTurnStartedAt !== null)
     ) {
         return true
     }
@@ -136,7 +145,6 @@ function isTailAssistantBlockActivelyRunning(
     ) {
         return true
     }
-    const activeTurnStartedAt = session.activeTurnStartedAt ?? null
     if (
         activeTurnStartedAt !== null
         && getBlockPresentationTimestamp(tailBlock) >= activeTurnStartedAt
@@ -464,11 +472,79 @@ function extractMessageContent(message: AppendMessage): { text: string; attachme
     return { text, attachments }
 }
 
+const NO_STORE_SUBSCRIBE = () => () => {}
+const NO_STORE_SNAPSHOT = () => null
+
+/** Converts changed thread messages only. The cache never owns frozen payloads:
+ * each source is a complete current turn (or one current user/system block). */
+export class HappyThreadMessageCache {
+    private byId = new Map<string, { source: TurnEntitySnapshot | VisibleChatBlock; running: boolean; message: ThreadMessage }>()
+    private blockCache = new WeakMap<VisibleChatBlock, ThreadMessageLike>()
+    private messages: readonly ThreadMessage[] = []
+
+    reconcile(entries: readonly BlockWithThreadMessageId[], turns: ReadonlyMap<string, TurnEntitySnapshot>, isRunning: boolean, snapshot?: SessionEntityStoreSnapshot | null): readonly ThreadMessage[] {
+        const standaloneRuns = snapshot ? null : threadMessageRuns(entries)
+        const length = snapshot?.timelineIndex.length ?? standaloneRuns!.length
+        const next: ThreadMessage[] = []
+        const nextById = new Map<string, { source: TurnEntitySnapshot | VisibleChatBlock; running: boolean; message: ThreadMessage }>()
+        let unchanged = length === this.messages.length
+        for (let i = 0; i < length; i += 1) {
+            const ref = snapshot?.timelineIndex[i]
+            const turn = turns.get(ref?.id ?? standaloneRuns![i]![0]!.threadMessageId)
+            const first = ref
+                ? { threadMessageId: ref.id, block: turn?.blocks[0] ?? snapshot!.visibleById.get(ref.id)!, timestamp: turn?.timestamp }
+                : standaloneRuns![i]![0]!
+            const source = turn ?? first.block
+            const running = Boolean(turn && isRunning && i === length - 1)
+            const old = this.byId.get(first.threadMessageId)
+            let message: ThreadMessageLike
+            if (old?.source === source && old.running === running) {
+                message = old.message
+            } else if (!turn) {
+                message = toThreadMessageLike(first.block, first.threadMessageId, first.timestamp ?? getBlockPresentationTimestamp(first.block))
+            } else {
+                const converted = turn.blocks.map((block) => {
+                    const cached = this.blockCache.get(block)
+                    if (cached) return cached
+                    const partMessage = toThreadMessageLike(block, first.threadMessageId, turn.timestamp)
+                    this.blockCache.set(block, partMessage)
+                    return partMessage
+                })
+                const head = converted[0]!
+                const pendingPermission = turn.blocks.some((block) => block.kind === 'tool-call' && block.tool.permission?.status === 'pending')
+                message = {
+                    ...head,
+                    id: turn.id,
+                    createdAt: new Date(turn.timestamp),
+                    content: converted.flatMap((item) => typeof item.content === 'string' ? [{ type: 'text' as const, text: item.content }] : item.content),
+                    status: running ? { type: 'running' } : pendingPermission ? { type: 'requires-action', reason: 'tool-calls' } : { type: 'complete', reason: 'stop' },
+                    metadata: { ...head.metadata, custom: {
+                        ...head.metadata?.custom,
+                        kind: (head.metadata?.custom as HappyChatMessageMetadata | undefined)?.kind ?? 'assistant',
+                        invokedAt: turn.invokedAt, durationMs: turn.durationMs,
+                        usage: turn.usage, model: turn.model, roundSummary: turn.roundSummary, turnCount: turn.turnCount,
+                    } satisfies HappyChatMessageMetadata },
+                }
+            }
+            const normalized = old?.source === source && old.running === running
+                ? old.message
+                : fromThreadMessageLike(message, first.threadMessageId, { type: 'complete', reason: 'stop' })
+            if (normalized !== this.messages[i]) unchanged = false
+            next.push(normalized)
+            nextById.set(first.threadMessageId, { source, running, message: normalized })
+        }
+        this.byId = nextById
+        if (!unchanged) this.messages = next
+        return this.messages
+    }
+}
+
 export function useHappyRuntime(props: {
     session: Session
+    entityStore?: SessionEntityStore | null
     blocks?: readonly VisibleChatBlock[]
     blocksWithThreadIds?: readonly BlockWithThreadMessageId[]
-    messagesVersion: number
+    messagesVersion?: number
     historyVersion: number
     viewMode?: 'tail' | 'history'
     isSyncingTail?: boolean
@@ -495,6 +571,11 @@ export function useHappyRuntime(props: {
 }) {
     const isRunning = props.isRunning ?? props.session.thinking
     const flavor = props.session.metadata?.flavor
+    const entitySnapshot = useSyncExternalStore(
+        props.entityStore?.subscribe ?? NO_STORE_SUBSCRIBE,
+        props.entityStore?.getSnapshot ?? NO_STORE_SNAPSHOT,
+        props.entityStore?.getSnapshot ?? NO_STORE_SNAPSHOT
+    )
 
     // Compute response-group aggregates once per block list so we can
     // inject the summed metadata onto each group's first visible block.
@@ -504,13 +585,23 @@ export function useHappyRuntime(props: {
     const threadIdWrapperCacheRef = useRef(
         new WeakMap<VisibleChatBlock, BlockWithThreadMessageId>()
     )
-    const blocksWithThreadIds = useMemo(
-        () => props.blocksWithThreadIds ?? assignThreadMessageIdsWithStableWrappers(
+    const standaloneEntries = useMemo(
+        () => props.entityStore ? null : props.blocksWithThreadIds ?? assignThreadMessageIdsWithStableWrappers(
             hoistMidTurnTitleEvents(filterVisibleBlocksForFlavor(props.blocks ?? [], flavor)),
             threadIdWrapperCacheRef.current
         ),
-        [props.blocksWithThreadIds, props.blocks, flavor]
+        [props.entityStore, props.blocksWithThreadIds, props.blocks, flavor]
     )
+    const blocksWithThreadIds = entitySnapshot?.blocksWithThreadIds ?? standaloneEntries ?? []
+    const standaloneTurnsRef = useRef(new Map<string, TurnEntitySnapshot>())
+    const partCacheRef = useRef(new WeakMap<VisibleChatBlock, TurnEntityContentPart>())
+    const standaloneTurns = useMemo(() => {
+        if (!standaloneEntries) return null
+        const next = buildTurnEntitiesById(standaloneEntries, standaloneTurnsRef.current, partCacheRef.current)
+        standaloneTurnsRef.current = next
+        return next
+    }, [standaloneEntries])
+    const turns = entitySnapshot?.turnsById ?? standaloneTurns ?? standaloneTurnsRef.current
 
     const tailAssistantBlock = useMemo(
         () => findTailAssistantBlock(blocksWithThreadIds),
@@ -553,52 +644,8 @@ export function useHappyRuntime(props: {
         settledTailRef.current.settledMarker
     )
 
-    const convertedBlockCacheRef = useRef(
-        new WeakMap<BlockWithThreadMessageId, ThreadMessageLike>()
-    )
-    const convertBlock = useCallback(
-        (entry: BlockWithThreadMessageId): ThreadMessageLike => {
-            const cached = convertedBlockCacheRef.current.get(entry)
-            if (cached) return cached
-            const { block, threadMessageId, timestamp, aggregate } = entry
-            const message = toThreadMessageLike(
-                block,
-                threadMessageId,
-                timestamp ?? getBlockPresentationTimestamp(block)
-            )
-            if (!aggregate) {
-                convertedBlockCacheRef.current.set(entry, message)
-                return message
-            }
-            const existing = message.metadata?.custom as HappyChatMessageMetadata | undefined
-            const withAggregate: ThreadMessageLike = {
-                ...message,
-                metadata: {
-                    ...message.metadata,
-                    custom: {
-                        ...(existing ?? { kind: 'assistant' }),
-                        usage: aggregate.usage,
-                        model: aggregate.model,
-                        invokedAt: aggregate.invokedAt,
-                        durationMs: aggregate.durationMs,
-                        turnCount: aggregate.turnCount,
-                        roundSummary: aggregate.roundSummary
-                    } satisfies HappyChatMessageMetadata
-                }
-            }
-            convertedBlockCacheRef.current.set(entry, withAggregate)
-            return withAggregate
-        },
-        []
-    )
-
-    // Use cached message converter for performance optimization
-    // This prevents re-converting all messages on every render
-    const convertedMessages = useExternalMessageConverter<BlockWithThreadMessageId>({
-        callback: convertBlock,
-        messages: blocksWithThreadIds as BlockWithThreadMessageId[],
-        isRunning: isRunningForMessages,
-    })
+    const messageCacheRef = useRef(new HappyThreadMessageCache())
+    const convertedMessages = messageCacheRef.current.reconcile(blocksWithThreadIds, turns, isRunningForMessages, entitySnapshot)
 
     const onNew = useCallback(async (message: AppendMessage) => {
         const intent = consumeComposerSendIntent(props.pendingSendIntentRef)
@@ -628,10 +675,11 @@ export function useHappyRuntime(props: {
         await props.onAbort()
     }, [props.onAbort])
 
+    const messagesVersion = props.messagesVersion ?? entitySnapshot?.timelineVersion ?? 0
     const extras = useMemo<HappyRuntimeExtras>(() => ({
-        messagesVersion: props.messagesVersion,
+        messagesVersion,
         historyVersion: props.historyVersion
-    }), [props.messagesVersion, props.historyVersion])
+    }), [messagesVersion, props.historyVersion])
 
     // Memoize the adapter to avoid recreating on every render
     // useExternalStoreRuntime may use adapter identity for subscriptions

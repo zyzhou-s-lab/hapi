@@ -3,7 +3,7 @@ import { TextMessagePartProvider, useAuiState } from '@assistant-ui/react'
 import { projectSessionTodoSnapshot } from '@/chat/projections/todoProjection'
 import { useOptionalHappyChatSessionStateContext, useOptionalHappyChatStaticContext, useOptionalHappyChatTodosContext } from '@/components/AssistantChat/context'
 import { NotifySummaryText } from '@/components/AssistantChat/messages/NotifySummaryText'
-import { useOptionalSessionEntityStore, useOptionalSessionTurnEntity } from '@/hooks/useSessionEntityStore'
+import { useOptionalSessionEntityStore, useOptionalSessionTurnLayout } from '@/hooks/useSessionEntityStore'
 import type { TodoItem } from '@/types/api'
 import {
     hasTurnContentActivity,
@@ -148,33 +148,26 @@ export function TurnBlock() {
     const { locale } = useTranslation()
     const store = useOptionalSessionEntityStore()
     const messageId = useAuiState((state) => state.message.id)
-    const turnEntity = useOptionalSessionTurnEntity(messageId)
-    const hasStoreTurn = Boolean(turnEntity || store?.getTurnEntity(messageId))
+    const turnLayout = useOptionalSessionTurnLayout(messageId)
+    const hasStoreTurn = Boolean(turnLayout)
     const fallbackContent = useAuiState((state) => (
         !hasStoreTurn && state.message.role === 'assistant' ? state.message.content : null
     ))
     const auiRunning = useAuiState((state) => state.message.status?.type === 'running')
     const isLastMessage = useAuiState((state) => state.message.isLast)
     const auiCreatedAt = useAuiState((state) => state.message.createdAt.getTime())
-    const auiCustom = useAuiState((state) => state.message.metadata.custom as Partial<HappyChatMessageMetadata> | undefined)
-    const createdAt = turnEntity?.timestamp ?? auiCreatedAt
-    const custom = turnEntity ? {
-        ...auiCustom,
-        invokedAt: turnEntity.invokedAt ?? auiCustom?.invokedAt,
-        durationMs: turnEntity.durationMs ?? auiCustom?.durationMs,
-        usage: turnEntity.usage ?? auiCustom?.usage,
-        model: turnEntity.model ?? auiCustom?.model,
-        roundSummary: turnEntity.roundSummary ?? auiCustom?.roundSummary,
-        turnCount: turnEntity.turnCount ?? auiCustom?.turnCount,
-    } : auiCustom
+    const auiInvokedAt = useAuiState((state) => (state.message.metadata.custom as Partial<HappyChatMessageMetadata> | undefined)?.invokedAt)
+    const auiRoundSummary = useAuiState((state) => (state.message.metadata.custom as Partial<HappyChatMessageMetadata> | undefined)?.roundSummary)
+    const createdAt = auiCreatedAt
+    const custom = useMemo(() => ({ invokedAt: auiInvokedAt, roundSummary: auiRoundSummary }), [auiInvokedAt, auiRoundSummary])
 
     const prevPartitionRef = useRef<TurnPartition | null>(null)
     const partition = useMemo(() => {
-        const parts = turnEntity ? turnEntity.parts : contentParts(fallbackContent ?? [])
+        const parts = hasStoreTurn ? (store?.getLiveTurnParts(messageId) ?? []) : contentParts(fallbackContent ?? [])
         const next = partitionTurn(parts, staticCtx?.metadata ?? null, prevPartitionRef.current)
         prevPartitionRef.current = next
         return next
-    }, [fallbackContent, staticCtx?.metadata, turnEntity])
+    }, [fallbackContent, staticCtx?.metadata, turnLayout, store, messageId, hasStoreTurn])
     const hasRunningTool = useMemo(
         () => partition.rows.some(
             (row) => row.kind === 'tool'

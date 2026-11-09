@@ -26,7 +26,8 @@ import {
 } from '@/chat/toolGroups'
 import type { ChatBlock, NormalizedMessage } from '@/chat/types'
 import {
-    areThreadEntriesStructurallyEquivalent,
+    buildThreadTopology,
+    buildTurnLayoutsById,
     assignThreadMessageIdsWithStableWrappers,
     buildTurnEntitiesById,
     filterVisibleBlocksForFlavor,
@@ -35,16 +36,14 @@ import {
     type BlockWithThreadMessageId,
     type TurnEntityContentPart,
     type TurnEntitySnapshot,
+    type ThreadMessageTopology,
+    type TurnLayoutSnapshot,
 } from '@/lib/assistant-runtime-blocks'
 import { isDisplayedInQueueBar } from '@/lib/messages'
 import type { AgentState, DecryptedMessage, SessionMetadataSummary, ThreadGoal } from '@/types/api'
 
-export type { TurnEntityContentPart, TurnEntitySnapshot }
-export type TimelineEntryRef = {
-    readonly id: string
-    readonly kind: VisibleChatBlock['kind']
-    readonly role: VisibleChatBlockRole
-}
+export type { TurnEntityContentPart, TurnEntitySnapshot, TurnLayoutSnapshot }
+export type TimelineEntryRef = ThreadMessageTopology
 
 export type SessionEntityMetaSnapshot = {
     readonly latestUsage: LatestUsage | null
@@ -76,12 +75,14 @@ export type SessionEntityStoreSnapshot = {
     readonly normalizedMessages: readonly NormalizedMessage[]
     readonly timelineIndex: readonly TimelineEntryRef[]
     readonly timelineStructureKey: string
+    readonly timelineVersion: number
     readonly blocks: readonly ChatBlock[]
     readonly byId: ChatBlocksById
     readonly visibleBlocks: readonly VisibleChatBlock[]
     readonly visibleById: ReadonlyMap<string, VisibleChatBlock>
     readonly blocksWithThreadIds: readonly BlockWithThreadMessageId[]
     readonly turnsById: ReadonlyMap<string, TurnEntitySnapshot>
+    readonly turnLayoutsById: ReadonlyMap<string, TurnLayoutSnapshot>
     readonly outlineItems: readonly ConversationOutlineItem[]
     readonly sessionStatus: SessionStatusData | null
     readonly meta: SessionEntityMetaSnapshot
@@ -123,6 +124,7 @@ const EMPTY_VISIBLE_BLOCKS: readonly VisibleChatBlock[] = Object.freeze([])
 const EMPTY_VISIBLE_BY_ID: ReadonlyMap<string, VisibleChatBlock> = new Map()
 const EMPTY_BLOCKS_WITH_THREAD_IDS: readonly BlockWithThreadMessageId[] = Object.freeze([])
 const EMPTY_TURNS_BY_ID: ReadonlyMap<string, TurnEntitySnapshot> = new Map()
+const EMPTY_TURN_LAYOUTS: ReadonlyMap<string, TurnLayoutSnapshot> = new Map()
 const EMPTY_VISIBLE_MESSAGES: readonly DecryptedMessage[] = Object.freeze([])
 const EMPTY_NORMALIZED_MESSAGES: readonly NormalizedMessage[] = Object.freeze([])
 const EMPTY_QUEUED_MESSAGES: readonly DecryptedMessage[] = Object.freeze([])
@@ -463,35 +465,6 @@ function canReuseSettledPrefix(
     return true
 }
 
-function buildTimelineIndex(
-    visibleBlocks: readonly VisibleChatBlock[],
-    previousTimelineIndex: readonly TimelineEntryRef[]
-): readonly TimelineEntryRef[] {
-    if (visibleBlocks.length === 0) {
-        return EMPTY_TIMELINE_INDEX
-    }
-
-    let allSame = visibleBlocks.length === previousTimelineIndex.length
-    const next: TimelineEntryRef[] = new Array(visibleBlocks.length)
-
-    for (let i = 0; i < visibleBlocks.length; i += 1) {
-        const block = visibleBlocks[i]!
-        const role = visibleBlockRole(block)
-        const prev = previousTimelineIndex[i]
-        if (prev && prev.id === block.id && prev.kind === block.kind && prev.role === role) {
-            next[i] = prev
-        } else {
-            allSame = false
-            next[i] = Object.freeze({
-                id: block.id,
-                kind: block.kind,
-                role,
-            })
-        }
-    }
-
-    return allSame ? previousTimelineIndex : Object.freeze(next)
-}
 
 function isSameLatestUsage(a: LatestUsage | null, b: LatestUsage | null): boolean {
     if (a === b) return true
@@ -597,12 +570,14 @@ export class SessionEntityStore {
         normalizedMessages: EMPTY_NORMALIZED_MESSAGES,
         timelineIndex: EMPTY_TIMELINE_INDEX,
         timelineStructureKey: '',
+        timelineVersion: 0,
         blocks: EMPTY_BLOCKS,
         byId: EMPTY_BY_ID,
         visibleBlocks: EMPTY_VISIBLE_BLOCKS,
         visibleById: EMPTY_VISIBLE_BY_ID,
         blocksWithThreadIds: EMPTY_BLOCKS_WITH_THREAD_IDS,
         turnsById: EMPTY_TURNS_BY_ID,
+        turnLayoutsById: EMPTY_TURN_LAYOUTS,
         outlineItems: EMPTY_OUTLINE_ITEMS,
         sessionStatus: null,
         meta: EMPTY_META,
@@ -640,13 +615,14 @@ export class SessionEntityStore {
         return this.snapshot.turnsById.get(id)
     }
 
+    getTurnLayout = (id: string): TurnLayoutSnapshot | undefined => {
+        return this.snapshot.turnLayoutsById.get(id)
+    }
+
     getLiveTurnParts = (turnId: string): readonly TurnEntityContentPart[] | undefined => {
         const turn = this.snapshot.turnsById.get(turnId)
         if (!turn) return undefined
-        return turn.blocks.map((block) => {
-            const liveBlock = this.snapshot.visibleById.get(block.id) ?? block
-            return visibleBlockToTurnContentPart(liveBlock, this.turnPartCache)
-        })
+        return turn.parts
     }
 
     getPrecedingUserText = (threadMessageId: string): string => {
@@ -727,12 +703,14 @@ export class SessionEntityStore {
             normalizedMessages: EMPTY_NORMALIZED_MESSAGES,
             timelineIndex: EMPTY_TIMELINE_INDEX,
             timelineStructureKey: '',
+            timelineVersion: 0,
             blocks: EMPTY_BLOCKS,
             byId: EMPTY_BY_ID,
             visibleBlocks: EMPTY_VISIBLE_BLOCKS,
             visibleById: EMPTY_VISIBLE_BY_ID,
             blocksWithThreadIds: EMPTY_BLOCKS_WITH_THREAD_IDS,
             turnsById: EMPTY_TURNS_BY_ID,
+            turnLayoutsById: EMPTY_TURN_LAYOUTS,
             outlineItems: EMPTY_OUTLINE_ITEMS,
             sessionStatus: null,
             meta: EMPTY_META,
@@ -978,51 +956,37 @@ export class SessionEntityStore {
         }
 
         const hasLiveStreamingMessage = hasUnsettledPrefixMessages(stableNormalizedMessages)
-        const allowStreamingTextEquivalence = !(prevSnapshot.hasLiveStreamingMessage && !hasLiveStreamingMessage)
-        const canReuseBlocksWithThreadIds =
-            !sessionChanged
-            && allowStreamingTextEquivalence
+        const canReuseBlocksWithThreadIds = !sessionChanged
             && stableVisibleBlocks === prevSnapshot.visibleBlocks
             && input.metadata?.flavor === prevInput?.metadata?.flavor
-        const canReuseTurnEntities = canReuseBlocksWithThreadIds
-        const candidateBlocksWithThreadIds = canReuseBlocksWithThreadIds
+        const blocksWithThreadIds = canReuseBlocksWithThreadIds
             ? prevSnapshot.blocksWithThreadIds
             : assignThreadMessageIdsWithStableWrappers(
-                hoistMidTurnTitleEvents(
-                    filterVisibleBlocksForFlavor(stableVisibleBlocks, input.metadata?.flavor)
-                ),
+                hoistMidTurnTitleEvents(filterVisibleBlocksForFlavor(stableVisibleBlocks, input.metadata?.flavor)),
                 this.threadIdWrapperCache
             )
-        for (const entry of candidateBlocksWithThreadIds) {
-            if (visibleBlockRole(entry.block) !== 'assistant' && !visibleById.has(entry.threadMessageId)) {
+        for (const entry of blocksWithThreadIds) {
+            if (visibleBlockRole(entry.block) !== 'assistant') {
                 visibleById.set(entry.threadMessageId, entry.block)
             }
         }
-        const turnsById = canReuseTurnEntities
+        const turnsById = canReuseBlocksWithThreadIds
             ? prevSnapshot.turnsById
-            : buildTurnEntitiesById(
-                candidateBlocksWithThreadIds,
-                prevSnapshot.turnsById,
-                this.turnPartCache,
-                { allowStreamingTextEquivalence }
-            )
-        const blocksWithThreadIds = (
-            !sessionChanged
-            && allowStreamingTextEquivalence
-            && turnsById === prevSnapshot.turnsById
-            && areThreadEntriesStructurallyEquivalent(candidateBlocksWithThreadIds, prevSnapshot.blocksWithThreadIds)
-        )
-            ? prevSnapshot.blocksWithThreadIds
-            : candidateBlocksWithThreadIds
+            : buildTurnEntitiesById(blocksWithThreadIds, sessionChanged ? EMPTY_TURNS_BY_ID : prevSnapshot.turnsById, this.turnPartCache)
+        const turnLayoutsById = turnsById === prevSnapshot.turnsById
+            ? prevSnapshot.turnLayoutsById
+            : buildTurnLayoutsById(turnsById, sessionChanged ? EMPTY_TURN_LAYOUTS : prevSnapshot.turnLayoutsById)
         const outlineItems = (!sessionChanged && stableBlocks === prevSnapshot.blocks)
             ? prevSnapshot.outlineItems
             : buildConversationOutline([...stableBlocks], this.prevOutlineItems)
         this.prevOutlineItems = [...outlineItems]
 
-        const timelineIndex = buildTimelineIndex(stableVisibleBlocks, prevSnapshot.timelineIndex)
-        const timelineStructureKey = timelineIndex === prevSnapshot.timelineIndex
+        const timelineIndex = buildThreadTopology(blocksWithThreadIds, sessionChanged ? EMPTY_TIMELINE_INDEX : prevSnapshot.timelineIndex)
+        const timelineStructureKey = timelineIndex === prevSnapshot.timelineIndex && !sessionChanged
             ? prevSnapshot.timelineStructureKey
-            : timelineIndex.map((entry) => `${entry.kind}:${entry.id}`).join('|')
+            : timelineIndex.map((entry) => `${entry.role}:${entry.kind}:${entry.id}`).join('|')
+        const timelineVersion = (sessionChanged ? 0 : prevSnapshot.timelineVersion)
+            + (timelineIndex === (sessionChanged ? EMPTY_TIMELINE_INDEX : prevSnapshot.timelineIndex) ? 0 : 1)
         const stableQueuedMessages = isSameArrayElements(queuedMessages, prevSnapshot.meta.queuedMessages)
             ? prevSnapshot.meta.queuedMessages
             : Object.freeze(queuedMessages)
@@ -1072,12 +1036,14 @@ export class SessionEntityStore {
             normalizedMessages: stableNormalizedMessages,
             timelineIndex,
             timelineStructureKey,
+            timelineVersion,
             blocks: stableBlocks,
             byId: reconciledById,
             visibleBlocks: stableVisibleBlocks,
             visibleById,
             blocksWithThreadIds,
             turnsById,
+            turnLayoutsById,
             outlineItems: meta.outlineItems,
             sessionStatus: meta.sessionStatus,
             meta,
@@ -1228,13 +1194,29 @@ export class SessionEntityStore {
                 const nextBlock = next.byId.get(id)
                 const prevTurn = prev.turnsById.get(id)
                 const nextTurn = next.turnsById.get(id)
+                const layoutId = id.startsWith('layout:') ? id.slice('layout:'.length) : null
+                const layoutChanged = layoutId !== null && prev.turnLayoutsById.get(layoutId) !== next.turnLayoutsById.get(layoutId)
                 if (
                     prevVisible !== nextVisible
                     || prevBlock !== nextBlock
                     || prevTurn !== nextTurn
+                    || layoutChanged
                 ) {
                     changedEntityIds.add(id)
                 }
+            }
+        }
+
+        const anySnapshotChanged =
+            timelineChanged
+            || metaChanged
+            || prev.sessionId !== next.sessionId
+            || !isSameArrayElements(prev.visibleBlocks, next.visibleBlocks)
+            || !isSameArrayElements(prev.blocks, next.blocks)
+
+        if (anySnapshotChanged) {
+            for (const listener of [...this.storeListeners]) {
+                listener()
             }
         }
 
@@ -1254,19 +1236,6 @@ export class SessionEntityStore {
             const bucket = this.entityListeners.get(id)
             if (!bucket) continue
             for (const listener of [...bucket]) {
-                listener()
-            }
-        }
-
-        const anySnapshotChanged =
-            timelineChanged
-            || metaChanged
-            || prev.sessionId !== next.sessionId
-            || !isSameArrayElements(prev.visibleBlocks, next.visibleBlocks)
-            || !isSameArrayElements(prev.blocks, next.blocks)
-
-        if (anySnapshotChanged) {
-            for (const listener of [...this.storeListeners]) {
                 listener()
             }
         }

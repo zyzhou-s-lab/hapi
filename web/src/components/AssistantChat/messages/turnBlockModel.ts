@@ -414,6 +414,13 @@ function toolRows(block: ToolCallBlock, metadata: SessionMetadataSummary | null)
     }]
 }
 
+/** Re-derive labels and interaction flags whenever a row's live tool changes. */
+export function resolveLiveToolRow(row: TurnToolRow, block: ToolCallBlock, metadata: SessionMetadataSummary | null): TurnToolRow {
+    if (row.block === block) return row
+    const derived = toolRows(block, metadata)
+    return derived.find((candidate) => candidate.key === row.key) ?? derived[0] ?? { ...row, block }
+}
+
 function activityTitle(part: TurnContentPart): string | null {
     if (isToolGroup(part)) {
         const title = part.artifact.activityTitle

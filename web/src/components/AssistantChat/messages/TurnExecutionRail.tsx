@@ -1,7 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { formatDuration } from '@/chat/presentation'
 import {
-    summarizeTurnActivity,
     type ProjectedSubturn,
     type TurnPartition,
     type TurnReasoningRow,
@@ -18,6 +17,7 @@ import {
 import { useOptionalSessionVisibleEntity } from '@/hooks/useSessionEntityStore'
 import { cn } from '@/lib/utils'
 import { MarkdownRenderer } from '@/components/MarkdownRenderer'
+import { TurnRailSummary } from './TurnRailSummary'
 
 function RailEntityTextBody(props: {
     row: TurnTextRow
@@ -66,54 +66,8 @@ export function TurnExecutionRail(props: {
         [subturn.nonTrailingRows]
     )
 
-    const lastStepRow = subturn.stepRows[subturn.stepRows.length - 1]
-    const trailingReasoningBlockId = lastStepRow?.kind === 'reasoning' ? lastStepRow.blockId : undefined
-    const liveTrailingReasoningEntity = useOptionalSessionVisibleEntity(trailingReasoningBlockId)
-    const effectiveNonTrailingRows = useMemo(() => {
-        if (
-            !liveTrailingReasoningEntity
-            || liveTrailingReasoningEntity.kind !== 'agent-reasoning'
-            || subturn.nonTrailingRows.length === 0
-        ) {
-            return subturn.nonTrailingRows
-        }
-        const liveText = liveTrailingReasoningEntity.text.trim()
-        let changed = false
-        const nextRows = subturn.nonTrailingRows.map((row) => {
-            if (row.kind === 'reasoning' && row.blockId === trailingReasoningBlockId && row.text !== liveText) {
-                changed = true
-                return { ...row, text: liveText }
-            }
-            return row
-        })
-        return changed ? nextRows : subturn.nonTrailingRows
-    }, [liveTrailingReasoningEntity, subturn.nonTrailingRows, trailingReasoningBlockId])
-
-    const summary = useMemo(
-        () => summarizeTurnActivity({
-            rows: effectiveNonTrailingRows,
-            title: partition.title,
-            hasFoldable: partition.hasFoldable,
-            hasPinned: partition.hasPinned,
-            hasActivity: partition.hasActivity,
-            streaming: partition.streaming,
-        }, {
-            activeTodoText,
-            lang,
-        }),
-        [
-            effectiveNonTrailingRows,
-            partition.title,
-            partition.hasFoldable,
-            partition.hasPinned,
-            partition.hasActivity,
-            partition.streaming,
-            activeTodoText,
-            lang,
-        ]
-    )
+    const summaryRows = subturn.nonTrailingRows
     const { stepRows, nonTrailingRows, hasSteps, collapsedPinnedRailRows, quietTextRows, lastRow } = subturn
-    const headerText = streaming ? summary.workingHeader : summary.completedHeader
 
     const hasRunningOrPendingTool = useMemo(
         () => nonTrailingRows.some(
@@ -348,14 +302,7 @@ export function TurnExecutionRail(props: {
                 {failed ? (
                     <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-[var(--app-badge-error-text)]" />
                 ) : null}
-                <span
-                    className={cn(
-                        'truncate',
-                        streaming ? 'turn-text-shimmer font-medium' : 'font-normal'
-                    )}
-                >
-                    {headerText}
-                </span>
+                <TurnRailSummary rows={summaryRows} partition={partition} streaming={streaming} activeTodoText={activeTodoText} lang={lang} />
                 <SmallChevron open={open} className="opacity-75 group-hover:opacity-100" />
                 {durationMs != null && durationMs > 0 ? (
                     <span className="ml-1 shrink-0 text-[11.5px] tabular-nums text-[var(--app-hint)]/75">

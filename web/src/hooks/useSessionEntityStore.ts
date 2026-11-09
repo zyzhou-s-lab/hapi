@@ -4,12 +4,15 @@ import {
     useCallback,
     useContext,
     useLayoutEffect,
+    useMemo,
     useSyncExternalStore,
     type ReactNode,
 } from 'react'
 import type {
     SessionEntityMetaSnapshot,
     SessionEntityStore,
+    SessionEntityStoreSnapshot,
+    TurnLayoutSnapshot,
     TimelineEntryRef,
     TurnEntitySnapshot,
 } from '@/chat/store/sessionEntityStore'
@@ -40,6 +43,35 @@ export function useSessionTimelineIndex(store: SessionEntityStore): readonly Tim
 
 export function useSessionEntityMeta(store: SessionEntityStore): SessionEntityMetaSnapshot {
     return useSyncExternalStore(store.subscribeMeta, store.getMeta, store.getMeta)
+}
+
+/** Subscribe to the selected domain value without exposing whole snapshots to a surface. */
+export function useSessionEntitySelector<T>(
+    store: SessionEntityStore,
+    selector: (snapshot: SessionEntityStoreSnapshot) => T,
+    isEqual: (a: T, b: T) => boolean = Object.is
+): T {
+    const getSnapshot = useMemo(() => {
+        let current: { snapshot: SessionEntityStoreSnapshot; value: T } | undefined
+        return () => {
+            const snapshot = store.getSnapshot()
+            if (current?.snapshot === snapshot) return current.value
+            const selected = selector(snapshot)
+            const value = current && isEqual(current.value, selected) ? current.value : selected
+            current = { snapshot, value }
+            return value
+        }
+    }, [store, selector, isEqual])
+    return useSyncExternalStore(store.subscribe, getSnapshot, getSnapshot)
+}
+
+export function useOptionalSessionTurnLayout(id: string | null | undefined): TurnLayoutSnapshot | undefined {
+    const store = useContext(SessionEntityStoreContext)
+    const subscribe = useCallback((listener: () => void) => (
+        store && id ? store.subscribeEntity(`layout:${id}`, listener) : () => {}
+    ), [store, id])
+    const getSnapshot = useCallback(() => store && id ? store.getTurnLayout(id) : undefined, [store, id])
+    return useSyncExternalStore(subscribe, getSnapshot, getSnapshot)
 }
 
 export function useSessionVisibleEntity(

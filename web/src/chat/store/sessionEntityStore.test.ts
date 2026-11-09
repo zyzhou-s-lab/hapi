@@ -330,7 +330,7 @@ describe('SessionEntityStore', () => {
             hasMoreMessages: true,
             codexExplorationCollapsed: false,
         })
-        expect(snapTail.timelineIndex.map((e) => e.id)).toEqual(['u2', 'a2:0', 'u3', 'a3:0'])
+        expect(snapTail.timelineIndex.map((e) => e.id)).toEqual(['user-text:u2', 'agent-text:a2:0', 'user-text:u3', 'agent-text:a3:0'])
 
         // Prepend older turn u1/a1
         const prependedMessages: DecryptedMessage[] = [
@@ -345,7 +345,7 @@ describe('SessionEntityStore', () => {
             hasMoreMessages: false,
             codexExplorationCollapsed: false,
         })
-        expect(snapPrepended.timelineIndex.map((e) => e.id)).toEqual(['u1', 'a1:0', 'u2', 'a2:0', 'u3', 'a3:0'])
+        expect(snapPrepended.timelineIndex.map((e) => e.id)).toEqual(['user-text:u1', 'agent-text:a1:0', 'user-text:u2', 'agent-text:a2:0', 'user-text:u3', 'agent-text:a3:0'])
         // Reconciled blocks from u2..a3 preserve object identity
         expect(snapPrepended.blocks[2]).toBe(snapTail.blocks[0])
         expect(snapPrepended.blocks[3]).toBe(snapTail.blocks[1])
@@ -359,7 +359,7 @@ describe('SessionEntityStore', () => {
             codexExplorationCollapsed: false,
         })
         expect(snapOtherSession.sessionId).toBe('sess-other')
-        expect(snapOtherSession.timelineIndex.map((e) => e.id)).toEqual(['u-other'])
+        expect(snapOtherSession.timelineIndex.map((e) => e.id)).toEqual(['user-text:u-other'])
     })
 
     it('propagates Codex turnId, phase: commentary -> execution, and live streaming flag across streamId snapshots', () => {
@@ -441,7 +441,7 @@ describe('SessionEntityStore', () => {
         }
     })
 
-    it('keeps TurnEntitySnapshot reference stable across body-text streaming deltas and refreshes on settlement', () => {
+    it('keeps only turn layout and timeline stable while complete turn payloads remain current', () => {
         const store = createSessionEntityStore()
         const userPrompt = makeUserMessage('u-prompt', 'Explain the architecture', 1000)
         const liveDelta1: DecryptedMessage = {
@@ -474,6 +474,7 @@ describe('SessionEntityStore', () => {
         })
         const turnId = snap1.blocksWithThreadIds.find((e) => e.block.kind === 'agent-text')!.threadMessageId
         const turn1 = store.getTurnEntity(turnId)!
+        const layout1 = store.getTurnLayout(turnId)
         expect(turn1).toBeDefined()
         expect(store.getPrecedingUserText(turnId)).toBe('Explain the architecture')
 
@@ -513,17 +514,21 @@ describe('SessionEntityStore', () => {
             codexExplorationCollapsed: false,
         })
 
-        // TurnEntitySnapshot and blocksWithThreadIds references stay stable during body-text delta while leaf block notifies
-        expect(turnNotified).toBe(0)
+        // Complete domain snapshots update; only the payload-free layout and
+        // thread topology stay stable. No consumer sees a first-token turn.
+        expect(turnNotified).toBe(1)
         expect(blockNotified).toBe(1)
-        expect(store.getTurnEntity(turnId)).toBe(turn1)
-        expect(snap2.blocksWithThreadIds).toBe(snap1.blocksWithThreadIds)
+        expect(store.getTurnEntity(turnId)).not.toBe(turn1)
+        expect(store.getTurnLayout(turnId)).toBe(layout1)
+        expect(snap2.timelineIndex).toBe(snap1.timelineIndex)
+        expect(snap2.timelineVersion).toBe(snap1.timelineVersion)
+        expect(store.getTurnEntity(turnId)?.parts[0]?.text).toBe('First token and second token')
         expect(store.getLiveTurnParts(turnId)?.[0]).toMatchObject({
             type: 'text',
             text: 'First token and second token',
         })
 
-        // Settling the stream (live: false) with the exact same text refreshes TurnEntitySnapshot once
+        // Settlement preserves complete content without relying on a catch-up refresh.
         const settledMsg: DecryptedMessage = {
             ...liveDelta2,
             content: {
@@ -548,11 +553,62 @@ describe('SessionEntityStore', () => {
             hasMoreMessages: false,
             codexExplorationCollapsed: false,
         })
-        expect(turnNotified).toBe(1)
+        expect(turnNotified).toBeGreaterThanOrEqual(1)
         expect(store.getTurnEntity(turnId)?.parts[0]).toMatchObject({
             type: 'text',
             text: 'First token and second token',
         })
+    })
+    it('keeps one assistant timeline row while blocks, payloads, state and permissions evolve', () => {
+        const store = createSessionEntityStore()
+        const user = makeUserMessage('u', 'Inspect', 1)
+        const first = makeClaudeToolUseMessage('tool', 'tool-uuid', 'call', 'Read', {}, 2)
+        const initial = store.reconcileInput({ sessionId: 's', messages: [user, first] })
+        const turnId = initial.timelineIndex[1]!.id
+        expect(initial.timelineIndex).toEqual([
+            { id: 'user-text:u', kind: 'user-text', role: 'user' },
+            { id: turnId, kind: 'assistant-turn', role: 'assistant' },
+        ])
+        const layout = store.getTurnLayout(turnId)
+        const payload = makeClaudeToolUseMessage('tool', 'tool-uuid', 'call', 'Read', { file_path: 'a.ts', i: 'Reading implementation' }, 2)
+        const withPayload = store.reconcileInput({ sessionId: 's', messages: [user, payload] })
+        expect(withPayload.timelineIndex).toBe(initial.timelineIndex)
+        expect(withPayload.timelineVersion).toBe(initial.timelineVersion)
+        expect(store.getTurnLayout(turnId)).toBe(layout)
+        expect(store.getTurnEntity(turnId)?.parts[0]?.artifact).toMatchObject({ tool: { input: { file_path: 'a.ts' } } })
+        const withSecondTool = store.reconcileInput({ sessionId: 's', messages: [user, payload, makeClaudeToolUseMessage('tool2', 'uuid2', 'call2', 'Read', { file_path: 'b.ts' }, 3)] })
+        expect(withSecondTool.timelineIndex).toBe(initial.timelineIndex)
+        expect(withSecondTool.timelineVersion).toBe(initial.timelineVersion)
+        expect(store.getTurnLayout(turnId)).not.toBe(layout)
+        const completed = store.reconcileInput({ sessionId: 's', messages: [user, payload, makeClaudeToolResultMessage('result', 'result-uuid', 'call', 'line 1\nline 2', 4), makeAssistantTextMessage('final', 'Complete answer', 5)] })
+        expect(completed.timelineIndex).toBe(initial.timelineIndex)
+        expect(completed.timelineVersion).toBe(initial.timelineVersion)
+        expect(store.getLiveTurnParts(turnId)?.at(-1)).toMatchObject({ text: 'Complete answer' })
+        const afterRewind = store.reconcileInput({ sessionId: 's', messages: [] })
+        expect(afterRewind.timelineIndex).toEqual([])
+        expect(afterRewind.timelineVersion).toBe(initial.timelineVersion + 1)
+        expect(store.getTurnEntity(turnId)).toBeUndefined()
+        expect(store.getTurnLayout(turnId)).toBeUndefined()
+        store.reset('other')
+        expect(store.getSnapshot().timelineVersion).toBe(0)
+    })
+
+    it('builds topology after flavor filtering and title hoisting, retaining every user and system boundary', () => {
+        const store = createSessionEntityStore()
+        const event = (id: string, data: Record<string, unknown>, seq: number): DecryptedMessage => ({
+            id, seq, localId: null, createdAt: seq * 1000,
+            content: { role: 'agent', content: { type: 'event', data } },
+        })
+        const snapshot = store.reconcileInput({ sessionId: 's', metadata: { flavor: 'omp', path: '/repo', host: 'test' }, messages: [
+            makeUserMessage('u1', 'Question', 1), makeAssistantTextMessage('a', 'Answer', 2),
+            event('title', { type: 'title-changed', title: 'New title' }, 3),
+            makeAssistantTextMessage('b', 'More answer', 4),
+            event('ready', { type: 'ready' }, 5), makeUserMessage('u2', 'Next', 6),
+        ] })
+        const assistant = snapshot.timelineIndex.filter((entry) => entry.role === 'assistant')
+        expect(assistant).toHaveLength(1)
+        expect(snapshot.turnsById.get(assistant[0]!.id)?.parts.filter((part) => part.type === 'text').map((part) => part.text)).toEqual(['Answer', 'More answer'])
+        expect(snapshot.timelineIndex.filter((entry) => entry.role === 'user').map((entry) => entry.id)).toEqual(['user-text:u1', 'user-text:u2'])
     })
 })
 

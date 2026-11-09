@@ -3,6 +3,7 @@ import {
     describeCoalescedTurnStep,
     describeTurnToolStep,
     extractThoughtSummary,
+    resolveLiveToolRow,
     type TurnCoalescedRow,
     type TurnReasoningRow,
     type TurnRow,
@@ -23,6 +24,7 @@ import { useOptionalHappyChatStaticContext } from '@/components/AssistantChat/co
 import { SmallChevron } from '@/components/ui/card'
 import { useOptionalSessionBlockEntity, useOptionalSessionVisibleEntity } from '@/hooks/useSessionEntityStore'
 import { cn } from '@/lib/utils'
+import { useLiveTurnRows } from './useLiveTurnRows'
 
 export { SmallChevron }
 
@@ -530,8 +532,8 @@ export const TimelineToolStepRow = memo(function TimelineToolStepRow(props: {
         ? blockEntity
         : props.row.block
     const effectiveRow = useMemo(
-        () => (liveToolBlock === props.row.block ? props.row : { ...props.row, block: liveToolBlock }),
-        [liveToolBlock, props.row]
+        () => resolveLiveToolRow(props.row, liveToolBlock, ctx?.metadata ?? null),
+        [liveToolBlock, props.row, ctx?.metadata]
     )
     const [open, setOpen] = useState(props.defaultExpanded)
     const [hasOpened, setHasOpened] = useState(props.defaultExpanded)
@@ -662,11 +664,17 @@ export const TimelineCoalescedStepRow = memo(function TimelineCoalescedStepRow(p
     accentColor?: string
     forceMorph?: boolean
 }) {
+    const rows = useLiveTurnRows(props.row.rows)
+    const liveRow = useMemo(() => rows === props.row.rows ? props.row : ({
+        ...props.row,
+        rows: [...rows] as Array<TurnToolRow | TurnReasoningRow>,
+        toolRows: rows.filter((row): row is TurnToolRow => row.kind === 'tool'),
+    }), [rows, props.row])
     const [open, setOpen] = useState(false)
     const [hasOpened, setHasOpened] = useState(false)
     const descriptor = useMemo(
-        () => describeCoalescedTurnStep(props.row, props.lang),
-        [props.row, props.lang]
+        () => describeCoalescedTurnStep(liveRow, props.lang),
+        [liveRow, props.lang]
     )
 
     return (
@@ -710,7 +718,7 @@ export const TimelineCoalescedStepRow = memo(function TimelineCoalescedStepRow(p
                 <div className="turn-collapsible-body">
                     {open || hasOpened ? (
                         <div className="ml-2 mt-1 mb-1.5 border-l border-[var(--app-border)]/70 pl-2.5 space-y-0.5">
-                            {props.row.rows.map((member, memberIdx) =>
+                            {liveRow.rows.map((member, memberIdx) =>
                                 member.kind === 'reasoning' ? (
                                     <TimelineThoughtRow
                                         key={member.key}

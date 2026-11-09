@@ -26,7 +26,10 @@ const assistantUiMocks = vi.hoisted(() => ({
     useExternalStoreRuntime: vi.fn((adapter: unknown) => adapter)
 }))
 
-vi.mock('@assistant-ui/react', () => assistantUiMocks)
+vi.mock('@assistant-ui/react', async (importOriginal) => ({
+    ...await importOriginal<typeof import('@assistant-ui/react')>(),
+    useExternalStoreRuntime: assistantUiMocks.useExternalStoreRuntime,
+}))
 
 // Minimal builders for VisibleChatBlock fixtures. Tests focus on metadata
 // aggregation behavior across response groups; non-metadata fields default to
@@ -176,20 +179,16 @@ describe('useHappyRuntime event visibility', () => {
             ...runtimeProps,
             session: session('omp')
         }))
-        const ompInput = assistantUiMocks.useExternalMessageConverter.mock.calls.at(-1)?.[0]
-        expect(ompInput?.messages.map(({ block }) => block.id)).toEqual(['retry', 'answer'])
+        const ompInput = assistantUiMocks.useExternalStoreRuntime.mock.calls.at(-1)?.[0] as { messages: Array<{ id: string }> }
+        expect(ompInput.messages.map((message) => message.id)).toEqual(['agent-event:retry', 'agent-text:answer'])
         omp.unmount()
 
         renderHook(() => useHappyRuntime({
             ...runtimeProps,
             session: session('claude')
         }))
-        const claudeInput = assistantUiMocks.useExternalMessageConverter.mock.calls.at(-1)?.[0]
-        expect(claudeInput?.messages.map(({ block }) => block.id)).toEqual([
-            'quota',
-            'retry',
-            'answer'
-        ])
+        const claudeInput = assistantUiMocks.useExternalStoreRuntime.mock.calls.at(-1)?.[0] as { messages: Array<{ id: string }> }
+        expect(claudeInput.messages.map((message) => message.id)).toEqual(['agent-event:quota', 'agent-event:retry', 'agent-text:answer'])
     })
 
     it('refreshes canonical reasoning and text wrappers in place and drops an empty final', () => {
@@ -215,28 +214,25 @@ describe('useHappyRuntime event visibility', () => {
             onSendMessage: () => undefined, onAbort: async () => undefined,
             messagesVersion: 0, historyVersion: 0
         }), { initialProps: { blocks: blocksFor('row-1', content, true) } })
-        const first = assistantUiMocks.useExternalMessageConverter.mock.calls.at(-1)![0]
+        const first = assistantUiMocks.useExternalStoreRuntime.mock.calls.at(-1)![0] as { messages: Array<{ id: string; content: unknown[] }> }
         const grownContent = [
             { type: 'thinking', thinking: 'Inspect the implementation' },
             { type: 'text', text: 'Answer with details' }
         ]
         view.rerender({ blocks: blocksFor('row-2', grownContent, true) })
-        const grown = assistantUiMocks.useExternalMessageConverter.mock.calls.at(-1)![0]
-        expect(grown.messages.map(entry => entry.threadMessageId)).toEqual(first.messages.map(entry => entry.threadMessageId))
+        const grown = assistantUiMocks.useExternalStoreRuntime.mock.calls.at(-1)![0] as { messages: Array<{ id: string; content: unknown[] }> }
+        expect(grown.messages.map((entry) => entry.id)).toEqual(first.messages.map((entry) => entry.id))
         expect(grown.messages[0]).not.toBe(first.messages[0])
-        expect(grown.messages[1]).not.toBe(first.messages[1])
-        expect(grown.messages.map(grown.callback)).toMatchObject([
-            { content: [{ type: 'reasoning', text: 'Inspect the implementation' }] },
-            { content: [{ type: 'text', text: 'Answer with details' }] }
+        expect(grown.messages[0]?.content).toMatchObject([
+            { type: 'reasoning', text: 'Inspect the implementation' },
+            { type: 'text', text: 'Answer with details' },
         ])
         view.rerender({ blocks: blocksFor('row-final', grownContent, false, 7) })
-        const final = assistantUiMocks.useExternalMessageConverter.mock.calls.at(-1)![0]
+        const final = assistantUiMocks.useExternalStoreRuntime.mock.calls.at(-1)![0] as { messages: unknown[] }
         expect(final.messages[0]).not.toBe(grown.messages[0])
-        expect(final.messages.map(final.callback)[0]).toMatchObject({
-            metadata: { custom: { usage: { input_tokens: 10, output_tokens: 7 } } }
-        })
+        expect(final.messages[0]).toMatchObject({ metadata: { custom: { usage: { input_tokens: 10, output_tokens: 7 } } } })
         view.rerender({ blocks: blocksFor('row-empty-final', [], false) })
-        expect(assistantUiMocks.useExternalMessageConverter.mock.calls.at(-1)![0].messages).toEqual([])
+        expect((assistantUiMocks.useExternalStoreRuntime.mock.calls.at(-1)![0] as { messages: unknown[] }).messages).toEqual([])
     })
 
     it('preserves user-text threadMessageId across optimistic-to-server echo while updating hubMessageId', () => {
@@ -260,17 +256,15 @@ describe('useHappyRuntime event visibility', () => {
             messagesVersion: 0,
             historyVersion: 0
         }), { initialProps: { blocks: [optimistic] } })
-        const first = assistantUiMocks.useExternalMessageConverter.mock.calls.at(-1)![0]
-        expect(first.messages[0]?.threadMessageId).toBe('user-text:local-4cdab591')
-        expect(first.messages.map(first.callback)[0]).toMatchObject({
+        const first = assistantUiMocks.useExternalStoreRuntime.mock.calls.at(-1)![0] as { messages: unknown[] }
+        expect(first.messages[0]).toMatchObject({
             id: 'user-text:local-4cdab591',
             metadata: { custom: { hubMessageId: 'local-4cdab591', status: 'sending' } }
         })
 
         view.rerender({ blocks: [confirmed] })
-        const second = assistantUiMocks.useExternalMessageConverter.mock.calls.at(-1)![0]
-        expect(second.messages[0]?.threadMessageId).toBe('user-text:local-4cdab591')
-        expect(second.messages.map(second.callback)[0]).toMatchObject({
+        const second = assistantUiMocks.useExternalStoreRuntime.mock.calls.at(-1)![0] as { messages: unknown[] }
+        expect(second.messages[0]).toMatchObject({
             id: 'user-text:local-4cdab591',
             metadata: { custom: { hubMessageId: 'server-msg-1', status: 'sent' } }
         })

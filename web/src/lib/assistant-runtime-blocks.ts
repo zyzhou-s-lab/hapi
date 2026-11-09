@@ -45,6 +45,49 @@ export type TurnEntityContentPart = {
     readonly status?: { type?: string }
 }
 
+export type ThreadMessageTopology = {
+    readonly id: string
+    readonly kind: VisibleChatBlock['kind'] | 'assistant-turn'
+    readonly role: VisibleChatBlockRole
+}
+
+/** The sole grouping rule shared by the list and the runtime adapter. */
+export function threadMessageRuns(entries: readonly BlockWithThreadMessageId[]): readonly (readonly BlockWithThreadMessageId[])[] {
+    const runs: BlockWithThreadMessageId[][] = []
+    for (const entry of entries) {
+        const previous = runs[runs.length - 1]
+        if (visibleBlockRole(entry.block) === 'assistant' && previous && visibleBlockRole(previous[0]!.block) === 'assistant') {
+            previous.push(entry)
+        } else {
+            runs.push([entry])
+        }
+    }
+    return runs
+}
+
+export function buildThreadTopology(
+    entries: readonly BlockWithThreadMessageId[],
+    previous: readonly ThreadMessageTopology[]
+): readonly ThreadMessageTopology[] {
+    const next: ThreadMessageTopology[] = []
+    let previousRole: VisibleChatBlockRole | null = null
+    let unchanged = true
+    for (const entry of entries) {
+        const role = visibleBlockRole(entry.block)
+        if (role === 'assistant' && previousRole === 'assistant') continue
+        previousRole = role
+        const kind = role === 'assistant' ? 'assistant-turn' : entry.block.kind
+        const old = previous[next.length]
+        if (old?.id === entry.threadMessageId && old.role === role && old.kind === kind) {
+            next.push(old)
+        } else {
+            unchanged = false
+            next.push(Object.freeze({ id: entry.threadMessageId, role, kind }))
+        }
+    }
+    return unchanged && next.length === previous.length ? previous : Object.freeze(next)
+}
+
 export type TurnEntitySnapshot = {
     readonly id: string
     readonly blocks: readonly VisibleChatBlock[]
@@ -427,6 +470,14 @@ export function assignThreadMessageIdsWithStableWrappers(
     })
 
     const previousGroupByRawId = assistantGroupIdCache.get(wrapperCache)
+    const previousGroupForBlock = (cursor: number): string | undefined => {
+        const block = blocks[cursor]!
+        const direct = previousGroupByRawId?.get(rawIds[cursor]!) ?? previousGroupByRawId?.get(`block:${block.id}`)
+        if (direct) return direct
+        return block.kind === 'tool-group'
+            ? block.tools.map((tool) => previousGroupByRawId?.get(`tool-call:${tool.id}`) ?? previousGroupByRawId?.get(`block:${tool.id}`)).find((id) => id !== undefined)
+            : undefined
+    }
     const nextGroupByRawId = new Map<string, string>()
     const assignedIds = [...rawIds]
     const usedGroupIds = new Set<string>()
@@ -450,15 +501,15 @@ export function assignThreadMessageIdsWithStableWrappers(
 
         let groupId: string | undefined
         if (previousGroupByRawId) {
-            const startCandidate = previousGroupByRawId.get(rawIds[runStart]!)
-            const endCandidate = previousGroupByRawId.get(rawIds[runEnd]!)
+            const startCandidate = previousGroupForBlock(runStart)
+            const endCandidate = previousGroupForBlock(runEnd)
             if (startCandidate && !usedGroupIds.has(startCandidate)) {
                 groupId = startCandidate
             } else if (endCandidate && !usedGroupIds.has(endCandidate)) {
                 groupId = endCandidate
             } else {
                 for (let cursor = runStart; cursor <= runEnd; cursor += 1) {
-                    const candidate = previousGroupByRawId.get(rawIds[cursor]!)
+                    const candidate = previousGroupForBlock(cursor)
                     if (candidate && !usedGroupIds.has(candidate)) {
                         groupId = candidate
                         break
@@ -480,7 +531,15 @@ export function assignThreadMessageIdsWithStableWrappers(
             }
         }
         for (let cursor = runStart; cursor <= runEnd; cursor += 1) {
+            const block = blocks[cursor]!
             nextGroupByRawId.set(rawIds[cursor]!, resolvedGroupId)
+            nextGroupByRawId.set(`block:${block.id}`, resolvedGroupId)
+            if (block.kind === 'tool-group') {
+                for (const tool of block.tools) {
+                    nextGroupByRawId.set(`tool-call:${tool.id}`, resolvedGroupId)
+                    nextGroupByRawId.set(`block:${tool.id}`, resolvedGroupId)
+                }
+            }
         }
     }
     assistantGroupIdCache.set(wrapperCache, nextGroupByRawId)
@@ -665,83 +724,86 @@ function isSameBlockArray(
     return true
 }
 
-export function areTurnBlocksStructurallyEquivalent(
-    a: readonly VisibleChatBlock[],
-    b: readonly VisibleChatBlock[]
-): boolean {
-    if (a === b) return true
-    if (a.length !== b.length) return false
-    for (let i = 0; i < a.length; i += 1) {
-        const left = a[i]!
-        const right = b[i]!
-        if (left === right) continue
-        const leftLocalId = left.kind === 'user-text' ? left.localId : undefined
-        const rightLocalId = right.kind === 'user-text' ? right.localId : undefined
-        if (left.kind !== right.kind || left.id !== right.id || leftLocalId !== rightLocalId) {
-            return false
-        }
-        if (left.kind === 'agent-text' && right.kind === 'agent-text') {
-            if (
-                left.turnId !== right.turnId
-                || left.phase !== right.phase
-                || left.model !== right.model
-                || left.durationMs !== right.durationMs
-                || left.roundSummary !== right.roundSummary
-                || !isSameUsage(left.usage, right.usage)
-                || Boolean(left.text.trim()) !== Boolean(right.text.trim())
-            ) {
-                return false
-            }
-            continue
-        }
-        if (left.kind === 'agent-reasoning' && right.kind === 'agent-reasoning') {
-            if (
-                left.turnId !== right.turnId
-                || left.model !== right.model
-                || left.durationMs !== right.durationMs
-                || left.roundSummary !== right.roundSummary
-                || !isSameUsage(left.usage, right.usage)
-                || Boolean(left.text.trim()) !== Boolean(right.text.trim())
-            ) {
-                return false
-            }
-            continue
-        }
-        return false
-    }
-    return true
+/** Layout descriptors contain only data that changes row membership or placement.
+ * Mutable prose and ordinary tool payloads remain in the complete turn entities. */
+export type TurnLayoutBlock = {
+    readonly id: string
+    readonly kind: VisibleChatBlock['kind']
+    readonly nonEmpty?: boolean
+    readonly phase?: AssistantContentPhase
+    readonly toolName?: string
+    readonly state?: string
+    readonly permissionId?: string
+    readonly permissionStatus?: string
+    readonly agentMessage?: boolean
+    readonly projectionInput?: unknown
+    readonly projectionResult?: unknown
+    readonly members?: readonly TurnLayoutBlock[]
 }
 
-export function areThreadEntriesStructurallyEquivalent(
-    a: readonly BlockWithThreadMessageId[],
-    b: readonly BlockWithThreadMessageId[]
-): boolean {
-    if (a === b) return true
-    if (a.length !== b.length) return false
-    for (let i = 0; i < a.length; i += 1) {
-        const left = a[i]!
-        const right = b[i]!
-        if (left === right) continue
-        if (
-            visibleBlockRole(left.block) !== 'assistant'
-            || visibleBlockRole(right.block) !== 'assistant'
-            || left.threadMessageId !== right.threadMessageId
-            || left.timestamp !== right.timestamp
-            || !isSameAggregate(left.aggregate, right.aggregate)
-        ) {
-            return false
+export type TurnLayoutSnapshot = {
+    readonly id: string
+    readonly blocks: readonly TurnLayoutBlock[]
+}
+
+function describeLayoutBlock(block: VisibleChatBlock): TurnLayoutBlock {
+    if (block.kind === 'agent-text' || block.kind === 'agent-reasoning' || block.kind === 'cli-output') {
+        return { id: block.id, kind: block.kind, nonEmpty: Boolean(block.text.trim()), phase: 'phase' in block ? block.phase : undefined }
+    }
+    if (block.kind === 'tool-group') {
+        return { id: block.id, kind: block.kind, members: block.tools.map(describeLayoutBlock) }
+    }
+    if (block.kind === 'tool-call') {
+        const tool = block.tool
+        const name = tool.name.toLowerCase().replaceAll('_', '')
+        // These tools project row counts, Todo cards or an activity title from
+        // payloads. Ordinary tool args/results belong only to the row leaves.
+        const projectsPayload = name === 'todowrite' || name === 'todo' || name === 'updateplan' || name === 'exitplanmode' || name === 'codexreasoning'
+        const input = tool.input && typeof tool.input === 'object' ? tool.input as Record<string, unknown> : null
+        const path = input?.file_path ?? input?.path
+        return {
+            id: block.id, kind: block.kind, toolName: tool.name, state: tool.state,
+            permissionId: tool.permission?.id, permissionStatus: tool.permission?.status,
+            agentMessage: typeof path === 'string' && path.trim().startsWith('agent://'),
+            projectionInput: projectsPayload ? tool.input : undefined,
+            projectionResult: projectsPayload ? tool.result : undefined,
         }
     }
-    return true
+    return { id: block.id, kind: block.kind, projectionInput: block }
+}
+
+function sameLayoutBlock(a: TurnLayoutBlock, b: TurnLayoutBlock): boolean {
+    return a.id === b.id && a.kind === b.kind && a.nonEmpty === b.nonEmpty && a.phase === b.phase
+        && a.toolName === b.toolName && a.state === b.state
+        && a.permissionId === b.permissionId && a.permissionStatus === b.permissionStatus
+        && a.agentMessage === b.agentMessage && a.projectionInput === b.projectionInput && a.projectionResult === b.projectionResult
+        && ((!a.members && !b.members) || Boolean(a.members && b.members && a.members.length === b.members.length && a.members.every((member, i) => sameLayoutBlock(member, b.members![i]!))))
+}
+
+export function buildTurnLayoutsById(
+    turns: ReadonlyMap<string, TurnEntitySnapshot>,
+    previous: ReadonlyMap<string, TurnLayoutSnapshot>
+): ReadonlyMap<string, TurnLayoutSnapshot> {
+    const next = new Map<string, TurnLayoutSnapshot>()
+    let unchanged = turns.size === previous.size
+    for (const [id, turn] of turns) {
+        const blocks = turn.blocks.map(describeLayoutBlock)
+        const old = previous.get(id)
+        if (old && old.blocks.length === blocks.length && blocks.every((block, i) => sameLayoutBlock(block, old.blocks[i]!))) {
+            next.set(id, old)
+        } else {
+            unchanged = false
+            next.set(id, { id, blocks })
+        }
+    }
+    return unchanged ? previous : next
 }
 
 export function buildTurnEntitiesById(
     entries: readonly BlockWithThreadMessageId[],
     previousTurnsById: ReadonlyMap<string, TurnEntitySnapshot>,
-    partCache: WeakMap<VisibleChatBlock, TurnEntityContentPart>,
-    options?: { allowStreamingTextEquivalence?: boolean }
+    partCache: WeakMap<VisibleChatBlock, TurnEntityContentPart>
 ): Map<string, TurnEntitySnapshot> {
-    const allowStreamingTextEquivalence = options?.allowStreamingTextEquivalence ?? true
     const nextTurnsById = new Map<string, TurnEntitySnapshot>()
     let reusedCount = 0
     let index = 0
@@ -782,11 +844,7 @@ export function buildTurnEntitiesById(
         const prevTurn = previousTurnsById.get(turnId)
         if (
             prevTurn
-            && (
-                allowStreamingTextEquivalence
-                    ? areTurnBlocksStructurallyEquivalent(prevTurn.blocks, runBlocks)
-                    : isSameBlockArray(prevTurn.blocks, runBlocks)
-            )
+            && isSameBlockArray(prevTurn.blocks, runBlocks)
             && prevTurn.timestamp === timestamp
             && prevTurn.invokedAt === invokedAt
             && prevTurn.durationMs === durationMs
