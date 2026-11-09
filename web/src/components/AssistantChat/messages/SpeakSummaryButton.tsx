@@ -11,7 +11,7 @@ import {
     subscribeSpeaker
 } from '@/realtime/messageSummarySpeaker'
 
-export function SpeakSummaryButton(props: { messageId: string; text: string; getText?: () => string }) {
+export function SpeakSummaryButton(props: { messageId: string; text?: string; getText?: () => string }) {
     const ctx = useOptionalHappyChatStaticContext()
     const { t } = useTranslation()
     const [available, setAvailable] = useState(false)
@@ -29,7 +29,7 @@ export function SpeakSummaryButton(props: { messageId: string; text: string; get
         return () => { active = false }
     }, [ctx])
 
-    if (!ctx || !available || !props.text) return null
+    if (!ctx || !available || (!props.text && !props.getText)) return null
 
     const busy = phase !== 'idle'
     const title = error
@@ -47,7 +47,7 @@ export function SpeakSummaryButton(props: { messageId: string; text: string; get
                     stopSpeaking()
                     return
                 }
-                const resolvedText = props.getText ? props.getText() : props.text
+                const resolvedText = props.getText ? props.getText() : (props.text ?? '')
                 if (resolvedText) void speakSummary(ctx.api, props.messageId, resolvedText)
             }}
         >

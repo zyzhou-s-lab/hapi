@@ -89,7 +89,6 @@ export function SessionWorkArea(props: SessionSurfaceProps & {
                         baseSession={props.baseSession}
                         entityStore={props.entityStore}
                         viewMode={props.viewMode}
-                        tailRevision={props.tailRevision}
                         messagesVersion={props.messagesVersion}
                         historyVersion={props.historyVersion}
                         isSyncingTail={props.isSyncingTail}

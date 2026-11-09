@@ -1,4 +1,4 @@
-import { memo, useEffect, useMemo, useRef, useState } from 'react'
+import { memo, useMemo, useRef } from 'react'
 import { TextMessagePartProvider, useAuiState } from '@assistant-ui/react'
 import { projectSessionTodoSnapshot } from '@/chat/projections/todoProjection'
 import { useOptionalHappyChatSessionStateContext, useOptionalHappyChatStaticContext, useOptionalHappyChatTodosContext } from '@/components/AssistantChat/context'
@@ -52,6 +52,7 @@ export function TurnBlockView(props: {
     partition: TurnPartition
     streaming: boolean
     durationMs: number | null
+    streamingStartedAt?: number | null
     initiallyOpen: boolean
     activeTodoText?: string | null
     fallbackTodos?: readonly TodoItem[] | null
@@ -114,15 +115,19 @@ function LiveTailTurnBlockBody(props: {
         )
     )
     const streaming = props.auiRunning || props.hasRunningTool || isActiveSessionTailTurn
-    const [now, setNow] = useState(() => Date.now())
     const activeTodoText = streaming ? projectSessionTodoSnapshot(todosCtx?.todos).activeLabel : null
     const fallbackTodos = (streaming || props.isLastMessage) ? (todosCtx?.todos ?? null) : null
-
-    useEffect(() => {
-        if (!streaming) return
-        const timer = window.setInterval(() => setNow(Date.now()), 1000)
-        return () => window.clearInterval(timer)
-    }, [streaming])
+    const invokedAt = props.custom?.invokedAt ?? (streaming ? (sessionStateCtx?.activeTurnStartedAt ?? props.createdAt) : undefined)
+    const settledDurationMs = turnDurationMs({
+        roundSummary: props.custom?.roundSummary,
+        invokedAt,
+        createdAt: props.createdAt,
+        now: props.createdAt,
+        streaming: false,
+    })
+    const streamingStartedAt = streaming && props.custom?.roundSummary?.durationMs === undefined
+        ? (invokedAt ?? null)
+        : null
 
     return (
         <MemoizedTurnBlockView
@@ -132,13 +137,8 @@ function LiveTailTurnBlockBody(props: {
             partition={props.partition}
             streaming={streaming}
             initiallyOpen={false}
-            durationMs={turnDurationMs({
-                roundSummary: props.custom?.roundSummary,
-                invokedAt: props.custom?.invokedAt ?? (streaming ? (sessionStateCtx?.activeTurnStartedAt ?? props.createdAt) : undefined),
-                createdAt: props.createdAt,
-                now,
-                streaming,
-            })}
+            durationMs={settledDurationMs}
+            streamingStartedAt={streamingStartedAt}
         />
     )
 }

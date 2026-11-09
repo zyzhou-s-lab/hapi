@@ -16,3 +16,17 @@ export function getAssistantCopyText(
         .filter((text) => text.length > 0)
         .join('\n\n')
 }
+
+export function hasAssistantCopyableText(
+    parts: readonly (ThreadAssistantMessagePart | TurnEntityContentPart)[],
+    options?: { stripNotifySummary?: boolean }
+): boolean {
+    const strip = options?.stripNotifySummary === true
+    for (const part of parts) {
+        if (part.type !== 'text' || typeof part.text !== 'string') continue
+        const trimmed = part.text.trim()
+        const normalized = strip ? stripNotifySummaryFooter(trimmed) : trimmed
+        if (normalized.length > 0) return true
+    }
+    return false
+}

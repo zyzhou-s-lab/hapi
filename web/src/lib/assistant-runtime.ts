@@ -512,10 +512,13 @@ export class HappyThreadMessageCache {
                 })
                 const head = converted[0]!
                 const pendingPermission = turn.blocks.some((block) => block.kind === 'tool-call' && block.tool.permission?.status === 'pending')
+                const createdAt = old?.message.createdAt?.getTime() === turn.timestamp
+                    ? old.message.createdAt
+                    : new Date(turn.timestamp)
                 message = {
                     ...head,
                     id: turn.id,
-                    createdAt: new Date(turn.timestamp),
+                    createdAt,
                     content: converted.flatMap((item) => typeof item.content === 'string' ? [{ type: 'text' as const, text: item.content }] : item.content),
                     status: running ? { type: 'running' } : pendingPermission ? { type: 'requires-action', reason: 'tool-calls' } : { type: 'complete', reason: 'stop' },
                     metadata: { ...head.metadata, custom: {

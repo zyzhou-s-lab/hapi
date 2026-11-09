@@ -32,11 +32,36 @@ function RailEntityTextBody(props: {
     return <MarkdownRenderer content={liveText} />
 }
 
+function TurnDurationBadge(props: {
+    durationMs: number | null
+    streaming: boolean
+    streamingStartedAt?: number | null
+}) {
+    const liveTick = props.streaming && typeof props.streamingStartedAt === 'number' && Number.isFinite(props.streamingStartedAt)
+    const [now, setNow] = useState(() => Date.now())
+    useEffect(() => {
+        if (!liveTick) return
+        setNow(Date.now())
+        const timer = window.setInterval(() => setNow(Date.now()), 1000)
+        return () => window.clearInterval(timer)
+    }, [liveTick, props.streamingStartedAt])
+    const effectiveDurationMs = liveTick
+        ? Math.max(0, now - props.streamingStartedAt!)
+        : props.durationMs
+    if (effectiveDurationMs == null || effectiveDurationMs <= 0) return null
+    return (
+        <span className="ml-1 shrink-0 text-[11.5px] tabular-nums text-[var(--app-hint)]/75">
+            {formatDuration(effectiveDurationMs)}
+        </span>
+    )
+}
+
 export function TurnExecutionRail(props: {
     subturn: ProjectedSubturn
     partition: TurnPartition
     streaming: boolean
     durationMs: number | null
+    streamingStartedAt?: number | null
     open: boolean
     onOpenChange: (open: boolean) => void
     activeTodoText?: string | null
@@ -50,6 +75,7 @@ export function TurnExecutionRail(props: {
         partition,
         streaming,
         durationMs,
+        streamingStartedAt,
         open,
         onOpenChange,
         activeTodoText,
@@ -304,11 +330,11 @@ export function TurnExecutionRail(props: {
                 ) : null}
                 <TurnRailSummary rows={summaryRows} partition={partition} streaming={streaming} activeTodoText={activeTodoText} lang={lang} />
                 <SmallChevron open={open} className="opacity-75 group-hover:opacity-100" />
-                {durationMs != null && durationMs > 0 ? (
-                    <span className="ml-1 shrink-0 text-[11.5px] tabular-nums text-[var(--app-hint)]/75">
-                        {formatDuration(durationMs)}
-                    </span>
-                ) : null}
+                <TurnDurationBadge
+                    durationMs={durationMs}
+                    streaming={streaming}
+                    streamingStartedAt={streamingStartedAt}
+                />
             </button>
 
             {/* Level 1: Left-indented vertical timeline rail */}

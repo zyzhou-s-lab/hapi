@@ -39,7 +39,6 @@ export type MessageWindowControlsState = {
     hasMore: boolean
     viewMode: MessageViewMode
     historyVersion: number
-    tailRevision: number
 }
 
 export type MessageWindowControls = {
@@ -50,7 +49,6 @@ export type MessageWindowControls = {
     hasMore: boolean
     viewMode: MessageViewMode
     historyVersion: number
-    tailRevision: number
     loadMore: (onBeforeApply?: (historyVersion: number) => boolean) => Promise<OlderLoadOutcome>
     cancelLoadMore: () => void
     refetch: () => Promise<void>
@@ -66,7 +64,6 @@ export const EMPTY_CONTROLS_STATE: MessageWindowControlsState = {
     hasMore: false,
     viewMode: 'tail',
     historyVersion: 0,
-    tailRevision: 0,
 }
 
 export function selectMessageWindowControlsState(state: MessageWindowState): MessageWindowControlsState {
@@ -79,7 +76,6 @@ export function selectMessageWindowControlsState(state: MessageWindowState): Mes
         hasMore: state.hasMore,
         viewMode: state.viewMode,
         historyVersion: state.historyVersion,
-        tailRevision: state.tailRevision,
     }
 }
 
@@ -97,7 +93,6 @@ export function areMessageWindowControlsStatesEqual(
         && a.hasMore === b.hasMore
         && a.viewMode === b.viewMode
         && a.historyVersion === b.historyVersion
-        && a.tailRevision === b.tailRevision
 }
 
 function useMessageWindowLifecycleAndActions(api: ApiClient | null, sessionId: string | null) {
@@ -227,7 +222,6 @@ export function useMessageWindowControls(
         hasMore: state.hasMore,
         viewMode: state.viewMode,
         historyVersion: state.historyVersion,
-        tailRevision: state.tailRevision,
         loadMore,
         cancelLoadMore,
         refetch,

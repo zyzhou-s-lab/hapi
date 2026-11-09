@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { memo, useCallback, useEffect, useMemo, useState } from 'react'
 import { useNavigate } from '@tanstack/react-router'
 import { SessionEntityStoreProvider } from '@/hooks/useSessionEntityStore'
 import { PRESERVE_SESSION_SIDEBAR_SCROLL } from '@/lib/sessionNavigation'
@@ -21,10 +21,10 @@ import { createSessionBase } from '@/components/SessionChat/sessionState'
 import type { SessionChatProps } from '@/components/SessionChat/types'
 
 /** Keying resets drafts, runtime, scratchlist, view state and subscriptions together. */
-export function SessionChat(props: SessionChatProps) {
+export const SessionChat = memo(function SessionChat(props: SessionChatProps) {
     const sessionId = props.sessionId ?? props.session?.id ?? ''
     return <SessionChatInner key={sessionId} {...props} />
-}
+})
 
 /** Session identity, navigation and explicit UI state are the shell's only inputs. */
 function SessionChatInner(props: SessionChatProps) {

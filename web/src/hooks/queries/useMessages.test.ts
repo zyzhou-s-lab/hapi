@@ -147,6 +147,7 @@ describe('useMessageWindowControls', () => {
                 ...current,
                 messages: [makeMessage('m-1', 'Hello')],
                 messagesVersion: 1,
+                tailRevision: 1,
             })
             mockStore.emit('sess-stream')
         })
@@ -155,22 +156,25 @@ describe('useMessageWindowControls', () => {
         expect(controlsRenders).toBe(2)
         expect(fullMessagesRenders).toBe(2)
 
-        // Streaming token delta updates messages array and messagesVersion while hasMessages remains true
+        // Streaming token delta updates messages array, messagesVersion, and tailRevision while hasMessages remains true
         act(() => {
             const current = mockStore.ensureState('sess-stream')
             mockStore.states.set('sess-stream', {
                 ...current,
                 messages: [makeMessage('m-1', 'Hello world'), makeMessage('m-2', 'Second chunk')],
                 messagesVersion: 2,
+                tailRevision: 2,
             })
             mockStore.emit('sess-stream')
         })
 
         expect(fullHook.result.current.messages).toHaveLength(2)
         expect(fullHook.result.current.messagesVersion).toBe(2)
+        expect(fullHook.result.current.tailRevision).toBe(2)
         expect(fullMessagesRenders).toBe(3)
-        // Decisive check: useMessageWindowControls did NOT re-render on streaming token/message updates
+        // Decisive check: useMessageWindowControls did NOT re-render on streaming token/message/tailRevision updates
         expect(controlsRenders).toBe(2)
+        expect('tailRevision' in controlsHook.result.current).toBe(false)
 
         // Control flag change (hasMore + warning) notifies useMessageWindowControls
         act(() => {
@@ -179,14 +183,12 @@ describe('useMessageWindowControls', () => {
                 ...current,
                 hasMore: true,
                 warning: 'Partial history',
-                tailRevision: 1,
             })
             mockStore.emit('sess-stream')
         })
 
         expect(controlsHook.result.current.hasMore).toBe(true)
         expect(controlsHook.result.current.warning).toBe('Partial history')
-        expect(controlsHook.result.current.tailRevision).toBe(1)
         expect(controlsRenders).toBe(3)
     })
 })

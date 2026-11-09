@@ -284,7 +284,6 @@ export function SessionThreadSection(props: {
     baseSession: Session
     entityStore: SessionEntityStore
     viewMode: 'tail' | 'history'
-    tailRevision: number
     messagesVersion?: number
     historyVersion: number
     isSyncingTail: boolean
@@ -385,19 +384,14 @@ export function SessionThreadSection(props: {
     )
 
     const rememberedTailBoundaryRef = useRef<{ id: string | null; tailRevision: number } | null>(null)
-    const viewParamsRef = useRef({
-        viewMode: props.viewMode,
-        tailRevision: props.tailRevision,
-    })
-    viewParamsRef.current = {
-        viewMode: props.viewMode,
-        tailRevision: props.tailRevision,
-    }
+    const viewModeRef = useRef(props.viewMode)
+    viewModeRef.current = props.viewMode
 
     const isLatestCompletedBoundary = useCallback((messageId: string): boolean => {
         const snap = props.entityStore.getSnapshot()
         const cachedSession = queryClient.getQueryData<{ session: Session }>(queryKeys.session(props.sessionId))?.session ?? props.baseSession
-        const { viewMode, tailRevision } = viewParamsRef.current
+        const viewMode = viewModeRef.current
+        const tailRevision = getMessageWindowState(props.sessionId).tailRevision
         const currentTailBoundaryId = viewMode === 'tail'
             ? findLatestCompletedBoundaryId(
                 snap.visibleBlocks,

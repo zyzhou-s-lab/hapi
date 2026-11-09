@@ -25,7 +25,6 @@ export type SessionChatProps = {
     viewMode: 'tail' | 'history'
     messagesVersion?: number
     historyVersion: number
-    tailRevision: number
     onBack: () => void
     onRefresh: () => void
     onLoadMore: (onBeforeApply?: (historyVersion: number) => boolean) => Promise<OlderLoadOutcome>

@@ -457,7 +457,6 @@ function SessionPage() {
         refetch: refetchMessages,
         viewMode: messagesViewMode,
         historyVersion,
-        tailRevision,
         setViewMode,
     } = useMessageWindowControls(api, sessionId)
 
@@ -845,6 +844,28 @@ function SessionPage() {
         })
     }, [navigate, sessionId])
 
+    const resolveSessionIdForUpload = useCallback(
+        async (id: string) => (await resolveSessionId(id)).sessionId,
+        [resolveSessionId]
+    )
+
+    const handleAbortRestore = useCallback((text: string) => {
+        sendErrorIdRef.current += 1
+        setSendErrors((prev) => ({
+            ...prev,
+            [sessionId]: {
+                id: sendErrorIdRef.current,
+                text,
+                message: t('chat.sendError.aborted'),
+                code: 'abort',
+                scheduledAt: null,
+                deliveryMode: 'queue',
+                mutationStarted: true,
+                restoreSuppressed: false
+            }
+        }))
+    }, [sessionId, t])
+
     if (!session) {
         if (sessionError) {
             return (
@@ -893,13 +914,12 @@ function SessionPage() {
             sendSettlement={sendSettlement}
             viewMode={messagesViewMode}
             historyVersion={historyVersion}
-            tailRevision={tailRevision}
             onBack={goBack}
             onRefresh={refreshSelectedSession}
             onLoadMore={loadMoreMessages}
             onCancelLoadMore={cancelLoadMoreMessages}
             onSend={sendMessage}
-            resolveSessionIdForUpload={async (id) => (await resolveSessionId(id)).sessionId}
+            resolveSessionIdForUpload={resolveSessionIdForUpload}
             onUploadSessionResolved={handleSessionResolved}
             onViewModeChange={setViewMode}
             onRetryMessage={retryMessage}
@@ -910,22 +930,7 @@ function SessionPage() {
             onSuppressSendErrorRestore={suppressSendErrorRestore}
             initialOutlineOpen={outline}
             onInitialOutlineConsumed={handleInitialOutlineConsumed}
-            onAbortRestore={(text) => {
-                sendErrorIdRef.current += 1
-                setSendErrors((prev) => ({
-                    ...prev,
-                    [sessionId]: {
-                        id: sendErrorIdRef.current,
-                        text,
-                        message: t('chat.sendError.aborted'),
-                        code: 'abort',
-                        scheduledAt: null,
-                        deliveryMode: 'queue',
-                        mutationStarted: true,
-                        restoreSuppressed: false
-                    }
-                }))
-            }}
+            onAbortRestore={handleAbortRestore}
         />
     )
 }

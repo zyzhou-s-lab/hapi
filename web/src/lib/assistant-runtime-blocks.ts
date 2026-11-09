@@ -456,11 +456,18 @@ const assistantGroupIdCache = new WeakMap<
     Map<string, string>
 >()
 
+export type ThreadMessageIdAssignmentOptions = {
+    initialSeen?: ReadonlyMap<string, number>
+    initialUsedGroupIds?: ReadonlySet<string>
+    preserveGroupByRawId?: ReadonlyMap<string, string>
+}
+
 export function assignThreadMessageIdsWithStableWrappers(
     blocks: readonly VisibleChatBlock[],
-    wrapperCache: WeakMap<VisibleChatBlock, BlockWithThreadMessageId>
+    wrapperCache: WeakMap<VisibleChatBlock, BlockWithThreadMessageId>,
+    options?: ThreadMessageIdAssignmentOptions
 ): BlockWithThreadMessageId[] {
-    const seen = new Map<string, number>()
+    const seen = new Map<string, number>(options?.initialSeen)
     const rawIds = blocks.map((block) => {
         const id = block.kind === 'user-text' ? block.localId || block.id : block.id
         const base = `${block.kind}:${id}`
@@ -478,9 +485,9 @@ export function assignThreadMessageIdsWithStableWrappers(
             ? block.tools.map((tool) => previousGroupByRawId?.get(`tool-call:${tool.id}`) ?? previousGroupByRawId?.get(`block:${tool.id}`)).find((id) => id !== undefined)
             : undefined
     }
-    const nextGroupByRawId = new Map<string, string>()
+    const nextGroupByRawId = new Map<string, string>(options?.preserveGroupByRawId)
     const assignedIds = [...rawIds]
-    const usedGroupIds = new Set<string>()
+    const usedGroupIds = new Set<string>(options?.initialUsedGroupIds)
     for (let index = 0; index < blocks.length; index += 1) {
         if (visibleBlockRole(blocks[index]!) !== 'assistant') {
             usedGroupIds.add(rawIds[index]!)
@@ -543,7 +550,6 @@ export function assignThreadMessageIdsWithStableWrappers(
         }
     }
     assistantGroupIdCache.set(wrapperCache, nextGroupByRawId)
-
     const responseGroupTimestamps = getResponseGroupTimestamps(blocks)
     const aggregates = aggregateResponseGroups(blocks)
 
@@ -736,6 +742,7 @@ export type TurnLayoutBlock = {
     readonly permissionId?: string
     readonly permissionStatus?: string
     readonly agentMessage?: boolean
+    readonly tasksCount?: number
     readonly projectionInput?: unknown
     readonly projectionResult?: unknown
     readonly members?: readonly TurnLayoutBlock[]
@@ -765,6 +772,7 @@ function describeLayoutBlock(block: VisibleChatBlock): TurnLayoutBlock {
             id: block.id, kind: block.kind, toolName: tool.name, state: tool.state,
             permissionId: tool.permission?.id, permissionStatus: tool.permission?.status,
             agentMessage: typeof path === 'string' && path.trim().startsWith('agent://'),
+            tasksCount: Array.isArray(input?.tasks) ? input.tasks.length : undefined,
             projectionInput: projectsPayload ? tool.input : undefined,
             projectionResult: projectsPayload ? tool.result : undefined,
         }
@@ -776,7 +784,7 @@ function sameLayoutBlock(a: TurnLayoutBlock, b: TurnLayoutBlock): boolean {
     return a.id === b.id && a.kind === b.kind && a.nonEmpty === b.nonEmpty && a.phase === b.phase
         && a.toolName === b.toolName && a.state === b.state
         && a.permissionId === b.permissionId && a.permissionStatus === b.permissionStatus
-        && a.agentMessage === b.agentMessage && a.projectionInput === b.projectionInput && a.projectionResult === b.projectionResult
+        && a.agentMessage === b.agentMessage && a.tasksCount === b.tasksCount && a.projectionInput === b.projectionInput && a.projectionResult === b.projectionResult
         && ((!a.members && !b.members) || Boolean(a.members && b.members && a.members.length === b.members.length && a.members.every((member, i) => sameLayoutBlock(member, b.members![i]!))))
 }
 

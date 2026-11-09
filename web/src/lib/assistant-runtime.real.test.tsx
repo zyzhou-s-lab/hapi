@@ -57,6 +57,13 @@ describe('real assistant-ui entity runtime', () => {
         ], 'Complete tool output') })
         const current = view.result.current.thread.getState().messages
         expect(current[1]).toBe(initial[1])
+        const activeCreatedAt = current.at(-1)?.createdAt
+        act(() => { update([
+            { type: 'thinking', thinking: 'Inspect the current implementation' },
+            { type: 'tool_use', id: 'call', name: 'Read', input: { file_path: 'src/a.ts', i: 'Reading current source' } },
+            { type: 'text', text: 'Full final answer' },
+        ], 'Complete tool output') })
+        expect(view.result.current.thread.getState().messages.at(-1)?.createdAt).toBe(activeCreatedAt)
         expect(current.at(-1)?.content).toMatchObject([
             { type: 'reasoning', text: 'Inspect the current implementation' },
             { type: 'tool-call', toolCallId: 'call', args: { file_path: 'src/a.ts' }, result: 'Complete tool output' },

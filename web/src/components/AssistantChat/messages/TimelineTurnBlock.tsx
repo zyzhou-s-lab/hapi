@@ -41,6 +41,7 @@ function SubturnView(props: {
     partition: TurnPartition
     streaming: boolean
     durationMs: number | null
+    streamingStartedAt?: number | null
     initiallyOpen?: boolean
     activeTodoText?: string | null
     viewMode: TranscriptViewMode
@@ -79,6 +80,7 @@ export function TimelineTurnBlockView(props: {
     partition: TurnPartition
     streaming: boolean
     durationMs: number | null
+    streamingStartedAt?: number | null
     initiallyOpen?: boolean
     activeTodoText?: string | null
     fallbackTodos?: readonly TodoItem[] | null
@@ -130,6 +132,7 @@ export function TimelineTurnBlockView(props: {
                     partition={props.partition}
                     streaming={props.streaming}
                     durationMs={props.durationMs}
+                    streamingStartedAt={props.streamingStartedAt}
                     initiallyOpen={props.initiallyOpen}
                     activeTodoText={props.activeTodoText}
                     viewMode={viewMode}

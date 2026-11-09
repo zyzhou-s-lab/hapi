@@ -54,6 +54,7 @@ export type TurnSlotContext = {
     partition: TurnPartition
     streaming: boolean
     durationMs: number | null
+    streamingStartedAt?: number | null
     open: boolean
     setOpen: (next: boolean) => void
     activeTodoText?: string | null

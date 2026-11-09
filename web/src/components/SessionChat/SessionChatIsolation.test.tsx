@@ -12,7 +12,8 @@ import {
     useSessionMentionTooltipResolver,
 } from '@/components/AssistantChat/SessionChatSurfaces'
 import { I18nProvider } from '@/lib/i18n-context'
-import { appendOptimisticMessage, clearMessageWindow } from '@/lib/message-window-store'
+import { useMessageWindowControls } from '@/hooks/queries/useMessages'
+import { appendOptimisticMessage, clearMessageWindow, ingestIncomingMessages } from '@/lib/message-window-store'
 import { queryKeys } from '@/lib/query-keys'
 import { ToastProvider, useToast } from '@/lib/toast-context'
 import type { DecryptedMessage, Session, SessionSummary } from '@/types/api'
@@ -129,6 +130,55 @@ describe('SessionChat surface isolation and imperative ingestion bridge', () => 
 
         expect(shellRenders).toBe(1)
         expect(capturedStore!.getSnapshot().visibleMessages).toHaveLength(1)
+        // Live SSE streaming chunks through ingestIncomingMessages advance tailRevision without re-rendering useMessageWindowControls or the shell
+        let controlsRenders = 0
+        function ControlsHost() {
+            controlsRenders += 1
+            useMessageWindowControls(null, 'sess-iso-1')
+            return null
+        }
+        render(<ControlsHost />)
+        expect(controlsRenders).toBe(1)
+
+        vi.useFakeTimers()
+        try {
+            for (let step = 1; step <= 3; step += 1) {
+                act(() => {
+                    ingestIncomingMessages('sess-iso-1', [{
+                        id: `stream-snap-${step}`,
+                        seq: 10 + step,
+                        localId: null,
+                        createdAt: 1000 + step,
+                        content: {
+                            role: 'agent',
+                            content: {
+                                type: 'output',
+                                data: {
+                                    type: 'assistant',
+                                    uuid: 'live-stream-1',
+                                    streamSnapshot: true,
+                                    live: step < 3,
+                                    message: {
+                                        role: 'assistant',
+                                        content: [{ type: 'text', text: `Streaming chunk ${step}` }],
+                                    },
+                                },
+                            },
+                        },
+                    }])
+                    vi.advanceTimersByTime(100)
+                })
+            }
+        } finally {
+            vi.useRealTimers()
+        }
+
+        expect(controlsRenders).toBe(1)
+        expect(shellRenders).toBe(1)
+        expect(capturedStore!.getSnapshot().visibleBlocks.at(-1)).toMatchObject({
+            kind: 'agent-text',
+            text: 'Streaming chunk 3',
+        })
     })
 
     it('emits model refusal fallback toast from ModelRefusalToastConsumer without re-rendering the shell', () => {
