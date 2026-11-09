@@ -41,10 +41,42 @@ export function useSessionFlavorModelController(rawProps: {
     onRefresh: () => void
 }): SessionFlavorModelController {
     const composerConfig = useSessionComposerConfig(rawProps.api, rawProps.session.id, rawProps.session)
-    const session = useMemo(
-        () => (composerConfig ? { ...rawProps.session, ...composerConfig } : rawProps.session),
-        [composerConfig, rawProps.session]
-    )
+    const session = useMemo<Session>(() => {
+        if (!composerConfig) {
+            return rawProps.session
+        }
+        const baseMetadata = rawProps.session.metadata
+        const mergedMetadata = (baseMetadata || composerConfig.path || composerConfig.flavor || composerConfig.machineId)
+            ? {
+                path: composerConfig.path ?? baseMetadata?.path ?? '',
+                host: baseMetadata?.host ?? '',
+                ...baseMetadata,
+                flavor: composerConfig.flavor !== undefined ? composerConfig.flavor : baseMetadata?.flavor,
+                machineId: composerConfig.machineId !== undefined ? composerConfig.machineId : baseMetadata?.machineId,
+                worktree: composerConfig.worktree !== undefined ? composerConfig.worktree : baseMetadata?.worktree,
+                ompThinking: composerConfig.ompThinking !== undefined ? composerConfig.ompThinking : baseMetadata?.ompThinking,
+                piAvailableModels: composerConfig.piAvailableModels !== undefined ? composerConfig.piAvailableModels : baseMetadata?.piAvailableModels,
+                piSelectedModel: composerConfig.piSelectedModel !== undefined ? composerConfig.piSelectedModel : baseMetadata?.piSelectedModel,
+                ccSwitchProviderId: composerConfig.ccSwitchProviderId !== undefined ? composerConfig.ccSwitchProviderId : baseMetadata?.ccSwitchProviderId,
+                ...(composerConfig.piThinkingLevel !== undefined ? { piThinkingLevel: composerConfig.piThinkingLevel } : {}),
+                ...(composerConfig.claudePromptCacheTtl !== undefined ? { claudePromptCacheTtl: composerConfig.claudePromptCacheTtl } : {}),
+                ...(composerConfig.ccSwitchProviderName !== undefined ? { ccSwitchProviderName: composerConfig.ccSwitchProviderName } : {}),
+            } as Session['metadata']
+            : null
+        return {
+            ...rawProps.session,
+            active: composerConfig.active,
+            permissionMode: composerConfig.permissionMode,
+            collaborationMode: composerConfig.collaborationMode,
+            copilotAgentMode: composerConfig.copilotAgentMode,
+            model: composerConfig.model ?? rawProps.session.model ?? null,
+            modelReasoningEffort: composerConfig.modelReasoningEffort ?? null,
+            effort: composerConfig.effort ?? null,
+            serviceTier: composerConfig.serviceTier ?? null,
+            resumeWithSessionModel: composerConfig.resumeWithSessionModel ?? rawProps.session.resumeWithSessionModel ?? false,
+            metadata: mergedMetadata,
+        }
+    }, [composerConfig, rawProps.session])
     const props = { ...rawProps, session }
     const { haptic } = usePlatform()
     const navigate = useNavigate()

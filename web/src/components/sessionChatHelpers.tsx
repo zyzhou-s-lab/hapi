@@ -1,24 +1,21 @@
-import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
+import { useCallback, useEffect, useMemo, useRef } from 'react'
 import { flushSync } from 'react-dom'
 import { useAui } from '@assistant-ui/react'
 import type { ApiClient } from '@/api/client'
 import type { AttachmentMetadata, DecryptedMessage, PiModelSummary, Session } from '@/types/api'
 import type { ModelRefusalFallbackEvent, NormalizedMessage } from '@/chat/types'
-import type { VisibleChatBlock } from '@/chat/toolGroups'
 import {
     buildGoalStateMessages,
     createSessionEntityStore,
     hasAbortableAgentRun,
     type SessionEntityStore,
-    type SessionEntityStoreSnapshot,
 } from '@/chat/store/sessionEntityStore'
-import { useUnseenBlockCount } from '@/hooks/useUnseenBlockCount'
-import { useCodexExplorationCollapse } from '@/hooks/useCodexExplorationCollapse'
-import { findLatestCompletedBoundaryId, type BlockWithThreadMessageId } from '@/lib/assistant-runtime'
+import { getInitialCodexExplorationCollapsed, useCodexExplorationCollapse } from '@/hooks/useCodexExplorationCollapse'
 import { getMessageWindowState, subscribeMessageWindow } from '@/lib/message-window-store'
 import { useToast } from '@/lib/toast-context'
-import { resolveStructureMessagesVersion } from '@/components/AssistantChat/threadScrollHelpers'
 import { useTranslation } from '@/lib/use-translation'
+import { queryKeys } from '@/lib/query-keys'
+import { useSessionChatQueryClient, useSessionSurfaceSelector } from '@/components/SessionChat/sessionState'
 import type { MessageDeliveryMode } from '@hapi/protocol'
 import { isHubScratchlistAttachmentPath } from '@hapi/protocol'
 import type { SendMessageAcceptance } from '@/hooks/mutations/useSendMessage'
@@ -426,343 +423,100 @@ export function chatComposerGridPlacement(input: {
     }
 }
 
-const EMPTY_DEC_MESSAGES: DecryptedMessage[] = []
+const EMPTY_DEC_MESSAGES: readonly DecryptedMessage[] = []
 
-function getLastEventMessageId(messages: readonly NormalizedMessage[]): string | null {
-    for (let i = messages.length - 1; i >= 0; i -= 1) {
-        const msg = messages[i]
-        if (msg?.role === 'event') {
-            return msg.id
+export type UseSessionChatPipelineParams = {
+    sessionId: string
+    session?: Session
+    messages?: DecryptedMessage[]
+    hasMoreMessages: boolean
+}
+
+/** Create and seed the session store without subscribing the session shell. */
+export function useSessionChatPipeline(props: UseSessionChatPipelineParams): { entityStore: SessionEntityStore } {
+    const queryClient = useSessionChatQueryClient()
+    const entityStore = useMemo(() => createSessionEntityStore(), [])
+    const session = queryClient.getQueryData<{ session: Session }>(queryKeys.session(props.sessionId))?.session ?? props.session
+    const window = props.messages === undefined ? getMessageWindowState(props.sessionId) : null
+    entityStore.reconcileInput({
+        sessionId: props.sessionId,
+        messages: props.messages ?? window?.messages ?? EMPTY_DEC_MESSAGES,
+        agentState: session?.agentState,
+        metadata: session?.metadata,
+        backgroundTaskCount: session?.backgroundTaskCount,
+        hasMoreMessages: window?.hasMore ?? props.hasMoreMessages,
+        codexExplorationCollapsed: getInitialCodexExplorationCollapsed(),
+    }, { deferNotifications: true })
+    useEffect(() => entityStore.flushNotifications())
+    return { entityStore }
+}
+
+/** Both transport caches feed the domain store directly, outside React renders. */
+export function SessionEntityStoreIngestionBridge(props: UseSessionChatPipelineParams & { entityStore: SessionEntityStore }) {
+    const queryClient = useSessionChatQueryClient()
+    const { codexExplorationCollapsed } = useCodexExplorationCollapse()
+    useEffect(() => {
+        const sync = () => {
+            const session = queryClient.getQueryData<{ session: Session }>(queryKeys.session(props.sessionId))?.session ?? props.session
+            const window = props.messages === undefined ? getMessageWindowState(props.sessionId) : null
+            props.entityStore.reconcileInput({
+                sessionId: props.sessionId,
+                messages: props.messages ?? window?.messages ?? EMPTY_DEC_MESSAGES,
+                agentState: session?.agentState,
+                metadata: session?.metadata,
+                backgroundTaskCount: session?.backgroundTaskCount,
+                hasMoreMessages: window?.hasMore ?? props.hasMoreMessages,
+                codexExplorationCollapsed,
+            })
         }
-    }
+        const unsubscribeSession = queryClient.getQueryCache().subscribe((event) => {
+            const key = event.query.queryKey
+            if (key[0] === 'session' && key[1] === props.sessionId) sync()
+        })
+        const unsubscribeWindow = subscribeMessageWindow(props.sessionId, sync)
+        sync()
+        return () => {
+            unsubscribeSession()
+            unsubscribeWindow()
+        }
+    }, [codexExplorationCollapsed, props.entityStore, props.hasMoreMessages, props.messages, props.session, props.sessionId, queryClient])
     return null
 }
 
-type StructuralPipelineSnapshot = {
-    sessionId: string | null
-    rawSnapshot: SessionEntityStoreSnapshot
-    visibleMessages: readonly DecryptedMessage[]
-    normalizedMessages: readonly NormalizedMessage[]
-    visibleBlocks: readonly VisibleChatBlock[]
-    blocksWithThreadIds: readonly BlockWithThreadMessageId[]
-    turnsById: SessionEntityStoreSnapshot['turnsById']
-    timelineIndex: SessionEntityStoreSnapshot['timelineIndex']
-    timelineStructureKey: string
-    structureMessagesVersion: number
-    historyVersion: number
-    hasRunningChildAgent: boolean
-    activityLabel: string | null
-    sessionStatus: SessionEntityStoreSnapshot['sessionStatus']
-    outlineItems: SessionEntityStoreSnapshot['outlineItems']
-    hasAbortableRun: boolean
-    lastEventMessageId: string | null
-}
-
-export type UseSessionChatPipelineParams = {
-    session: Session
-    messages?: DecryptedMessage[]
-    hasMoreMessages: boolean
-    viewMode: 'tail' | 'history'
-    tailRevision: number
-    onResetSessionView?: () => void
-}
-
-export function useSessionChatPipeline(props: UseSessionChatPipelineParams & {
-    messagesVersion?: number
-    historyVersion?: number
-}) {
+export function ModelRefusalToastConsumer(props: { entityStore: SessionEntityStore; sessionId: string }) {
     const { t } = useTranslation()
     const { addToast } = useToast()
-    const { codexExplorationCollapsed } = useCodexExplorationCollapse()
-    const modelRefusalFallbackToastIdsRef = useRef<Set<string>>(new Set())
-    const onResetSessionViewRef = useRef(props.onResetSessionView)
-    onResetSessionViewRef.current = props.onResetSessionView
-    const entityStore = useMemo(() => createSessionEntityStore(), [])
-    const structureVersionTrackerRef = useRef({
-        sessionId: props.session.id,
-        structureVersion: 0,
-        structureKey: '',
-        historyVersion: 0,
-        rawMessagesCount: 0,
-    })
-    const prevStructuralRef = useRef<StructuralPipelineSnapshot | null>(null)
-    const [rememberedTailBoundary, setRememberedTailBoundary] = useState<{
-        id: string | null
-        tailRevision: number
-    } | null>(null)
-
+    const handled = useRef(new Set<string>())
     useEffect(() => {
-        modelRefusalFallbackToastIdsRef.current.clear()
-        onResetSessionViewRef.current?.()
-    }, [props.session.id])
-
-    const directWindowState = props.messages === undefined
-        ? getMessageWindowState(props.session.id)
-        : null
-    const renderMessages = props.messages ?? directWindowState?.messages ?? EMPTY_DEC_MESSAGES
-    const renderHasMore = props.messages !== undefined
-        ? props.hasMoreMessages
-        : (directWindowState?.hasMore ?? props.hasMoreMessages)
-
-    const latestSessionInputRef = useRef({
-        sessionId: props.session.id,
-        agentState: props.session.agentState,
-        metadata: props.session.metadata,
-        backgroundTaskCount: props.session.backgroundTaskCount,
-        codexExplorationCollapsed,
-    })
-    latestSessionInputRef.current = {
-        sessionId: props.session.id,
-        agentState: props.session.agentState,
-        metadata: props.session.metadata,
-        backgroundTaskCount: props.session.backgroundTaskCount,
-        codexExplorationCollapsed,
-    }
-
-    entityStore.reconcileInput({
-        sessionId: props.session.id,
-        messages: renderMessages,
-        agentState: props.session.agentState,
-        metadata: props.session.metadata,
-        backgroundTaskCount: props.session.backgroundTaskCount,
-        hasMoreMessages: renderHasMore,
-        codexExplorationCollapsed,
-    }, { deferNotifications: true })
-
-    useEffect(() => {
-        entityStore.flushNotifications()
-    })
-
-    useEffect(() => {
-        if (props.messages !== undefined) {
-            return
-        }
-        const sessionId = props.session.id
-        const syncFromWindow = () => {
-            const latest = latestSessionInputRef.current
-            if (latest.sessionId !== sessionId) {
-                return
+        const report = () => {
+            for (const message of props.entityStore.getSnapshot().normalizedMessages) {
+                if (message.role !== 'event' || !isModelRefusalFallbackEvent(message.content) || handled.current.has(message.id)) continue
+                handled.current.add(message.id)
+                addToast({
+                    title: t('toast.modelRefusalFallback.title'),
+                    body: t('toast.modelRefusalFallback.body', {
+                        originalModel: message.content.originalModel,
+                        message: message.content.message,
+                    }),
+                    sessionId: props.sessionId,
+                    url: `/sessions/${props.sessionId}`,
+                    variant: 'warning',
+                    durationMs: MODEL_REFUSAL_FALLBACK_TOAST_DURATION_MS,
+                })
             }
-            const currentWindow = getMessageWindowState(sessionId)
-            entityStore.reconcileInput({
-                sessionId,
-                messages: currentWindow.messages,
-                agentState: latest.agentState,
-                metadata: latest.metadata,
-                backgroundTaskCount: latest.backgroundTaskCount,
-                hasMoreMessages: currentWindow.hasMore,
-                codexExplorationCollapsed: latest.codexExplorationCollapsed,
-            })
         }
-        syncFromWindow()
-        return subscribeMessageWindow(sessionId, syncFromWindow)
-    }, [entityStore, props.messages, props.session.id])
+        report()
+        return props.entityStore.subscribe(report)
+    }, [addToast, props.entityStore, props.sessionId, t])
+    return null
+}
 
-    const propsMessagesDefined = props.messages !== undefined
-    const propsMessagesVersion = props.messagesVersion
-    const propsHistoryVersion = props.historyVersion
-    const currentSessionId = props.session.id
+const selectNormalizedMessages = (snapshot: import('@/chat/store/sessionEntityStore').SessionEntityStoreSnapshot) => snapshot.normalizedMessages
 
-    const getStructuralPipelineSnapshot = useCallback((): StructuralPipelineSnapshot => {
-        const snap = entityStore.getSnapshot()
-        const liveWindow = !propsMessagesDefined
-            ? getMessageWindowState(currentSessionId)
-            : null
-        const rawVersion = propsMessagesDefined
-            ? (propsMessagesVersion ?? 0)
-            : (propsMessagesVersion ?? liveWindow?.messagesVersion ?? 0)
-        const historyVer = propsMessagesDefined
-            ? (propsHistoryVersion ?? 0)
-            : (propsHistoryVersion ?? liveWindow?.historyVersion ?? 0)
-        const hasAbortableRun = hasAbortableAgentRun(snap.blocks)
-        const lastEventMessageId = getLastEventMessageId(snap.normalizedMessages)
-        const prev = prevStructuralRef.current
-
-        if (
-            prev !== null
-            && prev.sessionId === snap.sessionId
-            && prev.blocksWithThreadIds === snap.blocksWithThreadIds
-            && prev.turnsById === snap.turnsById
-            && prev.timelineStructureKey === snap.timelineStructureKey
-            && prev.historyVersion === historyVer
-            && (prev.visibleMessages.length === 0) === (snap.visibleMessages.length === 0)
-            && prev.sessionStatus === snap.sessionStatus
-            && prev.hasRunningChildAgent === snap.hasRunningChildAgent
-            && prev.activityLabel === snap.activityLabel
-            && prev.outlineItems === snap.outlineItems
-            && prev.hasAbortableRun === hasAbortableRun
-            && prev.lastEventMessageId === lastEventMessageId
-        ) {
-            return prev
-        }
-
-        const tracker = structureVersionTrackerRef.current
-        const sameSession = tracker.sessionId === (snap.sessionId ?? currentSessionId)
-        const nextStructureVersion = resolveStructureMessagesVersion({
-            messagesVersion: rawVersion,
-            previousStructureVersion: sameSession ? tracker.structureVersion : 0,
-            previousStructureKey: sameSession ? tracker.structureKey : '',
-            nextStructureKey: snap.timelineStructureKey,
-            previousHistoryVersion: sameSession ? tracker.historyVersion : 0,
-            nextHistoryVersion: historyVer,
-            previousRawMessagesCount: sameSession ? tracker.rawMessagesCount : 0,
-            nextRawMessagesCount: snap.visibleMessages.length,
-        })
-        structureVersionTrackerRef.current = {
-            sessionId: snap.sessionId ?? currentSessionId,
-            structureVersion: nextStructureVersion,
-            structureKey: snap.timelineStructureKey,
-            historyVersion: historyVer,
-            rawMessagesCount: snap.visibleMessages.length,
-        }
-
-        const nextStructural: StructuralPipelineSnapshot = {
-            sessionId: snap.sessionId,
-            rawSnapshot: snap,
-            visibleMessages: snap.visibleMessages,
-            normalizedMessages: snap.normalizedMessages,
-            visibleBlocks: snap.visibleBlocks,
-            blocksWithThreadIds: snap.blocksWithThreadIds,
-            turnsById: snap.turnsById,
-            timelineIndex: snap.timelineIndex,
-            timelineStructureKey: snap.timelineStructureKey,
-            structureMessagesVersion: nextStructureVersion,
-            historyVersion: historyVer,
-            hasRunningChildAgent: snap.hasRunningChildAgent,
-            activityLabel: snap.activityLabel,
-            sessionStatus: snap.sessionStatus,
-            outlineItems: snap.outlineItems,
-            hasAbortableRun,
-            lastEventMessageId,
-        }
-        prevStructuralRef.current = nextStructural
-        return nextStructural
-    }, [
-        currentSessionId,
-        entityStore,
-        propsHistoryVersion,
-        propsMessagesDefined,
-        propsMessagesVersion,
-    ])
-
-    const structuralSnapshot = useSyncExternalStore(
-        entityStore.subscribe,
-        getStructuralPipelineSnapshot,
-        getStructuralPipelineSnapshot
-    )
-
-    const {
-        rawSnapshot: snapshot,
-        visibleMessages,
-        normalizedMessages,
-        visibleBlocks,
-        blocksWithThreadIds,
-        timelineIndex,
-        timelineStructureKey,
-        structureMessagesVersion,
-        hasRunningChildAgent,
-        activityLabel,
-        sessionStatus,
-        outlineItems,
-    } = structuralSnapshot
-
-    const reduced = useMemo(
-        () => ({
-            blocks: snapshot.blocks,
-            hasReadyEvent: snapshot.hasReadyEvent,
-            latestGoal: snapshot.latestGoal,
-            latestUsage: snapshot.latestUsage,
-        }),
-        [snapshot.blocks, snapshot.hasReadyEvent, snapshot.latestGoal, snapshot.latestUsage]
-    )
-
-    useEffect(() => {
-        const displayedIds = modelRefusalFallbackToastIdsRef.current
-        for (const message of normalizedMessages) {
-            if (message.role !== 'event') continue
-            if (!isModelRefusalFallbackEvent(message.content)) continue
-            if (displayedIds.has(message.id)) continue
-
-            displayedIds.add(message.id)
-            const event = message.content
-            addToast({
-                title: t('toast.modelRefusalFallback.title'),
-                body: t('toast.modelRefusalFallback.body', {
-                    originalModel: event.originalModel,
-                    message: event.message
-                }),
-                sessionId: props.session.id,
-                url: `/sessions/${props.session.id}`,
-                variant: 'warning',
-                durationMs: MODEL_REFUSAL_FALLBACK_TOAST_DURATION_MS
-            })
-        }
-    }, [addToast, normalizedMessages, props.session.id, t])
-
-    // Fork-current must compare against assistant-ui message ids (`kind:id`),
-    // not raw hub message ids — MessageActions receive the rendered card id,
-    // and adjacent assistant blocks join under the first block's id.
-    //
-    // Calculate the boundary from the tail window, then remember it while the
-    // operator reads history. Otherwise changing viewMode to `history` hides
-    // a valid current Fork action, and loading older pages can make the last
-    // visible historical message look like the current fork boundary.
-    const currentTailBoundaryId = useMemo(() => {
-        if (props.viewMode !== 'tail') return null
-        return findLatestCompletedBoundaryId(
-            visibleBlocks,
-            props.session.thinking,
-            props.session.activeTurnStartedAt ?? null,
-            blocksWithThreadIds
-        )
-    }, [
-        blocksWithThreadIds,
-        props.viewMode,
-        props.session.activeTurnStartedAt,
-        props.session.thinking,
-        visibleBlocks,
-    ])
-
-    useEffect(() => {
-        if (props.viewMode !== 'tail') return
-        setRememberedTailBoundary((previous) => (
-            previous?.id === currentTailBoundaryId && previous.tailRevision === props.tailRevision
-                ? previous
-                : { id: currentTailBoundaryId, tailRevision: props.tailRevision }
-        ))
-    }, [currentTailBoundaryId, props.tailRevision, props.viewMode])
-
-    const latestCompletedBoundaryId = resolveLatestCompletedBoundaryIdForView(
-        props.viewMode,
-        currentTailBoundaryId,
-        rememberedTailBoundary,
-        props.tailRevision
-    )
-
-    const isLatestCompletedBoundary = useCallback((messageId: string) => {
-        return latestCompletedBoundaryId === messageId
-    }, [latestCompletedBoundaryId])
-
-    // "N new messages" counts rendered blocks, not raw messages: a subagent run
-    // is dozens of sidechain messages but a single Task card, and a tool_use +
-    // tool_result pair is one card.
-    const unseenCount = useUnseenBlockCount(props.viewMode, visibleBlocks)
-
-    return {
-        entityStore,
-        timelineIndex,
-        timelineStructureKey,
-        structureMessagesVersion,
-        visibleMessages,
-        normalizedMessages,
-        reduced,
-        sessionStatus,
-        hasRunningChildAgent,
-        activityLabel,
-        visibleBlocks,
-        blocksWithThreadIds,
-        isLatestCompletedBoundary,
-        unseenCount,
-        outlineItems,
-    }
+export function SessionAbortRestoreBridge(props: {
+    entityStore: SessionEntityStore
+    onAbortRestore: (text: string) => void
+}) {
+    const messages = useSessionSurfaceSelector(props.entityStore, selectNormalizedMessages)
+    return <AbortRestoreConsumer messages={messages} onAbortRestore={props.onAbortRestore} />
 }
