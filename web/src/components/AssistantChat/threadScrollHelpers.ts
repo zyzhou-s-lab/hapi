@@ -8,15 +8,21 @@ export type ScrollAnchor = {
 
 export type PendingScrollRestore = {
     runId: number
+    sessionId: string
     anchor: ScrollAnchor | null
-    scrollTop: number
-    scrollHeight: number
     targetHistoryVersion: number | null
     pinOnRestore?: boolean
+    previousOverflowAnchor?: string
 }
 
 export type HistoryLoadSource = 'coverage' | 'user' | 'consumer'
 export type PullToLoadState = 'idle' | 'pulling' | 'ready'
+
+export type ThreadScrollPhase =
+    | 'INITIAL_PINNING'
+    | 'PINNED_FOLLOW'
+    | 'USER_SCROLLED'
+    | 'PREPENDING_HISTORY'
 
 export type ThreadScrollMode =
     | 'tail-follow'
@@ -24,6 +30,7 @@ export type ThreadScrollMode =
     | 'pagination-restore'
 
 export type ThreadScrollState = {
+    phase: ThreadScrollPhase
     mode: ThreadScrollMode
     autoScrollEnabled: boolean
     atBottom: boolean
@@ -58,6 +65,8 @@ export type HistoryLoaderState = {
 }
 
 export const MESSAGE_ANCHOR_SELECTOR = '.happy-thread-messages > [id]'
+export const THREAD_ENTRY_ANCHOR_SELECTOR =
+    '.happy-thread-messages > [id], [data-thread-entry-id], [data-message-id]'
 // Resume tail-following only once the user has actually reached the bottom.
 // A wider proximity threshold makes a downward-reading user enter tail mode
 // early; the next content/layout update then snaps the viewport to the end.
@@ -146,6 +155,25 @@ export function shouldCancelInitialScrollSettling(
         && intent.distanceFromBottom > MANUAL_SCROLL_EPSILON_PX
 }
 
+export function resolveThreadScrollPhase(params: {
+    autoScrollEnabled: boolean
+    atBottom: boolean
+    hasPendingRestore: boolean
+    isInitialPinning?: boolean
+}): ThreadScrollPhase {
+    if (params.hasPendingRestore) {
+        return 'PREPENDING_HISTORY'
+    }
+    if (params.autoScrollEnabled && params.atBottom) {
+        return params.isInitialPinning ? 'INITIAL_PINNING' : 'PINNED_FOLLOW'
+    }
+    return 'USER_SCROLLED'
+}
+
+export function shouldFollowTailInScrollPhase(phase: ThreadScrollPhase): boolean {
+    return phase === 'INITIAL_PINNING' || phase === 'PINNED_FOLLOW'
+}
+
 export function resolveThreadScrollMode(params: {
     autoScrollEnabled: boolean
     atBottom: boolean
@@ -166,6 +194,7 @@ export function shouldFollowTailInScrollMode(mode: ThreadScrollMode): boolean {
 
 export function createInitialThreadScrollState(lastScrollTop = 0): ThreadScrollState {
     return {
+        phase: 'INITIAL_PINNING',
         mode: 'tail-follow',
         autoScrollEnabled: true,
         atBottom: true,
@@ -206,9 +235,14 @@ export function createInitialHistoryLoaderState(runId = 0): HistoryLoaderState {
     }
 }
 
+export type ThreadScrollStatePatch = Partial<Omit<ThreadScrollState, 'mode' | 'phase'>> & {
+    isInitialPinning?: boolean
+    phase?: ThreadScrollPhase
+}
+
 export function applyThreadScrollStatePatch(
     current: ThreadScrollState,
-    patch: Partial<Omit<ThreadScrollState, 'mode'>>
+    patch: ThreadScrollStatePatch
 ): ThreadScrollState {
     const autoScrollEnabled = patch.autoScrollEnabled !== undefined
         ? patch.autoScrollEnabled
@@ -225,7 +259,17 @@ export function applyThreadScrollStatePatch(
     const pendingRestore = patch.pendingRestore !== undefined
         ? patch.pendingRestore
         : current.pendingRestore
+    const isInitialPinning = patch.isInitialPinning !== undefined
+        ? patch.isInitialPinning
+        : current.phase === 'INITIAL_PINNING' && autoScrollEnabled && atBottom && pendingRestore === null
+    const phase = patch.phase ?? resolveThreadScrollPhase({
+        autoScrollEnabled,
+        atBottom,
+        hasPendingRestore: pendingRestore !== null,
+        isInitialPinning,
+    })
     return {
+        phase,
         mode: resolveThreadScrollMode({
             autoScrollEnabled,
             atBottom,
@@ -240,6 +284,7 @@ export function applyThreadScrollStatePatch(
 }
 
 export type ViewportScrollTransition = {
+    nextPhase: ThreadScrollPhase
     nextMode: ThreadScrollMode
     autoScrollEnabled: boolean
     atBottom: boolean
@@ -262,6 +307,12 @@ export function transitionScrollModeOnViewportScroll(params: {
         const autoScrollEnabled = !cancel
         const atBottom = !cancel
         return {
+            nextPhase: resolveThreadScrollPhase({
+                autoScrollEnabled,
+                atBottom,
+                hasPendingRestore: params.hasPendingRestore,
+                isInitialPinning: !cancel,
+            }),
             nextMode: resolveThreadScrollMode({
                 autoScrollEnabled,
                 atBottom,
@@ -278,6 +329,12 @@ export function transitionScrollModeOnViewportScroll(params: {
 
     if (params.intent.isScrollingUp && params.intent.distanceFromBottom > MANUAL_SCROLL_EPSILON_PX) {
         return {
+            nextPhase: resolveThreadScrollPhase({
+                autoScrollEnabled: false,
+                atBottom: false,
+                hasPendingRestore: params.hasPendingRestore,
+                isInitialPinning: false,
+            }),
             nextMode: resolveThreadScrollMode({
                 autoScrollEnabled: false,
                 atBottom: false,
@@ -294,6 +351,12 @@ export function transitionScrollModeOnViewportScroll(params: {
 
     if (params.intent.isNearBottom) {
         return {
+            nextPhase: resolveThreadScrollPhase({
+                autoScrollEnabled: true,
+                atBottom: true,
+                hasPendingRestore: params.hasPendingRestore,
+                isInitialPinning: false,
+            }),
             nextMode: resolveThreadScrollMode({
                 autoScrollEnabled: true,
                 atBottom: true,
@@ -310,6 +373,12 @@ export function transitionScrollModeOnViewportScroll(params: {
 
     if (params.tailScrollInProgress) {
         return {
+            nextPhase: resolveThreadScrollPhase({
+                autoScrollEnabled: true,
+                atBottom: true,
+                hasPendingRestore: params.hasPendingRestore,
+                isInitialPinning: false,
+            }),
             nextMode: resolveThreadScrollMode({
                 autoScrollEnabled: true,
                 atBottom: true,
@@ -325,6 +394,12 @@ export function transitionScrollModeOnViewportScroll(params: {
     }
 
     return {
+        nextPhase: resolveThreadScrollPhase({
+            autoScrollEnabled: false,
+            atBottom: false,
+            hasPendingRestore: params.hasPendingRestore,
+            isInitialPinning: false,
+        }),
         nextMode: resolveThreadScrollMode({
             autoScrollEnabled: false,
             atBottom: false,
@@ -364,22 +439,57 @@ export function resolveStructureMessagesVersion(params: {
 }
 
 type CapturedAnchorState = {
-    height: number
-    wasFirstMessage: boolean
+    anchorHeight: number
     topOffset: number
+    childId: string | null
+    childTopOffset: number
     consumedPrepend: boolean
 }
 
 const capturedAnchorState = new WeakMap<ScrollAnchor, CapturedAnchorState>()
 
+function getMessageAnchorId(element: HTMLElement): string {
+    return (
+        element.id
+        || element.getAttribute('data-thread-entry-id')
+        || element.getAttribute('data-message-id')
+        || ''
+    )
+}
+
+function findMessageAnchorElement(viewport: HTMLElement, anchorId: string): HTMLElement | null {
+    if (!anchorId) {
+        return null
+    }
+    const byId = document.getElementById(anchorId)
+    if (byId && viewport.contains(byId)) {
+        return byId
+    }
+    const candidates = viewport.querySelectorAll<HTMLElement>(THREAD_ENTRY_ANCHOR_SELECTOR)
+    for (const candidate of candidates) {
+        if (
+            candidate.id === anchorId
+            || candidate.getAttribute('data-thread-entry-id') === anchorId
+            || candidate.getAttribute('data-message-id') === anchorId
+        ) {
+            return candidate
+        }
+    }
+    return null
+}
+
 export function captureScrollAnchor(viewport: HTMLElement): ScrollAnchor | null {
     const viewportRect = viewport.getBoundingClientRect()
-    const messages = Array.from(viewport.querySelectorAll<HTMLElement>(MESSAGE_ANCHOR_SELECTOR))
+    const messages = Array.from(viewport.querySelectorAll<HTMLElement>(THREAD_ENTRY_ANCHOR_SELECTOR))
     const firstNonSystemIndex = messages.findIndex(
         (element) => element.getAttribute('data-hapi-message-role') !== 'system'
     )
     for (let index = 0; index < messages.length; index += 1) {
         const message = messages[index]!
+        const anchorId = getMessageAnchorId(message)
+        if (!anchorId) {
+            continue
+        }
         const rect = message.getBoundingClientRect()
         if (rect.bottom > viewportRect.top && rect.top < viewportRect.bottom) {
             if (index < firstNonSystemIndex) {
@@ -396,18 +506,29 @@ export function captureScrollAnchor(viewport: HTMLElement): ScrollAnchor | null 
             }
             const topOffset = rect.top - viewportRect.top
             const anchor: ScrollAnchor = {
-                id: message.id,
+                id: anchorId,
                 topOffset
             }
-            const height = rect.bottom - rect.top
-            if (height > 0) {
-                capturedAnchorState.set(anchor, {
-                    height,
-                    wasFirstMessage: index === 0 || index === firstNonSystemIndex,
-                    topOffset,
-                    consumedPrepend: false
-                })
+            let childId: string | null = null
+            let childTopOffset = 0
+            for (const child of message.querySelectorAll<HTMLElement>('[data-block-id]')) {
+                const id = child.getAttribute('data-block-id')
+                // Rail containers can repeat a row's id. Capture the row itself.
+                if (!id || child.querySelector('[data-block-id]')) continue
+                const childRect = child.getBoundingClientRect()
+                if (childRect.bottom > viewportRect.top && childRect.top < viewportRect.bottom) {
+                    childId = id
+                    childTopOffset = childRect.top - rect.top
+                    break
+                }
             }
+            capturedAnchorState.set(anchor, {
+                anchorHeight: rect.bottom - rect.top,
+                topOffset,
+                childId,
+                childTopOffset,
+                consumedPrepend: false,
+            })
             return anchor
         }
     }
@@ -415,24 +536,42 @@ export function captureScrollAnchor(viewport: HTMLElement): ScrollAnchor | null 
 }
 
 export function restoreScrollAnchor(viewport: HTMLElement, anchor: ScrollAnchor): boolean {
-    const target = document.getElementById(anchor.id)
-    if (!target || !viewport.contains(target)) {
+    const target = findMessageAnchorElement(viewport, anchor.id)
+    if (!target) {
         return false
     }
-    const viewportRect = viewport.getBoundingClientRect()
-    const targetRect = target.getBoundingClientRect()
-    const state = capturedAnchorState.get(anchor)
-    let effectiveTopOffset = state?.topOffset ?? anchor.topOffset
-    if (state && !state.consumedPrepend) {
-        state.consumedPrepend = true
-        const currentHeight = targetRect.bottom - targetRect.top
-        if (state.wasFirstMessage && state.height > 0 && currentHeight > state.height) {
-            effectiveTopOffset -= currentHeight - state.height
-            state.topOffset = effectiveTopOffset
+    const previousOverflowAnchor = viewport.style.overflowAnchor
+    viewport.style.overflowAnchor = 'none'
+    try {
+        const viewportRect = viewport.getBoundingClientRect()
+        const targetRect = target.getBoundingClientRect()
+        const state = capturedAnchorState.get(anchor)
+        const currentTopOffset = targetRect.top - viewportRect.top
+        let delta = currentTopOffset - (state?.topOffset ?? anchor.topOffset)
+        if (state && !state.consumedPrepend) {
+            const child = state.childId === null ? undefined : Array.from(
+                target.querySelectorAll<HTMLElement>('[data-block-id]')
+            ).find((element) => (
+                element.getAttribute('data-block-id') === state.childId
+                && !element.querySelector('[data-block-id]')
+            ))
+            const childDelta = child
+                ? child.getBoundingClientRect().top - targetRect.top - state.childTopOffset
+                : 0
+            delta = Math.max(0, delta) + Math.max(0, childDelta)
+            const previousScrollTop = viewport.scrollTop
+            if (delta !== 0) viewport.scrollTop += delta
+            // Save the resulting anchor offset, including browser clamping.
+            // Later pinning corrects actual drift without consuming the prepend twice.
+            state.topOffset = currentTopOffset - (viewport.scrollTop - previousScrollTop)
+            state.consumedPrepend = true
+        } else if (delta !== 0) {
+            viewport.scrollTop += delta
         }
+        return true
+    } finally {
+        viewport.style.overflowAnchor = previousOverflowAnchor
     }
-    viewport.scrollTop += targetRect.top - viewportRect.top - effectiveTopOffset
-    return true
 }
 
 /** Scroll events while the older page is in flight still belong to the user.
@@ -500,10 +639,32 @@ export function getHistoryCoverageRetryDelay(deadline: number, now: number): num
     return Math.max(0, deadline - now) + 16
 }
 
+export function clearOlderLoadRetry(state: HistoryLoaderState): void {
+    const timer = state.failureRetryTimer
+    if (timer !== null && timer !== undefined) {
+        window.clearTimeout(timer)
+        state.failureRetryTimer = null
+    }
+}
+
+export function scheduleOlderLoadRetry(
+    state: HistoryLoaderState,
+    delayMs: number,
+    onRetry: () => void
+): number {
+    clearOlderLoadRetry(state)
+    const timer = window.setTimeout(() => {
+        state.failureRetryTimer = null
+        onRetry()
+    }, delayMs)
+    state.failureRetryTimer = timer
+    return timer
+}
+
 const MAX_VISIBLE_BOUNDARY_LOAD_PAGES = 4
 
 export function getVisibleTurnBoundaryId(viewport: HTMLElement): string | null {
-    const messages = Array.from(viewport.querySelectorAll<HTMLElement>(MESSAGE_ANCHOR_SELECTOR))
+    const messages = Array.from(viewport.querySelectorAll<HTMLElement>(THREAD_ENTRY_ANCHOR_SELECTOR))
     const nonSystemMessages = messages.filter(
         (element) => element.getAttribute('data-hapi-message-role') !== 'system'
     )
@@ -516,19 +677,18 @@ export function getVisibleTurnBoundaryId(viewport: HTMLElement): string | null {
         firstMessage.getAttribute('data-hapi-message-role') === 'user'
         && secondMessage?.getAttribute('data-hapi-message-role') === 'assistant'
     ) {
-        return secondMessage.id
+        return getMessageAnchorId(secondMessage) || null
     }
-    return firstMessage.id
+    return getMessageAnchorId(firstMessage) || null
 }
 
 export function isTopTurnHeadlessAssistant(viewport: HTMLElement): boolean {
-    const messages = Array.from(viewport.querySelectorAll<HTMLElement>(MESSAGE_ANCHOR_SELECTOR))
+    const messages = Array.from(viewport.querySelectorAll<HTMLElement>(THREAD_ENTRY_ANCHOR_SELECTOR))
     const firstNonSystem = messages.find(
         (element) => element.getAttribute('data-hapi-message-role') !== 'system'
     )
     return firstNonSystem?.getAttribute('data-hapi-message-role') === 'assistant'
 }
-
 export async function loadUntilVisibleBoundaryChanges(options: {
     getVisibleBoundary: () => string | null
     isTopTurnIncomplete?: () => boolean

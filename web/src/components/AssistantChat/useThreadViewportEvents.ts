@@ -149,12 +149,16 @@ export function useThreadViewportEvents(bindings: ThreadViewportEventBindings): 
             const pending = scrollStateRef.current.pendingRestore
             const anchorPin = anchorPinRef.current
             if (
+                intent.isNearBottom
+                || (scrollStateRef.current.autoScrollEnabled && scrollStateRef.current.atBottom)
+            ) {
+                clearPinnedAnchor()
+            } else if (
                 anchorPin.until > Date.now()
                 && anchorPin.anchor
-                && historyLoaderRef.current.phase !== 'loading'
+                && historyLoaderRef.current.phase === 'idle'
             ) {
-                if (intent.isScrollingUp) {
-                    restoreScrollAnchor(viewport, anchorPin.anchor)
+                if (intent.isScrollingUp && restoreScrollAnchor(viewport, anchorPin.anchor)) {
                     scrollStateRef.current.lastScrollTop = viewport.scrollTop
                     return
                 }
@@ -166,8 +170,6 @@ export function useThreadViewportEvents(bindings: ThreadViewportEventBindings): 
                 && shouldRecapturePendingHistoryAnchor(historyLoaderRef.current.phase)
             ) {
                 pending.anchor = captureScrollAnchor(viewport)
-                pending.scrollTop = viewport.scrollTop
-                pending.scrollHeight = viewport.scrollHeight
             }
 
             const needsCoverage = needsViewportCoverageRef.current()
@@ -501,8 +503,6 @@ export function useThreadViewportEvents(bindings: ThreadViewportEventBindings): 
                         && shouldRecapturePendingHistoryAnchor(historyLoaderRef.current.phase)
                     ) {
                         pending.anchor = captureScrollAnchor(viewport)
-                        pending.scrollTop = viewport.scrollTop
-                        pending.scrollHeight = viewport.scrollHeight
                     }
                 }
             }
