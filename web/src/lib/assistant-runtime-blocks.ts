@@ -1,3 +1,4 @@
+import { stripNotifySummaryFooter } from '@hapi/protocol/messages'
 import { isInlineCompactionEvent, isLegacyCompactionStartEvent } from '@/chat/reducerEvents'
 import { renderEventLabel } from '@/chat/presentation'
 import type {
@@ -451,9 +452,14 @@ function isSameAggregate(
         && isSameUsage(a.usage, b.usage)
 }
 
+type AssistantGroupLookupCache = {
+    readonly preserved?: ReadonlyMap<string, string>
+    readonly local: ReadonlyMap<string, string>
+}
+
 const assistantGroupIdCache = new WeakMap<
     WeakMap<VisibleChatBlock, BlockWithThreadMessageId>,
-    Map<string, string>
+    AssistantGroupLookupCache
 >()
 
 export type ThreadMessageIdAssignmentOptions = {
@@ -467,27 +473,39 @@ export function assignThreadMessageIdsWithStableWrappers(
     wrapperCache: WeakMap<VisibleChatBlock, BlockWithThreadMessageId>,
     options?: ThreadMessageIdAssignmentOptions
 ): BlockWithThreadMessageId[] {
-    const seen = new Map<string, number>(options?.initialSeen)
+    const initialSeen = options?.initialSeen
+    const initialUsedGroupIds = options?.initialUsedGroupIds
+    const preserveGroupByRawId = options?.preserveGroupByRawId
+    const seen = new Map<string, number>()
     const rawIds = blocks.map((block) => {
         const id = block.kind === 'user-text' ? block.localId || block.id : block.id
         const base = `${block.kind}:${id}`
-        const occurrence = seen.get(base) ?? 0
+        const occurrence = seen.get(base) ?? initialSeen?.get(base) ?? 0
         seen.set(base, occurrence + 1)
         return occurrence === 0 ? base : `${base}~${occurrence}`
     })
 
     const previousGroupByRawId = assistantGroupIdCache.get(wrapperCache)
+    const hasPreviousGroupLookup = Boolean(previousGroupByRawId || preserveGroupByRawId)
+    const lookupPreviousGroupId = (key: string): string | undefined => {
+        return previousGroupByRawId?.local.get(key)
+            ?? previousGroupByRawId?.preserved?.get(key)
+            ?? preserveGroupByRawId?.get(key)
+    }
     const previousGroupForBlock = (cursor: number): string | undefined => {
         const block = blocks[cursor]!
-        const direct = previousGroupByRawId?.get(rawIds[cursor]!) ?? previousGroupByRawId?.get(`block:${block.id}`)
+        const direct = lookupPreviousGroupId(rawIds[cursor]!) ?? lookupPreviousGroupId(`block:${block.id}`)
         if (direct) return direct
         return block.kind === 'tool-group'
-            ? block.tools.map((tool) => previousGroupByRawId?.get(`tool-call:${tool.id}`) ?? previousGroupByRawId?.get(`block:${tool.id}`)).find((id) => id !== undefined)
+            ? block.tools.map((tool) => lookupPreviousGroupId(`tool-call:${tool.id}`) ?? lookupPreviousGroupId(`block:${tool.id}`)).find((id) => id !== undefined)
             : undefined
     }
-    const nextGroupByRawId = new Map<string, string>(options?.preserveGroupByRawId)
+    const nextGroupByRawId = new Map<string, string>()
     const assignedIds = [...rawIds]
-    const usedGroupIds = new Set<string>(options?.initialUsedGroupIds)
+    const usedGroupIds = new Set<string>()
+    const isGroupIdUsed = (id: string): boolean => {
+        return usedGroupIds.has(id) || (initialUsedGroupIds?.has(id) ?? false)
+    }
     for (let index = 0; index < blocks.length; index += 1) {
         if (visibleBlockRole(blocks[index]!) !== 'assistant') {
             usedGroupIds.add(rawIds[index]!)
@@ -507,17 +525,17 @@ export function assignThreadMessageIdsWithStableWrappers(
         const runEnd = index - 1
 
         let groupId: string | undefined
-        if (previousGroupByRawId) {
+        if (hasPreviousGroupLookup) {
             const startCandidate = previousGroupForBlock(runStart)
             const endCandidate = previousGroupForBlock(runEnd)
-            if (startCandidate && !usedGroupIds.has(startCandidate)) {
+            if (startCandidate && !isGroupIdUsed(startCandidate)) {
                 groupId = startCandidate
-            } else if (endCandidate && !usedGroupIds.has(endCandidate)) {
+            } else if (endCandidate && !isGroupIdUsed(endCandidate)) {
                 groupId = endCandidate
             } else {
                 for (let cursor = runStart; cursor <= runEnd; cursor += 1) {
                     const candidate = previousGroupForBlock(cursor)
-                    if (candidate && !usedGroupIds.has(candidate)) {
+                    if (candidate && !isGroupIdUsed(candidate)) {
                         groupId = candidate
                         break
                     }
@@ -549,7 +567,10 @@ export function assignThreadMessageIdsWithStableWrappers(
             }
         }
     }
-    assistantGroupIdCache.set(wrapperCache, nextGroupByRawId)
+    assistantGroupIdCache.set(wrapperCache, {
+        preserved: preserveGroupByRawId,
+        local: nextGroupByRawId,
+    })
     const responseGroupTimestamps = getResponseGroupTimestamps(blocks)
     const aggregates = aggregateResponseGroups(blocks)
 
@@ -743,14 +764,55 @@ export type TurnLayoutBlock = {
     readonly permissionStatus?: string
     readonly agentMessage?: boolean
     readonly tasksCount?: number
-    readonly projectionInput?: unknown
-    readonly projectionResult?: unknown
+    readonly addedTodoCount?: number
     readonly members?: readonly TurnLayoutBlock[]
 }
 
 export type TurnLayoutSnapshot = {
     readonly id: string
     readonly blocks: readonly TurnLayoutBlock[]
+}
+
+export type TurnHeaderSnapshot = {
+    readonly id: string
+    readonly isLast: boolean
+    readonly isRunning: boolean
+    readonly hasRunningTool: boolean
+    readonly hasCopyableText: boolean
+    readonly hasStrippedCopyableText?: boolean
+    readonly canSpeak?: boolean
+    readonly timestamp: number
+    readonly invokedAt?: number | null
+    readonly durationMs?: number
+    readonly usage?: UsageData
+    readonly model?: string | null
+    readonly roundSummary?: RoundSummary
+    readonly turnCount?: number
+}
+
+function countAddedTodoRows(input: Record<string, unknown> | null, result: unknown): number | undefined {
+    if (input && Array.isArray(input.todos) && input.todos.length > 0) {
+        return undefined
+    }
+    if (!result || typeof result !== 'object' || Array.isArray(result)) {
+        return undefined
+    }
+    const resultRecord = result as Record<string, unknown>
+    if (!Array.isArray(resultRecord.newTodos) || resultRecord.newTodos.length === 0) {
+        return undefined
+    }
+    let count = 0
+    for (const item of resultRecord.newTodos) {
+        if (!item || typeof item !== 'object' || Array.isArray(item)) continue
+        const entry = item as Record<string, unknown>
+        const text = typeof entry.content === 'string'
+            ? entry.content
+            : typeof entry.text === 'string'
+                ? entry.text
+                : ''
+        if (text.trim().length > 0) count += 1
+    }
+    return count > 0 ? count : undefined
 }
 
 function describeLayoutBlock(block: VisibleChatBlock): TurnLayoutBlock {
@@ -763,28 +825,37 @@ function describeLayoutBlock(block: VisibleChatBlock): TurnLayoutBlock {
     if (block.kind === 'tool-call') {
         const tool = block.tool
         const name = tool.name.toLowerCase().replaceAll('_', '')
-        // These tools project row counts, Todo cards or an activity title from
-        // payloads. Ordinary tool args/results belong only to the row leaves.
-        const projectsPayload = name === 'todowrite' || name === 'todo' || name === 'updateplan' || name === 'exitplanmode' || name === 'codexreasoning'
         const input = tool.input && typeof tool.input === 'object' ? tool.input as Record<string, unknown> : null
         const path = input?.file_path ?? input?.path
+        const addedTodoCount = (name === 'todowrite' || name === 'todo')
+            ? countAddedTodoRows(input, tool.result)
+            : undefined
         return {
             id: block.id, kind: block.kind, toolName: tool.name, state: tool.state,
             permissionId: tool.permission?.id, permissionStatus: tool.permission?.status,
             agentMessage: typeof path === 'string' && path.trim().startsWith('agent://'),
             tasksCount: Array.isArray(input?.tasks) ? input.tasks.length : undefined,
-            projectionInput: projectsPayload ? tool.input : undefined,
-            projectionResult: projectsPayload ? tool.result : undefined,
+            addedTodoCount,
         }
     }
-    return { id: block.id, kind: block.kind, projectionInput: block }
+    if (block.kind === 'agent-event' && isInlineCompactionEvent(block.event)) {
+        const compaction = toCompactionToolCallBlock(block)
+        return {
+            id: block.id,
+            kind: block.kind,
+            toolName: 'ContextCompaction',
+            state: compaction.tool.state,
+        }
+    }
+    return { id: block.id, kind: block.kind }
 }
 
 function sameLayoutBlock(a: TurnLayoutBlock, b: TurnLayoutBlock): boolean {
     return a.id === b.id && a.kind === b.kind && a.nonEmpty === b.nonEmpty && a.phase === b.phase
         && a.toolName === b.toolName && a.state === b.state
         && a.permissionId === b.permissionId && a.permissionStatus === b.permissionStatus
-        && a.agentMessage === b.agentMessage && a.tasksCount === b.tasksCount && a.projectionInput === b.projectionInput && a.projectionResult === b.projectionResult
+        && a.agentMessage === b.agentMessage && a.tasksCount === b.tasksCount
+        && a.addedTodoCount === b.addedTodoCount
         && ((!a.members && !b.members) || Boolean(a.members && b.members && a.members.length === b.members.length && a.members.every((member, i) => sameLayoutBlock(member, b.members![i]!))))
 }
 
@@ -802,6 +873,123 @@ export function buildTurnLayoutsById(
         } else {
             unchanged = false
             next.set(id, { id, blocks })
+        }
+    }
+    return unchanged ? previous : next
+}
+
+function isRunningToolVisibleBlock(block: VisibleChatBlock): boolean {
+    if (block.kind === 'tool-call') {
+        return block.tool.state === 'running' || block.tool.state === 'pending'
+    }
+    if (block.kind === 'tool-group') {
+        return block.tools.some((tool) => tool.tool.state === 'running' || tool.tool.state === 'pending')
+    }
+    if (block.kind === 'agent-event' && isInlineCompactionEvent(block.event)) {
+        return toCompactionToolCallBlock(block).tool.state === 'running'
+    }
+    return false
+}
+
+function hasCopyableTextInBlock(block: VisibleChatBlock): boolean {
+    if (block.kind === 'agent-text' || block.kind === 'cli-output') {
+        return block.text.trim().length > 0
+    }
+    return block.kind === 'codex-review'
+}
+
+function hasStrippedCopyableTextInBlock(block: VisibleChatBlock): boolean {
+    if (block.kind === 'agent-text' || block.kind === 'cli-output') {
+        const trimmed = block.text.trim()
+        if (trimmed.length === 0) return false
+        return trimmed.includes('<notify_summary>')
+            ? stripNotifySummaryFooter(trimmed).length > 0
+            : true
+    }
+    return block.kind === 'codex-review'
+}
+
+export function getTurnCopyableText(turn: TurnEntitySnapshot): string {
+    const segments: string[] = []
+    for (const block of turn.blocks) {
+        if (block.kind === 'agent-text' || block.kind === 'cli-output') {
+            if (block.text.length > 0) {
+                segments.push(block.text)
+            }
+        } else if (block.kind === 'codex-review') {
+            const formatted = formatCodexReviewText(block.review)
+            if (formatted.length > 0) {
+                segments.push(formatted)
+            }
+        }
+    }
+    return segments.join('\n\n')
+}
+
+export function sameTurnHeader(
+    a: TurnHeaderSnapshot | undefined,
+    b: TurnHeaderSnapshot | undefined
+): boolean {
+    if (a === b) return true
+    if (!a || !b) return false
+    return a.id === b.id
+        && a.isLast === b.isLast
+        && a.isRunning === b.isRunning
+        && a.hasRunningTool === b.hasRunningTool
+        && a.hasCopyableText === b.hasCopyableText
+        && a.hasStrippedCopyableText === b.hasStrippedCopyableText
+        && a.canSpeak === b.canSpeak
+        && a.timestamp === b.timestamp
+        && a.invokedAt === b.invokedAt
+        && a.durationMs === b.durationMs
+        && isSameUsage(a.usage, b.usage)
+        && a.model === b.model
+        && a.roundSummary === b.roundSummary
+        && a.turnCount === b.turnCount
+}
+
+export function buildTurnHeadersById(
+    turns: ReadonlyMap<string, TurnEntitySnapshot>,
+    timelineIndex: readonly ThreadMessageTopology[],
+    sessionThinking: boolean,
+    previous: ReadonlyMap<string, TurnHeaderSnapshot>
+): ReadonlyMap<string, TurnHeaderSnapshot> {
+    const lastEntryId = timelineIndex[timelineIndex.length - 1]?.id ?? null
+    const next = new Map<string, TurnHeaderSnapshot>()
+    let unchanged = turns.size === previous.size
+    for (const [id, turn] of turns) {
+        const isLast = id === lastEntryId
+        const hasRunningTool = turn.blocks.some(isRunningToolVisibleBlock)
+        const hasLiveProse = turn.blocks.some(
+            (block) => (block.kind === 'agent-text' || block.kind === 'agent-reasoning') && 'live' in block && block.live === true
+        )
+        const isRunning = (isLast && sessionThinking) || hasRunningTool || hasLiveProse
+        const hasCopyableText = turn.blocks.some(hasCopyableTextInBlock)
+        const hasStrippedCopyableText = hasCopyableText && turn.blocks.some(hasStrippedCopyableTextInBlock)
+        const first = turn.blocks[0]
+        const canSpeak = first?.kind !== 'cli-output' && first?.kind !== 'codex-review'
+        const candidate: TurnHeaderSnapshot = {
+            id,
+            isLast,
+            isRunning,
+            hasRunningTool,
+            hasCopyableText,
+            hasStrippedCopyableText,
+            canSpeak,
+            timestamp: turn.timestamp,
+            invokedAt: turn.invokedAt,
+            durationMs: turn.durationMs,
+            usage: turn.usage,
+            model: turn.model,
+            roundSummary: turn.roundSummary,
+            turnCount: turn.turnCount,
+        }
+        const old = previous.get(id)
+        if (old && sameTurnHeader(old, candidate)) {
+            next.set(id, old)
+        } else {
+            unchanged = false
+            next.set(id, candidate)
         }
     }
     return unchanged ? previous : next

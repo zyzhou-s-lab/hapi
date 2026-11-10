@@ -1584,3 +1584,71 @@ describe('normalizeDecryptedMessage', () => {
     })
 
 })
+
+describe('canonical delivery metadata', () => {
+    const records = [
+        { label: 'user text', role: 'user', record: { role: 'user', content: 'Hello' } },
+        { label: 'user fallback', role: 'user', record: { role: 'user', content: { unknown: true } } },
+        { label: 'assistant output', role: 'agent', record: { role: 'agent', content: {
+            type: 'output', data: { type: 'assistant', message: { content: 'Hello', turnId: 'raw-provider' } }
+        } } },
+        { label: 'wrapped user output', role: 'user', record: { role: 'agent', content: {
+            type: 'output', data: { type: 'user', message: { content: [{ type: 'text', text: 'Hello' }] } }
+        } } },
+        { label: 'Codex text', role: 'agent', record: { role: 'agent', content: {
+            type: 'codex', data: { type: 'message', message: 'Hello', turnId: 'raw-provider' }
+        } } },
+        { label: 'Codex reasoning', role: 'agent', record: { role: 'agent', content: {
+            type: 'codex', data: { type: 'reasoning', message: 'Thinking', turn_id: 'raw-provider' }
+        } } },
+        { label: 'Codex tool call', role: 'agent', record: { role: 'agent', content: {
+            type: 'codex', data: { type: 'tool-call', callId: 'tool', name: 'bash', turnId: 'raw-provider' }
+        } } },
+        { label: 'Codex tool result', role: 'agent', record: { role: 'agent', content: {
+            type: 'codex', data: { type: 'tool-call-result', callId: 'tool', output: 'done' }
+        } } },
+        { label: 'event', role: 'event', record: { role: 'agent', content: {
+            type: 'event', data: { type: 'ready' }
+        } } },
+        { label: 'Codex event', role: 'event', record: { role: 'agent', content: {
+            type: 'codex', data: { type: 'omp-rpc-warning', warning: 'Unknown event' }
+        } } },
+        { label: 'agent fallback', role: 'agent', record: { role: 'agent', content: { unknown: true } } },
+        { label: 'unknown role fallback', role: 'agent', record: { role: 'unknown', content: 'Hello' } }
+    ]
+
+    it.each(records)('prefers delivery identity and preserves lifecycle on $label', ({ record, role }) => {
+        const message: DecryptedMessage = {
+            ...makeMessage({ ...record, meta: { turnId: 'provider-meta' } }),
+            turnId: ' hub-turn ', turnState: 'cutoff'
+        }
+        expect(normalizeDecryptedMessage(message)).toMatchObject({ role, turnId: 'hub-turn', turnState: 'cutoff' })
+        expect(normalizeDecryptedMessage({
+            ...message, turnId: null,
+            content: { ...record, meta: { turnId: ' canonical-turn ' } }
+        })).toMatchObject({ role, turnId: 'canonical-turn', turnState: 'cutoff' })
+    })
+
+    it.each([
+        { type: 'output', data: { type: 'assistant', turnId: 'raw-data', message: { content: 'Hello', turnId: 'raw-message' } } },
+        { type: 'codex', data: { type: 'message', message: 'Hello', turnId: 'raw-data' } },
+        { type: 'codex', data: { type: 'reasoning', message: 'Thinking', turn_id: 'raw-data' } },
+        { type: 'codex', data: { type: 'tool-call', callId: 'tool', name: 'bash', turnId: 'raw-data' } }
+    ])('does not synthesize canonical identity from provider payload %#', (content) => {
+        const message: DecryptedMessage = {
+            ...makeMessage({ role: 'agent', meta: { turnId: ' ', turn_id: 'raw-meta' }, content: { ...content, turnId: 'raw-content' } }),
+            turnId: ' ', turnState: 'history'
+        }
+        const normalized = normalizeDecryptedMessage(message)
+        expect(normalized).not.toBeNull()
+        expect(normalized?.turnId).toBeUndefined()
+        expect(normalized?.turnState).toBe('history')
+    })
+
+    it('preserves delivery lifecycle and identity when no role envelope can be unwrapped', () => {
+        const message: DecryptedMessage = {
+            ...makeMessage({ unknown: true }), turnId: 'hub-turn', turnState: 'aborted'
+        }
+        expect(normalizeDecryptedMessage(message)).toMatchObject({ role: 'agent', turnId: 'hub-turn', turnState: 'aborted' })
+    })
+})

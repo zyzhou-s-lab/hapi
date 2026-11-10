@@ -138,8 +138,11 @@ export function ensureToolBlock(
         if (mappedState === 'completed' || mappedState === 'error') {
             existing.tool = {
                 ...existing.tool,
-                state: existing.tool.state === 'error' ? 'error' : mappedState,
-                completedAt: existing.tool.completedAt ?? seed.createdAt
+                state: existing.tool.state === 'error' && existing.tool.completionSource !== 'invocation-cutoff'
+                    ? 'error'
+                    : mappedState,
+                completedAt: existing.tool.completedAt ?? seed.createdAt,
+                completionSource: undefined
             }
         }
         // The first call (tool_use) records when the tool was invoked. The
@@ -177,6 +180,7 @@ export function ensureToolBlock(
         id,
         name: seed.name,
         state: initialState,
+        ...(isTerminalInitialState ? {} : { completionSource: 'unresolved' as const }),
         input: seed.input,
         createdAt: seed.createdAt,
         startedAt: initialState === 'pending' ? null : seed.createdAt,

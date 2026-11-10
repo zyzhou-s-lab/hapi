@@ -1,6 +1,7 @@
 import type { AttachmentMetadata, MessageStatus } from '@/types/api'
 import type { ThreadGoal } from '@/types/api'
 import type { InlineMediaSource } from '@/chat/inlineMediaSource'
+import type { TurnState } from '@hapi/protocol'
 
 export type UsageData = {
     input_tokens: number
@@ -217,6 +218,8 @@ export type NormalizedMessage = ({
     steered?: boolean
     /** Optional turn identifier emitted by CLI adapters to group blocks without timestamp heuristics. */
     turnId?: string
+    /** Canonical lifecycle state delivered by the Hub for this invocation. */
+    turnState?: TurnState
 }
 
 export type ToolPermission = {
@@ -236,6 +239,8 @@ export type ChatToolCall = {
     id: string
     name: string
     state: 'pending' | 'running' | 'completed' | 'error'
+    /** Non-authoritative outcome provenance; explicit tool results/statuses leave this unset. */
+    completionSource?: 'invocation-cutoff' | 'unresolved'
     input: unknown
     createdAt: number
     startedAt: number | null

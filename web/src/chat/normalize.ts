@@ -1,5 +1,5 @@
 import { unwrapRoleWrappedRecordEnvelope } from '@hapi/protocol/messages'
-import { safeStringify } from '@hapi/protocol'
+import { isObject, safeStringify } from '@hapi/protocol'
 import type { DecryptedMessage } from '@/types/api'
 import type { NormalizedMessage } from '@/chat/types'
 import { isCodexContent, isSkippableAgentContent, normalizeAgentRecord } from '@/chat/normalizeAgent'
@@ -18,9 +18,16 @@ export function normalizeDecryptedMessage(message: DecryptedMessage): Normalized
 
 function normalizeDecryptedMessageUncached(message: DecryptedMessage): NormalizedMessage | null {
     const record = unwrapRoleWrappedRecordEnvelope(message.content)
+    // Provider payload IDs are not canonical invocation identities.
+    const turnId = message.turnId?.trim()
+        || (record && isObject(record.meta) && typeof record.meta.turnId === 'string' ? record.meta.turnId.trim() : undefined)
+        || undefined
+    const turnState = message.turnState ?? undefined
     if (!record) {
         return {
             id: message.id,
+            turnId,
+            turnState,
             localId: message.localId,
             createdAt: message.createdAt,
             role: 'agent',
@@ -34,9 +41,19 @@ function normalizeDecryptedMessageUncached(message: DecryptedMessage): Normalize
     if (record.role === 'user') {
         const normalized = normalizeUserRecord(message.id, message.localId, message.createdAt, record.content, record.meta)
         return normalized
-            ? { ...normalized, status: message.status, originalText: message.originalText, invokedAt: message.invokedAt, steered: message.steered }
+            ? {
+                ...normalized,
+                turnId,
+                turnState,
+                status: message.status,
+                originalText: message.originalText,
+                invokedAt: message.invokedAt,
+                steered: message.steered
+            }
             : {
                 id: message.id,
+                turnId,
+                turnState,
                 localId: message.localId,
                 createdAt: message.createdAt,
                 role: 'user',
@@ -57,10 +74,11 @@ function normalizeDecryptedMessageUncached(message: DecryptedMessage): Normalize
         if (!normalized && isCodexContent(record.content)) {
             return null
         }
-        return normalized
-            ? { ...normalized, status: message.status, originalText: message.originalText, invokedAt: message.invokedAt }
-            : {
+        if (!normalized) {
+            return {
                 id: message.id,
+                turnId,
+                turnState,
                 localId: message.localId,
                 createdAt: message.createdAt,
                 role: 'agent',
@@ -71,10 +89,32 @@ function normalizeDecryptedMessageUncached(message: DecryptedMessage): Normalize
                 originalText: message.originalText,
                 invokedAt: message.invokedAt
             }
+        }
+        const settledOverride = message.lifecycleState === 'settled'
+            && normalized.role === 'agent'
+            && (normalized.live || normalized.streamSnapshot?.live)
+            ? {
+                live: undefined,
+                streamSnapshot: normalized.streamSnapshot
+                    ? { ...normalized.streamSnapshot, live: false }
+                    : undefined
+            }
+            : undefined
+        return {
+            ...normalized,
+            turnId,
+            turnState,
+            ...settledOverride,
+            status: message.status,
+            originalText: message.originalText,
+            invokedAt: message.invokedAt
+        }
     }
 
     return {
         id: message.id,
+        turnId,
+        turnState,
         localId: message.localId,
         createdAt: message.createdAt,
         role: 'agent',

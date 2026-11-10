@@ -17,9 +17,9 @@ import type {
 } from '@/chat/types'
 import { areInlineMediaSourcesEqual } from '@/chat/inlineMediaSource'
 
-export type ChatBlocksById = Map<string, ChatBlock>
+export type ChatBlocksById = ReadonlyMap<string, ChatBlock>
 
-function indexBlocks(blocks: ChatBlock[], map: ChatBlocksById): void {
+function indexBlocks(blocks: ChatBlock[], map: Map<string, ChatBlock>): void {
     for (const block of blocks) {
         map.set(block.id, block)
         if (block.kind === 'tool-call') {
@@ -243,6 +243,7 @@ function areToolCallsEqual(left: ToolCallBlock, right: ToolCallBlock, childrenSa
         && left.tool.id === right.tool.id
         && left.tool.name === right.tool.name
         && left.tool.state === right.tool.state
+        && left.tool.completionSource === right.tool.completionSource
         && left.tool.input === right.tool.input
         && left.tool.result === right.tool.result
         && left.tool.description === right.tool.description
@@ -331,10 +332,10 @@ function reconcileBlock(block: ChatBlock, prevById: ChatBlocksById): ChatBlock {
 
 export function reconcileChatBlocks(nextBlocks: ChatBlock[], prevById: ChatBlocksById): {
     blocks: ChatBlock[]
-    byId: ChatBlocksById
+    byId: Map<string, ChatBlock>
 } {
     const blocks = reconcileBlockList(nextBlocks, prevById)
-    const byId: ChatBlocksById = new Map()
+    const byId = new Map<string, ChatBlock>()
     indexBlocks(blocks, byId)
     return { blocks, byId }
 }

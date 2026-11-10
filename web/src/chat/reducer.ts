@@ -6,6 +6,8 @@ import { dedupeAgentEvents, foldApiErrorEvents, foldCompactionEvents } from '@/c
 import { collectTitleChanges, ensureToolBlock, getPermissions } from '@/chat/reducerTools'
 import { reduceTimeline } from '@/chat/reducerTimeline'
 import { isRedundantGoalStatusMessageText } from '@hapi/protocol/messages'
+import type { TurnState } from '@hapi/protocol'
+import type { RetainedTimelineSuffix } from '@/chat/replayBoundary'
 
 // Calculate context size from usage data
 function calculateContextSize(usage: UsageData): number {
@@ -47,11 +49,55 @@ export type LatestUsage = {
     timestamp: number
 }
 
-export type ReduceChatBlocksOptions = {
-    goalStateMessages?: NormalizedMessage[]
+export type ThreadGoalPrefixSummary = {
+    readonly rawGoal: ThreadGoal | null
+    readonly sawNewerNonGoalUserMessage: boolean
 }
 
-function getLatestThreadGoal(normalized: NormalizedMessage[]): ThreadGoal | null {
+export type TimelineCheckpoint = {
+    readonly blocks: readonly ChatBlock[]
+    readonly hasReadyEvent: boolean
+}
+
+export type ReduceChatBlocksOptions = {
+    goalStateMessages?: NormalizedMessage[]
+    prefixGoalSummary?: ThreadGoalPrefixSummary | null
+    prefixToolIds?: ReadonlySet<string>
+    oldestWindowMessageTime?: number | null
+    activeTurnId?: string | null
+    sessionThinking?: boolean
+    retainedTimelineSuffix?: RetainedTimelineSuffix | null
+}
+
+export function buildThreadGoalPrefixSummary(
+    normalized: readonly NormalizedMessage[]
+): ThreadGoalPrefixSummary {
+    let sawNewerNonGoalUserMessage = false
+    for (let i = normalized.length - 1; i >= 0; i--) {
+        const msg = normalized[i]
+        if (msg.role === 'user') {
+            if (!/^\s*\/goal(?:\s|$)/i.test(msg.content.text)) {
+                sawNewerNonGoalUserMessage = true
+            }
+            continue
+        }
+        if (msg.role !== 'event') continue
+        const event = msg.content as AgentEvent
+        if (event.type === 'thread-goal-cleared') {
+            return { rawGoal: null, sawNewerNonGoalUserMessage }
+        }
+        if (event.type === 'thread-goal-updated') {
+            const record = event as { goal?: ThreadGoal }
+            return { rawGoal: record.goal ?? null, sawNewerNonGoalUserMessage }
+        }
+    }
+    return { rawGoal: null, sawNewerNonGoalUserMessage }
+}
+
+function getLatestThreadGoal(
+    normalized: readonly NormalizedMessage[],
+    prefixGoalSummary?: ThreadGoalPrefixSummary | null
+): ThreadGoal | null {
     let sawNewerNonGoalUserMessage = false
     for (let i = normalized.length - 1; i >= 0; i--) {
         const msg = normalized[i]
@@ -65,11 +111,41 @@ function getLatestThreadGoal(normalized: NormalizedMessage[]): ThreadGoal | null
         const event = msg.content as AgentEvent
         if (event.type === 'thread-goal-cleared') return null
         if (event.type === 'thread-goal-updated') {
-            const goal = (event as { goal?: ThreadGoal }).goal ?? null
+            const record = event as { goal?: ThreadGoal }
+            const goal = record.goal ?? null
             if (goal?.status === 'complete' && sawNewerNonGoalUserMessage) {
                 return null
             }
             return goal
+        }
+    }
+    const fallbackGoal = prefixGoalSummary?.rawGoal ?? null
+    if (!fallbackGoal) return null
+    if (
+        fallbackGoal.status === 'complete'
+        && (sawNewerNonGoalUserMessage || prefixGoalSummary?.sawNewerNonGoalUserMessage)
+    ) {
+        return null
+    }
+    return fallbackGoal
+}
+
+export function findLatestUsageInMessages(
+    normalized: readonly NormalizedMessage[]
+): LatestUsage | null {
+    for (let i = normalized.length - 1; i >= 0; i--) {
+        const msg = normalized[i]
+        if (msg.usage && isUsageVisibleInParentContext(msg)) {
+            return {
+                inputTokens: msg.usage.input_tokens,
+                outputTokens: msg.usage.output_tokens,
+                cacheCreation: msg.usage.cache_creation_input_tokens ?? 0,
+                cacheRead: msg.usage.cache_read_input_tokens ?? 0,
+                contextSize: calculateContextSize(msg.usage),
+                contextWindow: msg.usage.context_window ?? null,
+                model: msg.model ?? null,
+                timestamp: msg.createdAt
+            }
         }
     }
     return null
@@ -149,7 +225,25 @@ export function reduceChatBlocks(
     normalized: NormalizedMessage[],
     agentState: AgentState | null | undefined,
     options: ReduceChatBlocksOptions = {}
-): { blocks: ChatBlock[]; hasReadyEvent: boolean; latestUsage: LatestUsage | null; latestGoal: ThreadGoal | null } {
+): { blocks: ChatBlock[]; timeline: TimelineCheckpoint; hasReadyEvent: boolean; latestUsage: LatestUsage | null; latestGoal: ThreadGoal | null } {
+    // Retain lifecycle authority even when a newer content snapshot replaces its message.
+    const lifecycleMessages: readonly TracedMessage[] = normalized
+    const turnStates = new Map<string, TurnState>()
+    for (const msg of lifecycleMessages) {
+        if (
+            !msg.isSidechain
+            && msg.sidechainId === undefined
+            && msg.parentToolUseId == null
+            && msg.turnId !== undefined
+            && msg.turnState !== undefined
+            && msg.turnState !== 'history'
+            && (msg.turnState !== 'running' || !turnStates.has(msg.turnId))
+        ) {
+            // A replayed running snapshot cannot reopen a canonically closed turn.
+            turnStates.set(msg.turnId, msg.turnState)
+        }
+    }
+
     normalized = collapseAssistantSnapshots(normalized)
     const permissionsById = getPermissions(agentState)
     const titleChangesByToolUseId = collectTitleChanges(normalized)
@@ -170,9 +264,23 @@ export function reduceChatBlocks(
 
     const consumedGroupIds = new Set<string>()
     const emittedTitleChangeToolUseIds = new Set<string>()
-    const reducerContext = { permissionsById, groups, consumedGroupIds, titleChangesByToolUseId, emittedTitleChangeToolUseIds }
-    const rootResult = reduceTimeline(root, reducerContext)
-    let hasReadyEvent = rootResult.hasReadyEvent
+    const reducerContext = {
+        permissionsById,
+        groups,
+        consumedGroupIds,
+        titleChangesByToolUseId,
+        emittedTitleChangeToolUseIds,
+        turnStates,
+        activeTurnId: options.activeTurnId,
+        sessionThinking: options.sessionThinking
+    }
+    const retained = options.retainedTimelineSuffix
+    const suffixStart = retained ? root.findIndex((msg) => msg.id === retained.startMessageId) : -1
+    const rootResult = reduceTimeline(suffixStart >= 0 ? root.slice(0, suffixStart) : root, reducerContext)
+    if (retained && suffixStart >= 0) rootResult.blocks.push(...retained.blocks)
+    const hasReadyEvent = rootResult.hasReadyEvent || Boolean(suffixStart >= 0 && retained?.hasReadyEvent)
+    // Permission synthesis mutates rootResult.blocks; the checkpoint owns the earlier stage.
+    const timeline: TimelineCheckpoint = { blocks: rootResult.blocks, hasReadyEvent }
     const renderedToolIds = collectRenderedToolIds(rootResult.blocks)
 
     // Synthesize a tool card only for a *pending* permission that has no tool
@@ -186,13 +294,15 @@ export function reduceChatBlocks(
     // Also skip if the permission is older than the oldest message in the
     // current view, to avoid mixing old tool cards with newer messages when
     // paginating.
-    const oldestMessageTime = normalized.length > 0
-        ? Math.min(...normalized.map(m => m.createdAt))
-        : null
+    const oldestMessageTime = options.oldestWindowMessageTime !== undefined
+        ? options.oldestWindowMessageTime
+        : normalized.length > 0
+            ? Math.min(...normalized.map(m => m.createdAt))
+            : null
 
     for (const [id, entry] of permissionsById) {
         if (entry.permission.status !== 'pending') continue
-        if (renderedToolIds.has(id)) continue
+        if (renderedToolIds.has(id) || options.prefixToolIds?.has(id)) continue
 
         const createdAt = entry.permission.createdAt ?? Date.now()
 
@@ -201,6 +311,7 @@ export function reduceChatBlocks(
         if (oldestMessageTime !== null && createdAt < oldestMessageTime) {
             continue
         }
+        if (rootResult.blocks === timeline.blocks) rootResult.blocks = [...rootResult.blocks]
 
         ensureToolBlock(rootResult.blocks, rootResult.toolBlocksById, id, {
             createdAt,
@@ -212,29 +323,13 @@ export function reduceChatBlocks(
         })
     }
 
-    // Calculate latest usage from messages (find the most recent message with usage data)
-    let latestUsage: LatestUsage | null = null
-    for (let i = normalized.length - 1; i >= 0; i--) {
-        const msg = normalized[i]
-        if (msg.usage && isUsageVisibleInParentContext(msg)) {
-            latestUsage = {
-                inputTokens: msg.usage.input_tokens,
-                outputTokens: msg.usage.output_tokens,
-                cacheCreation: msg.usage.cache_creation_input_tokens ?? 0,
-                cacheRead: msg.usage.cache_read_input_tokens ?? 0,
-                contextSize: calculateContextSize(msg.usage),
-                contextWindow: msg.usage.context_window ?? null,
-                model: msg.model ?? null,
-                timestamp: msg.createdAt
-            }
-            break
-        }
-    }
+    const latestUsage = findLatestUsageInMessages(normalized)
 
     return {
         blocks: filterSilentGoalBlocks(foldCompactionEvents(dedupeAgentEvents(foldApiErrorEvents(rootResult.blocks)))),
+        timeline,
         hasReadyEvent,
         latestUsage,
-        latestGoal: getLatestThreadGoal(options.goalStateMessages ?? normalized)
+        latestGoal: getLatestThreadGoal(options.goalStateMessages ?? normalized, options.prefixGoalSummary)
     }
 }

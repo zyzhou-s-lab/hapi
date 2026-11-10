@@ -109,15 +109,20 @@ function StoreThreadMessagesById(props: {
     components: ThreadMessageComponents
 }) {
     const timelineEntries = useSessionTimelineIndex(props.store)
+    const UserComponent = (props.components?.UserMessage ?? HappyUserMessage) as React.ComponentType<{ messageId?: string }>
+    const AssistantComponent = (props.components?.AssistantMessage ?? HappyAssistantMessage) as React.ComponentType<{ messageId?: string }>
+    const SystemComponent = (props.components?.SystemMessage ?? HappySystemMessage) as React.ComponentType<{ messageId?: string }>
     return (
         <>
-            {timelineEntries.map((entry) => (
-                <ThreadPrimitive.Unstable_MessageById
-                    key={entry.id}
-                    messageId={entry.id}
-                    components={props.components}
-                />
-            ))}
+            {timelineEntries.map((entry) => {
+                if (entry.role === 'user') {
+                    return <UserComponent key={entry.id} messageId={entry.id} />
+                }
+                if (entry.role === 'system') {
+                    return <SystemComponent key={entry.id} messageId={entry.id} />
+                }
+                return <AssistantComponent key={entry.id} messageId={entry.id} />
+            })}
         </>
     )
 }

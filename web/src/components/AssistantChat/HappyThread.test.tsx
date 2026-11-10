@@ -523,12 +523,15 @@ describe('scroll anchor helpers', () => {
         viewport.remove()
     })
 
-    it('offsets scrollTop by height growth when older blocks are prepended inside the anchored split turn', () => {
+    it('offsets scrollTop by stable child displacement when older blocks are prepended inside the anchored split turn', () => {
         const viewport = document.createElement('div')
         const messages = document.createElement('div')
         messages.className = 'happy-thread-messages'
         const splitTurn = document.createElement('div')
         splitTurn.id = 'hapi-message-split-turn'
+        const child = document.createElement('div')
+        child.dataset.blockId = 'existing-step'
+        splitTurn.append(child)
         messages.append(splitTurn)
         viewport.append(messages)
         document.body.append(viewport)
@@ -536,10 +539,15 @@ describe('scroll anchor helpers', () => {
 
         let currentHeight = 400
         let prependedAbove = 0
+        let childTop = 0
         vi.spyOn(viewport, 'getBoundingClientRect').mockReturnValue(rect({ top: 100, bottom: 700 }))
         vi.spyOn(splitTurn, 'getBoundingClientRect').mockImplementation(() => rect({
             top: 100 + prependedAbove - viewport.scrollTop,
             bottom: 100 + prependedAbove + currentHeight - viewport.scrollTop
+        }))
+        vi.spyOn(child, 'getBoundingClientRect').mockImplementation(() => rect({
+            top: 100 + prependedAbove + childTop - viewport.scrollTop,
+            bottom: 100 + prependedAbove + childTop + 100 - viewport.scrollTop
         }))
 
         const anchor = captureScrollAnchor(viewport)
@@ -552,6 +560,7 @@ describe('scroll anchor helpers', () => {
         // plus 200px of an earlier user message inserted above it.
         currentHeight = 1_000
         prependedAbove = 200
+        childTop = 600
         expect(restoreScrollAnchor(viewport, anchor!)).toBe(true)
         expect(viewport.scrollTop).toBe(800)
 
@@ -560,6 +569,14 @@ describe('scroll anchor helpers', () => {
         currentHeight = 1_150
         expect(restoreScrollAnchor(viewport, anchor!)).toBe(true)
         expect(viewport.scrollTop).toBe(800)
+
+        // A later genuine scroll drift still restores the pinned location.
+        viewport.scrollTop = 760
+        expect(restoreScrollAnchor(viewport, anchor!)).toBe(true)
+        expect(viewport.scrollTop).toBe(800)
+        prependedAbove += 30
+        expect(restoreScrollAnchor(viewport, anchor!)).toBe(true)
+        expect(viewport.scrollTop).toBe(830)
 
         viewport.remove()
     })
@@ -574,12 +591,16 @@ describe('scroll anchor helpers', () => {
         const splitTurn = document.createElement('div')
         splitTurn.id = 'hapi-message-split-turn'
         splitTurn.setAttribute('data-hapi-message-role', 'assistant')
+        const child = document.createElement('div')
+        child.dataset.blockId = 'existing-step'
+        splitTurn.append(child)
         messages.append(hoistedSystemEvent, splitTurn)
         viewport.append(messages)
         document.body.append(viewport)
         viewport.scrollTop = 0
 
         let currentHeight = 500
+        let childTop = 0
         vi.spyOn(viewport, 'getBoundingClientRect').mockReturnValue(rect({ top: 100, bottom: 700 }))
         vi.spyOn(hoistedSystemEvent, 'getBoundingClientRect').mockImplementation(() => rect({
             top: 100 - viewport.scrollTop,
@@ -588,6 +609,10 @@ describe('scroll anchor helpers', () => {
         vi.spyOn(splitTurn, 'getBoundingClientRect').mockImplementation(() => rect({
             top: 124 - viewport.scrollTop,
             bottom: 124 + currentHeight - viewport.scrollTop
+        }))
+        vi.spyOn(child, 'getBoundingClientRect').mockImplementation(() => rect({
+            top: 124 + childTop - viewport.scrollTop,
+            bottom: 224 + childTop - viewport.scrollTop
         }))
 
         const anchor = captureScrollAnchor(viewport)
@@ -599,11 +624,134 @@ describe('scroll anchor helpers', () => {
         // Prepending earlier blocks inside the split turn grows its height by 900px while
         // the hoisted system event remains at index 0 with height 24px.
         currentHeight = 1_400
+        childTop = 900
         expect(restoreScrollAnchor(viewport, anchor!)).toBe(true)
         expect(viewport.scrollTop).toBe(900)
 
         viewport.remove()
     })
+    it.each([
+        { name: 'external and internal prepend', above: 200, inside: 600, tail: 0, child: true, expected: 900 },
+        { name: 'internal prepend', above: 0, inside: 900, tail: 0, child: true, expected: 1000 },
+        { name: 'bottom growth only', above: 0, inside: 0, tail: 250, child: true, expected: 100 },
+        { name: 'internal prepend and bottom growth', above: 0, inside: 600, tail: 250, child: true, expected: 700 },
+        { name: 'external prepend and bottom growth', above: 200, inside: 0, tail: 250, child: true, expected: 300 },
+        { name: 'bottom growth without a stable child', above: 0, inside: 0, tail: 250, child: false, expected: 100 },
+        { name: 'negative anchor movement and internal prepend', above: -30, inside: 40, tail: 0, child: true, expected: 140 },
+        { name: 'negative child movement', above: 50, inside: -20, tail: 250, child: true, expected: 150 },
+    ])('compensates only upward insertion: $name', ({ above, inside, tail, child: hasChild, expected }) => {
+        const viewport = document.createElement('div')
+        const message = document.createElement('div')
+        message.dataset.threadEntryId = 'geometry-turn'
+        const wrapper = document.createElement('div')
+        wrapper.dataset.blockId = 'stable-step'
+        const child = document.createElement('div')
+        child.dataset.blockId = 'stable-step'
+        if (hasChild) {
+            wrapper.append(child)
+            message.append(wrapper)
+        }
+        viewport.append(message)
+        document.body.append(viewport)
+        viewport.scrollTop = 100
+        let anchorTop = 0
+        let childTop = 120
+        let height = 1000
+        viewport.getBoundingClientRect = () => rect({ top: 100, bottom: 700 })
+        message.getBoundingClientRect = () => rect({
+            top: 100 + anchorTop - viewport.scrollTop,
+            bottom: 100 + anchorTop + height - viewport.scrollTop,
+        })
+        // A same-id rail wrapper must not hide the stable row's displacement.
+        wrapper.getBoundingClientRect = message.getBoundingClientRect
+        child.getBoundingClientRect = () => rect({
+            top: 100 + anchorTop + childTop - viewport.scrollTop,
+            bottom: 200 + anchorTop + childTop - viewport.scrollTop,
+        })
+        try {
+            const anchor = captureScrollAnchor(viewport)!
+            anchorTop += above
+            childTop += inside
+            height += inside + tail
+            expect(restoreScrollAnchor(viewport, anchor)).toBe(true)
+            expect(viewport.scrollTop).toBe(expected)
+            expect(restoreScrollAnchor(viewport, anchor)).toBe(true)
+            expect(viewport.scrollTop).toBe(expected)
+            viewport.scrollTop -= 15
+            expect(restoreScrollAnchor(viewport, anchor)).toBe(true)
+            expect(viewport.scrollTop).toBe(expected)
+            viewport.scrollTop += 25
+            expect(restoreScrollAnchor(viewport, anchor)).toBe(true)
+            expect(viewport.scrollTop).toBe(expected)
+        } finally {
+            viewport.remove()
+        }
+    })
+
+    it('rebases a consumed prepend after the browser clamps scrollTop', () => {
+        const viewport = document.createElement('div')
+        const message = document.createElement('div')
+        message.dataset.threadEntryId = 'clamped-turn'
+        viewport.append(message)
+        document.body.append(viewport)
+        let scrollTop = 100
+        let anchorTop = 0
+        const writeScrollTop = vi.fn((value: number) => { scrollTop = Math.min(200, value) })
+        Object.defineProperty(viewport, 'scrollTop', { get: () => scrollTop, set: writeScrollTop })
+        viewport.getBoundingClientRect = () => rect({ top: 100, bottom: 700 })
+        message.getBoundingClientRect = () => rect({
+            top: 100 + anchorTop - scrollTop,
+            bottom: 1100 + anchorTop - scrollTop,
+        })
+        try {
+            const anchor = captureScrollAnchor(viewport)!
+            anchorTop = 400
+            expect(restoreScrollAnchor(viewport, anchor)).toBe(true)
+            expect(scrollTop).toBe(200)
+            writeScrollTop.mockClear()
+            expect(restoreScrollAnchor(viewport, anchor)).toBe(true)
+            expect(writeScrollTop).not.toHaveBeenCalled()
+        } finally {
+            viewport.remove()
+        }
+    })
+
+    it('uses the first visible stable child and tolerates its removal', () => {
+        const viewport = document.createElement('div')
+        const message = document.createElement('div')
+        message.dataset.threadEntryId = 'visible-child-turn'
+        const hidden = document.createElement('div')
+        hidden.dataset.blockId = 'offscreen-step'
+        const visible = document.createElement('div')
+        visible.dataset.blockId = 'visible-step'
+        message.append(hidden, visible)
+        viewport.append(message)
+        document.body.append(viewport)
+        viewport.scrollTop = 100
+        let childTop = 120
+        let height = 1000
+        viewport.getBoundingClientRect = () => rect({ top: 100, bottom: 700 })
+        message.getBoundingClientRect = () => rect({ top: 100 - viewport.scrollTop, bottom: 100 + height - viewport.scrollTop })
+        hidden.getBoundingClientRect = () => rect({ top: -1000, bottom: -900 })
+        visible.getBoundingClientRect = () => rect({ top: 100 + childTop - viewport.scrollTop, bottom: 200 + childTop - viewport.scrollTop })
+        try {
+            const anchor = captureScrollAnchor(viewport)!
+            childTop += 200
+            height += 450
+            expect(restoreScrollAnchor(viewport, anchor)).toBe(true)
+            expect(viewport.scrollTop).toBe(300)
+            visible.remove()
+            height += 250
+            expect(restoreScrollAnchor(viewport, anchor)).toBe(true)
+            expect(viewport.scrollTop).toBe(300)
+            message.remove()
+            expect(restoreScrollAnchor(viewport, anchor)).toBe(false)
+            expect(viewport.scrollTop).toBe(300)
+        } finally {
+            viewport.remove()
+        }
+    })
+
     it('does not recapture the anchor once the older page is applied', () => {
         expect(shouldRecapturePendingHistoryAnchor('loading')).toBe(true)
         expect(shouldRecapturePendingHistoryAnchor('awaiting-render')).toBe(false)
@@ -892,9 +1040,8 @@ describe('3-state scroll mode and structure version helpers', () => {
             autoScrollEnabled: false,
             pendingRestore: {
                 runId: 1,
+                sessionId: 'session-1',
                 anchor: null,
-                scrollTop: 0,
-                scrollHeight: 1200,
                 targetHistoryVersion: null,
                 pinOnRestore: false,
             },

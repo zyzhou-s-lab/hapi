@@ -35,8 +35,8 @@ import {
     threadMessageRuns,
     type TurnEntitySnapshot,
     type TurnEntityContentPart,
+    type TurnHeaderSnapshot,
 } from '@/lib/assistant-runtime-blocks'
-
 export {
     type AggregatedAssistantMeta,
     type BlockWithThreadMessageId,
@@ -473,12 +473,13 @@ function extractMessageContent(message: AppendMessage): { text: string; attachme
 }
 
 const NO_STORE_SUBSCRIBE = () => () => {}
-const NO_STORE_SNAPSHOT = () => null
+const NO_STORE_VERSION = () => -1
 
-/** Converts changed thread messages only. The cache never owns frozen payloads:
- * each source is a complete current turn (or one current user/system block). */
+/** Converts changed thread messages only. In entity-store mode, assistant turns use
+ * lightweight TurnHeaderSnapshot skeletons so streaming content/tool deltas never
+ * trigger assistant-ui ThreadMessage conversion or reconciliation. */
 export class HappyThreadMessageCache {
-    private byId = new Map<string, { source: TurnEntitySnapshot | VisibleChatBlock; running: boolean; message: ThreadMessage }>()
+    private byId = new Map<string, { source: TurnHeaderSnapshot | TurnEntitySnapshot | VisibleChatBlock; running: boolean; message: ThreadMessage }>()
     private blockCache = new WeakMap<VisibleChatBlock, ThreadMessageLike>()
     private messages: readonly ThreadMessage[] = []
 
@@ -486,22 +487,47 @@ export class HappyThreadMessageCache {
         const standaloneRuns = snapshot ? null : threadMessageRuns(entries)
         const length = snapshot?.timelineIndex.length ?? standaloneRuns!.length
         const next: ThreadMessage[] = []
-        const nextById = new Map<string, { source: TurnEntitySnapshot | VisibleChatBlock; running: boolean; message: ThreadMessage }>()
+        const nextById = new Map<string, { source: TurnHeaderSnapshot | TurnEntitySnapshot | VisibleChatBlock; running: boolean; message: ThreadMessage }>()
         let unchanged = length === this.messages.length
         for (let i = 0; i < length; i += 1) {
             const ref = snapshot?.timelineIndex[i]
-            const turn = turns.get(ref?.id ?? standaloneRuns![i]![0]!.threadMessageId)
+            const id = ref?.id ?? standaloneRuns![i]![0]!.threadMessageId
+            const header = snapshot ? snapshot.turnHeadersById.get(id) : undefined
+            const turn = header ? undefined : turns.get(id)
             const first = ref
-                ? { threadMessageId: ref.id, block: turn?.blocks[0] ?? snapshot!.visibleById.get(ref.id)!, timestamp: turn?.timestamp }
+                ? { threadMessageId: ref.id, block: snapshot!.visibleById.get(ref.id), timestamp: header?.timestamp ?? turn?.timestamp }
                 : standaloneRuns![i]![0]!
-            const source = turn ?? first.block
-            const running = Boolean(turn && isRunning && i === length - 1)
+            const source = header ?? turn ?? first.block!
+            const running = Boolean((header || turn) && isRunning && i === length - 1)
             const old = this.byId.get(first.threadMessageId)
             let message: ThreadMessageLike
             if (old?.source === source && old.running === running) {
                 message = old.message
+            } else if (header) {
+                const createdAt = old?.message.createdAt?.getTime() === header.timestamp
+                    ? old.message.createdAt
+                    : new Date(header.timestamp)
+                message = {
+                    role: 'assistant',
+                    id: header.id,
+                    createdAt,
+                    content: [],
+                    status: running ? { type: 'running' } : { type: 'complete', reason: 'stop' },
+                    metadata: {
+                        custom: {
+                            kind: 'assistant',
+                            invokedAt: header.invokedAt,
+                            durationMs: header.durationMs,
+                            usage: header.usage,
+                            model: header.model,
+                            roundSummary: header.roundSummary,
+                            turnCount: header.turnCount,
+                        } satisfies HappyChatMessageMetadata,
+                    },
+                }
             } else if (!turn) {
-                message = toThreadMessageLike(first.block, first.threadMessageId, first.timestamp ?? getBlockPresentationTimestamp(first.block))
+                const block = first.block!
+                message = toThreadMessageLike(block, first.threadMessageId, first.timestamp ?? getBlockPresentationTimestamp(block))
             } else {
                 const converted = turn.blocks.map((block) => {
                     const cached = this.blockCache.get(block)
@@ -574,12 +600,14 @@ export function useHappyRuntime(props: {
 }) {
     const isRunning = props.isRunning ?? props.session.thinking
     const flavor = props.session.metadata?.flavor
-    const entitySnapshot = useSyncExternalStore(
-        props.entityStore?.subscribe ?? NO_STORE_SUBSCRIBE,
-        props.entityStore?.getSnapshot ?? NO_STORE_SNAPSHOT,
-        props.entityStore?.getSnapshot ?? NO_STORE_SNAPSHOT
+    const runtimeTopologyVersion = useSyncExternalStore(
+        props.entityStore?.subscribeRuntimeTopology ?? NO_STORE_SUBSCRIBE,
+        props.entityStore?.getRuntimeTopologyVersion ?? NO_STORE_VERSION,
+        props.entityStore?.getRuntimeTopologyVersion ?? NO_STORE_VERSION
     )
-
+    const entitySnapshot = runtimeTopologyVersion >= 0 && props.entityStore
+        ? props.entityStore.getSnapshot()
+        : null
     // Compute response-group aggregates once per block list so we can
     // inject the summed metadata onto each group's first visible block.
     // The library's `joinExternalMessages` only preserves

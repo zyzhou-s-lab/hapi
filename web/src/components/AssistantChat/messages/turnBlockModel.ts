@@ -5,6 +5,7 @@ import { isAskUserQuestionToolName } from '@/components/ToolCard/askUserQuestion
 import {
     projectSessionTodoSnapshot,
     projectToolTodoSnapshot,
+    resolveTodoToolKind,
 } from '@/chat/projections/todoProjection'
 import {
     extractTodoChecklist,
@@ -484,7 +485,7 @@ export function partitionTurn(
         if (part.type === 'reasoning' && typeof part.text === 'string' && part.text.trim()) {
             rows.push({
                 kind: 'reasoning',
-                key: `reasoning:${index}`,
+                key: part.blockId && part.blockId.length > 0 ? part.blockId : `reasoning:${index}`,
                 text: part.text.trim(),
                 ...(part.blockId !== undefined ? { blockId: part.blockId } : {}),
             })
@@ -494,7 +495,7 @@ export function partitionTurn(
             const phase = part.phase === 'execution' || part.phase === 'final_answer' ? part.phase : undefined
             rows.push({
                 kind: 'text',
-                key: `text:${index}`,
+                key: part.blockId && part.blockId.length > 0 ? part.blockId : `text:${index}`,
                 text: part.text.trim(),
                 trailing: false,
                 ...(phase !== undefined ? { phase } : {}),
@@ -1766,6 +1767,75 @@ function areDisplayStepRowsEqual(a: TurnDisplayStepRow, b: TurnDisplayStepRow): 
     return areTurnRowsEqual(a as TurnRow, b as TurnRow)
 }
 
+export function projectSubturnTodoChecklists(
+    rows: readonly TurnRow[],
+    options?: {
+        readonly streaming?: boolean
+        readonly fallbackTodos?: readonly TodoItem[] | null
+    },
+    previousChecklists?: readonly ProjectedTodoChecklist[] | null
+): {
+    readonly todoChecklists: ProjectedTodoChecklist[]
+    readonly pinnedChecklistKeys: ReadonlySet<string>
+} {
+    const streaming = options?.streaming ?? false
+    const rawFallbackChecklistItems: TodoCardItem[] =
+        options?.fallbackTodos && options.fallbackTodos.length > 0
+            ? [...projectSessionTodoSnapshot(options.fallbackTodos).items]
+            : []
+    const fallbackChecklistItems: TodoCardItem[] =
+        rawFallbackChecklistItems.length > 0 && !rawFallbackChecklistItems.every((item) => item.status === 'blocked')
+            ? rawFallbackChecklistItems
+            : []
+    const toolRowsInTurn = rows.filter((row): row is TurnToolRow => row.kind === 'tool')
+    const allToolBlocks = toolRowsInTurn.map((row) => row.block)
+
+    const pinnedChecklistByKey = new Map<string, TodoCardItem[]>()
+    for (const row of toolRowsInTurn) {
+        if (!row.pinned || row.error) continue
+        const checklist = [...projectToolTodoSnapshot(row.block, allToolBlocks, fallbackChecklistItems).items]
+        const rule = classifyToolPresentation(row.block, {
+            hasValidTodoChecklist: checklist.length > 0,
+            errorRecovered: false,
+        })
+        if (rule.slot === 'turn-todo-section' && checklist.length > 0) {
+            pinnedChecklistByKey.set(row.key, checklist)
+        }
+    }
+
+    const rawChecklists: ProjectedTodoChecklist[] = []
+    if (pinnedChecklistByKey.size > 0) {
+        for (const [key, items] of pinnedChecklistByKey.entries()) {
+            rawChecklists.push({ key, items })
+        }
+    } else if (
+        fallbackChecklistItems.length > 0
+        && (
+            (streaming && fallbackChecklistItems.some((item) => item.status === 'in_progress' || item.status === 'pending'))
+            || (previousChecklists?.some((checklist) => checklist.key === 'session-fallback-todos')
+                && !fallbackChecklistItems.every((item) => item.status === 'blocked' || item.status === 'completed')
+                || previousChecklists?.some((checklist) => checklist.key === 'session-fallback-todos')
+                    && fallbackChecklistItems.every((item) => item.status === 'completed'))
+        )
+    ) {
+        rawChecklists.push({ key: 'session-fallback-todos', items: fallbackChecklistItems })
+    }
+
+    const mappedChecklists = rawChecklists.map((checklist) => {
+        const prevChecklist = previousChecklists?.find((c) => c.key === checklist.key)
+        return prevChecklist && areTodoCardItemsEqual(prevChecklist.items, checklist.items)
+            ? prevChecklist
+            : checklist
+    })
+    const stableTodoChecklists = previousChecklists && isSameRefArray(mappedChecklists, previousChecklists)
+        ? [...previousChecklists]
+        : mappedChecklists
+    return {
+        todoChecklists: stableTodoChecklists,
+        pinnedChecklistKeys: new Set(pinnedChecklistByKey.keys()),
+    }
+}
+
 export function projectTurn(
     partition: TurnPartition,
     options?: {
@@ -1792,64 +1862,27 @@ export function projectTurn(
         : coalesceTurnStepRows(stepCandidates, { absorbTransitionalThoughts: viewMode === 'normal' })
     const hasSteps = stepRows.some((row) => row.kind !== 'text' || row.phase === 'execution') || isInitialStreamingWait
 
-    const rawFallbackChecklistItems: TodoCardItem[] =
-        options?.fallbackTodos && options.fallbackTodos.length > 0
-            ? [...projectSessionTodoSnapshot(options.fallbackTodos).items]
-            : []
-    const fallbackChecklistItems: TodoCardItem[] =
-        rawFallbackChecklistItems.length > 0 && !rawFallbackChecklistItems.every((item) => item.status === 'blocked')
-            ? rawFallbackChecklistItems
-            : []
-    const allToolBlocks = stepCandidates
-        .filter((r): r is TurnToolRow => r.kind === 'tool')
-        .map((r) => r.block)
-
-    const pinnedChecklistByKey = new Map<string, TodoCardItem[]>()
-    for (const row of stepRows) {
-        if (row.kind !== 'tool' || !row.pinned || row.error) continue
-        const checklist = [...projectToolTodoSnapshot(row.block, allToolBlocks, fallbackChecklistItems).items]
-        const rule = classifyToolPresentation(row.block, {
-            hasValidTodoChecklist: checklist.length > 0,
-            errorRecovered: false,
-        })
-        if (rule.slot === 'turn-todo-section' && checklist.length > 0) {
-            pinnedChecklistByKey.set(row.key, checklist)
-        }
-    }
-
-    const todoChecklists: ProjectedTodoChecklist[] = []
-    if (pinnedChecklistByKey.size > 0) {
-        for (const [key, items] of pinnedChecklistByKey.entries()) {
-            todoChecklists.push({ key, items })
-        }
-    } else if (
-        fallbackChecklistItems.length > 0
-        && (
-            (streaming && fallbackChecklistItems.some((item) => item.status === 'in_progress' || item.status === 'pending'))
-            || (previousProjected?.subturns[0]?.todoChecklists.some((checklist) => checklist.key === 'session-fallback-todos')
-                && !fallbackChecklistItems.every((item) => item.status === 'blocked' || item.status === 'completed')
-                || previousProjected?.subturns[0]?.todoChecklists.some((checklist) => checklist.key === 'session-fallback-todos')
-                    && fallbackChecklistItems.every((item) => item.status === 'completed'))
-        )
-    ) {
-        todoChecklists.push({ key: 'session-fallback-todos', items: fallbackChecklistItems })
-    }
+    const { todoChecklists, pinnedChecklistKeys } = projectSubturnTodoChecklists(
+        stepCandidates,
+        { streaming, fallbackTodos: options?.fallbackTodos },
+        previousProjected?.subturns[0]?.todoChecklists
+    )
 
     const collapsedPinnedRailRows = stepRows.filter((row): row is TurnToolRow | TurnCoalescedRow => {
         if (row.kind === 'coalesced') {
             return row.rows.some(
-                (r) => r.kind === 'tool' && r.pinned && !pinnedChecklistByKey.has(r.key)
+                (r) => r.kind === 'tool' && r.pinned && !pinnedChecklistKeys.has(r.key)
             )
         }
         if (row.kind === 'tool') {
-            const checklist = !row.error
-                ? [...projectToolTodoSnapshot(row.block, allToolBlocks, fallbackChecklistItems).items]
-                : []
+            if (!row.error && !row.permission && resolveTodoToolKind(row.block.tool.name) !== null) {
+                return false
+            }
             const rule = classifyToolPresentation(row.block, {
-                hasValidTodoChecklist: checklist.length > 0,
+                hasValidTodoChecklist: pinnedChecklistKeys.has(row.key),
                 errorRecovered: !row.pinned && row.error,
             })
-            return rule.slot === 'rail' && row.pinned && !pinnedChecklistByKey.has(row.key)
+            return rule.slot === 'rail' && row.pinned && !pinnedChecklistKeys.has(row.key)
         }
         return false
     })

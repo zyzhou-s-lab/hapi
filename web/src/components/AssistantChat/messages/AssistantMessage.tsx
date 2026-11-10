@@ -1,24 +1,28 @@
-import { useCallback, useMemo, useSyncExternalStore } from 'react'
+import { useCallback, useMemo } from 'react'
 import { MessagePrimitive, useAuiState, type TextMessagePart } from '@assistant-ui/react'
 import { Reasoning, ReasoningGroup } from '@/components/assistant-ui/reasoning'
 import { HappyToolMessage } from '@/components/AssistantChat/messages/ToolMessage'
 import { messageHasTurnActivity, TurnBlock } from '@/components/AssistantChat/messages/TurnBlock'
 import { CliOutputBlock } from '@/components/CliOutputBlock'
 import type { HappyChatMessageMetadata } from '@/lib/assistant-runtime'
-import { getAssistantCopyText, hasAssistantCopyableText } from '@/components/AssistantChat/messages/assistantCopyText'
+import { getAssistantCopyText } from '@/components/AssistantChat/messages/assistantCopyText'
 import { getConversationMessageAnchorId } from '@/chat/outline'
 import { CodexReviewCard } from '@/components/AssistantChat/messages/CodexReviewCard'
 import { MessageActions } from '@/components/AssistantChat/messages/MessageActions'
-import { useHappyChatHistoryContext, useHappyChatStaticContext } from '@/components/AssistantChat/context'
+import {
+    useHappyChatHistoryContext,
+    useHappyChatStaticContext,
+    useOptionalHappyChatSessionStateContext,
+} from '@/components/AssistantChat/context'
 import {
     useOptionalSessionEntityStore,
+    useOptionalSessionTurnHeader,
     useOptionalSessionTurnLayout,
     useOptionalSessionVisibleEntity,
 } from '@/hooks/useSessionEntityStore'
 import { NotifySummaryText } from '@/components/AssistantChat/messages/NotifySummaryText'
 import { useSessionSummaryInChat } from '@/hooks/useSessionSummaryInChat'
 import { SpeakSummaryButton } from '@/components/AssistantChat/messages/SpeakSummaryButton'
-
 const MESSAGE_PART_COMPONENTS = {
     Text: NotifySummaryText,
     Reasoning,
@@ -36,75 +40,25 @@ function StoreReview({ blockId }: { blockId: string }) {
     return entity?.kind === 'codex-review' ? <CodexReviewCard review={entity.review} /> : null
 }
 
-type TurnActionMetaSlice = {
-    readonly hasCopyableText: boolean
-    readonly canSpeak: boolean
-    readonly metadata: {
-        durationMs?: number
-        usage?: HappyChatMessageMetadata['usage']
-        model: string | null
-        turnCount?: number
-        roundSummary?: HappyChatMessageMetadata['roundSummary']
-    }
-}
-
-const EMPTY_TURN_ACTION_SLICE: TurnActionMetaSlice = Object.freeze({
-    hasCopyableText: false,
-    canSpeak: true,
-    metadata: Object.freeze({
-        durationMs: undefined,
-        usage: undefined,
-        model: null,
-        turnCount: undefined,
-        roundSummary: undefined,
-    }),
-})
-
-/** Copy/share/speech read the current turn at click time; metadata is a leaf. */
+/** Copy/share/speech read the current turn at click time; metadata subscribes only to header:<id>. */
 function StoreAssistantActions({ messageId, elementId }: { messageId: string; elementId: string }) {
     const store = useOptionalSessionEntityStore()
+    const header = useOptionalSessionTurnHeader(messageId)
+    const sessionState = useOptionalHappyChatSessionStateContext()
     const showSummary = useSessionSummaryInChat()
-    const subscribe = useCallback(
-        (listener: () => void) => (store && messageId ? store.subscribeEntity(messageId, listener) : () => {}),
-        [store, messageId]
+    const hasCopyableText = showSummary
+        ? Boolean(header?.hasCopyableText)
+        : Boolean(header?.hasStrippedCopyableText ?? header?.hasCopyableText)
+    const metadata = useMemo(
+        () => ({
+            durationMs: header?.durationMs,
+            usage: header?.usage,
+            model: header?.model ?? null,
+            turnCount: header?.turnCount,
+            roundSummary: header?.roundSummary,
+        }),
+        [header?.durationMs, header?.usage, header?.model, header?.turnCount, header?.roundSummary]
     )
-    const getSnapshot = useMemo(() => {
-        let previous: TurnActionMetaSlice = EMPTY_TURN_ACTION_SLICE
-        return (): TurnActionMetaSlice => {
-            if (!store || !messageId) return EMPTY_TURN_ACTION_SLICE
-            const turn = store.getTurnEntity(messageId)
-            if (!turn) return EMPTY_TURN_ACTION_SLICE
-            const first = turn.blocks[0]
-            const canSpeak = first?.kind !== 'cli-output' && first?.kind !== 'codex-review'
-            const hasCopyableText = hasAssistantCopyableText(turn.parts, { stripNotifySummary: !showSummary })
-            const model = turn.model ?? null
-            if (
-                previous !== EMPTY_TURN_ACTION_SLICE
-                && previous.hasCopyableText === hasCopyableText
-                && previous.canSpeak === canSpeak
-                && previous.metadata.durationMs === turn.durationMs
-                && previous.metadata.usage === turn.usage
-                && previous.metadata.model === model
-                && previous.metadata.turnCount === turn.turnCount
-                && previous.metadata.roundSummary === turn.roundSummary
-            ) {
-                return previous
-            }
-            previous = {
-                hasCopyableText,
-                canSpeak,
-                metadata: {
-                    durationMs: turn.durationMs,
-                    usage: turn.usage,
-                    model,
-                    turnCount: turn.turnCount,
-                    roundSummary: turn.roundSummary,
-                },
-            }
-            return previous
-        }
-    }, [store, messageId, showSummary])
-    const slice = useSyncExternalStore(subscribe, getSnapshot, getSnapshot)
     const getCopyText = useCallback(
         () => getAssistantCopyText(store?.getLiveTurnParts(messageId) ?? [], { stripNotifySummary: !showSummary }),
         [store, messageId, showSummary]
@@ -112,16 +66,20 @@ function StoreAssistantActions({ messageId, elementId }: { messageId: string; el
     return <AssistantActions
         messageId={messageId}
         elementId={elementId}
-        hasCopyableText={slice.hasCopyableText}
+        createdAt={header?.timestamp}
+        threadIsRunning={Boolean(sessionState?.sessionThinking)}
+        hasCopyableText={hasCopyableText}
         getCopyText={getCopyText}
-        metadata={slice.metadata}
-        canSpeak={slice.canSpeak}
+        metadata={metadata}
+        canSpeak={header?.canSpeak ?? true}
     />
 }
 
 function AssistantActions(props: {
     messageId: string
     elementId: string
+    createdAt?: Date | number
+    threadIsRunning?: boolean
     copyText?: string
     hasCopyableText?: boolean
     getCopyText?: () => string
@@ -134,9 +92,19 @@ function AssistantActions(props: {
         && ctx.isLatestCompletedBoundary?.(props.messageId) && !ctx.disabled && ctx.onForkConversation)
     const hasCopy = Boolean(props.copyText || props.hasCopyableText)
     return <div className="flex items-center gap-1">
-        <MessageActions align="start" copyText={props.copyText || undefined} getCopyText={hasCopy ? props.getCopyText : undefined}
-            metadata={props.metadata} messageElementId={props.elementId} showFork={showFork}
-            historyActionPending={history.historyActionPending} onFork={showFork ? () => ctx.onForkConversation!() : undefined} />
+        <MessageActions
+            align="start"
+            messageId={props.messageId}
+            createdAt={props.createdAt}
+            threadIsRunning={props.threadIsRunning}
+            copyText={props.copyText || undefined}
+            getCopyText={hasCopy ? props.getCopyText : undefined}
+            metadata={props.metadata}
+            messageElementId={props.elementId}
+            showFork={showFork}
+            historyActionPending={history.historyActionPending}
+            onFork={showFork ? () => ctx.onForkConversation!() : undefined}
+        />
         {props.canSpeak && hasCopy ? <SpeakSummaryButton messageId={props.messageId} text={props.copyText} getText={props.getCopyText} /> : null}
     </div>
 }
@@ -146,14 +114,20 @@ function StoreAssistantMessage({ messageId }: { messageId: string }) {
     const elementId = getConversationMessageAnchorId(messageId)
     const first = layout?.blocks[0]
     const standalone = layout?.blocks.length === 1
-    return <MessagePrimitive.Root id={elementId} data-hapi-message-role="assistant" className="happy-message px-1 min-w-0 max-w-full overflow-x-clip scroll-mt-4">
+    return <div
+        id={elementId}
+        data-message-id={messageId}
+        data-thread-entry-id={messageId}
+        data-hapi-message-role="assistant"
+        className="aui-message-root happy-message px-1 min-w-0 max-w-full overflow-x-clip scroll-mt-4"
+    >
         {standalone && first?.kind === 'cli-output'
             ? <StoreCliOutput blockId={first.id} />
             : standalone && first?.kind === 'codex-review'
                 ? <StoreReview blockId={first.id} />
-                : <TurnBlock />}
+                : <TurnBlock messageId={messageId} />}
         <StoreAssistantActions messageId={messageId} elementId={elementId} />
-    </MessagePrimitive.Root>
+    </div>
 }
 
 /** Standalone consumers keep assistant-ui's full content renderer. */
@@ -175,8 +149,24 @@ function RuntimeAssistantMessage({ messageId }: { messageId: string }) {
     </MessagePrimitive.Root>
 }
 
-export function HappyAssistantMessage() {
-    const store = useOptionalSessionEntityStore()
+function StoreAssistantMessageFromAui() {
     const messageId = useAuiState((s) => s.message.id)
-    return store ? <StoreAssistantMessage messageId={messageId} /> : <RuntimeAssistantMessage messageId={messageId} />
+    return <StoreAssistantMessage messageId={messageId} />
+}
+
+function RuntimeAssistantMessageFromAui() {
+    const messageId = useAuiState((s) => s.message.id)
+    return <RuntimeAssistantMessage messageId={messageId} />
+}
+
+export function HappyAssistantMessage(props: { messageId?: string } = {}) {
+    const store = useOptionalSessionEntityStore()
+    if (store) {
+        return props.messageId
+            ? <StoreAssistantMessage messageId={props.messageId} />
+            : <StoreAssistantMessageFromAui />
+    }
+    return props.messageId
+        ? <RuntimeAssistantMessage messageId={props.messageId} />
+        : <RuntimeAssistantMessageFromAui />
 }

@@ -57,17 +57,21 @@ describe('real assistant-ui entity runtime', () => {
         ], 'Complete tool output') })
         const current = view.result.current.thread.getState().messages
         expect(current[1]).toBe(initial[1])
+        const activeTurnId = current.at(-1)!.id
         const activeCreatedAt = current.at(-1)?.createdAt
+        const activeMessageBeforeSameHeaderDelta = current.at(-1)
         act(() => { update([
-            { type: 'thinking', thinking: 'Inspect the current implementation' },
+            { type: 'thinking', thinking: 'Inspect the current implementation (more thought)' },
             { type: 'tool_use', id: 'call', name: 'Read', input: { file_path: 'src/a.ts', i: 'Reading current source' } },
-            { type: 'text', text: 'Full final answer' },
+            { type: 'text', text: 'Full final answer updated' },
         ], 'Complete tool output') })
         expect(view.result.current.thread.getState().messages.at(-1)?.createdAt).toBe(activeCreatedAt)
-        expect(current.at(-1)?.content).toMatchObject([
-            { type: 'reasoning', text: 'Inspect the current implementation' },
-            { type: 'tool-call', toolCallId: 'call', args: { file_path: 'src/a.ts' }, result: 'Complete tool output' },
-            { type: 'text', text: 'Full final answer' },
+        expect(view.result.current.thread.getState().messages.at(-1)).toBe(activeMessageBeforeSameHeaderDelta)
+        expect(current.at(-1)?.content).toEqual([])
+        expect(store.getLiveTurnParts(activeTurnId)).toMatchObject([
+            { type: 'reasoning', text: 'Inspect the current implementation (more thought)' },
+            { type: 'tool-call', toolCallId: 'call', artifact: { tool: { input: { file_path: 'src/a.ts' } } }, result: 'Complete tool output' },
+            { type: 'text', text: 'Full final answer updated' },
         ])
         const settledTurn1 = current[1]
         const settledUser2 = current[2]
@@ -105,8 +109,10 @@ describe('real assistant-ui entity runtime', () => {
         view.rerender({ currentSession: { ...session, thinking: false } })
         expect(view.result.current.thread.getState().messages).toEqual([])
         act(() => { store.reconcileInput({ sessionId: 'other', messages: [user('other-u', 1), assistant('other-a', 2, [{ type: 'text', text: 'Other session' }])] }) })
+        const otherTurnId = store.getTimelineIndex().at(-1)!.id
         expect(view.result.current.thread.getState().messages.map((message) => message.id)).toEqual(store.getTimelineIndex().map((entry) => entry.id))
-        expect(view.result.current.thread.getState().messages.at(-1)?.content).toMatchObject([{ type: 'text', text: 'Other session' }])
+        expect(view.result.current.thread.getState().messages.at(-1)?.content).toEqual([])
+        expect(store.getCopyableText(otherTurnId)).toBe('Other session')
     })
 
     it('keeps historical answers complete while a new run waits for its first output', () => {
@@ -119,7 +125,8 @@ describe('real assistant-ui entity runtime', () => {
         const state = view.result.current.thread.getState()
         const settledId = store.getTimelineIndex()[1]!.id
         expect(state.isRunning).toBe(true)
-        expect(state.messages.find((m) => m.id === settledId)).toMatchObject({ status: { type: 'complete' }, content: [{ text: 'Settled answer' }] })
+        expect(state.messages.find((m) => m.id === settledId)).toMatchObject({ status: { type: 'complete' }, content: [] })
+        expect(store.getCopyableText(settledId)).toBe('Settled answer')
     })
 
     it('renders live text, CLI output, tool args/results, permissions, and Todo updates through real AssistantRuntimeProvider + Unstable_MessageById without re-rendering the list or TurnBlock on payload deltas', async () => {
@@ -140,24 +147,20 @@ describe('real assistant-ui entity runtime', () => {
             onRefresh: vi.fn(),
         } as unknown as HappyChatContextValue
 
-        const COMPONENTS = {
-            UserMessage: HappyUserMessage,
-            AssistantMessage: HappyAssistantMessage,
-            SystemMessage: HappySystemMessage,
-        } as const
-
         function CanonicalTimelineList({ entityStore }: { entityStore: SessionEntityStore }) {
             listRenders += 1
             const timeline = useSessionTimelineIndex(entityStore)
             return (
                 <div data-testid="canonical-list">
-                    {timeline.map((entry) => (
-                        <ThreadPrimitive.Unstable_MessageById
-                            key={entry.id}
-                            messageId={entry.id}
-                            components={COMPONENTS}
-                        />
-                    ))}
+                    {timeline.map((entry) => {
+                        if (entry.role === 'user') {
+                            return <HappyUserMessage key={entry.id} messageId={entry.id} />
+                        }
+                        if (entry.role === 'system') {
+                            return <HappySystemMessage key={entry.id} messageId={entry.id} />
+                        }
+                        return <HappyAssistantMessage key={entry.id} messageId={entry.id} />
+                    })}
                 </div>
             )
         }
@@ -205,7 +208,11 @@ describe('real assistant-ui entity runtime', () => {
         await waitFor(() => expect(screen.getByText('Hello')).toBeInTheDocument())
         const initialListRenders = listRenders
 
-        // 2. Stream text delta -> DOM updates live, listRenders stays identical
+        // 2. Stream text delta after copyable text already exists -> DOM updates live, listRenders and runtime topology stay quiet
+        let runtimeNotifications = 0
+        const unsubRuntime = store.subscribeRuntimeTopology(() => {
+            runtimeNotifications += 1
+        })
         act(() => {
             store.reconcileInput({
                 sessionId: 's',
@@ -217,7 +224,7 @@ describe('real assistant-ui entity runtime', () => {
         })
         await waitFor(() => expect(screen.getByText('Hello world from live leaf!')).toBeInTheDocument())
         expect(listRenders).toBe(initialListRenders)
-
+        expect(runtimeNotifications).toBe(0)
         // 3. Add a running Read tool call with empty input, then stream its file_path + intent
         const turnId = store.getTimelineIndex()[1]!.id
         let layoutNotifications = 0
@@ -256,7 +263,7 @@ describe('real assistant-ui entity runtime', () => {
         expect(listRenders).toBe(initialListRenders)
         expect(screen.getByTestId('turn-level0-header')).toHaveTextContent('Reading App component')
 
-        // 4. Add TodoWrite tool and update its todos -> layout updates and renders Todo card live
+        // 4. Add TodoWrite tool and update its todos -> layout updates once on tool addition, then in-place Todo status updates without layout or list notifications
         act(() => {
             store.reconcileInput({
                 sessionId: 's',
@@ -279,6 +286,29 @@ describe('real assistant-ui entity runtime', () => {
             })
         })
         expect(screen.getByText('Audit canonical thread topology')).toBeInTheDocument()
+        const layoutNotificationsAfterTodoAdd = layoutNotifications
+        act(() => {
+            store.reconcileInput({
+                sessionId: 's',
+                messages: [
+                    user('u1', 1),
+                    assistant('a1', 2, [
+                        { type: 'thinking', thinking: 'Checking file' },
+                        {
+                            type: 'tool_use',
+                            id: 'tool-todo',
+                            name: 'TodoWrite',
+                            input: {
+                                todos: [
+                                    { id: 't1', content: 'Audit canonical thread topology', status: 'completed' },
+                                ],
+                            },
+                        },
+                    ], true),
+                ],
+            })
+        })
+        expect(layoutNotifications).toBe(layoutNotificationsAfterTodoAdd)
         expect(listRenders).toBe(initialListRenders)
         // 5. Assistant CLI output in turn 2 streams in place without changing list topology or TurnLayoutSnapshot after first chunk
         const cliMsg = (text: string): DecryptedMessage => ({
@@ -375,5 +405,6 @@ describe('real assistant-ui entity runtime', () => {
         expect(screen.getByText(/Context usage: 42% \(updated\)/)).toBeInTheDocument()
         expect(listRenders).toBe(rendersAfterUserCli)
         unsubLayout()
+        unsubRuntime()
     })
 })

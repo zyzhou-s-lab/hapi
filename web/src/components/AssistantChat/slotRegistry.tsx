@@ -58,6 +58,7 @@ export type TurnSlotContext = {
     open: boolean
     setOpen: (next: boolean) => void
     activeTodoText?: string | null
+    fallbackTodos?: readonly TodoItem[] | null
     viewMode: 'normal' | 'thinking' | 'verbose'
     lang: 'en' | 'zh-CN'
     accentColor: string

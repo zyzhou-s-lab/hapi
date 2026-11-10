@@ -1,8 +1,15 @@
-import { memo } from 'react'
-import type { ProjectedTodoChecklist } from '@/components/AssistantChat/messages/turnBlockModel'
+import { memo, useMemo, useRef } from 'react'
+import { resolveTodoToolKind } from '@/chat/projections/todoProjection'
+import {
+    projectSubturnTodoChecklists,
+    type ProjectedTodoChecklist,
+    type TurnRow,
+    type TurnToolRow,
+} from '@/components/AssistantChat/messages/turnBlockModel'
+import { useLiveTurnRows } from './useLiveTurnRows'
 import { ChecklistList, type ChecklistItem } from '@/components/ToolCard/checklist'
 import { Card } from '@/components/ui/card'
-
+import type { TodoItem } from '@/types/api'
 export const TimelineTodoChecklistCard = memo(function TimelineTodoChecklistCard(props: {
     items: ChecklistItem[]
     className?: string
@@ -30,14 +37,37 @@ export const TimelineTodoChecklistCard = memo(function TimelineTodoChecklistCard
 
 export const TurnTodoSection = memo(function TurnTodoSection(props: {
     checklists: ProjectedTodoChecklist[]
+    rows?: readonly TurnRow[]
+    fallbackTodos?: readonly TodoItem[] | null
     accentColor?: string
     suppressRunningShimmer?: boolean
     open?: boolean
     streaming?: boolean
 }) {
+    const todoToolRows = useMemo(
+        () => (props.rows ?? []).filter(
+            (row): row is TurnToolRow => row.kind === 'tool' && resolveTodoToolKind(row.block.tool.name) !== null
+        ),
+        [props.rows]
+    )
+    const liveTodoRows = useLiveTurnRows(todoToolRows)
+    const prevChecklistsRef = useRef<readonly ProjectedTodoChecklist[] | null>(null)
+    const checklists = useMemo(() => {
+        if (todoToolRows.length === 0) {
+            prevChecklistsRef.current = props.checklists
+            return props.checklists
+        }
+        const next = projectSubturnTodoChecklists(
+            liveTodoRows,
+            { streaming: props.streaming, fallbackTodos: props.fallbackTodos },
+            prevChecklistsRef.current ?? props.checklists
+        ).todoChecklists
+        prevChecklistsRef.current = next
+        return next
+    }, [todoToolRows.length, liveTodoRows, props.checklists, props.streaming, props.fallbackTodos])
     const visibleChecklists = (props.open || props.streaming)
-        ? props.checklists
-        : props.checklists.filter(
+        ? checklists
+        : checklists.filter(
             (checklist) =>
                 checklist.items.some((item) => item.status === 'in_progress' || item.status === 'pending')
                 || !checklist.items.some((item) => item.status === 'blocked')

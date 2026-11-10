@@ -485,11 +485,22 @@ describe('HappyThread older-history pagination lifecycle', () => {
                 get: () => pageOut.textContent === '2' ? 2_600 : 2_000,
             })
             viewport.getBoundingClientRect = () => DOMRect.fromRect({ y: 0, height: 900, width: 800 })
+            const step = document.createElement('div')
+            step.dataset.blockId = 'split-turn-step'
+            anchor.append(step)
             anchor.getBoundingClientRect = () => {
                 const splitTurnGrowth = pageOut.textContent === '2' ? 600 : 0
                 return DOMRect.fromRect({
                     y: -viewport.scrollTop,
                     height: 1_200 + splitTurnGrowth,
+                    width: 600,
+                })
+            }
+            step.getBoundingClientRect = () => {
+                const splitTurnGrowth = pageOut.textContent === '2' ? 600 : 0
+                return DOMRect.fromRect({
+                    y: splitTurnGrowth - viewport.scrollTop,
+                    height: 100,
                     width: 600,
                 })
             }

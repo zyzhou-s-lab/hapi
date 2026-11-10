@@ -1634,7 +1634,7 @@ describe('reduceTimeline', () => {
         })
     })
 
-    it('completes tool blocks from terminal tool-call status and reconciles orphaned background tool updates', () => {
+    it('completes wait only from its terminal status and preserves an in-progress tool introduced during wait', () => {
         const messages: TracedMessage[] = [
             {
                 id: 'wait-in-progress',
@@ -1725,7 +1725,69 @@ describe('reduceTimeline', () => {
 
         expect(waitBlock?.tool.state).toBe('completed')
         expect(waitBlock?.tool.input).toEqual({ i: 'Waiting for background job' })
-        expect(bashBlock?.tool.state).toBe('completed')
+        expect(bashBlock?.tool).toMatchObject({ state: 'running', completionSource: 'unresolved', completedAt: null })
         expect(blocks).toHaveLength(3)
+    })
+
+    it('preserves running tools on the active turn when commentary or reasoning streams mid-turn', () => {
+        const messages: TracedMessage[] = [
+            {
+                id: 'active-tool-msg',
+                localId: null,
+                createdAt: 1_700_000_000_000,
+                role: 'agent',
+                turnId: 'turn-active',
+                content: [{
+                    type: 'tool-call',
+                    id: 'call-running-bash',
+                    name: 'bash',
+                    input: { command: 'bun test' },
+                    description: null,
+                    status: 'in_progress',
+                    uuid: 'active-tool-msg',
+                    parentUUID: null
+                }],
+                isSidechain: false
+            } as TracedMessage,
+            {
+                id: 'active-commentary-msg',
+                localId: null,
+                createdAt: 1_700_000_001_000,
+                role: 'agent',
+                turnId: 'turn-active',
+                content: [{
+                    type: 'text',
+                    text: 'Still running tests...',
+                    phase: 'execution',
+                    uuid: 'active-commentary-msg',
+                    parentUUID: null
+                }],
+                isSidechain: false
+            } as TracedMessage
+        ]
+
+        const activeResult = reduceTimeline(messages, {
+            ...makeContext(),
+            activeTurnId: 'turn-active',
+            sessionThinking: true
+        })
+        expect(activeResult.toolBlocksById.get('call-running-bash')?.tool.state).toBe('running')
+
+        const idleResult = reduceTimeline(messages, {
+            ...makeContext(),
+            activeTurnId: null,
+            sessionThinking: false
+        })
+        expect(idleResult.toolBlocksById.get('call-running-bash')?.tool).toMatchObject({
+            state: 'running', completionSource: 'unresolved', completedAt: null
+        })
+
+        const closedResult = reduceTimeline(messages, {
+            ...makeContext(),
+            turnStates: new Map([['turn-active', 'completed']])
+        })
+        expect(closedResult.toolBlocksById.get('call-running-bash')?.tool).toMatchObject({
+            state: 'error', completionSource: 'invocation-cutoff', completedAt: null
+        })
     })
 })

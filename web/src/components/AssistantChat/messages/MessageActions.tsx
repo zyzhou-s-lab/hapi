@@ -18,6 +18,9 @@ export type MessageHistoryAction = {
 
 type MessageActionsProps = {
     align: 'start' | 'end'
+    messageId?: string
+    createdAt?: Date | number
+    threadIsRunning?: boolean
     copyText?: string
     getCopyText?: () => string
     metadata?: Omit<MessageMetadataProps, 'className'>
@@ -46,8 +49,11 @@ export function selectThreadIsRunning(state: MessageActionsAuiState): boolean {
     return state.thread?.isRunning ?? false
 }
 
-export function MessageActions({
+function MessageActionsView({
     align,
+    messageId,
+    createdAt,
+    threadIsRunning,
     copyText,
     getCopyText,
     metadata,
@@ -57,10 +63,9 @@ export function MessageActions({
     historyActionPending = false,
     onFork,
     onRewind
-}: MessageActionsProps) {
+}: MessageActionsProps & { threadIsRunning: boolean }) {
     const { copied, copy } = useCopyToClipboard()
     const { t } = useTranslation()
-    const threadIsRunning = useAuiState((state) => selectThreadIsRunning(state))
     const canCopy = Boolean(copyText || getCopyText)
     const hasMetadata = metadata ? buildMessageMetadataLabels(metadata).length > 0 : false
     const [forkOpen, setForkOpen] = useState(false)
@@ -71,6 +76,7 @@ export function MessageActions({
 
     const shareButton = messageElementId ? (
         <ShareTurnButton
+            messageId={messageId}
             messageElementId={messageElementId}
             fallbackText={copyText}
             getFallbackText={getCopyText}
@@ -118,7 +124,7 @@ export function MessageActions({
                     align === 'end' ? 'justify-end' : 'justify-start'
                 )}
             >
-                {align === 'end' ? <DesktopTimestamp /> : null}
+                {align === 'end' ? <DesktopTimestamp createdAt={createdAt} /> : null}
                 {align === 'end' && hasMetadata && metadata ? <MessageInfoPopover metadata={metadata} /> : null}
                 {align === 'end' ? shareButton : null}
                 {align === 'end' ? historyButtons : null}
@@ -127,7 +133,7 @@ export function MessageActions({
                 {align === 'start' ? historyButtons : null}
                 {align === 'start' ? shareButton : null}
                 {align === 'start' && hasMetadata && metadata ? <MessageInfoPopover metadata={metadata} /> : null}
-                {align === 'start' ? <DesktopTimestamp /> : null}
+                {align === 'start' ? <DesktopTimestamp createdAt={createdAt} /> : null}
             </div>
 
             <ConfirmDialog
@@ -178,10 +184,22 @@ export function MessageActions({
     )
 }
 
-function DesktopTimestamp() {
+function RuntimeMessageActions(props: MessageActionsProps) {
+    const threadIsRunning = useAuiState((state) => selectThreadIsRunning(state))
+    return <MessageActionsView {...props} threadIsRunning={threadIsRunning} />
+}
+
+export function MessageActions(props: MessageActionsProps) {
+    if (props.threadIsRunning !== undefined) {
+        return <MessageActionsView {...props} threadIsRunning={props.threadIsRunning} />
+    }
+    return <RuntimeMessageActions {...props} />
+}
+
+function DesktopTimestamp(props: { createdAt?: Date | number }) {
     return (
         <span className="inline-flex ml-1 items-center">
-            <MessageTimestamp className="text-[10px] leading-none text-[var(--app-hint)]" />
+            <MessageTimestamp createdAt={props.createdAt} className="text-[10px] leading-none text-[var(--app-hint)]" />
         </span>
     )
 }

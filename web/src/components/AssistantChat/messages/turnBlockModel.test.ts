@@ -622,4 +622,20 @@ describe('PR 3 toolPresentationManifest, hasTurnContentActivity, and projectTurn
             'Here is the final answer.',
         ])
     })
+
+    it('prefers stable blockId as row key for reasoning and text parts instead of positional index', () => {
+        const partition = partitionTurn([
+            { type: 'reasoning', text: 'First thought', blockId: 'block-reason-1' },
+            { type: 'text', text: 'Execution note', phase: 'execution', blockId: 'block-text-1' },
+            call(tool('read-1', 'Read', { input: { file_path: 'src/index.ts' } })),
+            { type: 'text', text: 'Final answer', blockId: 'block-answer-1' },
+        ], null)
+
+        expect(partition.rows.map((r) => r.key)).toEqual([
+            'block-reason-1',
+            'block-text-1',
+            'read-1',
+            'block-answer-1',
+        ])
+    })
 })

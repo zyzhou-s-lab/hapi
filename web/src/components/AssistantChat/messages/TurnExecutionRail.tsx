@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { formatDuration } from '@/chat/presentation'
 import {
     type ProjectedSubturn,
@@ -9,6 +9,7 @@ import {
 } from '@/components/AssistantChat/messages/turnBlockModel'
 import {
     RailSlidingActiveSpinner,
+    resolveTurnStepBlockId,
     SmallChevron,
     TimelineCoalescedStepRow,
     TimelineThoughtRow,
@@ -18,6 +19,12 @@ import { useOptionalSessionVisibleEntity } from '@/hooks/useSessionEntityStore'
 import { cn } from '@/lib/utils'
 import { MarkdownRenderer } from '@/components/MarkdownRenderer'
 import { TurnRailSummary } from './TurnRailSummary'
+const railCaptureRendererRegistry = new WeakMap<HTMLElement, () => ReactNode>()
+
+export function renderCollapsedRailForShareCapture(railElement: HTMLElement): ReactNode {
+    return railCaptureRendererRegistry.get(railElement)?.() ?? null
+}
+
 
 function RailEntityTextBody(props: {
     row: TurnTextRow
@@ -69,6 +76,7 @@ export function TurnExecutionRail(props: {
     lang: 'en' | 'zh-CN'
     accentColor: string
     renderTrailingText?: (text: string, streaming: boolean) => React.ReactNode
+    shareCapture?: boolean
 }) {
     const {
         subturn,
@@ -83,6 +91,7 @@ export function TurnExecutionRail(props: {
         lang,
         accentColor,
         renderTrailingText,
+        shareCapture = false,
     } = props
 
     const failed = useMemo(
@@ -133,22 +142,71 @@ export function TurnExecutionRail(props: {
         }
         return []
     }, [stepRows, hasTrailingReasoningStep, showFrontierSlot])
-
     const activeRunningRowIndex = activeRunningRowIndices[0] ?? -1
-
+    const effectiveOpen = open || shareCapture
+    const rootRailRef = useRef<HTMLDivElement | null>(null)
     const railRef = useRef<HTMLDivElement | null>(null)
     const rowElsRef = useRef<Array<HTMLDivElement | null>>([])
     const seenToolStatesRef = useRef<Map<string, boolean> | null>(null)
+    const fastMorphRowKeysRef = useRef<Set<string>>(new Set())
+    const prevLiveCountRef = useRef<number>(activeRunningRowIndices.length)
+    const railCompletedPulseRef = useRef<boolean>(false)
     const latestActiveRowIndexRef = useRef<number>(activeRunningRowIndex)
     latestActiveRowIndexRef.current = activeRunningRowIndex
-    const holdingForPrevMorphRef = useRef<boolean>(false)
-    const handoffTimerRef = useRef<number | undefined>(undefined)
-    const fastMorphTimerRef = useRef<number | undefined>(undefined)
-    const [fastMorphRowKey, setFastMorphRowKey] = useState<string | null>(null)
     const [spinnerOffsetY, setSpinnerOffsetY] = useState<number>(14)
     const [targetOffsetY, setTargetOffsetY] = useState<number>(14)
-    const [holdingForPrevMorph, setHoldingForPrevMorph] = useState<boolean>(false)
 
+    const liveCount = activeRunningRowIndices.length
+    if (liveCount > 0) {
+        railCompletedPulseRef.current = false
+    } else if (prevLiveCountRef.current > 0) {
+        railCompletedPulseRef.current = true
+    }
+    prevLiveCountRef.current = liveCount
+
+    const currentTools = new Map<string, { isRunning: boolean; isCompleted: boolean; rowKey: string }>()
+    for (let i = 0; i < stepRows.length; i += 1) {
+        const row = stepRows[i]!
+        if (row.kind === 'coalesced') {
+            for (const memberKey of row.memberKeys) {
+                currentTools.set(memberKey, {
+                    isRunning: false,
+                    isCompleted: true,
+                    rowKey: row.key,
+                })
+            }
+            continue
+        }
+        if (row.kind !== 'tool') continue
+        const isRunning = row.block.tool.state === 'running' || (row.block.tool.state === 'pending' && Boolean(row.permission))
+        const isQueued = row.block.tool.state === 'pending' && !row.permission
+        currentTools.set(row.key, {
+            isRunning,
+            isCompleted: !isRunning && !isQueued,
+            rowKey: row.key,
+        })
+    }
+
+    if (seenToolStatesRef.current === null) {
+        const initialMap = new Map<string, boolean>()
+        for (const [key, info] of currentTools.entries()) {
+            initialMap.set(key, info.isRunning)
+        }
+        seenToolStatesRef.current = initialMap
+    } else {
+        for (const [key, info] of currentTools.entries()) {
+            if (info.isRunning) {
+                fastMorphRowKeysRef.current.delete(info.rowKey)
+            } else if (streaming && !seenToolStatesRef.current.has(key) && info.isCompleted) {
+                fastMorphRowKeysRef.current.add(info.rowKey)
+            }
+        }
+        const nextMap = new Map<string, boolean>()
+        for (const [key, info] of currentTools.entries()) {
+            nextMap.set(key, info.isRunning)
+        }
+        seenToolStatesRef.current = nextMap
+    }
     const measureRowY = (rowIndex: number) => {
         const el = rowElsRef.current[rowIndex]
         const measuredTop = el ? el.offsetTop : 0
@@ -157,133 +215,21 @@ export function TurnExecutionRail(props: {
             : rowIndex * 30 + 14
     }
 
-    useEffect(() => {
-        return () => {
-            if (handoffTimerRef.current !== undefined) window.clearTimeout(handoffTimerRef.current)
-            if (fastMorphTimerRef.current !== undefined) window.clearTimeout(fastMorphTimerRef.current)
-        }
-    }, [])
-
     useLayoutEffect(() => {
-        const currentTools = new Map<string, { isRunning: boolean; isCompleted: boolean; rowIndex: number; rowKey: string }>()
-        for (let i = 0; i < stepRows.length; i += 1) {
-            const row = stepRows[i]!
-            if (row.kind === 'coalesced') {
-                for (const memberKey of row.memberKeys) {
-                    currentTools.set(memberKey, {
-                        isRunning: false,
-                        isCompleted: true,
-                        rowIndex: i,
-                        rowKey: row.key,
-                    })
-                }
-                continue
-            }
-            if (row.kind !== 'tool') continue
-            const isRunning = row.block.tool.state === 'running' || (row.block.tool.state === 'pending' && row.permission)
-            const isQueued = row.block.tool.state === 'pending' && !row.permission
-            currentTools.set(row.key, {
-                isRunning,
-                isCompleted: !isRunning && !isQueued,
-                rowIndex: i,
-                rowKey: row.key,
-            })
-        }
-
-        let transitionedMorphRowIndex = -1
-        let fastArrivedKey: string | null = null
-        let fastArrivedRowIndex = -1
-        const activeRowKey = activeRunningRowIndex >= 0 && activeRunningRowIndex < stepRows.length
-            ? stepRows[activeRunningRowIndex]?.key ?? null
-            : null
-        const targetWasAlreadyRunning = activeRowKey !== null
-            && seenToolStatesRef.current?.get(activeRowKey) === true
-
-        if (seenToolStatesRef.current === null) {
-            const initialMap = new Map<string, boolean>()
-            for (const [key, info] of currentTools.entries()) {
-                initialMap.set(key, info.isRunning)
-            }
-            seenToolStatesRef.current = initialMap
-        } else {
-            for (const [key, info] of currentTools.entries()) {
-                const wasRunning = seenToolStatesRef.current.get(key) === true
-                if (wasRunning && !info.isRunning) {
-                    transitionedMorphRowIndex = info.rowIndex
-                }
-            }
-            if (transitionedMorphRowIndex < 0 && streaming) {
-                for (const [key, info] of currentTools.entries()) {
-                    if (!seenToolStatesRef.current.has(key) && info.isCompleted) {
-                        fastArrivedKey = info.rowKey
-                        fastArrivedRowIndex = info.rowIndex
-                    }
-                }
-            }
-            const nextMap = new Map<string, boolean>()
-            for (const [key, info] of currentTools.entries()) {
-                nextMap.set(key, info.isRunning)
-            }
-            seenToolStatesRef.current = nextMap
-        }
-
-        if (fastArrivedKey !== null) {
-            if (fastMorphTimerRef.current !== undefined) window.clearTimeout(fastMorphTimerRef.current)
-            setFastMorphRowKey(fastArrivedKey)
-            fastMorphTimerRef.current = window.setTimeout(() => {
-                setFastMorphRowKey(null)
-                fastMorphTimerRef.current = undefined
-            }, 980)
-        }
-
         if (activeRunningRowIndex < 0) {
-            if (handoffTimerRef.current !== undefined) {
-                window.clearTimeout(handoffTimerRef.current)
-                handoffTimerRef.current = undefined
-            }
-            holdingForPrevMorphRef.current = false
-            setHoldingForPrevMorph(false)
             return
         }
-
         const nextTargetY = measureRowY(activeRunningRowIndex)
         setTargetOffsetY(nextTargetY)
-
-        const morphSourceIndex = transitionedMorphRowIndex >= 0
-            ? transitionedMorphRowIndex
-            : fastArrivedRowIndex
-
-        if (morphSourceIndex >= 0 && morphSourceIndex !== activeRunningRowIndex && !targetWasAlreadyRunning) {
-            if (handoffTimerRef.current !== undefined) {
-                window.clearTimeout(handoffTimerRef.current)
-            }
-            const startY = measureRowY(morphSourceIndex)
-            holdingForPrevMorphRef.current = true
-            setSpinnerOffsetY(startY)
-            setHoldingForPrevMorph(true)
-            handoffTimerRef.current = window.setTimeout(() => {
-                handoffTimerRef.current = undefined
-                const currentIdx = latestActiveRowIndexRef.current
-                const latestTargetY = currentIdx >= 0 ? measureRowY(currentIdx) : nextTargetY
-                holdingForPrevMorphRef.current = false
-                setTargetOffsetY(latestTargetY)
-                setHoldingForPrevMorph(false)
-                setSpinnerOffsetY(latestTargetY)
-            }, 820)
-        } else if (!holdingForPrevMorphRef.current) {
-            setHoldingForPrevMorph(false)
-            setSpinnerOffsetY(nextTargetY)
-        }
-    }, [stepRows, activeRunningRowIndex, streaming])
+        setSpinnerOffsetY(nextTargetY)
+    }, [stepRows, activeRunningRowIndex])
 
     useLayoutEffect(() => {
         const currentIdx = latestActiveRowIndexRef.current
         if (currentIdx >= 0) {
             const updatedY = measureRowY(currentIdx)
             setTargetOffsetY(updatedY)
-            if (!holdingForPrevMorphRef.current) {
-                setSpinnerOffsetY(updatedY)
-            }
+            setSpinnerOffsetY(updatedY)
         }
         const railEl = railRef.current
         if (!railEl || typeof ResizeObserver === 'undefined') {
@@ -294,9 +240,7 @@ export function TurnExecutionRail(props: {
             if (idx < 0) return
             const updatedY = measureRowY(idx)
             setTargetOffsetY(updatedY)
-            if (!holdingForPrevMorphRef.current) {
-                setSpinnerOffsetY(updatedY)
-            }
+            setSpinnerOffsetY(updatedY)
         })
         observer.observe(railEl)
         return () => observer.disconnect()
@@ -312,10 +256,50 @@ export function TurnExecutionRail(props: {
         return set
     }, [quietTextRows])
 
+    const railRootBlockId = useMemo(() => {
+        for (const row of subturn.rows) {
+            const id = resolveTurnStepBlockId(row)
+            if (id) return id
+        }
+        return undefined
+    }, [subturn.rows])
+
+    const collapsedRows = useMemo(() => {
+        const pinnedSet = new Set(collapsedPinnedRailRows)
+        return stepRows.filter((row): row is TurnToolRow | (typeof collapsedPinnedRailRows)[number] => {
+            if (row.kind === 'coalesced') {
+                return pinnedSet.has(row)
+            }
+            if (row.kind === 'tool') {
+                return pinnedSet.has(row)
+                    || row.permission
+                    || row.block.tool.state === 'running'
+                    || row.block.tool.state === 'pending'
+            }
+            return false
+        })
+    }, [stepRows, collapsedPinnedRailRows])
+
+    const collapsedQuietRows = useMemo(
+        () => (shareCapture ? quietTextRows.filter((item) => !item.keepVisibleWhenCollapsed) : []),
+        [shareCapture, quietTextRows]
+    )
+
+    useLayoutEffect(() => {
+        const rootEl = rootRailRef.current
+        if (!rootEl || shareCapture || !hasSteps) {
+            return undefined
+        }
+        railCaptureRendererRegistry.set(rootEl, () => <TurnExecutionRail {...props} shareCapture={true} />)
+        return () => {
+            railCaptureRendererRegistry.delete(rootEl)
+        }
+    })
+
     if (!hasSteps) return null
 
     return (
-        <div data-testid="turn-execution-rail" className="w-full">
+        <div ref={rootRailRef} data-testid="turn-execution-rail" data-block-id={railRootBlockId} className="w-full">
             {/* Level 0: Lightweight borderless summary header */}
             <button
                 type="button"
@@ -340,159 +324,180 @@ export function TurnExecutionRail(props: {
             {/* Level 1: Left-indented vertical timeline rail */}
             <div
                 className="turn-collapsible-shell"
-                data-open={open ? 'true' : 'false'}
-                aria-hidden={!open}
+                data-open={effectiveOpen ? 'true' : 'false'}
+                aria-hidden={!effectiveOpen}
                 data-testid="turn-level1-shell"
             >
                 <div className="turn-collapsible-body">
                     <div
                         ref={railRef}
-                        className="relative ml-2.5 mt-1 border-l border-[var(--app-border)] pl-3.5 space-y-0.5"
+                        className={cn(
+                            'relative ml-2.5 mt-1 border-l border-[var(--app-border)] pl-3.5 space-y-0.5',
+                            railCompletedPulseRef.current && 'turn-rail-completion-pulse'
+                        )}
+                        data-rail-transition={railCompletedPulseRef.current ? 'just-completed' : 'idle'}
                         data-testid="turn-level1-rail"
+                        data-block-id={railRootBlockId}
                     >
-                        {activeRunningRowIndex >= 0 ? (
-                            <RailSlidingActiveSpinner
-                                activeRowIndex={activeRunningRowIndex}
-                                offsetY={spinnerOffsetY}
-                                targetOffsetY={targetOffsetY}
-                                holdingForPrevMorph={holdingForPrevMorph}
-                                color={accentColor}
-                            />
-                        ) : null}
-                        {stepRows.map((row, idx) => {
-                            const isLastStep = idx === stepRows.length - 1
-                            if (row.kind === 'reasoning') {
-                                return (
+                        {effectiveOpen ? (
+                            <>
+                                {activeRunningRowIndex >= 0 ? (
+                                    <RailSlidingActiveSpinner
+                                        activeRowIndex={activeRunningRowIndex}
+                                        offsetY={spinnerOffsetY}
+                                        targetOffsetY={targetOffsetY}
+                                        color={accentColor}
+                                    />
+                                ) : null}
+                                {stepRows.map((row, idx) => {
+                                    const isLastStep = idx === stepRows.length - 1
+                                    const stepBlockId = resolveTurnStepBlockId(row)
+                                    if (row.kind === 'reasoning') {
+                                        return (
+                                            <div
+                                                key={row.key}
+                                                ref={(el) => {
+                                                    rowElsRef.current[idx] = el
+                                                }}
+                                                data-rail-row-index={idx}
+                                                data-block-id={stepBlockId}
+                                            >
+                                                <TimelineThoughtRow
+                                                    row={row}
+                                                    isActiveStreaming={streaming && isLastStep && activeRunningRowIndex === idx}
+                                                    suppressRunningShimmer={false}
+                                                    defaultExpanded={viewMode === 'thinking' || viewMode === 'verbose'}
+                                                    lang={lang}
+                                                    accentColor={accentColor}
+                                                />
+                                            </div>
+                                        )
+                                    }
+                                    if (row.kind === 'coalesced') {
+                                        return (
+                                            <div
+                                                key={row.key}
+                                                ref={(el) => {
+                                                    rowElsRef.current[idx] = el
+                                                }}
+                                                data-rail-row-index={idx}
+                                                data-block-id={stepBlockId}
+                                            >
+                                                <TimelineCoalescedStepRow
+                                                    row={row}
+                                                    lang={lang}
+                                                    accentColor={accentColor}
+                                                    forceMorph={fastMorphRowKeysRef.current.has(row.key)}
+                                                />
+                                            </div>
+                                        )
+                                    }
+                                    if (row.kind === 'tool') {
+                                        return (
+                                            <div
+                                                key={row.key}
+                                                ref={(el) => {
+                                                    rowElsRef.current[idx] = el
+                                                }}
+                                                data-rail-row-index={idx}
+                                                data-block-id={stepBlockId}
+                                            >
+                                                <TimelineToolStepRow
+                                                    row={row}
+                                                    rowIndex={idx}
+                                                    defaultExpanded={viewMode === 'verbose'}
+                                                    lang={lang}
+                                                    accentColor={accentColor}
+                                                    forceMorph={fastMorphRowKeysRef.current.has(row.key)}
+                                                    showInlineRailSpinner={idx !== activeRunningRowIndex}
+                                                    suppressRunningShimmer={false}
+                                                />
+                                            </div>
+                                        )
+                                    }
+                                    if (row.kind === 'text' && !keepVisibleKeys.has(row.key) && !shareCapture) {
+                                        return (
+                                            <div
+                                                key={row.key}
+                                                ref={(el) => {
+                                                    rowElsRef.current[idx] = el
+                                                }}
+                                                data-rail-row-index={idx}
+                                                data-block-id={stepBlockId}
+                                                className="px-1.5 py-1 text-[13.5px] leading-relaxed text-[var(--app-fg)]"
+                                            >
+                                                <RailEntityTextBody
+                                                    row={row}
+                                                    streaming={false}
+                                                    renderTrailingText={renderTrailingText}
+                                                />
+                                            </div>
+                                        )
+                                    }
+                                    return null
+                                })}
+                                {showFrontierSlot ? (
                                     <div
-                                        key={row.key}
+                                        key="__turn_frontier__"
                                         ref={(el) => {
-                                            rowElsRef.current[idx] = el
+                                            rowElsRef.current[stepRows.length] = el
                                         }}
-                                        data-rail-row-index={idx}
+                                        data-rail-row-index={stepRows.length}
+                                        data-block-id={railRootBlockId ? `${railRootBlockId}:frontier` : undefined}
+                                        data-testid="rail-frontier-row"
                                     >
-                                        <TimelineThoughtRow
-                                            row={row}
-                                            isActiveStreaming={streaming && isLastStep && activeRunningRowIndex === idx}
-                                            suppressRunningShimmer={holdingForPrevMorph && activeRunningRowIndex === idx}
-                                            defaultExpanded={viewMode === 'thinking' || viewMode === 'verbose'}
-                                            lang={lang}
-                                            accentColor={accentColor}
-                                        />
+                                        <div data-hapi-share-exclude="true" className="relative py-0.5">
+                                            <div className="flex w-full items-center gap-1.5 rounded-md px-1.5 py-1 text-left text-[13.5px] leading-5 text-[var(--app-hint)]">
+                                                <span
+                                                    className="turn-text-shimmer font-medium transition-opacity duration-200"
+                                                >
+                                                    {lang === 'zh-CN' ? '正在思考...' : 'Thinking...'}
+                                                </span>
+                                            </div>
+                                        </div>
                                     </div>
-                                )
-                            }
-                            if (row.kind === 'coalesced') {
-                                return (
-                                    <div
-                                        key={row.key}
-                                        ref={(el) => {
-                                            rowElsRef.current[idx] = el
-                                        }}
-                                        data-rail-row-index={idx}
-                                    >
-                                        <TimelineCoalescedStepRow
-                                            row={row}
-                                            lang={lang}
-                                            accentColor={accentColor}
-                                            forceMorph={row.key === fastMorphRowKey}
-                                        />
-                                    </div>
-                                )
-                            }
-                            if (row.kind === 'tool') {
-                                return (
-                                    <div
-                                        key={row.key}
-                                        ref={(el) => {
-                                            rowElsRef.current[idx] = el
-                                        }}
-                                        data-rail-row-index={idx}
-                                    >
-                                        <TimelineToolStepRow
-                                            row={row}
-                                            rowIndex={idx}
-                                            defaultExpanded={viewMode === 'verbose'}
-                                            lang={lang}
-                                            accentColor={accentColor}
-                                            forceMorph={row.key === fastMorphRowKey}
-                                            showInlineRailSpinner={idx !== activeRunningRowIndex}
-                                            suppressRunningShimmer={holdingForPrevMorph && activeRunningRowIndex === idx}
-                                        />
-                                    </div>
-                                )
-                            }
-                            if (row.kind === 'text' && !keepVisibleKeys.has(row.key)) {
-                                return (
-                                    <div
-                                        key={row.key}
-                                        ref={(el) => {
-                                            rowElsRef.current[idx] = el
-                                        }}
-                                        data-rail-row-index={idx}
-                                        className="px-1.5 py-1 text-[13.5px] leading-relaxed text-[var(--app-fg)]"
-                                    >
-                                        <RailEntityTextBody
-                                            row={row}
-                                            streaming={false}
-                                            renderTrailingText={renderTrailingText}
-                                        />
-                                    </div>
-                                )
-                            }
-                            return null
-                        })}
-                        {showFrontierSlot ? (
-                            <div
-                                key="__turn_frontier__"
-                                ref={(el) => {
-                                    rowElsRef.current[stepRows.length] = el
-                                }}
-                                data-rail-row-index={stepRows.length}
-                                data-testid="rail-frontier-row"
-                            >
-                                <div data-hapi-share-exclude="true" className="relative py-0.5">
-                                    <div className="flex w-full items-center gap-1.5 rounded-md px-1.5 py-1 text-left text-[13.5px] leading-5 text-[var(--app-hint)]">
-                                        <span
-                                            className={cn(
-                                                'transition-opacity duration-200',
-                                                holdingForPrevMorph && activeRunningRowIndex === stepRows.length
-                                                    ? 'text-[var(--app-hint)] opacity-45'
-                                                    : 'turn-text-shimmer font-medium'
-                                            )}
-                                        >
-                                            {lang === 'zh-CN' ? '正在思考...' : 'Thinking...'}
-                                        </span>
-                                    </div>
-                                </div>
-                            </div>
+                                ) : null}
+                            </>
                         ) : null}
                     </div>
                 </div>
             </div>
 
-            {!open ? (
+            {!effectiveOpen ? (
                 <>
-                    {viewMode === 'thinking' ? (
-                        <div className="ml-2 mt-1 border-l border-[var(--app-border)] pl-3.5 space-y-1">
+                    {viewMode === 'thinking' || hasTrailingReasoningStep ? (
+                        <div
+                            className="ml-2 mt-1 border-l border-[var(--app-border)] pl-3.5 space-y-1"
+                            data-block-id={railRootBlockId ? `${railRootBlockId}:thinking` : undefined}
+                        >
                             {stepRows
-                                .filter((row): row is TurnReasoningRow => row.kind === 'reasoning')
-                                .map((row) => (
-                                    <TimelineThoughtRow
-                                        key={row.key}
-                                        row={row}
-                                        isActiveStreaming={false}
-                                        defaultExpanded={true}
-                                        lang={lang}
-                                    />
-                                ))}
+                                .filter(
+                                    (row): row is TurnReasoningRow =>
+                                        row.kind === 'reasoning'
+                                        && (viewMode === 'thinking' || row === stepRows[stepRows.length - 1])
+                                )
+                                .map((row) => {
+                                    const isActiveTrailing = hasTrailingReasoningStep && row === stepRows[stepRows.length - 1]
+                                    return (
+                                        <TimelineThoughtRow
+                                            key={row.key}
+                                            row={row}
+                                            isActiveStreaming={isActiveTrailing}
+                                            defaultExpanded={viewMode === 'thinking'}
+                                            lang={lang}
+                                            accentColor={accentColor}
+                                        />
+                                    )
+                                })}
                         </div>
                     ) : null}
-                    {collapsedPinnedRailRows.length > 0 ? (
+                    {collapsedRows.length > 0 ? (
                         <div
                             className="relative ml-2.5 mt-1 border-l border-[var(--app-border)] pl-3.5 space-y-1"
                             data-testid="turn-collapsed-pinned-rail"
+                            data-block-id={resolveTurnStepBlockId(collapsedRows[0]!)}
                         >
-                            {collapsedPinnedRailRows.map((row, idx) =>
+                            {collapsedRows.map((row, idx) =>
                                 row.kind === 'coalesced' ? (
                                     <TimelineCoalescedStepRow
                                         key={row.key}
@@ -514,23 +519,42 @@ export function TurnExecutionRail(props: {
                             )}
                         </div>
                     ) : null}
-                    {quietTextRows
-                        .filter((item) => !item.keepVisibleWhenCollapsed)
-                        .map(({ row }) => (
-                            <div
-                                key={row.key}
-                                className="hidden py-1.5 text-[15px] leading-relaxed text-[var(--app-fg)]"
-                                data-hapi-turn-quiet="true"
-                            >
-                                <RailEntityTextBody
-                                    row={row}
-                                    streaming={false}
-                                    renderTrailingText={renderTrailingText}
-                                />
+                    {showFrontierSlot ? (
+                        <div
+                            data-testid="rail-frontier-row"
+                            data-block-id={railRootBlockId ? `${railRootBlockId}:frontier` : undefined}
+                            className="relative ml-2.5 mt-1 border-l border-[var(--app-border)] pl-3.5 py-0.5"
+                            data-hapi-share-exclude="true"
+                        >
+                            <RailSlidingActiveSpinner
+                                activeRowIndex={stepRows.length}
+                                offsetY={14}
+                                targetOffsetY={14}
+                                color={accentColor}
+                            />
+                            <div className="flex w-full items-center gap-1.5 rounded-md px-1.5 py-1 text-left text-[13.5px] leading-5 text-[var(--app-hint)]">
+                                <span className="turn-text-shimmer font-medium transition-opacity duration-200">
+                                    {lang === 'zh-CN' ? '正在思考...' : 'Thinking...'}
+                                </span>
                             </div>
-                        ))}
+                        </div>
+                    ) : null}
                 </>
             ) : null}
+            {collapsedQuietRows.map(({ row }) => (
+                <div
+                    key={row.key}
+                    data-block-id={resolveTurnStepBlockId(row)}
+                    className="hidden py-1.5 text-[15px] leading-relaxed text-[var(--app-fg)]"
+                    data-hapi-turn-quiet="true"
+                >
+                    <RailEntityTextBody
+                        row={row}
+                        streaming={false}
+                        renderTrailingText={renderTrailingText}
+                    />
+                </div>
+            ))}
         </div>
     )
 }

@@ -31,6 +31,12 @@ export type SessionStatusData = {
     possibleTerminalCommands: string[]
 }
 
+export type SessionStatusPrefixSummary = {
+    readonly terminals: readonly SessionStatusTerminal[]
+    readonly completedTaskIds: ReadonlySet<string>
+    readonly latestUnknownAt: number | null
+}
+
 const BACKGROUND_START_RE = /Command running in background with ID:\s*([^\s<]+)/
 const TASK_ID_RE = /<task-id>\s*([^<]+?)\s*<\/task-id>/
 
@@ -96,16 +102,44 @@ function backgroundTaskCompletions(messages: readonly NormalizedMessage[]): {
     return { ids, latestUnknownAt }
 }
 
-function buildBackgroundTerminals(
-    tools: readonly ToolCallBlock[],
+export function buildSessionStatusPrefixSummary(
+    blocks: readonly ChatBlock[],
     messages: readonly NormalizedMessage[]
-): { confirmed: SessionStatusTerminal[]; uncertain: SessionStatusTerminal[] } {
+): SessionStatusPrefixSummary {
+    const tools = collectToolBlocks(blocks)
     const terminals = tools
         .map(terminalFromBlock)
         .filter((terminal): terminal is SessionStatusTerminal => terminal !== null)
     const completions = backgroundTaskCompletions(messages)
-    const remaining = terminals.filter((terminal) => !completions.ids.has(terminal.id))
-    const latestUnknownAt = completions.latestUnknownAt
+    return {
+        terminals,
+        completedTaskIds: completions.ids,
+        latestUnknownAt: completions.latestUnknownAt
+    }
+}
+
+function buildBackgroundTerminals(
+    tools: readonly ToolCallBlock[],
+    messages: readonly NormalizedMessage[],
+    prefixSummary?: SessionStatusPrefixSummary | null
+): { confirmed: SessionStatusTerminal[]; uncertain: SessionStatusTerminal[] } {
+    const tailTerminals = tools
+        .map(terminalFromBlock)
+        .filter((terminal): terminal is SessionStatusTerminal => terminal !== null)
+    const terminals = prefixSummary
+        ? [...prefixSummary.terminals, ...tailTerminals]
+        : tailTerminals
+    const tailCompletions = backgroundTaskCompletions(messages)
+    const remaining = terminals.filter(
+        (terminal) => !tailCompletions.ids.has(terminal.id) && !(prefixSummary?.completedTaskIds.has(terminal.id) ?? false)
+    )
+    const latestUnknownAt = prefixSummary
+        ? (
+            prefixSummary.latestUnknownAt !== null && tailCompletions.latestUnknownAt !== null
+                ? Math.max(prefixSummary.latestUnknownAt, tailCompletions.latestUnknownAt)
+                : prefixSummary.latestUnknownAt ?? tailCompletions.latestUnknownAt
+        )
+        : tailCompletions.latestUnknownAt
     if (latestUnknownAt === null) return { confirmed: remaining, uncertain: [] }
     return {
         confirmed: remaining.filter((terminal) => terminal.startedAt > latestUnknownAt),
@@ -156,9 +190,10 @@ export function buildSessionStatusData(args: {
     messages: readonly NormalizedMessage[]
     backgroundTaskCount?: number
     includeSubagents?: boolean
+    prefixSummary?: SessionStatusPrefixSummary | null
 }): SessionStatusData | null {
     const tools = collectToolBlocks(args.blocks)
-    const detectedTerminals = buildBackgroundTerminals(tools, args.messages)
+    const detectedTerminals = buildBackgroundTerminals(tools, args.messages, args.prefixSummary)
     const terminals = args.backgroundTaskCount === undefined
         ? [...detectedTerminals.confirmed, ...detectedTerminals.uncertain]
         : args.backgroundTaskCount > 0

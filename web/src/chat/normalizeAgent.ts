@@ -361,7 +361,6 @@ function normalizeAssistantOutput(
     const outputTokens = usage ? asNumber(usage.output_tokens) : null
     const model = asString(message.model) ?? null
     const generationDurationMs = nonNegativeNumber(usage?.generation_duration_ms)
-    const turnId = asString(data.turnId ?? data.turn_id ?? message.turnId ?? message.turn_id) ?? undefined
 
     return {
         id: messageId,
@@ -373,7 +372,6 @@ function normalizeAssistantOutput(
             streamSnapshot: { id: `output:assistant:${uuid}`, live: data.live === true }
         } : {}),
         ...(data.live === true ? { live: true } : {}),
-        ...(turnId ? { turnId } : {}),
         isSidechain,
         parentToolUseId,
         content: blocks,
@@ -1161,7 +1159,6 @@ export function normalizeAgentRecord(
                 }
             }
             const phase = normalizeAssistantContentPhase(data.phase)
-            const turnId = asString(data.turnId ?? data.turn_id) ?? undefined
             return {
                 id: messageId,
                 localId,
@@ -1171,7 +1168,6 @@ export function normalizeAgentRecord(
                 role: 'agent',
                 isSidechain: false,
                 ...(data.live === true ? { live: true } : {}),
-                ...(turnId ? { turnId } : {}),
                 content: [{
                     type: 'text',
                     text: data.message,
@@ -1186,7 +1182,6 @@ export function normalizeAgentRecord(
 
         if (data.type === 'reasoning' && typeof data.message === 'string') {
             const streamId = asString(data.id) ?? messageId
-            const turnId = asString(data.turnId ?? data.turn_id) ?? undefined
             return {
                 id: messageId,
                 localId,
@@ -1196,7 +1191,6 @@ export function normalizeAgentRecord(
                 role: 'agent',
                 isSidechain: false,
                 ...(data.live === true ? { live: true } : {}),
-                ...(turnId ? { turnId } : {}),
                 content: [{ type: 'reasoning', text: data.message, uuid: messageId, streamId, parentUUID: null }],
                 meta
             }
@@ -1305,7 +1299,6 @@ export function normalizeAgentRecord(
         if (data.type === 'tool-call' && typeof data.callId === 'string') {
             const uuid = asString(data.id) ?? messageId
             const status = normalizeToolUseStatus(data.status)
-            const turnId = asString(data.turnId ?? data.turn_id) ?? undefined
             return {
                 id: messageId,
                 localId,
@@ -1314,7 +1307,6 @@ export function normalizeAgentRecord(
                 usage: normalizeCodexTokenUsage(data.usage) ?? undefined,
                 role: 'agent',
                 isSidechain: false,
-                ...(turnId ? { turnId } : {}),
                 content: [{
                     type: 'tool-call',
                     id: data.callId,

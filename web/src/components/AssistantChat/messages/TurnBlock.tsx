@@ -3,7 +3,7 @@ import { TextMessagePartProvider, useAuiState } from '@assistant-ui/react'
 import { projectSessionTodoSnapshot } from '@/chat/projections/todoProjection'
 import { useOptionalHappyChatSessionStateContext, useOptionalHappyChatStaticContext, useOptionalHappyChatTodosContext } from '@/components/AssistantChat/context'
 import { NotifySummaryText } from '@/components/AssistantChat/messages/NotifySummaryText'
-import { useOptionalSessionEntityStore, useOptionalSessionTurnLayout } from '@/hooks/useSessionEntityStore'
+import { useOptionalSessionEntityStore, useOptionalSessionTurnHeader, useOptionalSessionTurnLayout } from '@/hooks/useSessionEntityStore'
 import type { TodoItem } from '@/types/api'
 import {
     hasTurnContentActivity,
@@ -13,6 +13,7 @@ import {
     type TurnPartition,
 } from '@/components/AssistantChat/messages/turnBlockModel'
 import { TimelineTurnBlockView, type TranscriptViewMode } from '@/components/AssistantChat/messages/TimelineTurnBlock'
+import { TurnStepExpansionStore } from '@/components/AssistantChat/messages/TimelineStepRows'
 import type { HappyChatMessageMetadata } from '@/lib/assistant-runtime'
 import { useTranslation } from '@/lib/use-translation'
 
@@ -58,6 +59,9 @@ export function TurnBlockView(props: {
     fallbackTodos?: readonly TodoItem[] | null
     viewMode?: TranscriptViewMode
     lang?: 'en' | 'zh-CN'
+    turnId?: string
+    stepExpansionStore?: TurnStepExpansionStore
+    shareCapture?: boolean
 }) {
     return (
         <TimelineTurnBlockView {...props} renderTrailingText={renderTurnText} />
@@ -71,6 +75,9 @@ function HistoricalTurnBlockBody(props: {
     createdAt: number
     custom: Partial<HappyChatMessageMetadata> | undefined
     lang: 'en' | 'zh-CN'
+    turnId?: string
+    stepExpansionStore?: TurnStepExpansionStore
+    shareCapture?: boolean
 }) {
     const durationMs = useMemo(
         () => turnDurationMs({
@@ -82,17 +89,7 @@ function HistoricalTurnBlockBody(props: {
         }),
         [props.custom?.roundSummary, props.custom?.invokedAt, props.createdAt]
     )
-    return (
-        <MemoizedTurnBlockView
-            activeTodoText={null}
-            fallbackTodos={null}
-            lang={props.lang}
-            partition={props.partition}
-            streaming={false}
-            initiallyOpen={false}
-            durationMs={durationMs}
-        />
-    )
+    return <MemoizedTurnBlockView activeTodoText={null} fallbackTodos={null} lang={props.lang} partition={props.partition} streaming={false} initiallyOpen={false} durationMs={durationMs} turnId={props.turnId} stepExpansionStore={props.stepExpansionStore} shareCapture={props.shareCapture} />
 }
 
 function LiveTailTurnBlockBody(props: {
@@ -103,6 +100,9 @@ function LiveTailTurnBlockBody(props: {
     createdAt: number
     custom: Partial<HappyChatMessageMetadata> | undefined
     lang: 'en' | 'zh-CN'
+    turnId?: string
+    stepExpansionStore?: TurnStepExpansionStore
+    shareCapture?: boolean
 }) {
     const sessionStateCtx = useOptionalHappyChatSessionStateContext()
     const todosCtx = useOptionalHappyChatTodosContext()
@@ -129,21 +129,39 @@ function LiveTailTurnBlockBody(props: {
         ? (invokedAt ?? null)
         : null
 
-    return (
-        <MemoizedTurnBlockView
-            activeTodoText={activeTodoText}
-            fallbackTodos={fallbackTodos}
-            lang={props.lang}
-            partition={props.partition}
-            streaming={streaming}
-            initiallyOpen={false}
-            durationMs={settledDurationMs}
-            streamingStartedAt={streamingStartedAt}
-        />
-    )
+    return <MemoizedTurnBlockView activeTodoText={activeTodoText} fallbackTodos={fallbackTodos} lang={props.lang} partition={props.partition} streaming={streaming} initiallyOpen={false} durationMs={settledDurationMs} streamingStartedAt={streamingStartedAt} turnId={props.turnId} stepExpansionStore={props.stepExpansionStore} shareCapture={props.shareCapture} />
 }
 
-export function TurnBlock() {
+function StoreTurnBlock({ messageId, shareCapture }: { messageId: string; shareCapture?: boolean }) {
+    const staticCtx = useOptionalHappyChatStaticContext()
+    const { locale } = useTranslation()
+    const store = useOptionalSessionEntityStore()
+    const turnLayout = useOptionalSessionTurnLayout(messageId)
+    const turnHeader = useOptionalSessionTurnHeader(messageId)
+    const stepExpansionStoreRef = useRef<TurnStepExpansionStore | null>(null)
+    stepExpansionStoreRef.current ??= new TurnStepExpansionStore()
+    const prevPartitionRef = useRef<TurnPartition | null>(null)
+    const partition = useMemo(() => {
+        const parts = store?.getLiveTurnParts(messageId) ?? []
+        const next = partitionTurn(parts, staticCtx?.metadata ?? null, prevPartitionRef.current)
+        prevPartitionRef.current = next
+        return next
+    }, [staticCtx?.metadata, turnLayout, store, messageId])
+    const isLastMessage = Boolean(turnHeader?.isLast)
+    const auiRunning = Boolean(turnHeader?.isRunning)
+    const hasRunningTool = Boolean(turnHeader?.hasRunningTool)
+    const createdAt = turnHeader?.timestamp ?? 0
+    const custom = useMemo(
+        () => ({ invokedAt: turnHeader?.invokedAt ?? undefined, roundSummary: turnHeader?.roundSummary }),
+        [turnHeader?.invokedAt, turnHeader?.roundSummary]
+    )
+    const lang = locale === 'zh-CN' ? 'zh-CN' : 'en'
+    return !isLastMessage && !auiRunning && !hasRunningTool
+        ? <HistoricalTurnBlockBody partition={partition} createdAt={createdAt} custom={custom} lang={lang} turnId={messageId} stepExpansionStore={stepExpansionStoreRef.current} shareCapture={shareCapture} />
+        : <LiveTailTurnBlockBody partition={partition} auiRunning={auiRunning} hasRunningTool={hasRunningTool} isLastMessage={isLastMessage} createdAt={createdAt} custom={custom} lang={lang} turnId={messageId} stepExpansionStore={stepExpansionStoreRef.current} shareCapture={shareCapture} />
+}
+
+function RuntimeTurnBlock({ shareCapture }: { shareCapture?: boolean }) {
     const staticCtx = useOptionalHappyChatStaticContext()
     const { locale } = useTranslation()
     const store = useOptionalSessionEntityStore()
@@ -155,12 +173,12 @@ export function TurnBlock() {
     ))
     const auiRunning = useAuiState((state) => state.message.status?.type === 'running')
     const isLastMessage = useAuiState((state) => state.message.isLast)
-    const auiCreatedAt = useAuiState((state) => state.message.createdAt.getTime())
+    const createdAt = useAuiState((state) => state.message.createdAt.getTime())
     const auiInvokedAt = useAuiState((state) => (state.message.metadata.custom as Partial<HappyChatMessageMetadata> | undefined)?.invokedAt)
     const auiRoundSummary = useAuiState((state) => (state.message.metadata.custom as Partial<HappyChatMessageMetadata> | undefined)?.roundSummary)
-    const createdAt = auiCreatedAt
     const custom = useMemo(() => ({ invokedAt: auiInvokedAt, roundSummary: auiRoundSummary }), [auiInvokedAt, auiRoundSummary])
-
+    const stepExpansionStoreRef = useRef<TurnStepExpansionStore | null>(null)
+    stepExpansionStoreRef.current ??= new TurnStepExpansionStore()
     const prevPartitionRef = useRef<TurnPartition | null>(null)
     const partition = useMemo(() => {
         const parts = hasStoreTurn ? (store?.getLiveTurnParts(messageId) ?? []) : contentParts(fallbackContent ?? [])
@@ -176,20 +194,16 @@ export function TurnBlock() {
         [partition.rows]
     )
     const lang = locale === 'zh-CN' ? 'zh-CN' : 'en'
-    if (!isLastMessage && !auiRunning && !hasRunningTool) {
-        return <HistoricalTurnBlockBody partition={partition} createdAt={createdAt} custom={custom} lang={lang} />
-    }
-    return (
-        <LiveTailTurnBlockBody
-            partition={partition}
-            auiRunning={auiRunning}
-            hasRunningTool={hasRunningTool}
-            isLastMessage={isLastMessage}
-            createdAt={createdAt}
-            custom={custom}
-            lang={lang}
-        />
-    )
+    return !isLastMessage && !auiRunning && !hasRunningTool
+        ? <HistoricalTurnBlockBody partition={partition} createdAt={createdAt} custom={custom} lang={lang} turnId={messageId} stepExpansionStore={stepExpansionStoreRef.current} shareCapture={shareCapture} />
+        : <LiveTailTurnBlockBody partition={partition} auiRunning={auiRunning} hasRunningTool={hasRunningTool} isLastMessage={isLastMessage} createdAt={createdAt} custom={custom} lang={lang} turnId={messageId} stepExpansionStore={stepExpansionStoreRef.current} shareCapture={shareCapture} />
+}
+
+export function TurnBlock(props: { messageId?: string; shareCapture?: boolean } = {}) {
+    const store = useOptionalSessionEntityStore()
+    return store && props.messageId
+        ? <StoreTurnBlock messageId={props.messageId} shareCapture={props.shareCapture} />
+        : <RuntimeTurnBlock shareCapture={props.shareCapture} />
 }
 
 export function messageHasTurnActivity(content: readonly { type: string }[]): boolean {

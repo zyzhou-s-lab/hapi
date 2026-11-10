@@ -7,6 +7,7 @@ import { HappyChatProvider, type HappyChatContextValue } from '@/components/Assi
 import { SessionEntityStoreProvider } from '@/hooks/useSessionEntityStore'
 import { partitionTurn } from '@/components/AssistantChat/messages/turnBlockModel'
 import { TurnBlock, TurnBlockView } from '@/components/AssistantChat/messages/TurnBlock'
+import { ShareTurnButton } from '@/components/AssistantChat/messages/ShareTurnButton'
 import type { ToolCallBlock } from '@/chat/types'
 import type { DecryptedMessage } from '@/types/api'
 const { mockAuiMessage } = vi.hoisted(() => ({
@@ -87,15 +88,15 @@ function renderBlock(node: ReactNode) {
 }
 
 describe('TurnBlockView', () => {
-    it('folds quiet rows, keeps the error and permission rows, and leaves sandwiched text shareable', () => {
+    it('folds quiet rows without mounting collapsed step or quiet-text DOM, keeps error and permission rows operable, and mounts shareable sandwiched text on demand', () => {
         const partition = partitionTurn([
-            { type: 'reasoning', text: '先看页面' },
+            { type: 'reasoning', text: '先看页面', blockId: 'reason-1' },
             {
                 type: 'tool-call',
                 toolName: 'Read',
                 artifact: tool('read', 'Read', { input: { file_path: 'src/pages/home.tsx' } }),
             },
-            { type: 'text', text: '夹在工具之间的说明' },
+            { type: 'text', text: '夹在工具之间的说明', blockId: 'quiet-text-1' },
             {
                 type: 'tool-call',
                 toolName: 'Bash',
@@ -114,11 +115,48 @@ describe('TurnBlockView', () => {
                     input: { file_path: 'home.tsx' },
                 }),
             },
-            { type: 'text', text: '这是回答。' },
+            { type: 'text', text: '这是回答。', blockId: 'answer-1' },
         ], null)
 
-        const { container } = renderBlock(
-            <TurnBlockView partition={partition} streaming={false} durationMs={151_000} initiallyOpen={false} />
+        let capturedTarget: HTMLElement | string | null = null
+        let capturedOuterHTML = ''
+        const onShareTurn = vi.fn((target: HTMLElement | string | null) => {
+            capturedTarget = target
+            if (target instanceof HTMLElement) {
+                capturedOuterHTML = target.outerHTML
+            }
+        })
+        const value = {
+            api: {
+                approvePermission: vi.fn(async () => undefined),
+                denyPermission: vi.fn(async () => undefined),
+            },
+            sessionId: 'session',
+            metadata: null,
+            disabled: false,
+            onRefresh: vi.fn(),
+            onShareTurn,
+        } as unknown as HappyChatContextValue
+
+        const { container } = render(
+            <I18nProvider>
+                <HappyChatProvider value={value}>
+                    <div className="chat-scroll-content">
+                        <div className="happy-thread-messages">
+                            <div id="hapi-message-turn-1" data-hapi-message-role="assistant">
+                                <TurnBlockView
+                                    partition={partition}
+                                    streaming={false}
+                                    durationMs={151_000}
+                                    initiallyOpen={false}
+                                    turnId="turn-1"
+                                />
+                                <ShareTurnButton messageId="turn-1" messageElementId="hapi-message-turn-1" />
+                            </div>
+                        </div>
+                    </div>
+                </HappyChatProvider>
+            </I18nProvider>
         )
 
         const header = screen.getByTestId('turn-level0-header')
@@ -126,21 +164,49 @@ describe('TurnBlockView', () => {
         expect(header.className).not.toContain('app-reasoning-bg')
         expect(screen.getByTestId('turn-level1-shell')).toHaveAttribute('data-open', 'false')
         expect(screen.getByText('2m 31s')).toBeInTheDocument()
-        const note = container.querySelector('[data-hapi-turn-quiet]')
-        expect(note).not.toBeNull()
-        expect(note).toHaveTextContent('夹在工具之间的说明')
-        expect(note).toHaveClass('hidden')
-        expect(note?.closest('[data-hapi-share-exclude]')).toBeNull()
+        // Closed rail does not mount full stepRows or hidden quiet-text markdown in main DOM
+        expect(screen.getByTestId('turn-level1-rail').querySelectorAll('[data-rail-row-index]')).toHaveLength(0)
+        expect(container.querySelector('[data-hapi-turn-quiet]')).toBeNull()
+        expect(screen.queryByText('home.tsx')).not.toBeNull()
         const pinnedRail = screen.getByTestId('turn-collapsed-pinned-rail')
+        expect(pinnedRail).toHaveAttribute('data-block-id', 'bash')
         expect(pinnedRail).toHaveTextContent('which chrome')
         expect(pinnedRail).toHaveTextContent('home.tsx')
         expect(pinnedRail).toHaveTextContent('permission options')
         expect(screen.getByText('这是回答。')).toBeInTheDocument()
 
-        for (const row of container.querySelectorAll<HTMLElement>('[data-hapi-turn-quiet]')) {
-            row.classList.remove('hidden')
+        // Clicking ShareTurnButton mounts an offscreen capture tree inside .chat-scroll-content with sandwiched quiet text, then unmounts it
+        const rafCallbacks: FrameRequestCallback[] = []
+        const rafSpy = vi.spyOn(window, 'requestAnimationFrame').mockImplementation((cb: FrameRequestCallback) => {
+            rafCallbacks.push(cb)
+            return rafCallbacks.length
+        })
+        try {
+            fireEvent.click(screen.getByRole('button', { name: 'Share turn as image' }))
+            const offscreenStage = container.querySelector('[data-testid="turn-share-offscreen-stage"]')
+            expect(offscreenStage).not.toBeNull()
+            expect(container.querySelector('.chat-scroll-content')?.contains(offscreenStage)).toBe(true)
+            const quietNote = offscreenStage?.querySelector('[data-hapi-turn-quiet]')
+            expect(quietNote).not.toBeNull()
+            expect(quietNote).toHaveTextContent('夹在工具之间的说明')
+            expect(quietNote).toHaveClass('hidden')
+            expect(quietNote?.closest('[data-hapi-share-exclude="true"]')).toBe(offscreenStage)
+
+            while (rafCallbacks.length > 0) {
+                const next = rafCallbacks.shift()!
+                act(() => {
+                    next(16)
+                })
+            }
+
+            expect(onShareTurn).toHaveBeenCalledTimes(1)
+            expect(capturedTarget).toBeInstanceOf(HTMLElement)
+            expect(capturedOuterHTML).toContain('夹在工具之间的说明')
+            expect(capturedOuterHTML).toContain('这是回答。')
+            expect(container.querySelector('[data-testid="turn-share-offscreen-stage"]')).toBeNull()
+        } finally {
+            rafSpy.mockRestore()
         }
-        expect(note?.classList.contains('hidden')).toBe(false)
     })
 
     it('folds recovered mid-turn OMP tool errors and keeps the turn header dot neutral', () => {
@@ -637,5 +703,277 @@ describe('TurnBlockView', () => {
         expect(store.getTurnEntity(turn1Id)).toBe(turn1InitialRef)
         expect(turn1SelectorCalls).toBe(1)
         unsubTurn1()
+    })
+
+    it('retains expanded tool, thought, and coalesced step states across rail collapse/re-open and pinned-to-open transitions', () => {
+        const partition = partitionTurn([
+            { type: 'reasoning', text: '**Detailed thought step** body line 2', blockId: 'thought-block-1' },
+            {
+                type: 'tool-call',
+                toolName: 'Read',
+                artifact: tool('read-a', 'Read', {
+                    input: { file_path: 'src/a.ts' },
+                    result: 'alpha content',
+                }),
+            },
+            {
+                type: 'tool-call',
+                toolName: 'Read',
+                artifact: tool('read-b', 'Read', {
+                    input: { file_path: 'src/b.ts' },
+                    result: 'beta content',
+                }),
+            },
+            {
+                type: 'tool-call',
+                toolName: 'Bash',
+                artifact: tool('bash-err', 'Bash', {
+                    state: 'error',
+                    input: { command: 'bun run check' },
+                    result: { stderr: 'Check failed' },
+                }),
+            },
+            { type: 'text', text: 'Done.', blockId: 'ans-block-1' },
+        ], null)
+
+        renderBlock(
+            <TurnBlockView
+                partition={partition}
+                streaming={false}
+                durationMs={2_000}
+                initiallyOpen={false}
+                turnId="turn-preserve"
+            />
+        )
+
+        // Expand the pinned error tool while the rail is collapsed
+        const pinnedRail = screen.getByTestId('turn-collapsed-pinned-rail')
+        const pinnedToolButton = pinnedRail.querySelector('button[aria-expanded="false"]')
+        expect(pinnedToolButton).not.toBeNull()
+        fireEvent.click(pinnedToolButton!)
+        expect(screen.getByTestId('turn-level2-bash')).toBeInTheDocument()
+
+        // Open the main execution rail -> pinned tool moves into the open rail and stays expanded
+        fireEvent.click(screen.getByTestId('turn-level0-header'))
+        expect(screen.queryByTestId('turn-collapsed-pinned-rail')).toBeNull()
+        expect(screen.getByTestId('turn-level2-bash')).toBeInTheDocument()
+
+        // Expand the thought row and the coalesced read row inside the open rail
+        const thoughtButton = screen.getByText('Thought').closest('button')
+        expect(thoughtButton).not.toBeNull()
+        fireEvent.click(thoughtButton!)
+        expect(screen.getByText(/Detailed thought step/)).toBeInTheDocument()
+
+        const coalescedBatch = screen.getByTestId('coalesced-step-read')
+        expect(coalescedBatch).toHaveAttribute('data-block-id', 'coalesced:read:read-a')
+        fireEvent.click(coalescedBatch.querySelector('button')!)
+        expect(screen.getByText('a.ts')).toBeInTheDocument()
+        fireEvent.click(screen.getByText('a.ts').closest('button')!)
+        expect(screen.getByTestId('turn-level2-read')).toHaveTextContent('alpha content')
+
+        // Collapse the rail -> full stepRows unmount, but pinned error tool remains expanded in collapsed pinned rail
+        fireEvent.click(screen.getByTestId('turn-level0-header'))
+        expect(screen.getByTestId('turn-level1-rail').querySelectorAll('[data-rail-row-index]')).toHaveLength(0)
+        expect(screen.queryByText(/Detailed thought step/)).toBeNull()
+        expect(screen.queryByTestId('turn-level2-read')).toBeNull()
+        expect(screen.getByTestId('turn-collapsed-pinned-rail')).toBeInTheDocument()
+        expect(screen.getByTestId('turn-level2-bash')).toBeInTheDocument()
+
+        // Re-open the rail -> thought row, coalesced read group, nested read-a preview, and bash preview are all still expanded
+        fireEvent.click(screen.getByTestId('turn-level0-header'))
+        expect(screen.getByText(/Detailed thought step/)).toBeInTheDocument()
+        expect(screen.getByTestId('turn-level2-read')).toHaveTextContent('alpha content')
+        expect(screen.getByTestId('turn-level2-bash')).toBeInTheDocument()
+    })
+
+    it('keeps active running tools visible and operable when the execution rail is collapsed while streaming', () => {
+        const partition = partitionTurn([
+            {
+                type: 'tool-call',
+                toolName: 'Bash',
+                artifact: tool('bash-live', 'Bash', {
+                    state: 'running',
+                    input: { command: 'bun run build', i: 'Building production bundle' },
+                }),
+            },
+        ], null)
+
+        renderBlock(
+            <TurnBlockView
+                partition={partition}
+                streaming={true}
+                durationMs={1_000}
+                initiallyOpen={false}
+                turnId="turn-live-collapsed"
+            />
+        )
+
+        expect(screen.getByTestId('turn-level0-header')).toHaveAttribute('aria-expanded', 'false')
+        const collapsedRail = screen.getByTestId('turn-collapsed-pinned-rail')
+        expect(collapsedRail).toHaveAttribute('data-block-id', 'bash-live')
+        expect(collapsedRail).toHaveTextContent('Running')
+        expect(collapsedRail).toHaveTextContent('Building production bundle')
+        expect(collapsedRail.querySelector('[data-testid="rail-step-spinner"]')).not.toBeNull()
+    })
+
+    it('captures the full user+assistant turn sibling range when ShareTurnButton is clicked on the user prompt above a collapsed assistant rail', () => {
+        const partition = partitionTurn([
+            {
+                type: 'tool-call',
+                toolName: 'Read',
+                artifact: tool('read-user-share', 'Read', { input: { file_path: 'src/index.ts' } }),
+            },
+            { type: 'text', text: '助手在两个工具之间的静默说明', blockId: 'quiet-user-share' },
+            {
+                type: 'tool-call',
+                toolName: 'Bash',
+                artifact: tool('bash-user-share', 'Bash', { input: { command: 'echo ok' } }),
+            },
+            { type: 'text', text: '最终回复内容。', blockId: 'final-user-share' },
+        ], null)
+
+        let capturedSnapshots: Array<{ role: string | null; html: string }> = []
+        const onShareTurn = vi.fn((target: HTMLElement | string | null) => {
+            if (!(target instanceof HTMLElement)) return
+            let start: Element | null = target
+            while (start?.previousElementSibling && start.getAttribute('data-hapi-message-role') !== 'user') {
+                start = start.previousElementSibling
+            }
+            if (!start || start.getAttribute('data-hapi-message-role') !== 'user') {
+                start = target
+            }
+            const list: Array<{ role: string | null; html: string }> = []
+            let current: Element | null = start
+            while (current instanceof HTMLElement) {
+                if (current !== start && current.getAttribute('data-hapi-message-role') === 'user') {
+                    break
+                }
+                list.push({
+                    role: current.getAttribute('data-hapi-message-role'),
+                    html: current.outerHTML,
+                })
+                current = current.nextElementSibling
+            }
+            capturedSnapshots = list
+        })
+
+        const value = {
+            api: {
+                approvePermission: vi.fn(async () => undefined),
+                denyPermission: vi.fn(async () => undefined),
+            },
+            sessionId: 'session',
+            metadata: null,
+            disabled: false,
+            onRefresh: vi.fn(),
+            onShareTurn,
+        } as unknown as HappyChatContextValue
+
+        const { container } = render(
+            <I18nProvider>
+                <HappyChatProvider value={value}>
+                    <div className="chat-scroll-content">
+                        <div className="happy-thread-messages">
+                            <div id="hapi-message-user-1" data-hapi-message-role="user">
+                                <p>用户提问：请检查构建</p>
+                                <ShareTurnButton messageId="user-1" messageElementId="hapi-message-user-1" />
+                            </div>
+                            <div id="hapi-message-assistant-1" data-hapi-message-role="assistant">
+                                <TurnBlockView
+                                    partition={partition}
+                                    streaming={false}
+                                    durationMs={3_000}
+                                    initiallyOpen={false}
+                                    turnId="assistant-1"
+                                />
+                            </div>
+                        </div>
+                    </div>
+                </HappyChatProvider>
+            </I18nProvider>
+        )
+
+        const rafCallbacks: FrameRequestCallback[] = []
+        const rafSpy = vi.spyOn(window, 'requestAnimationFrame').mockImplementation((cb: FrameRequestCallback) => {
+            rafCallbacks.push(cb)
+            return rafCallbacks.length
+        })
+        try {
+            fireEvent.click(screen.getByRole('button', { name: 'Share turn as image' }))
+            while (rafCallbacks.length > 0) {
+                const next = rafCallbacks.shift()!
+                act(() => {
+                    next(16)
+                })
+            }
+            expect(onShareTurn).toHaveBeenCalledTimes(1)
+            expect(capturedSnapshots).toHaveLength(2)
+            expect(capturedSnapshots[0]?.role).toBe('user')
+            expect(capturedSnapshots[0]?.html).toContain('用户提问：请检查构建')
+            expect(capturedSnapshots[1]?.role).toBe('assistant')
+            expect(capturedSnapshots[1]?.html).toContain('助手在两个工具之间的静默说明')
+            expect(capturedSnapshots[1]?.html.split('助手在两个工具之间的静默说明')).toHaveLength(2)
+            expect(capturedSnapshots[1]?.html).toContain('最终回复内容。')
+            expect(container.querySelector('[data-testid="turn-share-offscreen-stage"]')).toBeNull()
+        } finally {
+            rafSpy.mockRestore()
+        }
+    })
+
+    it('omits data-block-id on reasoning/text rows without stable blockId while writing stable data-block-id when blockId or tool id is present', () => {
+        const withoutIds = partitionTurn([
+            { type: 'reasoning', text: 'Positional thought without blockId' },
+            { type: 'text', text: 'Answer.' },
+        ], null)
+
+        const { container, rerender } = renderBlock(
+            <TurnBlockView
+                partition={withoutIds}
+                streaming={false}
+                durationMs={1_000}
+                initiallyOpen={true}
+            />
+        )
+
+        // No positional reasoning:0 or text:0 should appear in data-block-id
+        expect(container.querySelector('[data-block-id^="reasoning:"]')).toBeNull()
+        expect(container.querySelector('[data-block-id^="text:"]')).toBeNull()
+
+        const withIds = partitionTurn([
+            { type: 'reasoning', text: 'Stable thought with blockId', blockId: 'blk-reason-42' },
+            {
+                type: 'tool-call',
+                toolName: 'Bash',
+                artifact: tool('blk-tool-99', 'Bash', { input: { command: 'ls' } }),
+            },
+            { type: 'text', text: 'Answer.', blockId: 'blk-ans-1' },
+        ], null)
+
+        rerender(
+            <I18nProvider>
+                <HappyChatProvider
+                    value={{
+                        api: {
+                            approvePermission: vi.fn(async () => undefined),
+                            denyPermission: vi.fn(async () => undefined),
+                        },
+                        sessionId: 'session',
+                        metadata: null,
+                        disabled: false,
+                        onRefresh: vi.fn(),
+                    } as unknown as HappyChatContextValue}
+                >
+                    <TurnBlockView
+                        partition={withIds}
+                        streaming={false}
+                        durationMs={1_000}
+                        initiallyOpen={true}
+                    />
+                </HappyChatProvider>
+            </I18nProvider>
+        )
+
+        expect(container.querySelector('[data-block-id="blk-reason-42"]')).not.toBeNull()
+        expect(container.querySelector('[data-block-id="blk-tool-99"]')).not.toBeNull()
     })
 })

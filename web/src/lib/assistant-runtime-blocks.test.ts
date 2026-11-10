@@ -44,12 +44,19 @@ describe('canonical thread topology and turn layout', () => {
         expect(permission.layouts.get(id)).not.toBe(completed.layouts.get(id))
     })
 
-    it('updates Todo/plan layout projections when card content changes', () => {
+    it('preserves turn layout on Todo/plan payload edits and updates layout only when todoCandidateEntityIds change', () => {
         const update = model()
         const initial = update([text, tool({ name: 'TodoWrite', input: { todos: [{ content: 'First', status: 'pending' }] } })])
         const next = update([text, tool({ name: 'TodoWrite', input: { todos: [{ content: 'First', status: 'completed' }] } })])
         expect(next.topology).toBe(initial.topology)
-        expect(next.layouts).not.toBe(initial.layouts)
+        expect(next.layouts).toBe(initial.layouts)
+        expect(next.turns).not.toBe(initial.turns)
+        const withSecondTodo = update([
+            text,
+            tool({ name: 'TodoWrite', input: { todos: [{ content: 'First', status: 'completed' }] } }),
+            { ...tool({ id: 'tool-2', name: 'TodoWrite', input: { todos: [{ content: 'Second', status: 'pending' }] } }), id: 'tool-2' },
+        ])
+        expect(withSecondTodo.layouts).not.toBe(next.layouts)
     })
 
     it('invalidates empty-to-first-token layout but streams CLI payload independently', () => {

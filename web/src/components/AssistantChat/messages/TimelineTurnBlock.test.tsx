@@ -1,7 +1,8 @@
 import { describe, expect, it, vi } from 'vitest'
-import { act, fireEvent, render, screen } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { I18nProvider } from '@/lib/i18n-context'
 import type { ToolCallBlock } from '@/chat/types'
+import { HappyChatProvider, type HappyChatContextValue } from '@/components/AssistantChat/context'
 import {
     partitionTurn,
     summarizeTurnActivity,
@@ -262,26 +263,18 @@ describe('TimelineTurnBlock & summarizeTurnActivity', () => {
             const checkmarkMorph = screen.getByTestId('rail-step-checkmark')
             expect(checkmarkMorph).toBeInTheDocument()
             expect(checkmarkMorph).toHaveAttribute('data-indicator-color', '#da7756')
+            expect(checkmarkMorph).toHaveAttribute('data-step-transition', 'just-completed')
+            expect(checkmarkMorph).toHaveAttribute('data-just-completed', 'true')
+            expect(checkmarkMorph.className).toContain('turn-step-morph-container')
             expect(screen.getByTestId('rail-step-closing-ring')).toBeInTheDocument()
             expect(screen.getByTestId('rail-step-check-pop')).toBeInTheDocument()
 
             const movedSpinner = screen.getByTestId('rail-step-spinner')
             expect(movedSpinner).toHaveAttribute('data-active-row-index', '1')
             expect(movedSpinner).toHaveAttribute('data-target-offset-y', '44')
-            expect(movedSpinner).toHaveAttribute('data-handoff-phase', 'completing-prev')
+            expect(movedSpinner).toHaveAttribute('data-handoff-phase', 'sliding')
             expect(movedSpinner).toHaveAttribute('data-indicator-color', '#da7756')
-
-            act(() => {
-                vi.advanceTimersByTime(850)
-            })
-            expect(screen.getByTestId('rail-step-spinner')).toHaveAttribute('data-handoff-phase', 'sliding')
-            expect(screen.getByTestId('rail-step-spinner').getAttribute('style')).toContain('translate3d(0, 44px, 0)')
-
-            act(() => {
-                vi.advanceTimersByTime(200)
-            })
-            expect(screen.queryByTestId('rail-step-checkmark')).toBeNull()
-            expect(screen.getByTestId('rail-step-spinner')).toBeInTheDocument()
+            expect(movedSpinner.getAttribute('style')).toContain('translate3d(0, 44px, 0)')
         } finally {
             vi.useRealTimers()
         }
@@ -352,16 +345,9 @@ describe('TimelineTurnBlock & summarizeTurnActivity', () => {
                 </I18nProvider>
             )
 
-            expect(screen.getByTestId('rail-step-checkmark')).toBeInTheDocument()
+            expect(screen.getByTestId('rail-step-checkmark')).toHaveAttribute('data-step-transition', 'just-completed')
             expect(screen.getByTestId('rail-frontier-row')).toBeInTheDocument()
-            expect(screen.getByTestId('rail-step-spinner')).toHaveAttribute('data-active-row-index', '1')
-            expect(screen.getByTestId('rail-step-spinner')).toHaveAttribute('data-handoff-phase', 'completing-prev')
-
-            act(() => {
-                vi.advanceTimersByTime(1000)
-            })
-            expect(screen.queryByTestId('rail-step-checkmark')).toBeNull()
-            // Spinner remains mounted and spinning on the frontier row (index 1) during the post-Ran LLM wait
+            // Spinner slides directly to the frontier row (index 1) during the post-Ran LLM wait without timer-driven state
             expect(screen.getByTestId('rail-step-spinner')).toHaveAttribute('data-active-row-index', '1')
             expect(screen.getByTestId('rail-step-spinner')).toHaveAttribute('data-handoff-phase', 'sliding')
 
@@ -391,12 +377,7 @@ describe('TimelineTurnBlock & summarizeTurnActivity', () => {
             // TodoWrite translates cleanly (never raw 'turn.verb.todo') and plays fast-arrival completion morph
             expect(screen.queryByText('turn.verb.todo')).toBeNull()
             expect(screen.getByText('Updated todos')).toBeInTheDocument()
-            expect(screen.getByTestId('rail-step-checkmark')).toBeInTheDocument()
-            expect(screen.getByTestId('rail-step-spinner')).toHaveAttribute('data-active-row-index', '3')
-
-            act(() => {
-                vi.advanceTimersByTime(1000)
-            })
+            expect(screen.getAllByTestId('rail-step-checkmark')).toHaveLength(2)
             expect(screen.getByTestId('rail-step-spinner')).toHaveAttribute('data-active-row-index', '3')
             expect(screen.getByTestId('rail-step-spinner')).toHaveAttribute('data-handoff-phase', 'sliding')
 
@@ -555,7 +536,7 @@ describe('TimelineTurnBlock & summarizeTurnActivity', () => {
 
             const headerSpanAfter = screen.getByTestId('turn-level0-header').querySelector('span')
             expect(headerSpanAfter).toBe(headerSpanBefore)
-            expect(screen.getByTestId('rail-step-spinner')).toHaveAttribute('data-handoff-phase', 'completing-prev')
+            expect(screen.getByTestId('rail-step-spinner')).toHaveAttribute('data-handoff-phase', 'sliding')
             expect(screen.queryByText('Queued')).toBeNull()
             expect(screen.getByText('Running')).toBeInTheDocument()
 
@@ -606,6 +587,7 @@ describe('TimelineTurnBlock & summarizeTurnActivity', () => {
             expect(screen.getByText('Thought')).toBeInTheDocument()
             expect(screen.queryByTestId('rail-frontier-row')).toBeNull()
             expect(screen.queryByTestId('rail-step-spinner')).toBeNull()
+            expect(screen.getByTestId('turn-level1-rail')).toHaveAttribute('data-rail-transition', 'just-completed')
             expect(screen.getByTestId('turn-trailing-answer').textContent).toContain('Here is the final answer taking over.')
         } finally {
             vi.useRealTimers()
@@ -1297,5 +1279,124 @@ describe('TimelineTurnBlock & summarizeTurnActivity', () => {
         expect(trailingAnswersAfterComplete[0]?.querySelector('[data-streaming]')).toHaveAttribute('data-streaming', 'false')
         expect(trailingAnswersAfterComplete[1]).toHaveTextContent('方案已在上文完整呈现，请确认优先级。')
         expect(trailingAnswersAfterComplete[1]?.querySelector('[data-streaming]')).toHaveAttribute('data-streaming', 'false')
+    })
+
+    it('preserves user-expanded step state across auto-collapse and manual re-open while keeping collapsed step DOM unmounted', () => {
+        const streamingParts: TurnContentPart[] = [
+            { type: 'reasoning', text: 'Analyzing build configuration.', blockId: 'r-build-1' },
+            call(tool('b-build-1', 'Bash', {
+                state: 'completed',
+                input: { command: 'bun run typecheck' },
+                result: { stdout: 'tsc --noEmit passed' },
+            })),
+            { type: 'text', text: 'Build succeeded.', blockId: 't-build-1' },
+        ]
+        const partition = partitionTurn(streamingParts, null)
+
+        const { rerender } = render(
+            <I18nProvider>
+                <TimelineTurnBlockView
+                    partition={partition}
+                    streaming={true}
+                    durationMs={2000}
+                    initiallyOpen={true}
+                    turnId="turn-auto-collapse"
+                />
+            </I18nProvider>
+        )
+
+        // Expand the Bash tool while streaming and open
+        fireEvent.click(screen.getByText('bun run typecheck'))
+        expect(screen.getByTestId('turn-level2-bash')).toHaveTextContent('tsc --noEmit passed')
+
+        // Turn finishes streaming -> auto-collapses rail and unmounts step rows
+        rerender(
+            <I18nProvider>
+                <TimelineTurnBlockView
+                    partition={partition}
+                    streaming={false}
+                    durationMs={3000}
+                    initiallyOpen={true}
+                    turnId="turn-auto-collapse"
+                />
+            </I18nProvider>
+        )
+
+        expect(screen.getByTestId('turn-level0-header')).toHaveAttribute('aria-expanded', 'false')
+        expect(screen.getByTestId('turn-level1-rail').querySelectorAll('[data-rail-row-index]')).toHaveLength(0)
+        expect(screen.queryByTestId('turn-level2-bash')).toBeNull()
+
+        // Manually re-open rail -> Bash tool preview is still expanded
+        fireEvent.click(screen.getByTestId('turn-level0-header'))
+        expect(screen.getByTestId('turn-level0-header')).toHaveAttribute('aria-expanded', 'true')
+        expect(screen.getByTestId('turn-level2-bash')).toHaveTextContent('tsc --noEmit passed')
+    })
+
+    it('mounts no historical step rows when closed and restores all 120 steps when opened', () => {
+        const partition = partitionTurn(Array.from({ length: 120 }, (_, index) => call(tool(`history-tool-${index}`, 'Bash', {
+            input: { command: `echo command-${index}` },
+            result: `output-${index}`,
+        }))), null)
+        const { container } = render(
+            <I18nProvider>
+                <TimelineTurnBlockView partition={partition} streaming={false} durationMs={1000} turnId="history-turn" />
+            </I18nProvider>
+        )
+        const closedNodes = container.querySelectorAll('*').length
+        expect(container.querySelectorAll('[data-rail-row-index]')).toHaveLength(0)
+        expect(screen.queryByText('echo command-0')).toBeNull()
+        fireEvent.click(screen.getByTestId('turn-level0-header'))
+        const openNodes = container.querySelectorAll('*').length
+        expect(container.querySelectorAll('[data-rail-row-index]')).toHaveLength(120)
+        expect(screen.getByText('echo command-0')).toBeInTheDocument()
+        expect(screen.getByText('echo command-119')).toBeInTheDocument()
+        expect(closedNodes).toBeLessThan(openNodes / 10)
+        console.info(`P2 jsdom nodes for 120 settled Bash steps: closed=${closedNodes}; open=${openNodes}`)
+    })
+
+    it('submits real permission and question footer actions while the rail remains collapsed', async () => {
+        const approvePermission = vi.fn(async () => undefined)
+        const onRefresh = vi.fn()
+        const value = {
+            api: { approvePermission, denyPermission: vi.fn(async () => undefined) },
+            sessionId: 'session-actions', metadata: null, disabled: false, onRefresh,
+        } as unknown as HappyChatContextValue
+        const partition = partitionTurn([
+            call(tool('permission-action', 'Bash', {
+                state: 'pending', permission: { id: 'permission-id', status: 'pending' },
+                input: { command: 'echo approved' },
+            })),
+            call(tool('question-action', 'AskUserQuestion', {
+                state: 'pending', permission: { id: 'question-id', status: 'pending' },
+                input: { questions: [{ question: 'Pick a layout', options: [{ label: 'Grid' }, { label: 'List' }] }] },
+            })),
+        ], null)
+        render(
+            <I18nProvider><HappyChatProvider value={value}>
+                <TimelineTurnBlockView partition={partition} streaming={true} durationMs={1000} turnId="action-turn" />
+            </HappyChatProvider></I18nProvider>
+        )
+        const header = screen.getByTestId('turn-level0-header')
+        expect(header).toHaveAttribute('aria-expanded', 'false')
+        fireEvent.click(screen.getByRole('button', { name: /^Allow$/ }))
+        await waitFor(() => expect(approvePermission).toHaveBeenCalledWith('session-actions', 'permission-id'))
+        fireEvent.click(screen.getByRole('radio', { name: /Grid/ }))
+        fireEvent.click(screen.getByRole('button', { name: /^Submit$/ }))
+        await waitFor(() => expect(approvePermission).toHaveBeenCalledWith('session-actions', 'question-id', { answers: { '0': ['Grid'] } }))
+        expect(header).toHaveAttribute('aria-expanded', 'false')
+        await waitFor(() => expect(onRefresh).toHaveBeenCalledTimes(2))
+    })
+
+    it('lets users close a verbose rail without the view-mode effect immediately reopening it', () => {
+        const partition = partitionTurn([call(tool('verbose-tool', 'Bash', { input: { command: 'echo verbose' } }))], null)
+        render(<I18nProvider><TimelineTurnBlockView partition={partition} streaming={false} durationMs={1000} viewMode="verbose" turnId="verbose-turn" /></I18nProvider>)
+        const header = screen.getByTestId('turn-level0-header')
+        expect(header).toHaveAttribute('aria-expanded', 'true')
+        fireEvent.click(header)
+        expect(header).toHaveAttribute('aria-expanded', 'false')
+        expect(screen.queryByText('echo verbose')).toBeNull()
+        fireEvent.click(header)
+        expect(header).toHaveAttribute('aria-expanded', 'true')
+        expect(screen.getByTestId('turn-level2-bash')).toBeInTheDocument()
     })
 })

@@ -1,10 +1,13 @@
-import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { createContext, memo, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import {
     describeCoalescedTurnStep,
     describeTurnToolStep,
     extractThoughtSummary,
     resolveLiveToolRow,
     type TurnCoalescedRow,
+    type TurnDisplayStepRow,
+    type TurnFileRow,
+    type TurnImageRow,
     type TurnReasoningRow,
     type TurnRow,
     type TurnStepPreview,
@@ -28,6 +31,62 @@ import { useLiveTurnRows } from './useLiveTurnRows'
 
 export { SmallChevron }
 
+export type StepExpansionEntry = {
+    readonly open: boolean
+    readonly hasOpened: boolean
+    readonly defaultExpanded: boolean
+}
+
+/** UI state only; owned by the mounted turn, outside the conditional rail rows. */
+export class TurnStepExpansionStore {
+    readonly entries = new Map<string, StepExpansionEntry>()
+    readonly subturns = new Map<string, boolean>()
+}
+
+export const TurnStepExpansionContext = createContext<TurnStepExpansionStore | null>(null)
+
+export function resolveTurnStepBlockId(
+    row: TurnDisplayStepRow | TurnImageRow | TurnFileRow
+): string | undefined {
+    if (row.kind === 'tool') {
+        return row.key === row.block.id ? row.block.id : row.key
+    }
+    if (row.kind === 'reasoning' || row.kind === 'text') {
+        return row.blockId && row.blockId.length > 0 ? row.blockId : undefined
+    }
+    if (row.kind === 'image' || row.kind === 'file') {
+        return row.block.id
+    }
+    return row.key
+}
+
+function useTurnStepExpansion(stepId: string, defaultExpanded: boolean) {
+    const store = useContext(TurnStepExpansionContext)
+    const [saved, setSaved] = useState<StepExpansionEntry>(() => (
+        store?.entries.get(stepId) ?? { open: defaultExpanded, hasOpened: defaultExpanded, defaultExpanded }
+    ))
+    const entry = saved.defaultExpanded === defaultExpanded ? saved : {
+        open: defaultExpanded,
+        hasOpened: saved.hasOpened || defaultExpanded,
+        defaultExpanded,
+    }
+
+    useEffect(() => {
+        if (saved !== entry) setSaved(entry)
+        store?.entries.set(stepId, entry)
+    }, [store, stepId, saved, entry])
+
+    const toggle = useCallback(() => {
+        setSaved((prev) => {
+            const next = { open: !prev.open, hasOpened: true, defaultExpanded }
+            store?.entries.set(stepId, next)
+            return next
+        })
+    }, [store, stepId, defaultExpanded])
+
+    return { open: entry.open, hasOpened: entry.hasOpened, toggle }
+}
+
 export function CopyButton(props: { text: string; label?: string }) {
     const [copied, setCopied] = useState(false)
     const label = props.label ?? 'Copy command'
@@ -38,14 +97,18 @@ export function CopyButton(props: { text: string; label?: string }) {
                 e.stopPropagation()
                 void navigator.clipboard?.writeText(props.text)
                 setCopied(true)
-                window.setTimeout(() => setCopied(false), 1400)
             }}
             className="inline-flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5 text-[11px] text-[var(--app-hint)] transition-colors hover:bg-[var(--app-subtle-bg)] hover:text-[var(--app-fg)]"
             title={label}
             aria-label={label}
         >
             {copied ? (
-                <span>Copied</span>
+                <span
+                    className="turn-copy-feedback"
+                    onAnimationEnd={() => setCopied(false)}
+                >
+                    Copied
+                </span>
             ) : (
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                     <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
@@ -297,33 +360,29 @@ export function StepInlinePreviewCard(props: { preview: TurnStepPreview }) {
 
 export function RailStepCompletionMorphBadge(props: { isRunning: boolean; forceMorph?: boolean; color?: string }) {
     const color = props.color ?? '#da7756'
-    const wasRunning = useRef(props.isRunning)
-    const didForceMorph = useRef(false)
-    const [showMorph, setShowMorph] = useState(false)
+    const prevStatusRef = useRef<'running' | 'completed'>(props.isRunning ? 'running' : 'completed')
+    const didForceMorphRef = useRef(false)
+    const justCompletedRef = useRef(false)
 
-    useLayoutEffect(() => {
-        if (props.isRunning) {
-            wasRunning.current = true
-            setShowMorph(false)
-            return undefined
+    if (props.isRunning) {
+        prevStatusRef.current = 'running'
+        justCompletedRef.current = false
+    } else if (prevStatusRef.current === 'running' || (props.forceMorph && !didForceMorphRef.current)) {
+        prevStatusRef.current = 'completed'
+        if (props.forceMorph) {
+            didForceMorphRef.current = true
         }
-        if ((wasRunning.current && !props.isRunning) || (props.forceMorph && !didForceMorph.current)) {
-            wasRunning.current = false
-            didForceMorph.current = true
-            setShowMorph(true)
-            const timer = window.setTimeout(() => {
-                setShowMorph(false)
-            }, 980)
-            return () => window.clearTimeout(timer)
-        }
-        return undefined
-    }, [props.isRunning, props.forceMorph])
-    if (!showMorph && !props.forceMorph) return null
+        justCompletedRef.current = true
+    }
+
+    if (props.isRunning || (!justCompletedRef.current && !props.forceMorph)) return null
 
     return (
         <span
             className="turn-step-morph-container pointer-events-none absolute -left-[22.5px] top-[14px] z-20 -translate-y-1/2 flex h-4 w-4 items-center justify-center rounded-full bg-[var(--app-bg)] ring-2 ring-[var(--app-bg)]"
             data-testid="rail-step-checkmark"
+            data-step-transition="just-completed"
+            data-just-completed="true"
             data-indicator-color={color}
             aria-hidden="true"
             style={{ color }}
@@ -369,7 +428,7 @@ export function RailSlidingActiveSpinner(props: {
     activeRowIndex: number
     offsetY: number
     targetOffsetY: number
-    holdingForPrevMorph: boolean
+    holdingForPrevMorph?: boolean
     color?: string
 }) {
     const color = props.color ?? '#da7756'
@@ -388,7 +447,7 @@ export function RailSlidingActiveSpinner(props: {
                 transform: props.holdingForPrevMorph
                     ? `translate3d(0, ${props.offsetY}px, 0) translateY(-50%) scale(0.75)`
                     : `translate3d(0, ${props.offsetY}px, 0) translateY(-50%) scale(1)`,
-                transition: 'transform 420ms cubic-bezier(0.22, 1, 0.36, 1), opacity 140ms ease',
+                transition: 'transform 320ms cubic-bezier(0.22, 1, 0.36, 1), opacity 240ms ease',
             }}
         >
             <svg viewBox="0 0 16 16" className="turn-step-spinner-svg h-4 w-4">
@@ -450,12 +509,8 @@ export const TimelineThoughtRow = memo(function TimelineThoughtRow(props: {
     const reasoningText = entity && entity.kind === 'agent-reasoning'
         ? entity.text.trim()
         : props.row.text
-    const [open, setOpen] = useState(props.defaultExpanded)
-    const [hasOpened, setHasOpened] = useState(props.defaultExpanded)
-    useEffect(() => {
-        setOpen(props.defaultExpanded)
-        if (props.defaultExpanded) setHasOpened(true)
-    }, [props.defaultExpanded])
+    const stepBlockId = resolveTurnStepBlockId(props.row)
+    const { open, hasOpened, toggle } = useTurnStepExpansion(stepBlockId ?? props.row.key, props.defaultExpanded)
 
     const label = props.lang === 'zh-CN'
         ? (props.isActiveStreaming ? '正在思考...' : '思考过程')
@@ -465,14 +520,11 @@ export const TimelineThoughtRow = memo(function TimelineThoughtRow(props: {
         [props.isActiveStreaming, reasoningText]
     )
     return (
-        <div data-hapi-share-exclude="true" className="relative py-0.5">
+        <div data-block-id={stepBlockId} data-hapi-share-exclude="true" className="relative py-0.5">
             <button
                 type="button"
                 aria-expanded={open}
-                onClick={() => {
-                    setHasOpened(true)
-                    setOpen((v) => !v)
-                }}
+                onClick={toggle}
                 className="group flex w-full items-center gap-1.5 rounded-md px-1.5 py-1 text-left text-[13.5px] leading-5 text-[var(--app-hint)] transition-colors hover:bg-[var(--app-subtle-bg)]/60 hover:text-[var(--app-fg)]"
             >
                 <span
@@ -535,13 +587,8 @@ export const TimelineToolStepRow = memo(function TimelineToolStepRow(props: {
         () => resolveLiveToolRow(props.row, liveToolBlock, ctx?.metadata ?? null),
         [liveToolBlock, props.row, ctx?.metadata]
     )
-    const [open, setOpen] = useState(props.defaultExpanded)
-    const [hasOpened, setHasOpened] = useState(props.defaultExpanded)
-    useEffect(() => {
-        setOpen(props.defaultExpanded)
-        if (props.defaultExpanded) setHasOpened(true)
-    }, [props.defaultExpanded])
-
+    const stepBlockId = resolveTurnStepBlockId(props.row)
+    const { open, hasOpened, toggle } = useTurnStepExpansion(stepBlockId ?? props.row.key, props.defaultExpanded)
     const descriptor = useMemo(
         () => describeTurnToolStep(effectiveRow, props.lang),
         [effectiveRow, props.lang]
@@ -551,7 +598,7 @@ export const TimelineToolStepRow = memo(function TimelineToolStepRow(props: {
     const requestsInput = isRequestUserInputToolName(effectiveRow.block.tool.name)
     const interactive = Boolean((asks || requestsInput) && effectiveRow.permission && ctx)
     return (
-        <div data-hapi-share-exclude="true" className="relative py-0.5">
+        <div data-block-id={stepBlockId} data-hapi-share-exclude="true" className="relative py-0.5">
             {props.showInlineRailSpinner && descriptor.isRunning && !props.suppressRunningShimmer ? (
                 <RailInlineActiveSpinner
                     activeRowIndex={props.rowIndex}
@@ -566,10 +613,7 @@ export const TimelineToolStepRow = memo(function TimelineToolStepRow(props: {
             <button
                 type="button"
                 aria-expanded={open}
-                onClick={() => {
-                    setHasOpened(true)
-                    setOpen((v) => !v)
-                }}
+                onClick={toggle}
                 className="group flex w-full items-center gap-1.5 rounded-md px-1.5 py-1 text-left text-[13.5px] leading-5 transition-colors hover:bg-[var(--app-subtle-bg)]/60"
             >
                 {effectiveRow.error ? (
@@ -670,15 +714,15 @@ export const TimelineCoalescedStepRow = memo(function TimelineCoalescedStepRow(p
         rows: [...rows] as Array<TurnToolRow | TurnReasoningRow>,
         toolRows: rows.filter((row): row is TurnToolRow => row.kind === 'tool'),
     }), [rows, props.row])
-    const [open, setOpen] = useState(false)
-    const [hasOpened, setHasOpened] = useState(false)
+    const stepBlockId = resolveTurnStepBlockId(props.row)
+    const { open, hasOpened, toggle } = useTurnStepExpansion(stepBlockId ?? props.row.key, false)
     const descriptor = useMemo(
         () => describeCoalescedTurnStep(liveRow, props.lang),
         [liveRow, props.lang]
     )
 
     return (
-        <div data-hapi-share-exclude="true" className="relative py-0.5" data-testid={`coalesced-step-${props.row.category}`}>
+        <div data-block-id={stepBlockId} data-hapi-share-exclude="true" className="relative py-0.5" data-testid={`coalesced-step-${props.row.category}`}>
             <RailStepCompletionMorphBadge
                 isRunning={false}
                 forceMorph={props.forceMorph}
@@ -687,10 +731,7 @@ export const TimelineCoalescedStepRow = memo(function TimelineCoalescedStepRow(p
             <button
                 type="button"
                 aria-expanded={open}
-                onClick={() => {
-                    setHasOpened(true)
-                    setOpen((v) => !v)
-                }}
+                onClick={toggle}
                 className="group flex w-full items-center gap-1.5 rounded-md px-1.5 py-1 text-left text-[13.5px] leading-5 transition-colors hover:bg-[var(--app-subtle-bg)]/60"
             >
                 <span className="shrink-0 text-[var(--app-hint)] transition-opacity duration-200 group-hover:text-[var(--app-fg)]">

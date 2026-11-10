@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { reduceChatBlocks } from './reducer'
 import { reconcileChatBlocks } from './reconcile'
 import { normalizeDecryptedMessage } from './normalize'
-import type { NormalizedMessage } from './types'
+import type { NormalizedMessage, ToolCallBlock } from './types'
 import type { DecryptedMessage } from '@/types/api'
 import type { AgentState, ThreadGoal, ThreadGoalStatus } from '@/types/api'
 
@@ -811,5 +811,108 @@ describe('canonical assistant snapshot reduction', () => {
         expect(reduceChatBlocks(messages, null).blocks).toMatchObject([
             { kind: 'agent-text', text: 'First' }, { kind: 'agent-text', text: 'Second' }
         ])
+    })
+})
+
+describe('tool outcome reconciliation', () => {
+    it.each([
+        [undefined, 'unresolved'],
+        ['unresolved', 'invocation-cutoff'],
+        ['invocation-cutoff', undefined]
+    ] as const)('replaces a tool when only completionSource changes from %s to %s', (previousSource, nextSource) => {
+        const before = reduceChatBlocks([{
+            id: 'call', localId: null, createdAt: 1, role: 'agent', isSidechain: false,
+            content: [{
+                type: 'tool-call', id: 'tool', name: 'bash', input: {}, description: null,
+                status: 'failed', uuid: 'call', parentUUID: null
+            }]
+        }], null)
+        const tool = before.blocks[0]
+        if (tool?.kind !== 'tool-call') throw new Error('Expected a tool block')
+        const previous: ToolCallBlock = {
+            ...tool, tool: { ...tool.tool, completionSource: previousSource }
+        }
+        const next: ToolCallBlock = {
+            ...previous, tool: { ...previous.tool, completionSource: nextSource }
+        }
+        const reconciled = reconcileChatBlocks([next], new Map([[previous.id, previous]]))
+        expect(reconciled.blocks[0]).toBe(next)
+        expect(reconciled.byId.get(next.id)).toBe(next)
+        expect(reconcileChatBlocks([{
+            ...next, tool: { ...next.tool }
+        }], reconciled.byId).blocks[0]).toBe(next)
+    })
+})
+
+describe('canonical delivery tool outcomes', () => {
+    it.each(['completed', 'failed', 'aborted', 'cutoff'] as const)('uses delivery ownership and event %s without a provider result', (turnState) => {
+        const messages: DecryptedMessage[] = [
+            {
+                ...decryptedMessage('call', {
+                    role: 'agent', meta: { turnId: 'provider-call' }, content: {
+                        type: 'codex', data: { type: 'tool-call', callId: 'tool', name: 'bash', turnId: 'raw-call' }
+                    }
+                }, 1),
+                turnId: 'hub-owner', turnState: 'running'
+            },
+            {
+                ...decryptedMessage('terminal', {
+                    role: 'agent', meta: { turnId: 'provider-terminal' },
+                    content: { type: 'event', data: { type: 'invocation-terminal' } }
+                }, 2),
+                turnId: 'hub-owner', turnState
+            },
+            {
+                ...decryptedMessage('running-replay', {
+                    role: 'agent', content: { type: 'event', data: { type: 'ready' } }
+                }, 3),
+                turnId: 'hub-owner', turnState: 'running'
+            }
+        ]
+        const normalized = messages.map((message) => {
+            const result = normalizeDecryptedMessage(message)
+            if (!result) throw new Error('Expected normalized delivery message')
+            return result
+        })
+        expect(normalized.map((message) => message.turnId)).toEqual(['hub-owner', 'hub-owner', 'hub-owner'])
+        expect(normalized[1]).toMatchObject({ role: 'event', turnState })
+        const reduced = reduceChatBlocks(normalized, null)
+        expect(reduced.blocks.find((block) => block.kind === 'tool-call')).toMatchObject({
+            turnId: 'hub-owner', tool: { state: 'error', completionSource: 'invocation-cutoff', completedAt: null }
+        })
+    })
+
+    it.each([
+        { isSidechain: true },
+        { parentToolUseId: 'child-parent' },
+        { isSidechain: true, parentToolUseId: 'child-parent' }
+    ])('does not use normalized child terminal metadata %# to close the parent', (attribution) => {
+        const messages: DecryptedMessage[] = [
+            {
+                ...decryptedMessage('call', {
+                    role: 'agent', content: {
+                        type: 'codex', data: { type: 'tool-call', callId: 'tool', name: 'bash' }
+                    }
+                }, 1),
+                turnId: 'parent-owner', turnState: 'running'
+            },
+            {
+                ...decryptedMessage('child-terminal', {
+                    role: 'agent', content: {
+                        type: 'output', data: { type: 'system', subtype: 'turn_duration', durationMs: 100, ...attribution }
+                    }
+                }, 2),
+                turnId: 'parent-owner', turnState: 'cutoff'
+            }
+        ]
+        const normalized = messages.map((message) => {
+            const result = normalizeDecryptedMessage(message)
+            if (!result) throw new Error('Expected normalized delivery message')
+            return result
+        })
+        expect(normalized[1]).toMatchObject({ role: 'event', turnState: 'cutoff', ...attribution })
+        expect(reduceChatBlocks(normalized, null).blocks.find((block) => block.kind === 'tool-call')).toMatchObject({
+            tool: { state: 'running', completionSource: 'unresolved', completedAt: null }
+        })
     })
 })

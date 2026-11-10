@@ -79,7 +79,23 @@ function renderThread(onViewModeChange = vi.fn()) {
             </I18nProvider>
         </QueryClientProvider>
     )
+    const prevScrollHeight = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'scrollHeight')
+    const prevClientHeight = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'clientHeight')
+    Object.defineProperties(HTMLElement.prototype, {
+        scrollHeight: { configurable: true, value: 1_232 },
+        clientHeight: { configurable: true, value: 530 },
+    })
     const result = render(renderHappyThread(0))
+    if (prevScrollHeight) {
+        Object.defineProperty(HTMLElement.prototype, 'scrollHeight', prevScrollHeight)
+    } else {
+        Reflect.deleteProperty(HTMLElement.prototype, 'scrollHeight')
+    }
+    if (prevClientHeight) {
+        Object.defineProperty(HTMLElement.prototype, 'clientHeight', prevClientHeight)
+    } else {
+        Reflect.deleteProperty(HTMLElement.prototype, 'clientHeight')
+    }
     const viewport = result.container.querySelector<HTMLElement>('.chat-scroll-y')
     if (!viewport) {
         throw new Error('Chat viewport was not rendered')
