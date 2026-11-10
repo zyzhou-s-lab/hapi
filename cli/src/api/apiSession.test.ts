@@ -94,7 +94,7 @@ vi.mock('axios', () => ({
     }
 }))
 
-import { ApiSessionClient, isExternalUserMessage, IncomingMessageFilter } from './apiSession'
+import { ApiSessionClient, isExternalUserMessage, IncomingMessageFilter, type HapiMessageContext } from './apiSession'
 import { clearGeneratedImages, registerGeneratedImage } from '@/modules/common/generatedImages'
 
 function createSession(overrides: Partial<Session> = {}): Session {
@@ -208,6 +208,7 @@ describe('ApiSessionClient lazy materialization', () => {
         expect(socketHarness.sockets[0]?.emitted.map((entry) => entry.event)).toEqual([
             'message',
             'message',
+            'session-source-bind',
             'session-alive'
         ])
         client.close()
@@ -328,6 +329,7 @@ describe('ApiSessionClient lazy materialization', () => {
             'message',
             'message',
             'session-end',
+            'session-source-bind',
             'session-alive'
         ])
         client.close()
@@ -823,5 +825,267 @@ describe('agent stream snapshot dedupe', () => {
             clearGeneratedImages()
             client.close()
         }
+    })
+})
+
+describe('canonical session source binding and ordered delivery', () => {
+    const turn1: HapiMessageContext = {
+        turnId: 'turn-1',
+        invocationId: 'inv-1',
+        providerTurnId: 'prov-1',
+        scope: 'main'
+    }
+
+    function ackLatestBind(
+        socket: (typeof socketHarness.sockets)[number],
+        generation: number,
+        overrides: Record<string, unknown> = {}
+    ): string {
+        const binds = socket.emitted.filter((entry) => entry.event === 'session-source-bind')
+        const latest = binds[binds.length - 1]
+        if (!latest) throw new Error('missing session-source-bind')
+        const payload = latest.args[0] as { sourceInstanceId: string }
+        const ack = latest.args[1] as (response: Record<string, unknown>) => void
+        ack({
+            ok: true,
+            sourceInstanceId: payload.sourceInstanceId,
+            sourceGeneration: generation,
+            ...overrides
+        })
+        return payload.sourceInstanceId
+    }
+
+    it('gates canonical messages on bind, retries a lost head ACK, and orders agent + lifecycle rows', () => {
+        vi.useFakeTimers()
+        try {
+            socketHarness.sockets.length = 0
+            const client = new ApiSessionClient('token', createSession())
+            const socket = socketHarness.sockets[0]!
+
+            expect(socket.emitted.find((entry) => entry.event === 'session-alive')?.args[0])
+                .not.toHaveProperty('thinking')
+            expect(socket.emitted.find((entry) => entry.event === 'session-source-bind')?.args[0])
+                .toMatchObject({ sid: '11111111-1111-4111-8111-111111111111', isReconnect: false })
+
+            client.sendAgentMessage({ type: 'message', message: 'first' }, turn1)
+            client.sendSessionEvent({
+                type: 'turn-lifecycle',
+                eventId: 'evt-finish-1',
+                transition: 'finished',
+                turnId: 'turn-1',
+                invocationId: 'inv-1',
+                providerTurnId: 'prov-1',
+                scope: 'main',
+                outcome: 'completed',
+                source: 'sdk-result'
+            })
+            client.sendSessionDeath('completed')
+
+            expect(socket.emitted.filter((entry) => entry.event === 'message')).toHaveLength(0)
+            expect(socket.emitted.filter((entry) => entry.event === 'session-end')).toHaveLength(0)
+
+            const sourceInstanceId = ackLatestBind(socket, 1)
+            let messages = socket.emitted.filter((entry) => entry.event === 'message')
+            expect(messages).toHaveLength(1)
+            const firstPayload = messages[0]?.args[0] as {
+                localId: string
+                message: { meta: Record<string, unknown> }
+            }
+            expect(firstPayload.message.meta).toMatchObject({
+                sentFrom: 'cli',
+                ...turn1,
+                sourceInstanceId,
+                sourceGeneration: 1
+            })
+
+            vi.advanceTimersByTime(1_000)
+            messages = socket.emitted.filter((entry) => entry.event === 'message')
+            expect(messages).toHaveLength(2)
+            expect(messages[1]?.args[0]).toEqual(firstPayload)
+
+            const secondAttemptAck = messages[1]?.args[1] as (ack: Record<string, unknown>) => void
+            secondAttemptAck({
+                ok: true,
+                committed: true,
+                eventId: firstPayload.localId,
+                sourceGeneration: 1
+            })
+
+            messages = socket.emitted.filter((entry) => entry.event === 'message')
+            expect(messages).toHaveLength(3)
+            const lifecyclePayload = messages[2]?.args[0] as {
+                localId: string
+                message: { content: { id: string }; meta: Record<string, unknown> }
+            }
+            expect(lifecyclePayload.localId).toBe('evt-finish-1')
+            expect(lifecyclePayload.message.content.id).toBe('evt-finish-1')
+            expect(lifecyclePayload.message.meta).toMatchObject({
+                ...turn1,
+                sourceInstanceId,
+                sourceGeneration: 1
+            })
+            expect(socket.emitted.filter((entry) => entry.event === 'session-end')).toHaveLength(0)
+
+            const lifecycleAck = messages[2]?.args[1] as (ack: Record<string, unknown>) => void
+            lifecycleAck({
+                ok: true,
+                committed: true,
+                eventId: 'evt-finish-1',
+                sourceGeneration: 1
+            })
+
+            expect(socket.emitted.find((entry) => entry.event === 'session-end')?.args[0]).toMatchObject({
+                sid: '11111111-1111-4111-8111-111111111111',
+                reason: 'completed',
+                sourceInstanceId,
+                sourceGeneration: 1
+            })
+            client.close()
+        } finally {
+            vi.useRealTimers()
+        }
+    })
+
+    it('freezes bound source generation across reconnect, settles fenced old head, and reports false flush', async () => {
+        socketHarness.sockets.length = 0
+        const client = new ApiSessionClient('token', createSession())
+        const socket = socketHarness.sockets[0]!
+        const sourceInstanceId = ackLatestBind(socket, 1)
+
+        client.sendAgentMessage({ type: 'message', message: 'gen1-head' }, turn1)
+        client.sendClaudeSessionMessage({
+            type: 'assistant',
+            uuid: 'claude-1',
+            timestamp: '2026-11-10T00:00:00.000Z',
+            message: { role: 'assistant', content: 'gen1-tail' }
+        } as never, turn1)
+
+        socket.trigger('disconnect', 'transport close')
+        socket.triggerConnect()
+        expect(socket.emitted.filter((entry) => entry.event === 'session-source-bind')[1]?.args[0])
+            .toEqual({ sid: '11111111-1111-4111-8111-111111111111', sourceInstanceId, isReconnect: true })
+        ackLatestBind(socket, 2)
+
+        client.sendAgentMessage({
+            type: 'message',
+            id: 'pi-1',
+            streamSnapshot: true,
+            live: true,
+            message: 'same-body'
+        }, turn1)
+        client.sendAgentMessage({
+            type: 'message',
+            id: 'pi-1',
+            streamSnapshot: true,
+            live: true,
+            message: 'same-body'
+        }, { ...turn1, turnId: 'turn-2', invocationId: 'inv-2' })
+
+        const flushPromise = client.flush({ timeoutMs: 500 })
+        let messages = socket.emitted.filter((entry) => entry.event === 'message')
+        expect(messages).toHaveLength(2)
+        const replayedHead = messages[1]?.args[0] as {
+            localId: string
+            message: { meta: { sourceGeneration: number } }
+        }
+        expect(replayedHead.message.meta.sourceGeneration).toBe(1)
+
+        ;(messages[1]?.args[1] as (ack: Record<string, unknown>) => void)({
+            ok: false,
+            reason: 'fenced-source'
+        })
+
+        messages = socket.emitted.filter((entry) => entry.event === 'message')
+        const secondHead = messages[2]?.args[0] as {
+            localId: string
+            createdAt?: number
+            message: { meta: { sourceGeneration: number } }
+        }
+        expect(secondHead.message.meta.sourceGeneration).toBe(1)
+        expect(secondHead.createdAt).toBe(Date.parse('2026-11-10T00:00:00.000Z'))
+        ;(messages[2]?.args[1] as (ack: Record<string, unknown>) => void)({
+            ok: true,
+            committed: true,
+            eventId: secondHead.localId,
+            sourceGeneration: 1
+        })
+
+        for (const index of [3, 4]) {
+            messages = socket.emitted.filter((entry) => entry.event === 'message')
+            const current = messages[index]?.args[0] as {
+                localId: string
+                message: { meta: { sourceGeneration: number } }
+            }
+            expect(current.message.meta.sourceGeneration).toBe(2)
+            ;(messages[index]?.args[1] as (ack: Record<string, unknown>) => void)({
+                ok: true,
+                committed: true,
+                eventId: current.localId,
+                sourceGeneration: 2
+            })
+        }
+
+        await expect(flushPromise).resolves.toBe(false)
+        client.close()
+    })
+
+    it('holds canonical messages during materialization until bind succeeds and resolves flush/close', async () => {
+        socketHarness.sockets.length = 0
+        const pendingMaterialization = deferred<Session>()
+        const client = new ApiSessionClient('token', createSession(), {
+            materialize: async () => await pendingMaterialization.promise
+        })
+        const socket = socketHarness.sockets[0]!
+
+        client.notifyUserActivity()
+        client.sendAgentMessage({ type: 'message', message: 'buffered canonical' }, turn1)
+        pendingMaterialization.resolve(createSession({ namespace: 'default' }))
+        expect(await client.materialize()).toBe(true)
+        expect(socket.emitted.filter((entry) => entry.event === 'message')).toHaveLength(0)
+
+        const flushPromise = client.flush({ timeoutMs: 500 })
+        ackLatestBind(socket, 1)
+        const emitted = socket.emitted.find((entry) => entry.event === 'message')!
+        const payload = emitted.args[0] as { localId: string }
+        ;(emitted.args[1] as (ack: Record<string, unknown>) => void)({
+            ok: true,
+            committed: true,
+            eventId: payload.localId,
+            sourceGeneration: 1
+        })
+        await expect(flushPromise).resolves.toBe(true)
+
+        client.sendAgentMessage({ type: 'message', message: 'unacked before close' }, turn1)
+        const closeFlush = client.flush({ timeoutMs: 500 })
+        client.close()
+        await expect(closeFlush).resolves.toBe(false)
+    })
+
+    it('stamps bound source authority on contextless agent and session event messages', () => {
+        socketHarness.sockets.length = 0
+        const client = new ApiSessionClient('token', createSession())
+        const socket = socketHarness.sockets[0]!
+        const sourceInstanceId = ackLatestBind(socket, 1)
+
+        client.sendAgentMessage({ type: 'message', message: 'contextless-agent' })
+        client.sendSessionEvent({ type: 'message', message: 'contextless-event' })
+        client.sendAgySessionMessage({
+            type: 'PLANNER_RESPONSE',
+            content: 'contextless-agy',
+            model: 'gemini'
+        } as never)
+
+        const messages = socket.emitted.filter((entry) => entry.event === 'message')
+        expect(messages).toHaveLength(3)
+        for (const emitted of messages) {
+            const payload = emitted.args[0] as {
+                message: { meta?: { sourceInstanceId?: string; sourceGeneration?: number } }
+            }
+            expect(payload.message.meta).toMatchObject({
+                sourceInstanceId,
+                sourceGeneration: 1
+            })
+        }
+        client.close()
     })
 })

@@ -1280,6 +1280,31 @@ describe('OmpRpcEventAdapter', () => {
             expect(harness.canonicalMessages[1]).toMatchObject({ uuid: harness.canonicalMessages[0].uuid });
             expect(harness.canonicalMessages[1]).not.toHaveProperty('live');
         });
+
+        it('preserves completed and failed turn outcomes across turn_end and agent_end boundaries', () => {
+            const harness = createHarness();
+            harness.adapter.handle(rpcEvent({ type: 'agent_start' }));
+            harness.adapter.handle(rpcEvent({ type: 'turn_start' }));
+            harness.adapter.handle(rpcEvent({ type: 'message_start', message: assistantMessage('normal') }));
+            harness.adapter.handle(rpcEvent({ type: 'message_end', message: assistantMessage('normal') }));
+            harness.adapter.handle(rpcEvent({ type: 'turn_end' }));
+            harness.adapter.handle(rpcEvent({ type: 'agent_end' }));
+            expect(harness.callbacks.onTurnFinished).toHaveBeenNthCalledWith(1, 'completed', expect.objectContaining({
+                scope: 'main'
+            }));
+
+            harness.adapter.handle(rpcEvent({ type: 'agent_start' }));
+            harness.adapter.handle(rpcEvent({ type: 'turn_start' }));
+            harness.adapter.handle(rpcEvent({
+                type: 'message_end',
+                message: { ...assistantMessage('err'), stopReason: 'error' }
+            }));
+            harness.adapter.handle(rpcEvent({ type: 'turn_end' }));
+            harness.adapter.handle(rpcEvent({ type: 'agent_end' }));
+            expect(harness.callbacks.onTurnFinished).toHaveBeenNthCalledWith(2, 'failed', expect.objectContaining({
+                scope: 'main'
+            }));
+        });
     });
 });
 

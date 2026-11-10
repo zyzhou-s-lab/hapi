@@ -16,7 +16,7 @@ describe('OutgoingMessageQueue message filtering', () => {
 
     it('sends normal messages', async () => {
         queue.enqueue({ type: 'assistant', uuid: '1' })
-        queue.enqueue({ type: 'user', uuid: '2' })
+        queue.enqueue({ type: 'user', uuid: '2', message: { role: 'user', content: 'Hello' } })
         await queue.flush()
 
         expect(sent).toHaveLength(2)
@@ -34,7 +34,7 @@ describe('OutgoingMessageQueue message filtering', () => {
     })
 
     it('filters out isMeta messages', async () => {
-        queue.enqueue({ type: 'user', isMeta: true, uuid: '1' })
+        queue.enqueue({ type: 'user', isMeta: true, uuid: '1', message: { role: 'user', content: 'Hello' } })
         queue.enqueue({ type: 'assistant', uuid: '2' })
         await queue.flush()
 
@@ -44,7 +44,7 @@ describe('OutgoingMessageQueue message filtering', () => {
 
     it('filters out isCompactSummary messages', async () => {
         queue.enqueue({ type: 'assistant', isCompactSummary: true, uuid: '1' })
-        queue.enqueue({ type: 'user', uuid: '2' })
+        queue.enqueue({ type: 'user', uuid: '2', message: { role: 'user', content: 'Hello' } })
         await queue.flush()
 
         expect(sent).toHaveLength(1)

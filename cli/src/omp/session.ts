@@ -1,5 +1,7 @@
 import { ApiClient, ApiSessionClient } from '@/lib';
 import { AgentSessionBase } from '@/agent/sessionBase';
+import type { HapiMessageContext } from '@/api/apiSession';
+import type { TurnLifecycleEventPayload } from '@hapi/protocol/messages'
 import type { OmpMode, PermissionMode } from './types';
 import type { LocalLaunchExitReason } from '@/agent/localLaunchPolicy';
 import type { OmpNativeSession } from '@hapi/protocol/types';
@@ -149,8 +151,12 @@ export class OmpSession extends AgentSessionBase<OmpMode, OmpInputQueue> {
         this.localLaunchFailure = { message, exitReason };
     };
 
-    sendAgentMessage = (message: unknown): void => {
-        this.client.sendAgentMessage(message);
+    sendAgentMessage = (message: unknown, context?: HapiMessageContext): void => {
+        this.client.sendAgentMessage(message, context);
+    };
+
+    sendTurnLifecycleEvent = (event: TurnLifecycleEventPayload, context?: HapiMessageContext): void => {
+        this.client.sendSessionEvent(event, undefined, context);
     };
 
     sendUserMessage = (text: string): void => {

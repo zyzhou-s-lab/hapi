@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import React from "react";
 import { Session } from "./session";
 import { RemoteModeDisplay } from "@/ui/ink/RemoteModeDisplay";
@@ -12,6 +13,8 @@ import { PLAN_FAKE_REJECT } from "./sdk/prompts";
 import { EnhancedMode } from "./loop";
 import { OutgoingMessageQueue } from "./utils/OutgoingMessageQueue";
 import type { ClaudePermissionMode } from "@hapi/protocol/types";
+import type { HapiMessageContext } from "@/api/apiSession";
+import type { TurnLifecycleOutcome } from "@hapi/protocol";
 import { applySessionTitleFallback } from './utils/sessionTitleFallback';
 import {
     RemoteLauncherBase,
@@ -137,7 +140,7 @@ class ClaudeRemoteLauncher extends RemoteLauncherBase {
         this.permissionHandler = permissionHandler;
 
         const messageQueue = new OutgoingMessageQueue(
-            (logMessage) => session.client.sendClaudeSessionMessage(logMessage)
+            (logMessage, context) => session.client.sendClaudeSessionMessage(logMessage, context)
         );
 
         permissionHandler.setOnPermissionRequest((toolCallId: string) => {
@@ -159,8 +162,65 @@ class ClaudeRemoteLauncher extends RemoteLauncherBase {
         session.addSessionFoundCallback(handleSessionFound);
 
         let planModeToolCalls = new Set<string>();
-        let ongoingToolCalls = new Map<string, { parentToolCallId: string | null }>();
+        let ongoingToolCalls = new Map<string, { parentToolCallId: string | null; context?: HapiMessageContext }>();
+        type ActiveClaudeInvocation = {
+            turnId: string;
+            invocationId: string;
+            started: boolean;
+            finished: boolean;
+        };
+        let activeInvocation: ActiveClaudeInvocation | null = null as ActiveClaudeInvocation | null;
 
+        const buildMessageContext = (isChild: boolean): HapiMessageContext | undefined => {
+            if (!activeInvocation) {
+                return undefined;
+            }
+            return {
+                turnId: activeInvocation.turnId,
+                invocationId: activeInvocation.invocationId,
+                scope: isChild ? 'child' : 'main',
+            };
+        };
+
+        const ensureInvocationStarted = () => {
+            const current: ActiveClaudeInvocation = activeInvocation ?? {
+                turnId: randomUUID(),
+                invocationId: randomUUID(),
+                started: false,
+                finished: false,
+            };
+            activeInvocation = current;
+            if (!current.started) {
+                current.started = true;
+                session.client.sendSessionEvent({
+                    type: 'turn-lifecycle',
+                    eventId: randomUUID(),
+                    transition: 'started',
+                    turnId: current.turnId,
+                    invocationId: current.invocationId,
+                    scope: 'main',
+                });
+            }
+        };
+
+        const finishActiveInvocation = (outcome: TurnLifecycleOutcome) => {
+            const current = activeInvocation;
+            if (!current || !current.started || current.finished) {
+                activeInvocation = null;
+                return;
+            }
+            current.finished = true;
+            activeInvocation = null;
+            session.client.sendSessionEvent({
+                type: 'turn-lifecycle',
+                eventId: randomUUID(),
+                transition: 'finished',
+                turnId: current.turnId,
+                invocationId: current.invocationId,
+                scope: 'main',
+                outcome,
+            });
+        };
         function onMessage(message: SDKMessage) {
             formatClaudeMessageForInk(message, messageBuffer);
             permissionHandler.onMessage(message);
@@ -183,7 +243,10 @@ class ClaudeRemoteLauncher extends RemoteLauncherBase {
                     for (let c of umessage.message.content) {
                         if (c.type === 'tool_use') {
                             logger.debug('[remote]: detected tool use ' + c.id! + ' parent: ' + umessage.parent_tool_use_id);
-                            ongoingToolCalls.set(c.id!, { parentToolCallId: umessage.parent_tool_use_id ?? null });
+                            ongoingToolCalls.set(c.id!, {
+                                parentToolCallId: umessage.parent_tool_use_id ?? null,
+                                context: buildMessageContext(Boolean(umessage.parent_tool_use_id)),
+                            });
                         }
                     }
                 }
@@ -267,6 +330,13 @@ class ClaudeRemoteLauncher extends RemoteLauncherBase {
                     }
                 }
 
+                const isChildMessage = Boolean(
+                    logMessage.isSidechain
+                    || logMessage.parentToolUseId
+                    || ('parent_tool_use_id' in message && typeof message.parent_tool_use_id === 'string' && message.parent_tool_use_id.length > 0)
+                );
+                const msgContext = buildMessageContext(isChildMessage);
+
                 if (logMessage.type === 'assistant' && message.type === 'assistant') {
                     const assistantMsg = message as SDKAssistantMessage;
                     const toolCallIds: string[] = [];
@@ -285,24 +355,25 @@ class ClaudeRemoteLauncher extends RemoteLauncherBase {
                         if (!isSidechain) {
                             messageQueue.enqueue(logMessage, {
                                 delay: 250,
-                                toolCallIds
+                                toolCallIds,
+                                context: msgContext,
                             });
                             return;
                         }
                     }
                 }
 
-                messageQueue.enqueue(logMessage);
+                messageQueue.enqueue(logMessage, { context: msgContext });
             }
 
             if (message.type === 'assistant') {
                 let umessage = message as SDKAssistantMessage;
                 if (umessage.message.content && Array.isArray(umessage.message.content)) {
                     for (let c of umessage.message.content) {
-                        if (c.type === 'tool_use' && c.name === 'Task' && c.input && typeof (c.input as any).prompt === 'string') {
-                            const logMessage2 = sdkToLogConverter.convertSidechainUserMessage(c.id!, (c.input as any).prompt);
+                        if (c.type === 'tool_use' && c.name === 'Task' && c.input && typeof c.input === 'object' && 'prompt' in c.input && typeof c.input.prompt === 'string') {
+                            const logMessage2 = sdkToLogConverter.convertSidechainUserMessage(c.id!, c.input.prompt);
                             if (logMessage2) {
-                                messageQueue.enqueue(logMessage2);
+                                messageQueue.enqueue(logMessage2, { context: buildMessageContext(true) });
                             }
                         }
                     }
@@ -347,7 +418,7 @@ class ClaudeRemoteLauncher extends RemoteLauncherBase {
                 // failure (never reached ready) from a failure after real
                 // progress was made, for the respawn-storm guard below.
                 let reachedReadyThisAttempt = false;
-                // True once nextMessage() has actually handed a message to the
+                let launchFailed = false;
                 // SDK during this attempt (as opposed to parking it into
                 // `pending` and returning null). Some commands complete and
                 // return successfully without ever calling onReady -- e.g.
@@ -508,7 +579,10 @@ class ClaudeRemoteLauncher extends RemoteLauncherBase {
                             // just asked to clear.
                             session.consumeOneTimeFlags();
                         },
-                        onReady: async (completionEvent?: string) => {
+                        onPromptDispatched: () => {
+                            ensureInvocationStarted();
+                        },
+                        onReady: async (completionEvent?: string, outcome: TurnLifecycleOutcome = 'completed') => {
                             // Reaching ready at all means this attempt is not an
                             // immediate/deterministic failure -- reset the
                             // respawn-storm guard. The turn that led here is no
@@ -517,7 +591,7 @@ class ClaudeRemoteLauncher extends RemoteLauncherBase {
                             inFlightMessage = null;
 
                             await messageQueue.flush();
-
+                            finishActiveInvocation(outcome);
                             if (completionEvent) {
                                 logger.debug(`[remote]: Completion event: ${completionEvent}`);
                                 session.client.sendSessionEvent({ type: 'message', message: completionEvent });
@@ -567,8 +641,8 @@ class ClaudeRemoteLauncher extends RemoteLauncherBase {
                         immediateFailureCount = 0;
                     }
                 } catch (e) {
+                    launchFailed = true;
                     logger.debug('[remote]: launch error', e);
-
                     // Restores a message batch that was already
                     // dequeued+acked from the queue (see
                     // MessageQueue2.collectBatch: the ack fires at dequeue
@@ -644,20 +718,27 @@ class ClaudeRemoteLauncher extends RemoteLauncherBase {
                 } finally {
                     logger.debug('[remote]: launch finally');
 
-                    for (let [toolCallId, { parentToolCallId }] of ongoingToolCalls) {
+                    for (let [toolCallId, { parentToolCallId, context }] of ongoingToolCalls) {
                         const converted = sdkToLogConverter.generateInterruptedToolResult(toolCallId, parentToolCallId);
                         if (converted) {
                             logger.debug('[remote]: terminating tool call ' + toolCallId + ' parent: ' + parentToolCallId);
-                            session.client.sendClaudeSessionMessage(converted);
+                            session.client.sendClaudeSessionMessage(converted, context ?? buildMessageContext(Boolean(parentToolCallId)));
                         }
                     }
                     ongoingToolCalls.clear();
 
                     logger.debug('[remote]: flushing message queue');
                     await messageQueue.flush();
+                    if (activeInvocation?.started && !activeInvocation.finished) {
+                        const terminalOutcome: TurnLifecycleOutcome = (
+                            controller.signal.aborted
+                            || this.exitReason !== null
+                            || !launchFailed
+                        ) ? 'aborted' : 'failed';
+                        finishActiveInvocation(terminalOutcome);
+                    }
                     messageQueue.destroy();
                     logger.debug('[remote]: message queue flushed');
-
                     this.abortController = null;
                     this.abortFuture?.resolve(undefined);
                     this.abortFuture = null;

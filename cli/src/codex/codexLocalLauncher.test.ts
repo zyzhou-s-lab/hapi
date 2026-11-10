@@ -1,4 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { ApiSessionClient, HapiMessageContext } from '@/api/apiSession';
+import type { TurnLifecycleEventPayload } from '@hapi/protocol/messages';
 import { appendFile, mkdir, rm, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
@@ -93,6 +95,19 @@ function createSessionStub(
     let modelReasoningEffort: string | null = null;
     const modelReasoningEffortUpdates: Array<string | null> = [];
     const transcriptPathCallbacks: Array<(path: string) => void> = [];
+    const client = {
+        isPending: () => pendingClient,
+        rpcHandlerManager: {
+            registerHandler: () => {}
+        },
+        sendAgentMessage: vi.fn<ApiSessionClient['sendAgentMessage']>((message) => {
+            agentMessages.push(message);
+            messageEvents.push({ type: 'agent-message', message });
+        }),
+        sendSessionEvent: vi.fn<ApiSessionClient['sendSessionEvent']>((event) => {
+            sessionEvents.push(event);
+        })
+    };
 
     return {
         session: {
@@ -110,12 +125,7 @@ function createSessionStub(
             markTranscriptHistoryReplayConsumed: () => {
                 transcriptHistoryReplayPending = false;
             },
-            client: {
-                isPending: () => pendingClient,
-                rpcHandlerManager: {
-                    registerHandler: () => {}
-                }
-            },
+            client,
             getPermissionMode: () => permissionMode,
             getModelReasoningEffort: () => modelReasoningEffort,
             setModelReasoningEffort: (effort: string | null) => {
@@ -143,8 +153,11 @@ function createSessionStub(
             resetTranscriptPath: () => {
                 transcriptPath = null;
             },
-            sendSessionEvent: (event: { type: string; message?: string }) => {
-                sessionEvents.push(event);
+            sendSessionEvent: (event: Parameters<ApiSessionClient['sendSessionEvent']>[0]) => {
+                client.sendSessionEvent(event);
+            },
+            sendTurnLifecycleEvent: (event: TurnLifecycleEventPayload, context?: HapiMessageContext) => {
+                client.sendSessionEvent(event, undefined, context);
             },
             recordLocalLaunchFailure: (message: string, exitReason: 'switch' | 'exit') => {
                 localLaunchFailure = { message, exitReason };
@@ -157,9 +170,8 @@ function createSessionStub(
                 userActivityCount += 1;
                 messageEvents.push({ type: 'user-activity' });
             },
-            sendAgentMessage: (message: unknown) => {
-                agentMessages.push(message);
-                messageEvents.push({ type: 'agent-message', message });
+            sendAgentMessage: (message: unknown, context?: HapiMessageContext) => {
+                client.sendAgentMessage(message, context);
             },
             queue: createQueueStub()
         },
@@ -1564,5 +1576,64 @@ describe('codexLocalLauncher', () => {
 
         expect(session.sessionId).toBeNull();
         expect(session.transcriptPath).toBeNull();
+    });
+
+    it('scopes buffered live final_answer messages as live after initial history replay finishes', async () => {
+        const initialTranscriptPath = join(tempDir, 'replay-then-live.jsonl');
+        await writeFile(
+            initialTranscriptPath,
+            [
+                JSON.stringify({ type: 'session_meta', payload: { id: 'replayed-thread' } }),
+                JSON.stringify({
+                    type: 'response_item',
+                    payload: {
+                        type: 'message',
+                        role: 'assistant',
+                        phase: 'final_answer',
+                        content: [{ type: 'output_text', text: 'historical final' }]
+                    }
+                })
+            ].join('\n') + '\n'
+        );
+        const { session } = createSessionStub(
+            'default',
+            undefined,
+            '/tmp/worktree',
+            null,
+            true
+        );
+        const { promise, resolve } = Promise.withResolvers<void>();
+        harness.runBarrier = promise;
+
+        const launcherPromise = codexLocalLauncher(session as never);
+        await wait(50);
+
+        harness.sessionHookHandlers[0]?.('replayed-thread', {
+            transcript_path: initialTranscriptPath
+        });
+        await wait(300);
+
+        await appendFile(
+            initialTranscriptPath,
+            JSON.stringify({
+                type: 'response_item',
+                payload: {
+                    type: 'message',
+                    role: 'assistant',
+                    phase: 'final_answer',
+                    content: [{ type: 'output_text', text: 'live final before exit' }]
+                }
+            }) + '\n'
+        );
+        await wait(2300);
+
+        resolve();
+        await launcherPromise;
+
+        const calls = session.client.sendAgentMessage.mock.calls;
+        const historicalCall = calls.find(([msg]) => Boolean(msg && typeof msg === 'object' && 'message' in msg && msg.message === 'historical final'));
+        const liveCall = calls.find(([msg]) => Boolean(msg && typeof msg === 'object' && 'message' in msg && msg.message === 'live final before exit'));
+        expect(historicalCall?.[1]).toEqual({ scope: 'history' });
+        expect(liveCall?.[1]).toEqual({ scope: 'main' });
     });
 });

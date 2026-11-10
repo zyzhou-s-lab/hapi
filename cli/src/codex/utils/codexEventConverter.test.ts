@@ -219,13 +219,30 @@ describe('convertCodexEvent', () => {
         expect(result).toBeNull();
     });
 
-    it.each(['task_complete', 'turn_aborted', 'task_failed'])('converts %s into a turn boundary', (type) => {
+    it.each([
+        ['task_complete', 'completed'],
+        ['turn_aborted', 'aborted'],
+        ['task_failed', 'failed']
+    ])('converts %s into a turn boundary', (type, outcome) => {
         const result = convertCodexEvent({
             type: 'event_msg',
             payload: { type, turn_id: 'turn-1' }
         });
 
-        expect(result).toEqual({ finishedTurnId: 'turn-1' });
+        expect(result).toEqual({ finishedTurnId: 'turn-1', finishedOutcome: outcome });
+    });
+
+    it('emits native start and terminal actions but never treats final body text as a terminal', () => {
+        const converter = createCodexEventConverter();
+        expect(converter({
+            type: 'event_msg', payload: { type: 'task_started', turn_id: 'native-turn' }
+        })).toEqual([{ type: 'turn-started', turnId: 'native-turn' }]);
+        expect(converter({
+            type: 'event_msg', payload: { type: 'agent_message', message: 'final body', turn_id: 'native-turn' }
+        }).some((action) => action.type === 'turn-finished')).toBe(false);
+        expect(converter({
+            type: 'event_msg', payload: { type: 'turn_aborted', turn_id: 'native-turn' }
+        }).at(-1)).toEqual({ type: 'turn-finished', turnId: 'native-turn', outcome: 'aborted' });
     });
 
     it.each([
@@ -367,7 +384,7 @@ describe('convertCodexEvent', () => {
         expect(getAgentMessages(completed)).toEqual([
             expect.objectContaining({ message: 'response-only final' })
         ]);
-        expect(completed.at(-1)).toEqual({ type: 'turn-finished', turnId: 'turn-1' });
+        expect(completed.at(-1)).toEqual({ type: 'turn-finished', turnId: 'turn-1', outcome: 'completed' });
     });
 
     it('flushes older finals before emitting a later semantic mirror', () => {
@@ -425,7 +442,7 @@ describe('convertCodexEvent', () => {
         expect(convert({
             type: 'event_msg',
             payload: { type: 'task_complete', turn_id: 'turn-1' }
-        })).toEqual([{ type: 'turn-finished', turnId: 'turn-1' }]);
+        })).toEqual([{ type: 'turn-finished', turnId: 'turn-1', outcome: 'completed' }]);
     });
 
     it('does not register a semantic message after pairing it with a buffered response', () => {
@@ -614,7 +631,7 @@ describe('convertCodexEvent', () => {
         expect(convert({
             type: 'event_msg',
             payload: { type: 'task_complete', turn_id: 'turn-1' }
-        })).toEqual([{ type: 'turn-finished', turnId: 'turn-1' }]);
+        })).toEqual([{ type: 'turn-finished', turnId: 'turn-1', outcome: 'completed' }]);
     });
 
     it('matches an indented compaction summary after the checkpoint prefix', () => {
@@ -640,7 +657,7 @@ describe('convertCodexEvent', () => {
         expect(convert({
             type: 'event_msg',
             payload: { type: 'task_complete', turn_id: 'turn-1' }
-        })).toEqual([{ type: 'turn-finished', turnId: 'turn-1' }]);
+        })).toEqual([{ type: 'turn-finished', turnId: 'turn-1', outcome: 'completed' }]);
     });
 
     it('does not let token counts confirm a pending final', () => {
@@ -716,7 +733,7 @@ describe('convertCodexEvent', () => {
             message: 'visible before remote compaction',
             id: 'visible-before-remote-compaction'
         }]);
-        expect(completed.at(-1)).toEqual({ type: 'turn-finished', turnId: 'turn-1' });
+        expect(completed.at(-1)).toEqual({ type: 'turn-finished', turnId: 'turn-1', outcome: 'completed' });
     });
 
     it('converts reasoning events', () => {

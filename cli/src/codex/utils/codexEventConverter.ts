@@ -57,13 +57,17 @@ export type CodexMessage = {
     is_error?: boolean;
 };
 
+export type CodexTurnOutcome = 'completed' | 'aborted' | 'failed';
+
 export type CodexEventProjection = {
     sessionId?: string;
     turnId?: string;
     messages?: CodexMessage[];
     userMessage?: string;
     userActivity?: true;
+    startedTurnId?: string;
     finishedTurnId?: string;
+    finishedOutcome?: CodexTurnOutcome;
 };
 
 export type CodexConversionAction = {
@@ -75,14 +79,17 @@ export type CodexConversionAction = {
 } | {
     type: 'user-activity';
 } | {
+    type: 'turn-started';
+    turnId: string;
+} | {
     type: 'agent-message';
     message: CodexMessage;
     turnId?: string;
 } | {
     type: 'turn-finished';
     turnId: string;
+    outcome?: CodexTurnOutcome;
 };
-
 export interface CodexEventConverter {
     (rawEvent: unknown): CodexConversionAction[];
     finalize: () => CodexConversionAction[];
@@ -322,6 +329,9 @@ function convertProjectionToActions(
     } else if (projection.userActivity) {
         actions.push({ type: 'user-activity' });
     }
+    if (projection.startedTurnId) {
+        actions.push({ type: 'turn-started', turnId: projection.startedTurnId });
+    }
 
     const turnId = projection.turnId ?? fallbackTurnId;
     for (const message of projection.messages ?? []) {
@@ -332,10 +342,14 @@ function convertProjectionToActions(
         });
     }
     if (projection.finishedTurnId) {
-        actions.push({ type: 'turn-finished', turnId: projection.finishedTurnId });
+        actions.push({
+            type: 'turn-finished',
+            turnId: projection.finishedTurnId,
+            ...(projection.finishedOutcome ? { outcome: projection.finishedOutcome } : {})
+        });
     }
     return actions;
-}
+};
 
 function confirmsPendingFinalVisibility(actions: CodexConversionAction[]): boolean {
     return actions.some((action) => (
@@ -395,9 +409,8 @@ export function createCodexEventConverter(): CodexEventConverter {
         currentTurnId = extractEventTurnId(parsed.data) ?? currentTurnId;
         const projection = extractAssistantMessageProjection(parsed.data, currentTurnId);
         const converted = convertCodexEvent(parsed.data);
-        const convertedActions = convertProjectionToActions(converted, projection?.turnId ?? null);
+        const convertedActions = convertProjectionToActions(converted, projection?.turnId ?? currentTurnId);
         const payload = asRecord(parsed.data.payload);
-
         if (parsed.data.type === 'compacted') {
             // Local compaction stores its raw assistant summary at the end of
             // checkpoint.message. Remote compaction leaves message empty and
@@ -593,9 +606,22 @@ export function convertCodexEvent(rawEvent: unknown): CodexEventProjection | nul
             };
         }
 
+        if (eventType === 'task_started') {
+            const turnId = asString(payloadRecord.turn_id ?? payloadRecord.turnId);
+            return turnId ? { startedTurnId: turnId } : null;
+        }
+
         if (eventType === 'task_complete' || eventType === 'turn_aborted' || eventType === 'task_failed') {
-            const turnId = asString(payloadRecord.turn_id);
-            return turnId ? { finishedTurnId: turnId } : null;
+            const turnId = asString(payloadRecord.turn_id ?? payloadRecord.turnId);
+            if (!turnId) {
+                return null;
+            }
+            const finishedOutcome: CodexTurnOutcome = eventType === 'task_complete'
+                ? 'completed'
+                : eventType === 'turn_aborted'
+                    ? 'aborted'
+                    : 'failed';
+            return { finishedTurnId: turnId, finishedOutcome };
         }
 
         if (eventType === 'agent_reasoning') {

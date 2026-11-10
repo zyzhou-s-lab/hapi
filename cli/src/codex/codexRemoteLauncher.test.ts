@@ -1,4 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { ApiSessionClient, HapiMessageContext } from '@/api/apiSession';
+import type { TurnLifecycleEventPayload } from '@hapi/protocol/messages';
 import { MessageQueue2 } from '@/utils/MessageQueue2';
 import type { EnhancedMode } from './loop';
 
@@ -1201,16 +1203,16 @@ function createSessionStub(
         updateAgentState(handler: (state: FakeAgentState) => FakeAgentState) {
             agentState = handler(agentState);
         },
-        sendAgentMessage(message: unknown) {
+        sendAgentMessage: vi.fn<ApiSessionClient['sendAgentMessage']>((message) => {
             codexMessages.push(message);
-        },
+        }),
         sendUserMessage(_text: string) {},
-        sendClaudeSessionMessage(message: unknown) {
+        sendClaudeSessionMessage: vi.fn<ApiSessionClient['sendClaudeSessionMessage']>((message) => {
             summaryMessages.push(message);
-        },
-        sendSessionEvent(event: { type: string; [key: string]: unknown }) {
+        }),
+        sendSessionEvent: vi.fn<ApiSessionClient['sendSessionEvent']>((event) => {
             sessionEvents.push(event);
-        },
+        }),
         emitMessagesConsumed: vi.fn(),
         emitSteerIndeterminate: vi.fn(),
         setSteerDeliveryState: vi.fn(async () => true)
@@ -1256,10 +1258,13 @@ function createSessionStub(
             resetThreadCalls.push(session.sessionId ?? 'none');
             session.sessionId = null;
         },
-        sendAgentMessage(message: unknown) {
-            client.sendAgentMessage(message);
+        sendAgentMessage(message: unknown, context?: HapiMessageContext) {
+            client.sendAgentMessage(message, context);
         },
-        sendSessionEvent(event: { type: string; [key: string]: unknown }) {
+        sendTurnLifecycleEvent(event: TurnLifecycleEventPayload, context?: HapiMessageContext) {
+            client.sendSessionEvent(event, undefined, context);
+        },
+        sendSessionEvent(event: Parameters<ApiSessionClient['sendSessionEvent']>[0]) {
             client.sendSessionEvent(event);
         },
         sendUserMessage(text: string) {

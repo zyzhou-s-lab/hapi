@@ -14,7 +14,8 @@ import { getGeneratedImage } from '@/modules/common/generatedImages'
 import { extractUserRequest } from '@/agy/utils/agyMessageText'
 import { AGENT_MESSAGE_PAYLOAD_TYPE } from "@hapi/protocol"
 import type { SessionEndReason } from '@hapi/protocol'
-import type { ClientToServerEvents, ServerToClientEvents, TerminalOutputPayload, Update } from '@hapi/protocol'
+import type { ClientToServerEvents, MessageAck, ServerToClientEvents, SessionSourceBindAck, TerminalOutputPayload, Update } from '@hapi/protocol'
+import type { TurnLifecycleEventPayload } from '@hapi/protocol/messages'
 import {
     AgentTerminalInputPayloadSchema,
     AgentTerminalRefreshPayloadSchema,
@@ -178,6 +179,32 @@ export type ApiSessionClientOptions = {
     onMaterialized?: (session: Session, snapshot: PendingSessionSnapshot) => void
 }
 
+export type HapiMessageContext = {
+    turnId?: string
+    invocationId?: string
+    providerTurnId?: string
+    scope: 'main' | 'child' | 'history'
+}
+
+type SessionSourceIdentity = {
+    sourceInstanceId: string
+    sourceGeneration: number
+}
+
+type CanonicalOutboundMessage = {
+    kind: 'message'
+    localId: string
+    message: { role: string; content: unknown; meta?: Record<string, unknown> }
+    context?: HapiMessageContext
+    createdAt?: number
+    payload?: Parameters<ClientToServerEvents['message']>[0]
+    source?: SessionSourceIdentity
+} | {
+    kind: 'session-end'
+    reason?: SessionEndReason
+    source?: SessionSourceIdentity
+}
+
 type PendingOutboundEvent = {
     emit: () => void
     retention: 'lossless' | 'droppable'
@@ -186,6 +213,7 @@ type PendingOutboundEvent = {
 const MAX_PENDING_DROPPABLE_EVENTS = 256
 const MATERIALIZATION_RETRY_MIN_MS = 1_000
 const MATERIALIZATION_RETRY_MAX_MS = 30_000
+const CANONICAL_RETRY_MS = 1_000
 
 function isTransientMaterializationError(error: unknown): boolean {
     if (!axios.isAxiosError(error)) {
@@ -258,6 +286,15 @@ export class ApiSessionClient extends EventEmitter {
     private retryQueuedMessageCallback: ((localId: string) => boolean) | null = null
     private readonly incomingFilter = new IncomingMessageFilter()
     private readonly lastStreamBodies = new Map<string, string>()
+    private readonly sourceInstanceId = randomUUID()
+    private boundSource: SessionSourceIdentity | null = null
+    private sourceConnection = 0
+    private canonicalTransportError: string | null = null
+    private canonicalUncommittedFailure = false
+    private canonicalRetryTimer: ReturnType<typeof setTimeout> | null = null
+    // In-memory only: entries survive reconnects, not a CLI process crash.
+    private readonly canonicalOutboundMessages: CanonicalOutboundMessage[] = []
+    private readonly canonicalDrainWaiters = new Set<(value: boolean) => void>()
     private backfillInFlight: Promise<void> | null = null
     private needsBackfill = false
     private hasConnectedOnce = false
@@ -348,9 +385,12 @@ export class ApiSessionClient extends EventEmitter {
 
         this.socket.on('connect', () => {
             logger.debug('Socket connected successfully')
-            // sendBuffer is flushed before this event. Packets already handed to
-            // the engine are not replayed, so forget dedupe keys and let a retry
-            // through. The hub collapses an identical snapshot.
+            const isReconnect = this.hasConnectedOnce
+            this.sourceConnection += 1
+            this.boundSource = null
+            this.canonicalTransportError = null
+            this.clearCanonicalRetry()
+            // Legacy stream sends can be retried after the Socket.IO buffer drains.
             this.lastStreamBodies.clear()
             this.awaitingMaterializedConnection = false
             this.rpcHandlerManager.onSocketConnect(this.socket)
@@ -359,10 +399,11 @@ export class ApiSessionClient extends EventEmitter {
             }
             void this.backfillIfNeeded()
             this.hasConnectedOnce = true
+            this.bindSessionSource(isReconnect, this.sourceConnection)
             this.socket.emit('session-alive', {
                 sid: this.sessionId,
                 time: Date.now(),
-                thinking: false
+                ...(this.boundSource ?? {})
             })
         })
 
@@ -372,6 +413,9 @@ export class ApiSessionClient extends EventEmitter {
 
         this.socket.on('disconnect', (reason) => {
             logger.debug('[API] Socket disconnected:', reason)
+            this.sourceConnection += 1
+            this.boundSource = null
+            this.clearCanonicalRetry()
             // In-flight emits are not put back into sendBuffer.
             this.lastStreamBodies.clear()
             this.rpcHandlerManager.onSocketDisconnect()
@@ -630,6 +674,7 @@ export class ApiSessionClient extends EventEmitter {
 
                 const pendingEvents = this.pendingOutboundEvents.splice(0)
                 this.awaitingMaterializedConnection = pendingEvents.length > 0
+                    || this.canonicalOutboundMessages.length > 0
                     || shouldSyncMetadata
                     || shouldSyncAgentState
                 for (const pendingEvent of pendingEvents) {
@@ -729,6 +774,162 @@ export class ApiSessionClient extends EventEmitter {
             }
         }
         this.pendingOutboundEvents.push({ emit, retention })
+    }
+
+    private clearCanonicalRetry(): void {
+        if (this.canonicalRetryTimer !== null) {
+            clearTimeout(this.canonicalRetryTimer)
+            this.canonicalRetryTimer = null
+        }
+    }
+
+    private scheduleCanonicalRetry(retry: () => void): void {
+        this.clearCanonicalRetry()
+        this.canonicalRetryTimer = setTimeout(() => {
+            this.canonicalRetryTimer = null
+            retry()
+        }, CANONICAL_RETRY_MS)
+        this.canonicalRetryTimer.unref?.()
+    }
+
+    private failCanonicalTransport(reason: string): void {
+        this.canonicalTransportError = reason
+        this.clearCanonicalRetry()
+        logger.warn(`[API] Canonical session delivery blocked for ${this.sessionId}: ${reason}`)
+        this.finishCanonicalDrain(false)
+    }
+
+    private bindSessionSource(isReconnect: boolean, connection: number): void {
+        if (this.state !== 'active' || !this.socket.connected || connection !== this.sourceConnection) return
+        this.scheduleCanonicalRetry(() => this.bindSessionSource(isReconnect, connection))
+        this.socket.emit('session-source-bind', {
+            sid: this.sessionId,
+            sourceInstanceId: this.sourceInstanceId,
+            isReconnect
+        }, (ack: SessionSourceBindAck) => {
+            if (this.state !== 'active' || !this.socket.connected || connection !== this.sourceConnection
+                || this.boundSource || this.canonicalTransportError) return
+            if (!ack?.ok || ack.fenced || ack.sourceInstanceId !== this.sourceInstanceId
+                || !Number.isSafeInteger(ack.sourceGeneration) || ack.sourceGeneration < 1) {
+                this.failCanonicalTransport(`source bind failed (${ack?.reason ?? 'invalid acknowledgement'})`)
+                return
+            }
+            this.clearCanonicalRetry()
+            this.boundSource = {
+                sourceInstanceId: this.sourceInstanceId,
+                sourceGeneration: ack.sourceGeneration
+            }
+            // Freeze every waiting entry at its first bind, including unsent tails.
+            for (const entry of this.canonicalOutboundMessages) {
+                this.bindCanonicalMessage(entry)
+            }
+            this.pumpCanonicalMessages()
+        })
+    }
+
+    private bindCanonicalMessage(entry: CanonicalOutboundMessage): void {
+        if (entry.source || !this.boundSource) return
+        entry.source = { ...this.boundSource }
+        if (entry.kind === 'message') {
+            entry.payload = {
+                sid: this.sessionId,
+                localId: entry.localId,
+                message: {
+                    ...entry.message,
+                    meta: {
+                        ...entry.message.meta,
+                        ...(entry.context?.turnId ? { turnId: entry.context.turnId } : {}),
+                        ...(entry.context?.invocationId ? { invocationId: entry.context.invocationId } : {}),
+                        ...(entry.context?.providerTurnId ? { providerTurnId: entry.context.providerTurnId } : {}),
+                        ...(entry.context?.scope ? { scope: entry.context.scope } : {}),
+                        ...entry.source
+                    }
+                },
+                ...(entry.createdAt !== undefined ? { createdAt: entry.createdAt } : {})
+            }
+        }
+    }
+
+    private enqueueCanonicalMessage(
+        message: Extract<CanonicalOutboundMessage, { kind: 'message' }>['message'],
+        context?: Extract<CanonicalOutboundMessage, { kind: 'message' }>['context'],
+        localId: string = randomUUID(),
+        createdAt?: number
+    ): void {
+        if (this.state === 'closed') return
+        const entry: CanonicalOutboundMessage = {
+            kind: 'message',
+            message,
+            ...(context ? { context: { ...context } } : {}),
+            localId,
+            createdAt
+        }
+        this.bindCanonicalMessage(entry)
+        this.canonicalOutboundMessages.push(entry)
+        this.pumpCanonicalMessages()
+    }
+
+    private pumpCanonicalMessages(): void {
+        if (this.state !== 'active' || !this.socket.connected || !this.boundSource
+            || this.canonicalTransportError || this.canonicalRetryTimer !== null) return
+        while (this.canonicalOutboundMessages[0]?.kind === 'session-end') {
+            const endEntry = this.canonicalOutboundMessages[0]
+            if (endEntry.kind !== 'session-end') break
+            this.canonicalOutboundMessages.shift()
+            this.bindCanonicalMessage(endEntry)
+            this.socket.emit('session-end', {
+                sid: this.sessionId, time: Date.now(), reason: endEntry.reason, ...(endEntry.source ?? {})
+            })
+        }
+        const entry = this.canonicalOutboundMessages[0]
+        if (!entry || entry.kind !== 'message') {
+            this.finishCanonicalDrain(!this.canonicalUncommittedFailure)
+            return
+        }
+        this.bindCanonicalMessage(entry)
+        const connection = this.sourceConnection
+        this.scheduleCanonicalRetry(() => this.pumpCanonicalMessages())
+        this.socket.emit('message', entry.payload!, (ack: MessageAck) => {
+            if (this.state !== 'active' || !this.socket.connected || connection !== this.sourceConnection
+                || this.canonicalTransportError || this.canonicalOutboundMessages[0] !== entry) return
+            if (!ack?.ok) {
+                if (ack?.reason === 'fenced-source' || ack?.reason === 'invalid-payload') {
+                    this.canonicalUncommittedFailure = true
+                    this.clearCanonicalRetry()
+                    logger.warn(`[API] Dropping uncommitted canonical message ${entry.localId} for ${this.sessionId}: ${ack.reason}`)
+                    this.canonicalOutboundMessages.shift()
+                    this.pumpCanonicalMessages()
+                    return
+                }
+                this.failCanonicalTransport(`message ${entry.localId} rejected (${ack?.reason ?? 'invalid acknowledgement'})`)
+                return
+            }
+            if (ack.committed !== true || ack.eventId !== entry.localId
+                || ack.sourceGeneration !== entry.source?.sourceGeneration) return
+            this.clearCanonicalRetry()
+            this.canonicalOutboundMessages.shift()
+            this.pumpCanonicalMessages()
+        })
+    }
+
+    private finishCanonicalDrain(value: boolean): void {
+        for (const finish of this.canonicalDrainWaiters) finish(value)
+    }
+
+    private async waitForCanonicalMessages(timeoutMs: number): Promise<boolean> {
+        if (this.state === 'closed' || this.canonicalTransportError) return false
+        if (this.canonicalOutboundMessages.length === 0) return !this.canonicalUncommittedFailure
+        if (timeoutMs <= 0) return false
+        return await new Promise<boolean>((resolve) => {
+            const finish = (value: boolean) => {
+                clearTimeout(timeout)
+                this.canonicalDrainWaiters.delete(finish)
+                resolve(value)
+            }
+            const timeout = setTimeout(() => finish(false), timeoutMs)
+            this.canonicalDrainWaiters.add(finish)
+            this.pumpCanonicalMessages()
+        })
     }
 
     onUserMessage(callback: (data: UserMessage, localId?: string) => void): void {
@@ -921,7 +1122,7 @@ export class ApiSessionClient extends EventEmitter {
         await this.backfillInFlight
     }
 
-    sendClaudeSessionMessage(body: RawJSONLines): void {
+    sendClaudeSessionMessage(body: RawJSONLines, context?: HapiMessageContext): void {
         let content: MessageContent
         // Origin timestamp (epoch ms) from the transcript entry's own `timestamp`,
         // forwarded only for agent messages so the hub can stamp created_at/invoked_at
@@ -965,13 +1166,20 @@ export class ApiSessionClient extends EventEmitter {
             }
         }
 
-        this.emitOrQueue(() => {
-            this.socket.emit('message', {
-                sid: this.sessionId,
-                message: content,
-                ...(createdAt !== undefined ? { createdAt } : {})
+        if (content.role === 'agent' && context) {
+            this.enqueueCanonicalMessage(content, context, undefined, createdAt)
+        } else {
+            this.emitOrQueue(() => {
+                const message = content.role === 'agent' && this.boundSource
+                    ? { ...content, meta: { ...content.meta, ...this.boundSource } }
+                    : content
+                this.socket.emit('message', {
+                    sid: this.sessionId,
+                    message,
+                    ...(createdAt !== undefined ? { createdAt } : {})
+                })
             })
-        })
+        }
 
         if (body.type === 'summary' && 'summary' in body && 'leafUuid' in body) {
             this.updateMetadata((metadata) => ({
@@ -1046,13 +1254,15 @@ export class ApiSessionClient extends EventEmitter {
             // enriched by the scanner from the conversation DB.
             data = { type: 'agy_message', content: entry.content ?? '', model: entry.model }
         }
-        this.socket.emit('message', {
-            sid: this.sessionId,
-            message: {
-                role: 'agent',
-                content: { type: 'output', data },
-                meta: { sentFrom: 'cli' }
-            }
+        this.emitOrQueue(() => {
+            this.socket.emit('message', {
+                sid: this.sessionId,
+                message: {
+                    role: 'agent',
+                    content: { type: 'output', data },
+                    meta: { sentFrom: 'cli', ...(this.boundSource ?? {}) }
+                }
+            })
         })
     }
 
@@ -1086,8 +1296,11 @@ export class ApiSessionClient extends EventEmitter {
         void this.materialize()
     }
 
-    sendAgentMessage(body: unknown): void {
-        const streamKey = streamSnapshotKey(body)
+    sendAgentMessage(body: unknown, context?: HapiMessageContext): void {
+        const providerStreamKey = streamSnapshotKey(body)
+        const streamKey = providerStreamKey && context
+            ? JSON.stringify([context.turnId, context.invocationId, context.scope, providerStreamKey])
+            : providerStreamKey
         const encoded = streamKey ? JSON.stringify(body) : null
         if (streamKey && encoded && this.lastStreamBodies.get(streamKey) === encoded) return
         if (streamKey && encoded) {
@@ -1126,10 +1339,16 @@ export class ApiSessionClient extends EventEmitter {
                 })
             }
         }
+        if (context) {
+            this.enqueueCanonicalMessage(content, context)
+            return
+        }
         this.emitOrQueue(() => {
             this.socket.emit('message', {
                 sid: this.sessionId,
-                message: content
+                message: this.boundSource
+                    ? { ...content, meta: { ...content.meta, ...this.boundSource } }
+                    : content
             })
         })
     }
@@ -1160,22 +1379,40 @@ export class ApiSessionClient extends EventEmitter {
         summary: string
         tokensBefore?: number
         estimatedTokensAfter?: number
-    }, id?: string): void {
+    } | TurnLifecycleEventPayload, id?: string, context?: HapiMessageContext): void {
         const content = {
             role: 'agent',
             content: {
-                id: id ?? randomUUID(),
+                id: event.type === 'turn-lifecycle' ? event.eventId : id ?? randomUUID(),
                 type: 'event',
                 data: event
             }
         }
-
+        const lifecycleContext = event.type === 'turn-lifecycle' ? {
+            turnId: event.turnId,
+            invocationId: event.invocationId,
+            providerTurnId: event.providerTurnId,
+            scope: event.scope
+        } : context
+        if (lifecycleContext) {
+            this.enqueueCanonicalMessage(
+                content,
+                lifecycleContext,
+                event.type === 'turn-lifecycle' ? event.eventId : undefined
+            )
+            return
+        }
+        const retention = event.type === 'ready' || event.type === 'switch' || event.type === 'permission-mode-changed'
+            ? 'droppable'
+            : 'lossless'
         this.emitOrQueue(() => {
             this.socket.emit('message', {
                 sid: this.sessionId,
-                message: content
+                message: this.boundSource
+                    ? { ...content, meta: { ...this.boundSource } }
+                    : content
             })
-        }, event.type === 'message' || event.type === 'error' || event.type === 'compact-summary' ? 'lossless' : 'droppable')
+        }, retention)
     }
 
     emitAgentTerminalOutput(data: string): void {
@@ -1271,6 +1508,7 @@ export class ApiSessionClient extends EventEmitter {
             time: Date.now(),
             thinking,
             mode,
+            ...(this.boundSource ?? {}),
             ...(runtime ?? {})
         })
     }
@@ -1280,7 +1518,8 @@ export class ApiSessionClient extends EventEmitter {
         this.emitOrQueue(() => {
             this.socket.emit('session-ready', {
                 sid: this.sessionId,
-                time: Date.now()
+                time: Date.now(),
+                ...(this.boundSource ?? {})
             })
         }, 'droppable')
     }
@@ -1340,8 +1579,17 @@ export class ApiSessionClient extends EventEmitter {
         if (this.state === 'active') {
             void cleanupUploadDir(this.sessionId)
         }
+        if (this.canonicalOutboundMessages.length > 0) {
+            const endEntry: CanonicalOutboundMessage = { kind: 'session-end', reason }
+            this.bindCanonicalMessage(endEntry)
+            this.canonicalOutboundMessages.push(endEntry)
+            this.pumpCanonicalMessages()
+            return
+        }
         this.emitOrQueue(() => {
-            this.socket.emit('session-end', { sid: this.sessionId, time: Date.now(), reason })
+            this.socket.emit('session-end', {
+                sid: this.sessionId, time: Date.now(), reason, ...(this.boundSource ?? {})
+            })
         })
     }
 
@@ -1563,6 +1811,9 @@ export class ApiSessionClient extends EventEmitter {
         if (!await this.drainLock(this.agentStateLock, remainingMs())) {
             return false
         }
+        if (!await this.waitForCanonicalMessages(remainingMs())) {
+            return false
+        }
 
         if (remainingMs() === 0) {
             return false
@@ -1576,7 +1827,8 @@ export class ApiSessionClient extends EventEmitter {
         try {
             await this.socket.timeout(pingTimeoutMs).emitWithAck('ping')
             this.awaitingMaterializedConnection = false
-            return true
+            return this.state === 'active' && !this.canonicalTransportError
+                && !this.canonicalUncommittedFailure && this.canonicalOutboundMessages.length === 0
         } catch {
             return false
         }
@@ -1588,6 +1840,11 @@ export class ApiSessionClient extends EventEmitter {
         }
         clearSessionPromptLive(this.sessionId)
         this.state = 'closed'
+        this.sourceConnection += 1
+        this.boundSource = null
+        this.clearCanonicalRetry()
+        this.canonicalOutboundMessages.length = 0
+        this.finishCanonicalDrain(false)
         this.materializationAbortController?.abort()
         this.materializationAbortController = null
         this.materializationRetryAbortController?.abort()

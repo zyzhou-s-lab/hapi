@@ -2,6 +2,8 @@ import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import type { AgentMessage, AgentUsage } from '@/agent/types';
 import type { RawJSONLines } from '@/claude/types';
+import type { HapiMessageContext } from '@/api/apiSession';
+import type { TurnLifecycleOutcome } from '@hapi/protocol';
 import type {
     JsonObject,
     JsonValue,
@@ -375,23 +377,24 @@ type SubagentState = {
     seenMessages: Set<string>;
     tools: Map<string, ToolLifecycle>;
     completedToolIds: Set<string>;
+    context?: HapiMessageContext;
 };
 
 export type OmpRpcEventAdapterCallbacks = {
-    onAgentMessage: (message: AgentMessage) => void;
-    onCanonicalMessage: (message: RawJSONLines) => void;
-    onAgentRunEvent: (event: OmpAgentRunEvent) => void;
+    onAgentMessage: (message: AgentMessage, context?: HapiMessageContext) => void;
+    onCanonicalMessage: (message: RawJSONLines, context?: HapiMessageContext) => void;
+    onAgentRunEvent: (event: OmpAgentRunEvent, context?: HapiMessageContext) => void;
     onAgentRunTrace: (scope: {
         agentId: string;
         cardId: string;
         parentToolCallId?: string;
         startedAt: number;
-    }, message: AgentMessage) => void;
-    onStructuredEvent: (event: OmpStructuredEvent) => void;
+    }, message: AgentMessage, context?: HapiMessageContext) => void;
+    onStructuredEvent: (event: OmpStructuredEvent, context?: HapiMessageContext) => void;
     onInkMessage: (message: string, type: 'assistant' | 'system' | 'tool' | 'result' | 'status') => void;
     onUserMessageCommitted: (steering: boolean) => void;
-    onTurnStarted: () => void;
-    onTurnFinished: () => void;
+    onTurnStarted: (context: HapiMessageContext) => void;
+    onTurnFinished: (outcome: TurnLifecycleOutcome, context?: HapiMessageContext) => void;
     onPromptResult: (agentInvoked: boolean) => void;
     onSessionInfoUpdate: () => void;
     onAvailableCommandsChanged: (commands: OmpAvailableCommand[]) => void;
@@ -411,43 +414,48 @@ export type OmpRpcEventAdapterCallbacks = {
 class OmpEventProjection {
     constructor(
         readonly enabled: boolean,
-        private readonly callbacks: OmpRpcEventAdapterCallbacks
+        private readonly callbacks: OmpRpcEventAdapterCallbacks,
+        private readonly defaultContext?: HapiMessageContext
     ) {}
 
-    onAgentMessage(message: AgentMessage): void {
+    onAgentMessage(message: AgentMessage, context?: HapiMessageContext): void {
         if (!this.enabled) return;
-        this.callbacks.onAgentMessage(message);
+        this.callbacks.onAgentMessage(message, context ?? this.defaultContext);
     }
 
-    onCanonicalMessage(message: RawJSONLines): void {
+    onCanonicalMessage(message: RawJSONLines, context?: HapiMessageContext): void {
         if (!this.enabled) return;
-        this.callbacks.onCanonicalMessage(message);
+        this.callbacks.onCanonicalMessage(message, context ?? this.defaultContext);
     }
 
-    onAgentRunEvent(event: OmpAgentRunEvent): void {
+    onAgentRunEvent(event: OmpAgentRunEvent, context?: HapiMessageContext): void {
         if (!this.enabled) return;
-        this.callbacks.onAgentRunEvent(event);
+        this.callbacks.onAgentRunEvent(event, context ?? this.defaultContext);
     }
 
     onAgentRunTrace(
         scope: Parameters<OmpRpcEventAdapterCallbacks['onAgentRunTrace']>[0],
-        message: AgentMessage
+        message: AgentMessage,
+        context?: HapiMessageContext
     ): void {
         if (!this.enabled) return;
-        this.callbacks.onAgentRunTrace(scope, message);
+        this.callbacks.onAgentRunTrace(scope, message, context ?? this.defaultContext);
     }
 
-    onStructuredEvent(event: OmpStructuredEvent): void {
+    onStructuredEvent(event: OmpStructuredEvent, context?: HapiMessageContext): void {
         if (!this.enabled) return;
-        this.callbacks.onStructuredEvent(event);
+        this.callbacks.onStructuredEvent(event, context ?? this.defaultContext);
     }
-
 }
 
 export class OmpRpcEventAdapter {
     private activeMessage: MainMessageAccumulator | null = null;
     private lastDisplayId: string | null = null;
     private currentTurnId: string | null = null;
+    private currentHapiTurnId: string | null = null;
+    private currentInvocationId: string | null = null;
+    private currentProviderTurnId: string | null = null;
+    private lastOutcome: TurnLifecycleOutcome = 'completed';
     private turnSequence = 0;
     private readonly tools = new Map<string, ToolLifecycle>();
     private readonly completedToolIds = new Set<string>();
@@ -468,7 +476,8 @@ export class OmpRpcEventAdapter {
             this.callbacks.onDiagnostic(`OMP event: ${event.type}`);
             return;
         }
-        const output = this.projection(event.type);
+        const preHandleContext = this.buildMainContext();
+        const output = this.projection(event.type, preHandleContext);
         this.handleKnown(output, event);
         // Generic projection belongs to event kinds without a timeline format,
         // not to individual occurrences suppressed by role handling or dedupe.
@@ -528,13 +537,22 @@ export class OmpRpcEventAdapter {
                 return exhaustive;
             }
         }
-        output.onStructuredEvent({ type: 'omp-session-event', eventType: event.type, frame: event.raw });
+        output.onStructuredEvent(
+            { type: 'omp-session-event', eventType: event.type, frame: event.raw },
+            this.buildMainContext() ?? preHandleContext
+        );
+    }
+
+    /** Stop live rendering immediately, but retain identity for the aborted final. */
+    private suppressLiveSnapshot(): void {
+        this.cancelSnapshot();
+        this.liveSuppressed = true;
     }
 
     /** Stop live rendering immediately, but retain identity for the aborted final. */
     abortMessage(): void {
-        this.cancelSnapshot();
-        this.liveSuppressed = true;
+        this.suppressLiveSnapshot();
+        this.lastOutcome = 'aborted';
     }
 
     /** No callbacks or trailing snapshots may escape transport teardown. */
@@ -569,8 +587,32 @@ export class OmpRpcEventAdapter {
         this.snapshotTimer.unref();
     }
 
-    private projection(type: OmpKnownEventType): OmpEventProjection {
-        return new OmpEventProjection(this.eventAllowlist.has(type), this.callbacks);
+    private buildMainContext(): HapiMessageContext | undefined {
+        if (!this.currentHapiTurnId || !this.currentInvocationId) {
+            return undefined;
+        }
+        return {
+            turnId: this.currentHapiTurnId,
+            invocationId: this.currentInvocationId,
+            ...(this.currentProviderTurnId ? { providerTurnId: this.currentProviderTurnId } : {}),
+            scope: 'main',
+        };
+    }
+
+    private buildChildContext(): HapiMessageContext | undefined {
+        if (!this.currentHapiTurnId || !this.currentInvocationId) {
+            return undefined;
+        }
+        return {
+            turnId: this.currentHapiTurnId,
+            invocationId: this.currentInvocationId,
+            ...(this.currentProviderTurnId ? { providerTurnId: this.currentProviderTurnId } : {}),
+            scope: 'child',
+        };
+    }
+
+    private projection(type: OmpKnownEventType, defaultContext?: HapiMessageContext): OmpEventProjection {
+        return new OmpEventProjection(this.eventAllowlist.has(type), this.callbacks, defaultContext ?? this.buildMainContext());
     }
 
     seedSubagents(snapshots: OmpSubagentSnapshot[]): void {
@@ -586,11 +628,13 @@ export class OmpRpcEventAdapter {
                 assignment: snapshot.assignment,
                 sessionFile: snapshot.sessionFile,
                 parentToolCallId: snapshot.parentToolCallId,
-                startedAt: snapshot.lastUpdate
+                startedAt: snapshot.lastUpdate,
+                context: { scope: 'history' },
             });
-            this.emitSubagentStart(this.projection('subagent_lifecycle'), state);
+            const historyContext: HapiMessageContext = { scope: 'history' };
+            this.emitSubagentStart(this.projection('subagent_lifecycle', historyContext), state);
             if (snapshot.progress) {
-                this.emitSubagentProgress(this.projection('subagent_progress'), state, snapshot.progress, snapshot.status);
+                this.emitSubagentProgress(this.projection('subagent_progress', historyContext), state, snapshot.progress, snapshot.status);
             }
         }
     }
@@ -602,36 +646,57 @@ export class OmpRpcEventAdapter {
             this.callbacks.onDiagnostic(`OMP subagent transcript has no registry entry: ${subagentId}`);
             return;
         }
-        const output = this.projection('subagent_event');
+        const historyContext: HapiMessageContext = { scope: 'history' };
+        const output = this.projection('subagent_event', historyContext);
         for (const message of messages) {
-            this.emitSubagentMessage(output, state, message);
+            this.emitSubagentMessage(output, state, message, historyContext);
         }
     }
 
     private handleKnown(output: OmpEventProjection, event: OmpKnownEvent): void {
         switch (event.type) {
-            case 'agent_start':
+            case 'agent_start': {
                 this.reconcileBoundary('agent_start');
                 this.liveSuppressed = false;
-                this.currentTurnId = typeof event.raw.turnId === 'string' && event.raw.turnId.length > 0
+                this.lastOutcome = 'completed';
+                const nativeTurnId = typeof event.raw.turnId === 'string' && event.raw.turnId.length > 0
                     ? event.raw.turnId
                     : typeof event.raw.turn_id === 'string' && event.raw.turn_id.length > 0
                         ? event.raw.turn_id
-                        : `omp-turn-${++this.turnSequence}`;
-                this.callbacks.onTurnStarted();
+                        : null;
+                this.currentProviderTurnId = nativeTurnId;
+                this.currentTurnId = nativeTurnId ?? `omp-turn-${++this.turnSequence}`;
+                this.currentHapiTurnId = randomUUID();
+                this.currentInvocationId = randomUUID();
+                const startedContext = this.buildMainContext()!;
+                this.callbacks.onTurnStarted(startedContext);
                 return;
-            case 'agent_end':
+            }
+            case 'agent_end': {
                 this.reconcileBoundary('agent_end');
+                const finishedContext = this.buildMainContext();
+                const rawOutcome = event.raw.aborted === true || event.raw.status === 'aborted'
+                    ? 'aborted'
+                    : event.raw.error !== undefined || event.raw.status === 'failed' || event.raw.status === 'error'
+                        ? 'failed'
+                        : this.lastOutcome;
                 this.currentTurnId = null;
-                this.callbacks.onTurnFinished();
+                this.currentHapiTurnId = null;
+                this.currentInvocationId = null;
+                this.currentProviderTurnId = null;
+                this.lastOutcome = 'completed';
+                this.callbacks.onTurnFinished(rawOutcome, finishedContext);
                 return;
+            }
             case 'turn_start':
                 this.reconcileBoundary('turn_start');
                 this.liveSuppressed = false;
                 if (typeof event.raw.turnId === 'string' && event.raw.turnId.length > 0) {
                     this.currentTurnId = event.raw.turnId;
+                    this.currentProviderTurnId = event.raw.turnId;
                 } else if (typeof event.raw.turn_id === 'string' && event.raw.turn_id.length > 0) {
                     this.currentTurnId = event.raw.turn_id;
+                    this.currentProviderTurnId = event.raw.turn_id;
                 } else if (!this.currentTurnId) {
                     this.currentTurnId = `omp-turn-${++this.turnSequence}`;
                 }
@@ -904,7 +969,7 @@ export class OmpRpcEventAdapter {
             uuid: displayId,
             streamSnapshot: true,
             ...(live ? { live: true } : {}),
-            ...(this.currentTurnId ? { turnId: this.currentTurnId } : {}),
+            ...(this.currentHapiTurnId ? { turnId: this.currentHapiTurnId } : (this.currentTurnId ? { turnId: this.currentTurnId } : {})),
             phase: canonicalPhase,
             parentUuid,
             isSidechain: false,
@@ -930,6 +995,11 @@ export class OmpRpcEventAdapter {
         this.lastCanonicalJson = encoded;
         output.onCanonicalMessage(canonical);
         if (live) return;
+        if (assistant.stopReason === 'aborted') {
+            this.lastOutcome = 'aborted';
+        } else if (assistant.stopReason === 'error' || Boolean(assistant.errorMessage)) {
+            this.lastOutcome = 'failed';
+        }
         if (output.enabled) this.lastDisplayId = displayId;
         output.onAgentMessage({ type: 'usage', ...this.toAgentUsage(assistant.usage) });
         if (assistant.errorMessage) {
@@ -950,7 +1020,7 @@ export class OmpRpcEventAdapter {
         output.onCanonicalMessage({
             type: 'user',
             uuid: displayId,
-            ...(this.currentTurnId ? { turnId: this.currentTurnId } : {}),
+            ...(this.currentHapiTurnId ? { turnId: this.currentHapiTurnId } : (this.currentTurnId ? { turnId: this.currentTurnId } : {})),
             phase: 'execution',
             parentUuid,
             isSidechain: false,
@@ -1299,7 +1369,7 @@ export class OmpRpcEventAdapter {
         }
     }
 
-    private emitSubagentMessage(output: OmpEventProjection, state: SubagentState, message: JsonObject): void {
+    private emitSubagentMessage(output: OmpEventProjection, state: SubagentState, message: JsonObject, contextOverride?: HapiMessageContext): void {
         const signature = this.subagentMessageSignature(message);
         if (state.seenMessages.has(signature)) return;
         state.seenMessages.add(signature);
@@ -1314,9 +1384,9 @@ export class OmpRpcEventAdapter {
             }
             for (const block of assistant.data.content) {
                 if (block.type === 'text' && typeof block.text === 'string' && block.text.length > 0) {
-                    this.emitSubagentTrace(output, state, { type: 'text', text: block.text, model, usage });
+                    this.emitSubagentTrace(output, state, { type: 'text', text: block.text, model, usage }, contextOverride);
                 } else if (block.type === 'thinking' && typeof block.thinking === 'string' && block.thinking.length > 0) {
-                    this.emitSubagentTrace(output, state, { type: 'reasoning', text: block.thinking, model, usage });
+                    this.emitSubagentTrace(output, state, { type: 'reasoning', text: block.thinking, model, usage }, contextOverride);
                 } else if (
                     block.type === 'toolCall'
                     && typeof block.id === 'string'
@@ -1330,14 +1400,14 @@ export class OmpRpcEventAdapter {
                         status: 'in_progress',
                         model,
                         usage
-                    });
+                    }, contextOverride);
                 }
             }
             if (assistant.data.errorMessage) {
-                this.emitSubagentTrace(output, state, { type: 'error', message: assistant.data.errorMessage });
+                this.emitSubagentTrace(output, state, { type: 'error', message: assistant.data.errorMessage }, contextOverride);
             }
             if (state.terminalStatus) {
-                this.emitSubagentTerminal(output, state, state.terminalStatus);
+                this.emitSubagentTerminal(output, state, state.terminalStatus, contextOverride);
             }
             return;
         }
@@ -1352,7 +1422,7 @@ export class OmpRpcEventAdapter {
                     details: toolResult.data.details
                 },
                 status: toolResult.data.isError ? 'failed' : 'completed'
-            });
+            }, contextOverride);
             state.completedToolIds.add(toolResult.data.toolCallId);
             state.tools.delete(toolResult.data.toolCallId);
         }
@@ -1420,6 +1490,7 @@ export class OmpRpcEventAdapter {
         assignment?: string;
         sessionFile?: string;
         parentToolCallId?: string;
+        context?: HapiMessageContext;
     }): SubagentState {
         const existing = this.subagents.get(input.id);
         if (existing) {
@@ -1428,10 +1499,16 @@ export class OmpRpcEventAdapter {
             existing.assignment = input.assignment ?? existing.assignment;
             existing.sessionFile = input.sessionFile ?? existing.sessionFile;
             existing.parentToolCallId = input.parentToolCallId ?? existing.parentToolCallId;
+            if ((!existing.context || existing.context.scope === 'history') && input.context) {
+                existing.context = input.context;
+            } else if (!existing.context) {
+                existing.context = this.buildChildContext();
+            }
             return existing;
         }
         const state: SubagentState = {
             ...input,
+            context: input.context ?? this.buildChildContext(),
             cardId: `omp-subagent:${input.id}`,
             startEmitted: false,
             seenMessages: new Set(),
@@ -1442,7 +1519,7 @@ export class OmpRpcEventAdapter {
         return state;
     }
 
-    private emitSubagentStart(output: OmpEventProjection, state: SubagentState): void {
+    private emitSubagentStart(output: OmpEventProjection, state: SubagentState, contextOverride?: HapiMessageContext): void {
         if (!output.enabled || state.startEmitted) return;
         state.startEmitted = true;
         const summary = state.description ?? state.assignment ?? state.task ?? state.agent;
@@ -1467,7 +1544,7 @@ export class OmpRpcEventAdapter {
                 parentToolCallId: state.parentToolCallId,
                 sessionFile: state.sessionFile
             }
-        });
+        }, contextOverride ?? state.context);
     }
 
     private emitSubagentProgress(output: OmpEventProjection, state: SubagentState, progress: JsonObject, status: string): void {
@@ -1498,10 +1575,10 @@ export class OmpRpcEventAdapter {
             retryState: retryState.success ? retryState.data : undefined,
             retryFailure: retryFailure.success ? retryFailure.data : undefined,
             result: status === 'completed' ? state.lastResultText : undefined
-        });
+        }, state.context);
     }
 
-    private emitSubagentTerminal(output: OmpEventProjection, state: SubagentState, status: string): void {
+    private emitSubagentTerminal(output: OmpEventProjection, state: SubagentState, status: string, contextOverride?: HapiMessageContext): void {
         const normalizedStatus = status === 'aborted' ? 'canceled' : status;
         const activity = normalizedStatus === 'completed'
             ? 'Completed'
@@ -1519,7 +1596,7 @@ export class OmpRpcEventAdapter {
             summary: state.description ?? state.assignment ?? state.task ?? state.agent,
             parentToolCallId: state.parentToolCallId,
             result: state.lastResultText
-        });
+        }, contextOverride ?? state.context);
     }
 
     private subagentYieldResult(progress: JsonObject): string | undefined {
@@ -1540,14 +1617,15 @@ export class OmpRpcEventAdapter {
         return undefined;
     }
 
-    private emitSubagentTrace(output: OmpEventProjection, state: SubagentState, message: AgentMessage): void {
-        this.emitSubagentStart(output, state);
+    private emitSubagentTrace(output: OmpEventProjection, state: SubagentState, message: AgentMessage, contextOverride?: HapiMessageContext): void {
+        const effectiveContext = contextOverride ?? state.context;
+        this.emitSubagentStart(output, state, effectiveContext);
         output.onAgentRunTrace({
             agentId: state.id,
             cardId: state.cardId,
             parentToolCallId: state.parentToolCallId,
             startedAt: state.startedAt
-        }, message);
+        }, message, effectiveContext);
     }
 
     private subagentMessageSignature(message: JsonObject): string {
@@ -1560,7 +1638,7 @@ export class OmpRpcEventAdapter {
     }
 
     private reconcileBoundary(boundary: 'turn_start' | 'turn_end' | 'agent_start' | 'agent_end'): void {
-        this.abortMessage();
+        this.suppressLiveSnapshot();
         if (!this.activeMessage) return;
         this.callbacks.onDiagnostic(
             `OMP ${boundary} reconciled an unfinished ${String(this.activeMessage.role ?? 'unknown')} message without appending it`

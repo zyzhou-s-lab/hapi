@@ -1,4 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { ApiSessionClient, HapiMessageContext } from '@/api/apiSession';
+import type { TurnLifecycleEventPayload } from '@hapi/protocol/messages';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -327,16 +329,16 @@ function createSessionStub(
                 rpcHandlers.set(method, handler);
             }
         },
-        sendAgentMessage(message: unknown) {
+        sendAgentMessage: vi.fn<ApiSessionClient['sendAgentMessage']>((message) => {
             agentMessages.push(message);
-        },
-        sendClaudeSessionMessage(message: RawJSONLines) {
+        }),
+        sendClaudeSessionMessage: vi.fn<ApiSessionClient['sendClaudeSessionMessage']>((message) => {
             canonicalMessages.push(message);
-        },
+        }),
         sendUserMessage(_text: string) {},
-        sendSessionEvent(event: { type: string; [key: string]: unknown }) {
+        sendSessionEvent: vi.fn<ApiSessionClient['sendSessionEvent']>((event) => {
             sessionEvents.push(event);
-        },
+        }),
         updateAgentState(handler: (state: import('@/api/types').AgentState) => import('@/api/types').AgentState) {
             agentState = handler(agentState);
         }
@@ -380,10 +382,13 @@ function createSessionStub(
             snapshots.push(snapshot);
             session.sessionId = snapshot.id;
         },
-        sendAgentMessage(message: unknown) {
-            agentMessages.push(message);
+        sendAgentMessage(message: unknown, context?: HapiMessageContext) {
+            client.sendAgentMessage(message, context);
         },
-        sendSessionEvent(event: { type: string; [key: string]: unknown }) {
+        sendTurnLifecycleEvent(event: TurnLifecycleEventPayload, context?: HapiMessageContext) {
+            client.sendSessionEvent(event, undefined, context);
+        },
+        sendSessionEvent(event: Parameters<ApiSessionClient['sendSessionEvent']>[0]) {
             client.sendSessionEvent(event);
         },
         sendUserMessage(_text: string) {}

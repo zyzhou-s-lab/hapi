@@ -34,7 +34,7 @@ export async function claudeLocalLauncher(session: Session): Promise<'switch' | 
             if (!isClaudeChatVisibleMessage(message)) {
                 return
             }
-            session.client.sendClaudeSessionMessage(message)
+            session.client.sendClaudeSessionMessage(message, { scope: 'history' })
         }
     });
 

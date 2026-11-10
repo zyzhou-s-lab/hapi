@@ -1,6 +1,8 @@
+import { randomUUID } from 'node:crypto';
 import { logger } from '@/ui/logger';
 import { resolve } from 'node:path';
 import { startHookServer } from '@/claude/utils/startHookServer';
+import type { HapiMessageContext } from '@/api/apiSession';
 import { codexLocal } from './codexLocal';
 import type { ReasoningEffort } from './appServerTypes';
 import { CodexSession } from './session';
@@ -22,9 +24,23 @@ import { countHookCoveredExecCalls } from './utils/codexExecWrapper';
 type ProposedPlanMessage = Extract<CodexMessage, { type: 'proposed_plan' }>;
 type ToolCallMessage = Extract<CodexMessage, { type: 'tool-call' }>;
 
+type PendingPlanEntry = {
+    message: ProposedPlanMessage;
+    replayedHistory: boolean;
+};
+
 type PendingExecWrapper = {
     message: ToolCallMessage;
     turnId?: string;
+    replayedHistory: boolean;
+};
+
+type LocalTurnState = {
+    turnId: string;
+    invocationId: string;
+    providerTurnId: string;
+    startedEmitted: boolean;
+    finishedEmitted: boolean;
 };
 
 function extractTurnContextReasoningEffort(event: CodexSessionEvent): ReasoningEffort | null | undefined {
@@ -64,8 +80,10 @@ export async function codexLocalLauncher(session: CodexSession): Promise<'switch
     let scannerReplayedExistingHistory = false;
     let transcriptModel: string | null = null;
     let convertTranscriptEvent = createCodexEventConverter();
-    const pendingPlansByTurnId = new Map<string, ProposedPlanMessage>();
+    const pendingPlansByTurnId = new Map<string, PendingPlanEntry>();
     const pendingExecWrappers = new Map<string, PendingExecWrapper>();
+    const liveTurnsByProviderTurnId = new Map<string, LocalTurnState>();
+    let currentLiveProviderTurnId: string | null = null;
     const toolHookBridge = new CodexToolHookBridge();
     const permissionMode = session.getPermissionMode();
     const managedPermissionMode = permissionMode === 'read-only' || permissionMode === 'safe-yolo' || permissionMode === 'yolo'
@@ -107,30 +125,119 @@ export async function codexLocalLauncher(session: CodexSession): Promise<'switch
         return primarySessionId === null || primarySessionId === sessionId;
     };
 
-    const sendProposedPlan = (message: ProposedPlanMessage): void => {
+    const getOrCreateLiveTurnState = (providerTurnId: string): LocalTurnState => {
+        const existing = liveTurnsByProviderTurnId.get(providerTurnId);
+        if (existing) {
+            return existing;
+        }
+        const created: LocalTurnState = {
+            turnId: randomUUID(),
+            invocationId: randomUUID(),
+            providerTurnId,
+            startedEmitted: false,
+            finishedEmitted: false
+        };
+        liveTurnsByProviderTurnId.set(providerTurnId, created);
+        return created;
+    };
+
+    const buildLocalMessageContext = (
+        providerTurnId: string | undefined,
+        replayedHistory: boolean
+    ): HapiMessageContext => {
+        if (replayedHistory) {
+            return {
+                scope: 'history',
+                ...(providerTurnId ? { providerTurnId } : {})
+            };
+        }
+        const effectiveProviderTurnId = providerTurnId ?? currentLiveProviderTurnId ?? undefined;
+        if (!effectiveProviderTurnId) {
+            return {
+                scope: 'main'
+            };
+        }
+        const turnState = getOrCreateLiveTurnState(effectiveProviderTurnId);
+        return {
+            turnId: turnState.turnId,
+            invocationId: turnState.invocationId,
+            providerTurnId: turnState.providerTurnId,
+            scope: 'main'
+        };
+    };
+
+    const emitLiveTurnStarted = (providerTurnId: string): void => {
+        currentLiveProviderTurnId = providerTurnId;
+        const turnState = getOrCreateLiveTurnState(providerTurnId);
+        if (turnState.startedEmitted || turnState.finishedEmitted) {
+            return;
+        }
+        turnState.startedEmitted = true;
+        const context: HapiMessageContext = {
+            turnId: turnState.turnId,
+            invocationId: turnState.invocationId,
+            providerTurnId: turnState.providerTurnId,
+            scope: 'main'
+        };
+        session.sendTurnLifecycleEvent({ type: 'turn-lifecycle', eventId: randomUUID(), transition: 'started', turnId: turnState.turnId,
+        invocationId: turnState.invocationId,
+        providerTurnId: turnState.providerTurnId,
+        scope: 'main' }, context);
+    };
+
+    const emitLiveTurnFinished = (
+        providerTurnId: string,
+        outcome: 'completed' | 'aborted' | 'failed' = 'completed'
+    ): void => {
+        const turnState = getOrCreateLiveTurnState(providerTurnId);
+        if (turnState.finishedEmitted) {
+            return;
+        }
+        if (!turnState.startedEmitted) {
+            emitLiveTurnStarted(providerTurnId);
+        }
+        turnState.finishedEmitted = true;
+        if (currentLiveProviderTurnId === providerTurnId) {
+            currentLiveProviderTurnId = null;
+        }
+        const context: HapiMessageContext = {
+            turnId: turnState.turnId,
+            invocationId: turnState.invocationId,
+            providerTurnId: turnState.providerTurnId,
+            scope: 'main'
+        };
+        session.sendTurnLifecycleEvent({ type: 'turn-lifecycle', eventId: randomUUID(), transition: 'finished', turnId: turnState.turnId,
+        invocationId: turnState.invocationId,
+        providerTurnId: turnState.providerTurnId,
+        scope: 'main',
+        outcome }, context);
+    };
+
+    const sendProposedPlan = (message: ProposedPlanMessage, replayedHistory: boolean): void => {
         const callId = `codex-proposed-plan:${message.id}`;
+        const messageContext = buildLocalMessageContext(message.turnId, replayedHistory);
         session.sendAgentMessage({
             type: 'tool-call',
             name: 'ExitPlanMode',
             callId,
             input: { plan: message.plan },
             id: message.id
-        });
+        }, messageContext);
         session.sendAgentMessage({
             type: 'tool-call-result',
             callId,
             output: null,
             id: `${message.id}:result`
-        });
+        }, messageContext);
     };
 
     const flushPendingPlan = (turnId: string): void => {
-        const message = pendingPlansByTurnId.get(turnId);
-        if (!message) {
+        const entry = pendingPlansByTurnId.get(turnId);
+        if (!entry) {
             return;
         }
         pendingPlansByTurnId.delete(turnId);
-        sendProposedPlan(message);
+        sendProposedPlan(entry.message, entry.replayedHistory);
     };
 
     const flushAllPendingPlans = (): void => {
@@ -143,22 +250,24 @@ export async function codexLocalLauncher(session: CodexSession): Promise<'switch
         const pending = pendingExecWrappers.get(callId);
         if (!pending) return;
         pendingExecWrappers.delete(callId);
-        session.sendAgentMessage(pending.message);
+        const messageContext = buildLocalMessageContext(pending.turnId, pending.replayedHistory);
+        session.sendAgentMessage(pending.message, messageContext);
         if (result) {
-            session.sendAgentMessage(result);
+            session.sendAgentMessage(result, messageContext);
         }
     };
 
     const flushAllPendingExecWrappers = (): void => {
         for (const [callId, pending] of pendingExecWrappers) {
-            session.sendAgentMessage(pending.message);
+            const messageContext = buildLocalMessageContext(pending.turnId, pending.replayedHistory);
+            session.sendAgentMessage(pending.message, messageContext);
             session.sendAgentMessage({
                 type: 'tool-call-result',
                 callId,
                 output: { error: 'Codex ended before the exec wrapper returned a result.' },
                 is_error: true,
                 id: `${pending.message.id}:incomplete`
-            });
+            }, messageContext);
         }
         pendingExecWrappers.clear();
     };
@@ -184,25 +293,43 @@ export async function codexLocalLauncher(session: CodexSession): Promise<'switch
                 session.notifyUserActivity();
                 continue;
             }
+            if (action.type === 'turn-started') {
+                if (!context.replayedHistory) {
+                    emitLiveTurnStarted(action.turnId);
+                }
+                continue;
+            }
             if (action.type === 'turn-finished') {
+                const turnMessageContext = buildLocalMessageContext(action.turnId, context.replayedHistory);
                 flushPendingPlan(action.turnId);
                 for (const message of toolHookBridge.finishTurn(action.turnId)) {
-                    session.sendAgentMessage(message);
+                    session.sendAgentMessage(message, turnMessageContext);
+                }
+                if (!context.replayedHistory) {
+                    emitLiveTurnFinished(action.turnId, action.outcome ?? 'completed');
                 }
                 continue;
             }
 
+            if (!context.replayedHistory && action.turnId) {
+                emitLiveTurnStarted(action.turnId);
+            }
             const message = action.message;
+            const messageContext = buildLocalMessageContext(action.turnId, context.replayedHistory);
             if (message.type === 'proposed_plan') {
                 // Codex may complete the Plan item before emitting its final text preface.
-                pendingPlansByTurnId.set(message.turnId, message);
+                pendingPlansByTurnId.set(message.turnId, {
+                    message,
+                    replayedHistory: context.replayedHistory
+                });
             } else if (message.type === 'tool-call' && message.name === 'exec') {
                 if (countHookCoveredExecCalls(message.input) === null) {
-                    session.sendAgentMessage(message);
+                    session.sendAgentMessage(message, messageContext);
                 } else {
                     pendingExecWrappers.set(message.callId, {
                         message,
-                        ...(action.turnId ? { turnId: action.turnId } : {})
+                        ...(action.turnId ? { turnId: action.turnId } : {}),
+                        replayedHistory: context.replayedHistory
                     });
                 }
             } else if (message.type === 'tool-call-result' && pendingExecWrappers.has(message.callId)) {
@@ -227,7 +354,7 @@ export async function codexLocalLauncher(session: CodexSession): Promise<'switch
                                 hapiUsageScope: 'managed'
                             }
                             : { ...message, model: transcriptModel };
-                session.sendAgentMessage(scopedMessage);
+                session.sendAgentMessage(scopedMessage, messageContext);
             }
         }
     };
@@ -290,11 +417,16 @@ export async function codexLocalLauncher(session: CodexSession): Promise<'switch
             return;
         }
         const replayExistingHistory = session.shouldReplayTranscriptHistory();
+        let replayCompleted = false;
+        scannerReplayedExistingHistory = replayExistingHistory;
         const createdScanner = await createCodexSessionScanner({
             transcriptPath,
             // 中文注释：导入模式下允许 scanner 首次回放 transcript 全量内容，补齐 Codex 客户端里已有但 Hapi 还未看到的消息。
             replayExistingHistory,
             onReplayComplete: () => {
+                replayCompleted = true;
+                scannerReplayedExistingHistory = false;
+                session.markTranscriptHistoryReplayConsumed();
                 finalizeTranscriptConversion(true);
             },
             onSessionId: (sessionId) => {
@@ -317,12 +449,12 @@ export async function codexLocalLauncher(session: CodexSession): Promise<'switch
             }
         });
         if (shuttingDown) {
-            await drainAndCleanupScanner(createdScanner, replayExistingHistory);
+            await drainAndCleanupScanner(createdScanner, replayExistingHistory && !replayCompleted);
             return;
         }
         scanner = createdScanner;
         scannerTranscriptPath = transcriptPath;
-        scannerReplayedExistingHistory = replayExistingHistory;
+        scannerReplayedExistingHistory = replayExistingHistory && !replayCompleted;
     };
 
     const handleTranscriptPath = (transcriptPath: string): Promise<void> => {
@@ -374,8 +506,15 @@ export async function codexLocalLauncher(session: CodexSession): Promise<'switch
                 if (primarySessionId && primarySessionId !== sessionId) {
                     return;
                 }
+                const hookTurnId = typeof data.turn_id === 'string' && data.turn_id.length > 0
+                    ? data.turn_id
+                    : undefined;
+                if (hookTurnId) {
+                    emitLiveTurnStarted(hookTurnId);
+                }
+                const hookContext = buildLocalMessageContext(hookTurnId, false);
                 for (const message of toolHookBridge.handle(data)) {
-                    session.sendAgentMessage(message);
+                    session.sendAgentMessage(message, hookContext);
                 }
                 return;
             }
@@ -460,10 +599,16 @@ export async function codexLocalLauncher(session: CodexSession): Promise<'switch
             await drainAndCleanupScanner(activeScanner, scannerReplayedExistingHistory);
         }
         flushAllPendingExecWrappers();
+        const fallbackShutdownContext = buildLocalMessageContext(currentLiveProviderTurnId ?? undefined, false);
         for (const message of toolHookBridge.finish()) {
-            session.sendAgentMessage(message);
+            session.sendAgentMessage(message, fallbackShutdownContext);
         }
         flushAllPendingPlans();
+        for (const [providerTurnId, turnState] of liveTurnsByProviderTurnId) {
+            if (turnState.startedEmitted && !turnState.finishedEmitted) {
+                emitLiveTurnFinished(providerTurnId, 'aborted');
+            }
+        }
         happyServer.stop();
         if (!hookReady) {
             logger.debug('[codex-local]: SessionStart hook did not provide transcript path before shutdown');

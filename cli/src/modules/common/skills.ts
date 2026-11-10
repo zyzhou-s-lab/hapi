@@ -1,6 +1,6 @@
 import { existsSync } from 'node:fs';
 import { access, lstat, open, readdir, readFile, realpath, stat } from 'fs/promises';
-import { homedir } from 'os';
+import { homedir, tmpdir } from 'os';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'path';
 import { parse as parseYaml } from 'yaml';
 import { listedConfigFilePath } from './configFilePath';
@@ -130,15 +130,19 @@ function userSkillWriteRoots(): string[] {
 function projectWriteRoots(workingDirectory: string | undefined): SkillWriteRoot[] {
     if (!workingDirectory) return [];
     const start = resolve(workingDirectory);
+    const systemTmpDir = resolve(tmpdir());
     const directories = [start];
     let current = start;
-    while (!existsSync(join(current, '.git'))) {
+    while (current !== systemTmpDir || !existsSync(join(current, '.git'))) {
+        if (current !== systemTmpDir && existsSync(join(current, '.git'))) {
+            return directories.flatMap(projectSkillRoots);
+        }
         const parent = dirname(current);
         if (parent === current) return projectSkillRoots(start);
         current = parent;
         directories.push(current);
     }
-    return directories.flatMap(projectSkillRoots);
+    return projectSkillRoots(start);
 }
 
 function projectSkillRoots(directory: string): SkillWriteRoot[] {
@@ -174,11 +178,12 @@ async function listProjectSkillsRoots(workingDirectory?: string, flavor?: string
     }
 
     const resolvedWorkingDirectory = resolve(workingDirectory);
+    const systemTmpDir = resolve(tmpdir());
     const directories = [resolvedWorkingDirectory];
     let currentDirectory = resolvedWorkingDirectory;
 
     while (true) {
-        if (await pathExists(join(currentDirectory, '.git'))) {
+        if (currentDirectory !== systemTmpDir && await pathExists(join(currentDirectory, '.git'))) {
             return directories.flatMap((directory) => getProjectSkillsRoots(directory, flavor));
         }
 

@@ -5,6 +5,8 @@ import type { EnhancedMode, PermissionMode } from './loop';
 import type { CodexCliOverrides } from './utils/codexCliOverrides';
 import type { LocalLaunchExitReason } from '@/agent/localLaunchPolicy';
 import type { Metadata, SessionModel, SessionModelReasoningEffort } from '@/api/types';
+import type { HapiMessageContext } from '@/api/apiSession';
+import type { TurnLifecycleEventPayload } from '@hapi/protocol/messages'
 import { setSessionPromptLive } from '@/modules/common/sessionPrompts';
 
 type LocalLaunchFailure = {
@@ -158,8 +160,12 @@ export class CodexSession extends AgentSessionBase<EnhancedMode> {
         this.localLaunchFailure = { message, exitReason };
     };
 
-    sendAgentMessage = (message: unknown): void => {
-        this.client.sendAgentMessage(message);
+    sendAgentMessage = (message: unknown, context?: HapiMessageContext): void => {
+        this.client.sendAgentMessage(message, context);
+    };
+
+    sendTurnLifecycleEvent = (event: TurnLifecycleEventPayload, context?: HapiMessageContext): void => {
+        this.client.sendSessionEvent(event, undefined, context);
     };
 
     sendUserMessage = (text: string): void => {

@@ -76,6 +76,7 @@ describe('OMP local native session scanner', () => {
         await writeFile(breadcrumb, breadcrumbContent);
         const onSnapshot = vi.fn();
         const scanner = createOmpLocalSessionScanner({
+            env: {},
             workingDirectory: cwd,
             homeDirectory: root,
             platform: 'darwin',
@@ -109,6 +110,7 @@ describe('OMP local native session scanner', () => {
         await mkdir(terminalDirectory, { recursive: true });
         const onSnapshot = vi.fn();
         const scanner = createOmpLocalSessionScanner({
+            env: {},
             workingDirectory: cwd,
             homeDirectory: root,
             platform: 'darwin',
@@ -146,6 +148,7 @@ describe('OMP local native session scanner', () => {
         await writeSession('First name');
         const onSnapshot = vi.fn();
         const scanner = createOmpLocalSessionScanner({
+            env: {},
             workingDirectory: cwd,
             homeDirectory: root,
             platform: 'darwin',
@@ -183,6 +186,7 @@ describe('OMP local native session scanner', () => {
         ].join('\n'));
         const onSnapshot = vi.fn();
         const scanner = createOmpLocalSessionScanner({
+            env: {},
             workingDirectory: cwd,
             homeDirectory: root,
             platform: 'darwin',

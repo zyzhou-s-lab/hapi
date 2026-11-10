@@ -8,9 +8,13 @@
 import { AsyncLock } from '@/utils/lock';
 import { isClaudeChatVisibleMessage } from './chatVisibility';
 
+import type { HapiMessageContext } from '@/api/apiSession';
+import type { RawJSONLines } from '@/claude/types';
+
 interface QueueItem {
     id: number;                    // Incremental ID for ordering
-    logMessage: any;               
+    logMessage: RawJSONLines;
+    context?: HapiMessageContext;
     delayed: boolean;              // Whether this message should be delayed
     delayMs: number;               // Delay duration (e.g., 250ms)
     toolCallIds?: string[];        // Tool calls to track for early release
@@ -25,19 +29,21 @@ export class OutgoingMessageQueue {
     private processTimer?: NodeJS.Timeout;
     private delayTimers = new Map<number, NodeJS.Timeout>();
     
-    constructor(private sendFunction: (message: any) => void) {}
+    constructor(private sendFunction: (message: RawJSONLines, context?: HapiMessageContext) => void) {}
     
     /**
      * Add message to queue
      */
-    enqueue(logMessage: any, options?: {
+    enqueue(logMessage: RawJSONLines, options?: {
         delay?: number,
-        toolCallIds?: string[]
+        toolCallIds?: string[],
+        context?: HapiMessageContext
     }) {
         this.lock.inLock(async () => {
             const item: QueueItem = {
                 id: this.nextId++,
                 logMessage,
+                context: options?.context ? { ...options.context } : undefined,
                 delayed: !!options?.delay,
                 delayMs: options?.delay || 0,
                 toolCallIds: options?.toolCallIds,
@@ -123,7 +129,7 @@ export class OutgoingMessageQueue {
             // Send if not already sent
             if (!item.sent) {
                 if (isClaudeChatVisibleMessage(item.logMessage) && !item.logMessage.isMeta && !item.logMessage.isCompactSummary) {
-                    this.sendFunction(item.logMessage);
+                    this.sendFunction(item.logMessage, item.context);
                 }
                 item.sent = true;
             }

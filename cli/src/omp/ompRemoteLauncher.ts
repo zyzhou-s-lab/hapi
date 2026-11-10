@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import React from 'react';
 import { execFile } from 'node:child_process';
 import { logger } from '@/ui/logger';
@@ -11,6 +12,8 @@ import { OmpDisplay } from '@/ui/ink/OmpDisplay';
 import type { OmpSession } from './session';
 import type { OmpRuntimeConfigApplied, OmpRuntimeConfigRequest } from './session';
 import type { PermissionMode } from './types';
+import type { HapiMessageContext } from '@/api/apiSession';
+import type { TurnLifecycleOutcome } from '@hapi/protocol';
 import { RPC_METHODS } from '@hapi/protocol/rpcMethods';
 import { buildOmpEnv } from './utils/config';
 import { setSessionPromptLive } from '@/modules/common/sessionPrompts';
@@ -84,6 +87,8 @@ class OmpRemoteLauncher extends RemoteLauncherBase {
     private nativeTurnGeneration = 0;
     private dispatching = false;
     private transportFailure: Error | null = null;
+    private activeInvocationContext: HapiMessageContext | null = null;
+    private readonly finishedInvocationIds = new Set<string>();
     private displayModel: string | null = null;
     private displayPermissionMode: PermissionMode | null = null;
     private currentModel: OmpModel | null = null;
@@ -177,26 +182,26 @@ class OmpRemoteLauncher extends RemoteLauncherBase {
         this.hostIntegration = hostIntegration;
 
         const eventAdapter = new OmpRpcEventAdapter({
-            onAgentMessage: (message) => {
-                this.forwardAgentMessage(message);
+            onAgentMessage: (message, context) => {
+                this.forwardAgentMessage(message, context);
             },
-            onCanonicalMessage: (message) => {
-                session.client.sendClaudeSessionMessage(message);
+            onCanonicalMessage: (message, context) => {
+                session.client.sendClaudeSessionMessage(message, context);
             },
-            onAgentRunEvent: (event) => {
-                session.sendAgentMessage(event);
+            onAgentRunEvent: (event, context) => {
+                session.sendAgentMessage(event, context);
             },
-            onAgentRunTrace: (scope, message) => {
+            onAgentRunTrace: (scope, message, context) => {
                 const converted = convertAgentMessage(message);
                 if (!converted) return;
                 session.sendAgentMessage({
                     type: 'agent-run-trace',
                     ...scope,
                     message: converted
-                });
+                }, context);
             },
-            onStructuredEvent: (event) => {
-                session.sendAgentMessage(event);
+            onStructuredEvent: (event, context) => {
+                session.sendAgentMessage(event, context);
             },
             onInkMessage: (message, type) => this.messageBuffer.addMessage(message, type),
             onUserMessageCommitted: (steering) => {
@@ -205,7 +210,20 @@ class OmpRemoteLauncher extends RemoteLauncherBase {
                     this.signalChange();
                 }
             },
-            onTurnStarted: () => {
+            onTurnStarted: (context) => {
+                if (this.activeInvocationContext) {
+                    this.finishActiveInvocation('aborted', this.activeInvocationContext);
+                }
+                this.activeInvocationContext = context;
+                session.sendTurnLifecycleEvent({
+                    type: 'turn-lifecycle',
+                    eventId: randomUUID(),
+                    transition: 'started',
+                    turnId: context.turnId!,
+                    invocationId: context.invocationId,
+                    ...(context.providerTurnId ? { providerTurnId: context.providerTurnId } : {}),
+                    scope: 'main',
+                }, context);
                 this.nativeTurnGeneration += 1;
                 this.isStreaming = true;
                 if (this.currentPrompt) {
@@ -214,7 +232,8 @@ class OmpRemoteLauncher extends RemoteLauncherBase {
                 session.onThinkingChange(true);
                 this.signalChange();
             },
-            onTurnFinished: () => {
+            onTurnFinished: (outcome, context) => {
+                this.finishActiveInvocation(outcome, context ?? this.activeInvocationContext ?? undefined);
                 this.isStreaming = false;
                 if (this.currentPrompt?.ignoreAgentEnds) {
                     this.currentPrompt.ignoreAgentEnds -= 1;
@@ -765,15 +784,16 @@ class OmpRemoteLauncher extends RemoteLauncherBase {
         );
     }
 
-    private forwardAgentMessage(message: AgentMessage): void {
+    private forwardAgentMessage(message: AgentMessage, context?: HapiMessageContext): void {
         if (message.type !== 'usage') {
             const converted = convertAgentMessage(message);
             if (converted) {
-                this.session.sendAgentMessage(converted);
+                this.session.sendAgentMessage(converted, context);
             }
             return;
         }
 
+        const capturedContext = context;
         this.trackEventTask((async () => {
             const state = await this.requireClient().request({ type: 'get_state' });
             this.persistRuntimeState(state);
@@ -783,7 +803,7 @@ class OmpRemoteLauncher extends RemoteLauncherBase {
                 contextWindow: state.contextUsage?.contextWindow
             });
             if (converted) {
-                this.session.sendAgentMessage(converted);
+                this.session.sendAgentMessage(converted, capturedContext);
             }
         })());
     }
@@ -1106,6 +1126,44 @@ class OmpRemoteLauncher extends RemoteLauncherBase {
         this.session.onThinkingChange(false);
         this.signalChange();
     }
+    private finishActiveInvocation(outcome: TurnLifecycleOutcome, context?: HapiMessageContext): void {
+        const target = context ?? this.activeInvocationContext;
+        if (!target || !target.turnId) {
+            this.activeInvocationContext = null;
+            return;
+        }
+        const invocationKey = target.invocationId ?? target.turnId;
+        if (this.finishedInvocationIds.has(invocationKey)) {
+            if (
+                this.activeInvocationContext
+                && this.activeInvocationContext.turnId === target.turnId
+                && this.activeInvocationContext.invocationId === target.invocationId
+            ) {
+                this.activeInvocationContext = null;
+            }
+            return;
+        }
+        this.finishedInvocationIds.add(invocationKey);
+        if (
+            this.activeInvocationContext
+            && this.activeInvocationContext.turnId === target.turnId
+            && this.activeInvocationContext.invocationId === target.invocationId
+        ) {
+            this.activeInvocationContext = null;
+        } else if (!context) {
+            this.activeInvocationContext = null;
+        }
+        this.session.sendTurnLifecycleEvent({
+            type: 'turn-lifecycle',
+            eventId: randomUUID(),
+            transition: 'finished',
+            turnId: target.turnId,
+            invocationId: target.invocationId,
+            ...(target.providerTurnId ? { providerTurnId: target.providerTurnId } : {}),
+            scope: 'main',
+            outcome,
+        }, target);
+    }
 
     private completePendingNativeFollowUp(): void {
         this.nativeFollowUpOutstanding = false;
@@ -1124,6 +1182,9 @@ class OmpRemoteLauncher extends RemoteLauncherBase {
 
     private handleTransportFailure(error: unknown): void {
         this.eventAdapter?.dispose();
+        if (this.activeInvocationContext) {
+            this.finishActiveInvocation('failed', this.activeInvocationContext);
+        }
         const failure = error instanceof Error ? error : new Error(String(error));
         this.transportFailure = failure;
         this.clearCurrentPrompt();
@@ -1179,6 +1240,9 @@ class OmpRemoteLauncher extends RemoteLauncherBase {
 
     private async handleExitFromUi(): Promise<void> {
         this.eventAdapter?.dispose();
+        if (this.activeInvocationContext) {
+            this.finishActiveInvocation('aborted', this.activeInvocationContext);
+        }
         await this.requestExit('exit', async () => {
             await this.handleAbort();
             this.signalChange();
@@ -1187,6 +1251,9 @@ class OmpRemoteLauncher extends RemoteLauncherBase {
 
     private async handleSwitchFromUi(): Promise<void> {
         this.eventAdapter?.dispose();
+        if (this.activeInvocationContext) {
+            this.finishActiveInvocation('aborted', this.activeInvocationContext);
+        }
         await this.requestExit('switch', async () => {
             this.session.queue.requeueHeld();
             this.heldInput = null;

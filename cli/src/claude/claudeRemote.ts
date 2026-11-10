@@ -1,5 +1,5 @@
 import { EnhancedMode, PermissionMode } from "./loop";
-import { query, type QueryOptions as Options, type SDKMessage, type SDKSystemMessage, AbortError, SDKUserMessage } from '@/claude/sdk'
+import { query, type QueryOptions as Options, type SDKMessage, type SDKSystemMessage, type SDKResultMessage, AbortError, SDKUserMessage } from '@/claude/sdk'
 import { claudeCheckSession } from "./utils/claudeCheckSession";
 import { join } from 'node:path';
 import { parseSpecialCommand } from "@/parsers/specialCommands";
@@ -30,7 +30,7 @@ export async function claudeRemote(opts: {
 
     // Dynamic parameters
     nextMessage: () => Promise<{ message: string, mode: EnhancedMode } | null>,
-    onReady: (completionEvent?: string) => void | Promise<void>,
+    onReady: (completionEvent?: string, outcome?: 'completed' | 'failed' | 'aborted') => void | Promise<void>,
     isAborted: (toolCallId: string) => boolean,
 
     // Callbacks
@@ -40,6 +40,7 @@ export async function claudeRemote(opts: {
     onFirstResult?: (initialMessage: string) => void,
     onCompletionEvent?: (message: string) => void,
     onSessionReset?: () => void
+    onPromptDispatched?: () => void
 }) {
     const debugPrefix = '[claudeRemote][async-debug]';
 
@@ -163,6 +164,7 @@ export async function claudeRemote(opts: {
         }
 
         mode = next.mode;
+        opts.onPromptDispatched?.();
         messages.push({
             type: 'user',
             message: {
@@ -277,6 +279,7 @@ export async function claudeRemote(opts: {
                     return;
                 }
                 mode = next.mode;
+                opts.onPromptDispatched?.();
                 messages.push({ type: 'user', message: { role: 'user', content: next.message } });
                 logger.debug(
                     `${debugPrefix} nextMessage resolved fetchId=${fetchId} elapsedMs=${Date.now() - startedAt} ` +
@@ -360,6 +363,12 @@ export async function claudeRemote(opts: {
 
             // Handle result messages
             if (message.type === 'result') {
+                const resultMessage = message as SDKResultMessage;
+                const resultOutcome: 'completed' | 'failed' = (
+                    resultMessage.is_error
+                    || resultMessage.subtype !== 'success'
+                    || (isCompactCommand && Boolean(compactFailure))
+                ) ? 'failed' : 'completed';
                 resultSeq += 1;
                 updateThinking(false);
                 logger.debug(
@@ -382,7 +391,7 @@ export async function claudeRemote(opts: {
                 }
 
                 // Flush the result carrier before completion, then announce ready.
-                await opts.onReady(completionEvent);
+                await opts.onReady(completionEvent, resultOutcome);
                 logger.debug(`${debugPrefix} onReady emitted for result #${resultSeq}`);
 
                 // Pull next user message without blocking response stream processing.
