@@ -63,6 +63,14 @@ public final class WindowMessage: Sendable, Equatable {
     public let invokedAt: InvokedAtField
     /// Future-scheduled send time (epoch ms), when set.
     public let scheduledAt: Int?
+    /// Explicit turn identity (`turnId`), when set.
+    public let turnId: String?
+    /// Turn lifecycle state (`running` | `completed` | `failed` | `aborted` | `cutoff` | `history`), when set.
+    public let turnState: String?
+    /// Turn phase (`execution` | `final_answer`), when set.
+    public let phase: String?
+    /// Message lifecycle state (`streaming` | `settled`), when set.
+    public let lifecycleState: String?
 
     // MARK: Client-side
 
@@ -76,6 +84,10 @@ public final class WindowMessage: Sendable, Equatable {
         createdAt: Int,
         invokedAt: InvokedAtField = .absent,
         scheduledAt: Int? = nil,
+        turnId: String? = nil,
+        turnState: String? = nil,
+        phase: String? = nil,
+        lifecycleState: String? = nil,
         status: MessageStatus? = nil
     ) {
         self.id = id
@@ -85,6 +97,10 @@ public final class WindowMessage: Sendable, Equatable {
         self.createdAt = createdAt
         self.invokedAt = invokedAt
         self.scheduledAt = scheduledAt
+        self.turnId = turnId
+        self.turnState = turnState
+        self.phase = phase
+        self.lifecycleState = lifecycleState
         self.status = status
     }
 
@@ -102,6 +118,10 @@ public final class WindowMessage: Sendable, Equatable {
             createdAt: wire.createdAt,
             invokedAt: wire.invokedAt.map(InvokedAtField.number) ?? .null,
             scheduledAt: wire.scheduledAt,
+            turnId: wire.turnId,
+            turnState: wire.turnState,
+            phase: wire.phase,
+            lifecycleState: wire.lifecycleState,
             status: status ?? (wire.deliveryState == "indeterminate" ? .indeterminate : nil)
         )
     }
@@ -148,7 +168,8 @@ public final class WindowMessage: Sendable, Equatable {
         WindowMessage(
             id: id, seq: seq, localId: localId, content: content,
             createdAt: createdAt, invokedAt: .number(invokedAt),
-            scheduledAt: scheduledAt, status: status
+            scheduledAt: scheduledAt, turnId: turnId, turnState: turnState,
+            phase: phase, lifecycleState: lifecycleState, status: status
         )
     }
 
@@ -161,7 +182,8 @@ public final class WindowMessage: Sendable, Equatable {
         WindowMessage(
             id: id, seq: seq, localId: localId, content: content,
             createdAt: createdAt, invokedAt: invokedAt,
-            scheduledAt: scheduledAt, status: status
+            scheduledAt: scheduledAt, turnId: turnId, turnState: turnState,
+            phase: phase, lifecycleState: lifecycleState, status: status
         )
     }
 
@@ -176,7 +198,11 @@ public final class WindowMessage: Sendable, Equatable {
             createdAt: createdAt,
             invokedAt: invokedAt.numberValue,
             scheduledAt: scheduledAt,
-            deliveryState: status == .indeterminate ? "indeterminate" : nil
+            deliveryState: status == .indeterminate ? "indeterminate" : nil,
+            turnId: turnId,
+            turnState: turnState,
+            phase: phase,
+            lifecycleState: lifecycleState
         )
     }
 }
@@ -189,7 +215,7 @@ public final class WindowMessage: Sendable, Equatable {
 /// when explicit null.
 extension WindowMessage: Codable {
     private enum CodingKeys: String, CodingKey {
-        case id, seq, localId, content, createdAt, invokedAt, scheduledAt, status
+        case id, seq, localId, content, createdAt, invokedAt, scheduledAt, turnId, turnState, phase, lifecycleState, status
     }
 
     public convenience init(from decoder: Decoder) throws {
@@ -212,7 +238,10 @@ extension WindowMessage: Codable {
             createdAt: try container.decode(Int.self, forKey: .createdAt),
             invokedAt: invokedAt,
             scheduledAt: try container.decodeIfPresent(Int.self, forKey: .scheduledAt),
-            // Unknown status strings degrade to nil (Android `fromWire`) —
+            turnId: try container.decodeIfPresent(String.self, forKey: .turnId),
+            turnState: try container.decodeIfPresent(String.self, forKey: .turnState),
+            phase: try container.decodeIfPresent(String.self, forKey: .phase),
+            lifecycleState: try container.decodeIfPresent(String.self, forKey: .lifecycleState),
             // a new client-side state must not break snapshot hydration.
             status: (try container.decodeIfPresent(String.self, forKey: .status))
                 .flatMap(MessageStatus.init(rawValue:))
@@ -237,6 +266,10 @@ extension WindowMessage: Codable {
             try container.encode(value, forKey: .invokedAt)
         }
         try container.encodeIfPresent(scheduledAt, forKey: .scheduledAt)
+        try container.encodeIfPresent(turnId, forKey: .turnId)
+        try container.encodeIfPresent(turnState, forKey: .turnState)
+        try container.encodeIfPresent(phase, forKey: .phase)
+        try container.encodeIfPresent(lifecycleState, forKey: .lifecycleState)
         try container.encodeIfPresent(status?.rawValue, forKey: .status)
     }
 }

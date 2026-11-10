@@ -150,6 +150,17 @@ data class ToolResultPermission(
     val decision: String? = null,
 )
 
+object ToolUseStatus {
+    const val IN_PROGRESS = "in_progress"
+    const val COMPLETED = "completed"
+    const val FAILED = "failed"
+    const val CANCELLED = "cancelled"
+    const val CANCELED = "canceled"
+    const val PENDING = "pending"
+    const val RUNNING = "running"
+    const val ERROR = "error"
+}
+
 sealed class NormalizedAgentContent {
 
     data class Text(
@@ -177,6 +188,7 @@ sealed class NormalizedAgentContent {
         /** Tri-state: `'progress' in data` in TS. */
         val hasProgress: Boolean = false,
         val progress: JsonElement? = null,
+        val status: String? = null,
         val uuid: String,
         val parentUUID: String? = null,
     ) : NormalizedAgentContent()
@@ -306,6 +318,9 @@ sealed class NormalizedMessage {
     abstract val invokedAt: Long?
     abstract val model: String?
     abstract val agentTimestamp: Long?
+    abstract val turnId: String?
+    abstract val turnState: String?
+    open val parentToolUseId: String? get() = null
 
     data class User(
         override val id: String,
@@ -321,6 +336,8 @@ sealed class NormalizedMessage {
         override val invokedAt: Long? = null,
         override val model: String? = null,
         override val agentTimestamp: Long? = null,
+        override val turnId: String? = null,
+        override val turnState: String? = null,
     ) : NormalizedMessage()
 
     data class Agent(
@@ -329,7 +346,7 @@ sealed class NormalizedMessage {
         override val createdAt: Long,
         val content: List<NormalizedAgentContent>,
         override val isSidechain: Boolean = false,
-        val parentToolUseId: String? = null,
+        override val parentToolUseId: String? = null,
         override val meta: JsonElement? = null,
         override val usage: UsageData? = null,
         override val status: String? = null,
@@ -337,6 +354,8 @@ sealed class NormalizedMessage {
         override val invokedAt: Long? = null,
         override val model: String? = null,
         override val agentTimestamp: Long? = null,
+        override val turnId: String? = null,
+        override val turnState: String? = null,
     ) : NormalizedMessage()
 
     data class Event(
@@ -352,6 +371,9 @@ sealed class NormalizedMessage {
         override val invokedAt: Long? = null,
         override val model: String? = null,
         override val agentTimestamp: Long? = null,
+        override val turnId: String? = null,
+        override val turnState: String? = null,
+        override val parentToolUseId: String? = null,
     ) : NormalizedMessage()
 }
 
@@ -421,6 +443,11 @@ object ToolState {
     const val ERROR = "error"
 }
 
+object ToolCompletionSource {
+    const val INVOCATION_CUTOFF = "invocation-cutoff"
+    const val UNRESOLVED = "unresolved"
+}
+
 /**
  * `ChatToolCall`. Immutable value replaced wholesale on update (mirrors the
  * TS `block.tool = { ...block.tool, ... }` pattern).
@@ -443,6 +470,7 @@ data class ChatToolCall(
     val nativeKind: String? = null,
     val result: JsonElement? = null,
     val permission: ToolPermission? = null,
+    val completionSource: String? = null,
 )
 
 sealed interface VisibleChatBlock
@@ -563,6 +591,7 @@ class ToolCallBlock(
     var tool: ChatToolCall,
     var children: List<ChatBlock>,
     override var meta: JsonElement?,
+    var turnId: String? = null,
 ) : ChatBlock() {
     override val kind: String get() = "tool-call"
 }

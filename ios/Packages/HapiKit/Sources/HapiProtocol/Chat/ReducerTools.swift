@@ -134,8 +134,10 @@ struct ToolBlockSeed {
     var nativeTitle: String?
     var nativeKind: String?
     var progress: JSONValue?
+    var status: ToolUseStatus?
     var permission: ToolPermission?
     var agentTimestamp: Int?
+    var turnId: String?
 
     init(
         createdAt: Int,
@@ -151,8 +153,10 @@ struct ToolBlockSeed {
         nativeTitle: String? = nil,
         nativeKind: String? = nil,
         progress: JSONValue? = nil,
+        status: ToolUseStatus? = nil,
         permission: ToolPermission? = nil,
-        agentTimestamp: Int? = nil
+        agentTimestamp: Int? = nil,
+        turnId: String? = nil
     ) {
         self.createdAt = createdAt
         self.invokedAt = invokedAt
@@ -167,8 +171,10 @@ struct ToolBlockSeed {
         self.nativeTitle = nativeTitle
         self.nativeKind = nativeKind
         self.progress = progress
+        self.status = status
         self.permission = permission
         self.agentTimestamp = agentTimestamp
+        self.turnId = turnId
     }
 }
 
@@ -177,6 +183,16 @@ private func isPlaceholderToolName(_ name: String) -> Bool {
     // 'generic' is agy's non-specific result wrapper — never let it
     // overwrite a specific name set by the permission request.
     return normalized.isEmpty || normalized == "tool" || normalized == "unknown" || normalized == "generic"
+}
+
+private func mapToolUseStatusToState(_ status: ToolUseStatus?) -> ToolCallState? {
+    switch status {
+    case .completed: return .completed
+    case .failed, .cancelled, .canceled, .error: return .error
+    case .pending: return .pending
+    case .inProgress, .running: return .running
+    case nil: return nil
+    }
 }
 
 /// Port of `ensureToolBlock`: create-or-merge the tool card for `id`.
@@ -219,8 +235,21 @@ func ensureToolBlock(
         if let nativeKind = seed.nativeKind {
             existing.tool.nativeKind = nativeKind
         }
-        if let progress = seed.progress, existing.tool.state == .running {
+        if let progress = seed.progress,
+           existing.tool.state == .running,
+           seed.status != .completed,
+           seed.status != .failed,
+           seed.status != .cancelled,
+           seed.status != .canceled,
+           seed.status != .error {
             existing.tool.result = progress
+        }
+        if let mappedState = mapToolUseStatusToState(seed.status), mappedState == .completed || mappedState == .error {
+            if existing.tool.state != .error || existing.tool.completionSource == .invocationCutoff {
+                existing.tool.state = mappedState
+            }
+            existing.tool.completedAt = existing.tool.completedAt ?? seed.createdAt
+            existing.tool.completionSource = nil
         }
         // The tool_use records when the tool was invoked; a later
         // tool_result must not overwrite it.
@@ -236,6 +265,7 @@ func ensureToolBlock(
         if let model = seed.model {
             existing.model = model
         }
+        if existing.turnId == nil { existing.turnId = seed.turnId }
         existingBox.block = .toolCall(existing)
         return existingBox
     }
@@ -243,20 +273,22 @@ func ensureToolBlock(
     let initialState: ToolCallState = {
         if seed.permission?.status == .pending { return .pending }
         if seed.permission?.status == .denied || seed.permission?.status == .canceled { return .error }
-        return .running
+        return mapToolUseStatusToState(seed.status) ?? .running
     }()
+    let isTerminalInitialState = initialState == .completed || initialState == .error
 
     let tool = ChatToolCall(
         id: id,
         name: seed.name,
         state: initialState,
+        completionSource: isTerminalInitialState ? nil : .unresolved,
         input: seed.input,
         createdAt: seed.createdAt,
-        startedAt: initialState == .running ? seed.createdAt : nil,
-        completedAt: nil,
+        startedAt: initialState == .pending ? nil : seed.createdAt,
+        completedAt: isTerminalInitialState ? seed.createdAt : nil,
         // Exec start is only ever a real Claude entry timestamp (never the
         // hub receive time); nil keeps the hub-time fallback.
-        execStartedAt: initialState == .running ? seed.agentTimestamp : nil,
+        execStartedAt: initialState == .pending ? nil : seed.agentTimestamp,
         execCompletedAt: nil,
         description: seed.description,
         nativeTitle: seed.nativeTitle,
@@ -275,7 +307,8 @@ func ensureToolBlock(
         model: seed.model,
         tool: tool,
         children: [],
-        meta: seed.meta
+        meta: seed.meta,
+        turnId: seed.turnId
     )
 
     let box = BlockBox(.toolCall(block))

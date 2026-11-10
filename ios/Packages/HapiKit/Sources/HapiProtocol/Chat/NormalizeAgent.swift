@@ -46,6 +46,12 @@ func normalizeToolResultPermissions(_ value: JSONValue?) -> ToolResultPermission
     )
 }
 
+/// Port of `normalizeToolUseStatus`.
+func normalizeToolUseStatus(_ value: JSONValue?) -> ToolUseStatus? {
+    guard let raw = value?.stringValue else { return nil }
+    return ToolUseStatus(rawValue: raw)
+}
+
 /// Port of `normalizeAgentEvent`: any record with a string `type` is an
 /// event, carried verbatim.
 func normalizeAgentEvent(_ value: JSONValue?) -> AgentEvent? {
@@ -835,7 +841,8 @@ func normalizeAgentRecord(
                     durationMs: asNumber(data["durationMs"]) ?? 0,
                     targetMessageId: asString(data["messageId"])
                 )),
-                isSidechain: false,
+                isSidechain: data["isSidechain"]?.jsTruthy ?? false,
+                parentToolUseId: asString(data["parentToolUseId"]),
                 meta: meta
             )
         }
@@ -1161,6 +1168,7 @@ func normalizeAgentRecord(
 
         if dataType == "tool-call", let callId = data["callId"]?.stringValue {
             let uuid = asString(data["id"]) ?? messageId
+            let status = normalizeToolUseStatus(data["status"])
             return NormalizedMessage(
                 id: messageId,
                 localId: localId,
@@ -1173,6 +1181,7 @@ func normalizeAgentRecord(
                     nativeTitle: asString(jsCoalesce(data["nativeTitle"], data["title"])),
                     nativeKind: asString(jsCoalesce(data["nativeKind"], data["kind"])),
                     progress: data["progress"], // key presence == `'progress' in data`
+                    status: status,
                     uuid: uuid,
                     parentUUID: nil
                 ))]),

@@ -102,9 +102,20 @@ fun reduceChatBlocks(
     val traced = traceMessages(normalized)
     val groups = LinkedHashMap<String, MutableList<NormalizedMessage>>()
     val root = mutableListOf<NormalizedMessage>()
+    val turnStates = HashMap<String, String>()
 
     for (msg in traced) {
         val sidechainId = msg.sidechainId
+        val message = msg.message
+        val turnId = message.turnId
+        val turnState = message.turnState
+        if (!message.isSidechain && sidechainId == null && message.parentToolUseId == null
+            && turnId != null && turnState != null && turnState != "history"
+            && (turnState != "running" || !turnStates.containsKey(turnId))
+        ) {
+            // Replayed running metadata cannot reopen a canonically closed turn.
+            turnStates[turnId] = turnState
+        }
         if (sidechainId != null) {
             groups.getOrPut(sidechainId) { mutableListOf() }.add(msg.message)
         } else {
@@ -118,6 +129,7 @@ fun reduceChatBlocks(
         consumedGroupIds = mutableSetOf(),
         titleChangesByToolUseId = titleChangesByToolUseId,
         emittedTitleChangeToolUseIds = mutableSetOf(),
+        turnStates = turnStates,
     )
     val rootResult = reduceTimeline(root, reducerContext)
     val hasReadyEvent = rootResult.hasReadyEvent

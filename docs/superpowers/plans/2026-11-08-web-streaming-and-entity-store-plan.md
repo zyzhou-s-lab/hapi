@@ -239,3 +239,9 @@ bunx playwright test \
 | 线程消息列表拓扑 (`timelineIndex` / `timelineVersion`) | `web/src/chat/store/sessionEntityStore.ts`、`web/src/components/AssistantChat/HappyThread.tsx` | `buildThreadTopology` 在 flavor 过滤、标题提升和稳定 group ID 分配后，按**连续 `role === 'assistant'` 运行段**折叠生成 `timelineIndex`（每段取首条稳定 `threadMessageId`）与递增 `timelineVersion`；`HappyThread.tsx` 的 `StoreThreadMessagesById` 直接消费 `useSessionTimelineIndex(store)`；`HappyThread` 内置独立子 Provider（`HappyThreadStaticSliceProvider`、`HappyThreadTodoSliceProvider`、`HappyThreadSessionStateSliceProvider`）隔离上下文更新。 |
 | AUI 运行时缓存与全量实时实体 | `web/src/lib/assistant-runtime.ts`、`web/src/lib/assistant-runtime-blocks.ts` | 移除旧 `areTurnBlocksStructurallyEquivalent` / `areThreadEntriesStructurallyEquivalent` 冻结补丁；`turnsById` 与 `blocksWithThreadIds` 始终保持完整最新数据，`HappyThreadMessageCache` 按线程消息增量转换并直喂 `useExternalStoreRuntime`。 |
 | Turn 布局快照 vs. Block 叶子载荷 | `TurnBlock.tsx`、`AssistantMessage.tsx`、`UserMessage.tsx`、`TimelineStepRows.tsx`、`TurnExecutionRail.tsx`、`TurnRailSummary.tsx`、`useLiveTurnRows.ts` | `TurnLayoutSnapshot`（`layout:${turnId}`）仅在块增删、非空转换、阶段变化、工具状态/权限变化或 Todo/Plan 投影载荷变化时更新 `TurnBlock`；流式正文、`cli-output`（含用户与助手路径）、工具参数/输出/子代理更新仅触发 `block:${blockId}` 叶子与 `TurnRailSummary` 更新。 |
+
+## 12. 后续架构整改收口计划（2026-11-09 Haruka 四维审计增补）
+
+针对 `0aafa1e8` 基线在 Haruka 四维架构审计中暴露出的四项深层遗留耦合（Hub 流式期间吞掉 `lifecycleState` SSE 与 `sessionCache` 内存重置未落盘 SQLite、`useHappyRuntime` 全量监听 `entityStore.subscribe` 导致每 token 重建 `ThreadMessage`、`SessionEntityStore` 依赖 `SettledPrefixCache` 前缀截断重算与数组浅拷贝、以及滚动翻页 `scrollHeight` 差值与 `820ms`/`980ms` 定时器补偿），详见落盘整改计划：
+
+- [`docs/superpowers/plans/2026-11-09-haruka-architecture-remediation-plan.md`](./2026-11-09-haruka-architecture-remediation-plan.md)

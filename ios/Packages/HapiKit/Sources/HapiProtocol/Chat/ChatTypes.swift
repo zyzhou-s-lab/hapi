@@ -372,6 +372,18 @@ public struct ToolPermission: Equatable, Sendable {
 
 // MARK: - Normalized agent content
 
+/// Port of `ToolUseStatus` (types.ts).
+public enum ToolUseStatus: String, Equatable, Sendable {
+    case inProgress = "in_progress"
+    case completed
+    case failed
+    case cancelled
+    case canceled
+    case pending
+    case running
+    case error
+}
+
 /// Port of the `ToolUse` member of `NormalizedAgentContent`.
 public struct ToolUseContent: Equatable, Sendable {
     public var id: String
@@ -383,6 +395,7 @@ public struct ToolUseContent: Equatable, Sendable {
     public var nativeKind: String?
     /// `nil` == no `progress` key on the wire payload.
     public var progress: JSONValue?
+    public var status: ToolUseStatus?
     public var uuid: String
     public var parentUUID: String?
 
@@ -394,6 +407,7 @@ public struct ToolUseContent: Equatable, Sendable {
         nativeTitle: String? = nil,
         nativeKind: String? = nil,
         progress: JSONValue? = nil,
+        status: ToolUseStatus? = nil,
         uuid: String,
         parentUUID: String? = nil
     ) {
@@ -404,6 +418,7 @@ public struct ToolUseContent: Equatable, Sendable {
         self.nativeTitle = nativeTitle
         self.nativeKind = nativeKind
         self.progress = progress
+        self.status = status
         self.uuid = uuid
         self.parentUUID = parentUUID
     }
@@ -665,6 +680,10 @@ public struct NormalizedMessage: Equatable, Sendable {
     /// Execution-machine wall clock (epoch ms) parsed from the Claude
     /// entry's own `timestamp`; `nil` when unparseable.
     public var agentTimestamp: Int?
+    /// Optional turn identifier from `DecryptedMessage.turnId` or envelope `meta.turnId`.
+    public var turnId: String?
+    /// Optional turn lifecycle state carried from `DecryptedMessage.turnState`.
+    public var turnState: String?
     /// Tracer output: the Task/Agent message id this sidechain message
     /// groups under.
     public var sidechainId: String?
@@ -683,6 +702,8 @@ public struct NormalizedMessage: Equatable, Sendable {
         invokedAt: Int? = nil,
         model: String? = nil,
         agentTimestamp: Int? = nil,
+        turnId: String? = nil,
+        turnState: String? = nil,
         sidechainId: String? = nil
     ) {
         self.id = id
@@ -698,6 +719,8 @@ public struct NormalizedMessage: Equatable, Sendable {
         self.invokedAt = invokedAt
         self.model = model
         self.agentTimestamp = agentTimestamp
+        self.turnId = turnId
+        self.turnState = turnState
         self.sidechainId = sidechainId
     }
 
@@ -721,11 +744,18 @@ public enum ToolCallState: String, Equatable, Sendable {
     case error
 }
 
+/// Port of `ToolCompletionSource` (types.ts).
+public enum ToolCompletionSource: String, Equatable, Sendable {
+    case invocationCutoff = "invocation-cutoff"
+    case unresolved
+}
+
 /// Port of `ChatToolCall` (types.ts).
 public struct ChatToolCall: Equatable, Sendable {
     public var id: String
     public var name: String
     public var state: ToolCallState
+    public var completionSource: ToolCompletionSource?
     /// `nil` == TS `undefined` (key omitted by the projection); `.null` ==
     /// an explicit JSON null input (kept by the projection).
     public var input: JSONValue?
@@ -745,6 +775,7 @@ public struct ChatToolCall: Equatable, Sendable {
         id: String,
         name: String,
         state: ToolCallState,
+        completionSource: ToolCompletionSource? = nil,
         input: JSONValue? = nil,
         createdAt: Int,
         startedAt: Int? = nil,
@@ -760,6 +791,7 @@ public struct ChatToolCall: Equatable, Sendable {
         self.id = id
         self.name = name
         self.state = state
+        self.completionSource = completionSource
         self.input = input
         self.createdAt = createdAt
         self.startedAt = startedAt
@@ -874,6 +906,33 @@ public struct ToolCallBlock: Equatable, Sendable {
     public var tool: ChatToolCall
     public var children: [ChatBlock]
     public var meta: JSONValue?
+    public var turnId: String?
+
+    public init(
+        id: String,
+        localId: String? = nil,
+        createdAt: Int,
+        invokedAt: Int? = nil,
+        durationMs: Int? = nil,
+        usage: UsageData? = nil,
+        model: String? = nil,
+        tool: ChatToolCall,
+        children: [ChatBlock] = [],
+        meta: JSONValue? = nil,
+        turnId: String? = nil
+    ) {
+        self.id = id
+        self.localId = localId
+        self.createdAt = createdAt
+        self.invokedAt = invokedAt
+        self.durationMs = durationMs
+        self.usage = usage
+        self.model = model
+        self.tool = tool
+        self.children = children
+        self.meta = meta
+        self.turnId = turnId
+    }
 }
 
 /// Port of the `ChatBlock` union (types.ts).

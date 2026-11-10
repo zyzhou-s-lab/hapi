@@ -40,6 +40,10 @@ data class DecryptedMessage(
     val invokedAt: OptionalField<Long?> = OptionalField.Absent,
     val scheduledAt: Long? = null,
     val deliveryState: String? = null,
+    val turnId: String? = null,
+    val turnState: String? = null,
+    val phase: String? = null,
+    val lifecycleState: String? = null,
 ) {
     /** `invokedAt` collapsed to a plain value (both absent and `null` → null). */
     val invokedAtOrNull: Long? get() = invokedAt.valueOrNull()
@@ -72,6 +76,10 @@ internal object DecryptedMessageSerializer : KSerializer<DecryptedMessage> {
             },
             scheduledAt = obj["scheduledAt"].longOrNull,
             deliveryState = obj["deliveryState"].stringOrNull,
+            turnId = obj["turnId"].stringOrNull,
+            turnState = obj["turnState"].stringOrNull,
+            phase = obj["phase"].stringOrNull,
+            lifecycleState = obj["lifecycleState"].stringOrNull,
         )
     }
 
@@ -89,6 +97,10 @@ internal object DecryptedMessageSerializer : KSerializer<DecryptedMessage> {
             }
             value.scheduledAt?.let { put("scheduledAt", JsonPrimitive(it)) }
             value.deliveryState?.let { put("deliveryState", JsonPrimitive(it)) }
+            value.turnId?.let { put("turnId", JsonPrimitive(it)) }
+            value.turnState?.let { put("turnState", JsonPrimitive(it)) }
+            value.phase?.let { put("phase", JsonPrimitive(it)) }
+            value.lifecycleState?.let { put("lifecycleState", JsonPrimitive(it)) }
         })
     }
 }

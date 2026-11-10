@@ -51,6 +51,8 @@ public struct SessionPatch: Equatable, Sendable {
     /// Carried on the wire but NOT applied by `applySessionDetailPatch`
     /// (mirroring `web/src/lib/sessionPatch.ts`).
     public var activeTurnStartedAt: PatchField<Int>?
+    public var activeTurnId: PatchField<String>?
+    public var lifecycleState: String?
     public var activeAt: Int?
     public var updatedAt: Int?
     public var metadata: VersionedValue<SessionMetadata>?
@@ -73,6 +75,8 @@ public struct SessionPatch: Equatable, Sendable {
         active: Bool? = nil,
         thinking: Bool? = nil,
         activeTurnStartedAt: PatchField<Int>? = nil,
+        activeTurnId: PatchField<String>? = nil,
+        lifecycleState: String? = nil,
         activeAt: Int? = nil,
         updatedAt: Int? = nil,
         metadata: VersionedValue<SessionMetadata>? = nil,
@@ -92,6 +96,8 @@ public struct SessionPatch: Equatable, Sendable {
         self.active = active
         self.thinking = thinking
         self.activeTurnStartedAt = activeTurnStartedAt
+        self.activeTurnId = activeTurnId
+        self.lifecycleState = lifecycleState
         self.activeAt = activeAt
         self.updatedAt = updatedAt
         self.metadata = metadata
@@ -115,6 +121,8 @@ extension SessionPatch: Codable {
         case active
         case thinking
         case activeTurnStartedAt
+        case activeTurnId
+        case lifecycleState
         case activeAt
         case updatedAt
         case metadata
@@ -143,6 +151,10 @@ extension SessionPatch: Codable {
         active = try container.decodeIfPresent(Bool.self, forKey: .active)
         thinking = try container.decodeIfPresent(Bool.self, forKey: .thinking)
         activeTurnStartedAt = try Self.decodePatchField(Int.self, in: container, forKey: .activeTurnStartedAt)
+        activeTurnId = try Self.decodePatchField(String.self, in: container, forKey: .activeTurnId)
+        lifecycleState = container.contains(.lifecycleState)
+            ? try container.decode(String.self, forKey: .lifecycleState)
+            : nil
         activeAt = try container.decodeIfPresent(Int.self, forKey: .activeAt)
         updatedAt = try container.decodeIfPresent(Int.self, forKey: .updatedAt)
         metadata = try container.decodeIfPresent(VersionedValue<SessionMetadata>.self, forKey: .metadata)
@@ -165,6 +177,8 @@ extension SessionPatch: Codable {
         try container.encodeIfPresent(active, forKey: .active)
         try container.encodeIfPresent(thinking, forKey: .thinking)
         try Self.encodePatchField(activeTurnStartedAt, in: &container, forKey: .activeTurnStartedAt)
+        try Self.encodePatchField(activeTurnId, in: &container, forKey: .activeTurnId)
+        try container.encodeIfPresent(lifecycleState, forKey: .lifecycleState)
         try container.encodeIfPresent(activeAt, forKey: .activeAt)
         try container.encodeIfPresent(updatedAt, forKey: .updatedAt)
         try container.encodeIfPresent(metadata, forKey: .metadata)

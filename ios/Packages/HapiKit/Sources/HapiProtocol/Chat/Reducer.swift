@@ -98,8 +98,15 @@ public func reduceChatBlocks(
     let traced = traceMessages(normalized)
     var groups: [String: [NormalizedMessage]] = [:]
     var root: [NormalizedMessage] = []
+    var turnStates: [String: String] = [:]
 
     for msg in traced {
+        if !msg.isSidechain, msg.sidechainId == nil, msg.parentToolUseId == nil,
+           let turnId = msg.turnId, let turnState = msg.turnState, turnState != "history",
+           turnState != "running" || turnStates[turnId] == nil {
+            // Replayed running metadata cannot reopen a canonically closed turn.
+            turnStates[turnId] = turnState
+        }
         if let sidechainId = msg.sidechainId {
             groups[sidechainId, default: []].append(msg)
         } else {
@@ -112,7 +119,8 @@ public func reduceChatBlocks(
         groups: groups,
         consumedGroupIds: [],
         titleChangesByToolUseId: titleChangesByToolUseId,
-        emittedTitleChangeToolUseIds: []
+        emittedTitleChangeToolUseIds: [],
+        turnStates: turnStates
     )
     var rootResult = reduceTimeline(root, context: reducerContext)
     let hasReadyEvent = rootResult.hasReadyEvent

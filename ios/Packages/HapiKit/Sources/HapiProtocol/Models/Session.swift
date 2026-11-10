@@ -26,6 +26,8 @@ public struct Session: Codable, Equatable, Sendable {
     public var thinking: Bool
     public var thinkingAt: Int
     public var activeTurnStartedAt: Int?
+    public var activeTurnId: String?
+    public var lifecycleState: String?
     public var backgroundTaskCount: Int?
     public var todos: [TodoItem]?
     /// Team-mode state, kept wire-verbatim (no v1 UI consumes its internals).
@@ -59,6 +61,8 @@ public struct Session: Codable, Equatable, Sendable {
         thinking: Bool,
         thinkingAt: Int,
         activeTurnStartedAt: Int? = nil,
+        activeTurnId: String? = nil,
+        lifecycleState: String? = nil,
         backgroundTaskCount: Int? = nil,
         todos: [TodoItem]? = nil,
         teamState: JSONValue? = nil,
@@ -88,6 +92,8 @@ public struct Session: Codable, Equatable, Sendable {
         self.thinking = thinking
         self.thinkingAt = thinkingAt
         self.activeTurnStartedAt = activeTurnStartedAt
+        self.activeTurnId = activeTurnId
+        self.lifecycleState = lifecycleState
         self.backgroundTaskCount = backgroundTaskCount
         self.todos = todos
         self.teamState = teamState
@@ -121,6 +127,8 @@ public struct Session: Codable, Equatable, Sendable {
         thinking = try container.decode(Bool.self, forKey: .thinking)
         thinkingAt = try container.decode(Int.self, forKey: .thinkingAt)
         activeTurnStartedAt = try container.decodeIfPresent(Int.self, forKey: .activeTurnStartedAt)
+        activeTurnId = try container.decodeIfPresent(String.self, forKey: .activeTurnId)
+        lifecycleState = try container.decodeIfPresent(String.self, forKey: .lifecycleState)
         backgroundTaskCount = try container.decodeIfPresent(Int.self, forKey: .backgroundTaskCount)
         todos = try container.decodeIfPresent([TodoItem].self, forKey: .todos)
         teamState = try container.decodeIfPresent(JSONValue.self, forKey: .teamState)

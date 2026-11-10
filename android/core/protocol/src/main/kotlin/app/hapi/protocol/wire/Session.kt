@@ -44,6 +44,8 @@ data class Session(
     val thinking: Boolean,
     val thinkingAt: Long,
     val activeTurnStartedAt: Long? = null,
+    val activeTurnId: String? = null,
+    val lifecycleState: String? = null,
     val backgroundTaskCount: Int? = null,
     val todos: List<TodoItem>? = null,
     val teamState: JsonElement? = null,

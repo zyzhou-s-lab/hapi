@@ -49,6 +49,10 @@ Opaque record; carry it through. Known keys:
 |---|---|---|
 | `sentFrom` | `'webapp'`, `'telegram-bot'`, `'cli'`, … | Origin of a user message. **`'cli'` marks CLI-echo traffic**: user/assistant text containing `<command-name>`, `<command-args>`, `<command-message>`, or `<local-command-stdout>` tags renders as a monospace *cli-output* block instead of a chat bubble, and a `<command-name>` block merges with its `<local-command-stdout>` follow-up (`web/src/chat/reducerCliOutput.ts`). |
 | `deliveryMode` | `'queue'` \| `'steer'` | Durable delivery intent of a user send (see [pagination](./pagination.md#send-constraints)). Absent = `queue`. |
+| `turnId` | `string` | Canonical turn identifier scoping stream replacements and turn lifecycle ownership (`shared/src/messages.ts:getMessageTurnId`). |
+| `turnPhase` | `'execution'` \| `'final_answer'` | Explicit turn phase (`'commentary'` normalizes to `'execution'`). |
+| `scope` | `'main'` \| `'child'` \| `'history'` | Message scope (`replayedHistory`/`importedHistory` normalize to `'history'`). |
+| `sourceInstanceId` / `sourceGeneration` / `preHandshake` | `string` / `number` / `boolean` | Producer fencing metadata used by the hub and reducer to reject stale-instance or pre-handshake lifecycle transitions. |
 
 ---
 
@@ -184,6 +188,7 @@ A visible `data.type` not matched above ⇒ stringified agent text fallback (unl
 | `limit-reached` | `endsAt: number`, `limitType: string` |
 | `limit-warning` | `utilization: number` (0–1), `endsAt`, `limitType` |
 | `ready` | — |
+| `turn-lifecycle` | `eventId: string`, `transition: 'started' \| 'finished'`, `turnId: string`, `scope: 'main' \| 'child' \| 'history'`, `outcome?: 'completed' \| 'failed' \| 'aborted'`, `invocationId?`, `providerTurnId?`, `sourceInstanceId?`, `sourceGeneration?`, `source?`, `preHandshake?` | Canonical turn start/finish boundary (`shared/src/messages.ts:getTurnLifecycleEvent`). |
 | `api-error` | `retryAttempt`, `maxRetries`, `error: unknown` |
 | `turn-duration` | `durationMs`, `targetMessageId?` |
 | `microcompact` | `trigger`, `preTokens`, `tokensSaved` |

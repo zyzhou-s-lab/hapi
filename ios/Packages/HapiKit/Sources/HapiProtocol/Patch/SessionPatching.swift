@@ -38,6 +38,8 @@ public func isRenderIrrelevantSessionPatch(session: Session, patch: SessionPatch
     if let value = patch.active, value != session.active { return false }
     if let value = patch.thinking, value != session.thinking { return false }
     if let field = patch.activeTurnStartedAt, field.wireValue != session.activeTurnStartedAt { return false }
+    if let field = patch.activeTurnId, field.wireValue != session.activeTurnId { return false }
+    if let value = patch.lifecycleState, value != session.lifecycleState { return false }
     if let value = patch.activeAt {
         if abs(value - session.activeAt) < 60_000 {
             // Sub-minute keep-alive move: skipped, contributes nothing.
@@ -88,6 +90,8 @@ public func applySessionDetailPatch(session: Session, patch: SessionPatch) -> Se
 
     if let value = patch.active { assign(\.active, value) }
     if let value = patch.thinking { assign(\.thinking, value) }
+    if let field = patch.activeTurnId { assign(\.activeTurnId, field.wireValue) }
+    if let value = patch.lifecycleState { assign(\.lifecycleState, value as String?) }
     if let value = patch.activeAt { assign(\.activeAt, value) }
     // Monotonic with the hub's applySessionPatch: a rejected stale
     // metadata/agentState replay must not rewind updatedAt.

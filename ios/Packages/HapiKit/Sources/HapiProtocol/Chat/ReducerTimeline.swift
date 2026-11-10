@@ -201,6 +201,7 @@ private func normalizeTraceMessage(
             name: asString(data["name"]) ?? "unknown",
             input: data["input"],
             description: nil,
+            status: normalizeToolUseStatus(data["status"]),
             uuid: traceId,
             parentUUID: nil
         ))]))]
@@ -240,19 +241,22 @@ final class ReducerContext {
     var consumedGroupIds: Set<String>
     let titleChangesByToolUseId: [String: String]
     var emittedTitleChangeToolUseIds: Set<String>
+    let turnStates: [String: String]
 
     init(
         permissionsById: PermissionMap,
         groups: [String: [NormalizedMessage]],
         consumedGroupIds: Set<String> = [],
         titleChangesByToolUseId: [String: String],
-        emittedTitleChangeToolUseIds: Set<String> = []
+        emittedTitleChangeToolUseIds: Set<String> = [],
+        turnStates: [String: String] = [:]
     ) {
         self.permissionsById = permissionsById
         self.groups = groups
         self.consumedGroupIds = consumedGroupIds
         self.titleChangesByToolUseId = titleChangesByToolUseId
         self.emittedTitleChangeToolUseIds = emittedTitleChangeToolUseIds
+        self.turnStates = turnStates
     }
 }
 
@@ -329,6 +333,15 @@ func reduceTimeline(_ messages: [NormalizedMessage], context: ReducerContext) ->
     var reasoningBlocksByStreamId: [String: BlockBox] = [:]
     var hasReadyEvent = false
 
+    var toolsWithUncertainOwnership = Set<String>()
+
+    func recordToolOwnership(_ toolId: String, _ msg: NormalizedMessage) {
+        let existingTurnId = toolBlocksById[toolId]?.block.asToolCall?.turnId
+        if msg.isSidechain || msg.sidechainId != nil || msg.parentToolUseId != nil || msg.turnId == nil
+            || (existingTurnId != nil && msg.turnId != nil && existingTurnId != msg.turnId) {
+            toolsWithUncertainOwnership.insert(toolId)
+        }
+    }
     func ensureAgentRunBlock(
         cardId: String,
         createdAt: Int,
@@ -426,11 +439,15 @@ func reduceTimeline(_ messages: [NormalizedMessage], context: ReducerContext) ->
         toBlock.usage = toBlock.usage ?? fromBlock.usage
         toBlock.model = toBlock.model ?? fromBlock.model
 
+        toBlock.turnId = toBlock.turnId ?? fromBlock.turnId
         if !isTerminalAgentRunState(toBlock.tool.state) && isTerminalAgentRunState(fromBlock.tool.state) {
             toBlock.tool.state = fromBlock.tool.state
         }
         if toBlock.tool.result == nil, let fromResult = fromBlock.tool.result {
             toBlock.tool.result = fromResult
+        }
+        if isTerminalAgentRunState(toBlock.tool.state) {
+            toBlock.tool.completionSource = nil
         }
 
         toBox.block = .toolCall(toBlock)
@@ -593,6 +610,9 @@ func reduceTimeline(_ messages: [NormalizedMessage], context: ReducerContext) ->
                     let nextState = mapAgentRunStatusToToolState(status)
                     if var block = box.block.asToolCall {
                         block.tool.state = nextState
+                        if nextState == .completed || nextState == .error {
+                            block.tool.completionSource = nil
+                        }
                         box.block = .toolCall(block)
                     }
                     if nextState == .running {
@@ -629,6 +649,7 @@ func reduceTimeline(_ messages: [NormalizedMessage], context: ReducerContext) ->
                         setEarliestStartedAt(box, startedAt)
                         if var block = box.block.asToolCall {
                             block.tool.completedAt = getAgentRunCompletedAt(event) ?? msg.createdAt
+                            block.tool.completionSource = nil
                             box.block = .toolCall(block)
                         }
                     }
@@ -900,6 +921,7 @@ func reduceTimeline(_ messages: [NormalizedMessage], context: ReducerContext) ->
                         continue
                     }
 
+                    recordToolOwnership(toolCall.id, msg)
                     let permission = context.permissionsById[toolCall.id]?.permission
 
                     let box = ensureToolBlock(&blocks, &toolBlocksById, id: toolCall.id, seed: ToolBlockSeed(
@@ -915,11 +937,13 @@ func reduceTimeline(_ messages: [NormalizedMessage], context: ReducerContext) ->
                         nativeTitle: toolCall.nativeTitle,
                         nativeKind: toolCall.nativeKind,
                         progress: toolCall.progress,
+                        status: toolCall.status,
                         permission: permission,
-                        agentTimestamp: msg.agentTimestamp
+                        agentTimestamp: msg.agentTimestamp,
+                        turnId: msg.turnId
                     ))
 
-                    if var block = box.block.asToolCall, block.tool.state == .pending {
+                    if var block = box.block.asToolCall, block.tool.state == .pending, toolCall.status != .pending {
                         block.tool.state = .running
                         box.block = .toolCall(block)
                     }
@@ -928,6 +952,11 @@ func reduceTimeline(_ messages: [NormalizedMessage], context: ReducerContext) ->
                     // startedAt to the earlier tool_use receive time.
                     setEarliestStartedAt(box, msg.createdAt)
                     setEarliestExecStartedAt(box, msg.agentTimestamp)
+                    if var block = box.block.asToolCall,
+                       block.tool.state == .completed || block.tool.state == .error {
+                        block.tool.execCompletedAt = block.tool.execCompletedAt ?? msg.agentTimestamp
+                        box.block = .toolCall(block)
+                    }
 
                     if isSubagentToolName(toolCall.name) && !context.consumedGroupIds.contains(msg.id) {
                         let sidechain = context.groups[msg.id]
@@ -987,6 +1016,7 @@ func reduceTimeline(_ messages: [NormalizedMessage], context: ReducerContext) ->
                         return permissionFromResult ?? permissionEntry?.permission
                     }()
 
+                    recordToolOwnership(toolResult.toolUseId, msg)
                     let box = ensureToolBlock(&blocks, &toolBlocksById, id: toolResult.toolUseId, seed: ToolBlockSeed(
                         createdAt: msg.createdAt,
                         invokedAt: msg.invokedAt,
@@ -997,7 +1027,8 @@ func reduceTimeline(_ messages: [NormalizedMessage], context: ReducerContext) ->
                         name: permissionEntry?.toolName ?? "Tool",
                         input: permissionEntry?.input ?? .null,
                         description: nil,
-                        permission: permission
+                        permission: permission,
+                        turnId: msg.turnId
                         // No agentTimestamp seed: execStartedAt must only
                         // ever originate from a tool_use entry.
                     ))
@@ -1007,6 +1038,7 @@ func reduceTimeline(_ messages: [NormalizedMessage], context: ReducerContext) ->
                         block.tool.completedAt = msg.createdAt
                         block.tool.execCompletedAt = msg.agentTimestamp
                         block.tool.state = toolResult.isError ? .error : .completed
+                        block.tool.completionSource = nil
                         box.block = .toolCall(block)
                     }
                     continue
@@ -1035,6 +1067,27 @@ func reduceTimeline(_ messages: [NormalizedMessage], context: ReducerContext) ->
                 }
             }
         }
+    }
+
+    for (toolId, box) in toolBlocksById {
+        guard var block = box.block.asToolCall else { continue }
+        if block.tool.state == .completed || block.tool.state == .error {
+            if block.tool.completionSource == .unresolved {
+                block.tool.completionSource = nil
+                box.block = .toolCall(block)
+            }
+            continue
+        }
+        let turnState = block.turnId.flatMap { context.turnStates[$0] }
+        let hasOwnedCutoff = !toolsWithUncertainOwnership.contains(toolId)
+            && agentRunBlocksByCardId[toolId] == nil
+            && block.tool.name != "CodexAgent"
+            && !isSubagentToolName(block.tool.name)
+            && (turnState == "completed" || turnState == "failed" || turnState == "aborted" || turnState == "cutoff")
+        // Progress is not terminal; only the exact canonical owner can close a missing outcome.
+        if hasOwnedCutoff { block.tool.state = .error }
+        block.tool.completionSource = hasOwnedCutoff ? .invocationCutoff : .unresolved
+        box.block = .toolCall(block)
     }
 
     return TimelineResult(

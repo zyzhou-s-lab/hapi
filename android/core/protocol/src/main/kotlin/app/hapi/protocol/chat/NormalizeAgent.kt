@@ -36,6 +36,13 @@ private fun normalizeToolResultPermissions(value: JsonElement?): ToolResultPermi
     )
 }
 
+fun normalizeToolUseStatus(value: JsonElement?): String? = when (val status = asString(value)) {
+    ToolUseStatus.IN_PROGRESS, ToolUseStatus.COMPLETED, ToolUseStatus.FAILED,
+    ToolUseStatus.CANCELLED, ToolUseStatus.CANCELED, ToolUseStatus.PENDING,
+    ToolUseStatus.RUNNING, ToolUseStatus.ERROR -> status
+    else -> null
+}
+
 private fun normalizeAgentEvent(value: JsonElement?): AgentEvent? {
     val record = asObject(value) ?: return null
     if (asString(record["type"]) == null) return null
@@ -597,14 +604,17 @@ private fun eventMessage(
     event: JsonObject,
     meta: JsonElement?,
     usage: UsageData? = null,
+    isSidechain: Boolean = false,
+    parentToolUseId: String? = null,
 ): NormalizedMessage.Event = NormalizedMessage.Event(
     id = messageId,
     localId = localId,
     createdAt = createdAt,
     event = AgentEvent.of(event),
-    isSidechain = false,
+    isSidechain = isSidechain,
     meta = meta,
     usage = usage,
+    parentToolUseId = parentToolUseId,
 )
 
 @Suppress("CyclomaticComplexMethod", "LongMethod")
@@ -660,7 +670,7 @@ fun normalizeAgentRecord(
                 put("type", "turn-duration")
                 put("durationMs", jsNumber(asNumber(data["durationMs"]) ?: 0.0))
                 asString(data["messageId"])?.let { put("targetMessageId", it) }
-            }, meta)
+            }, meta, isSidechain = jsTruthy(data["isSidechain"]), parentToolUseId = asString(data["parentToolUseId"]))
         }
         if (dataType == "system" && subtype == "away_summary") {
             return eventMessage(messageId, localId, createdAt, buildJsonObject {
@@ -957,6 +967,7 @@ fun normalizeAgentRecord(
                             nativeKind = asString(data["nativeKind"].orNull() ?: data["kind"]),
                             hasProgress = data.containsKey("progress"),
                             progress = data["progress"],
+                            status = normalizeToolUseStatus(data["status"]),
                             uuid = uuid,
                             parentUUID = null,
                         )

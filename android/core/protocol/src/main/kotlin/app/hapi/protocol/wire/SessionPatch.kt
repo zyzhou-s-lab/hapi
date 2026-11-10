@@ -42,6 +42,8 @@ data class SessionPatch(
     val active: Boolean? = null,
     val thinking: Boolean? = null,
     val activeTurnStartedAt: OptionalField<Long?> = OptionalField.Absent,
+    val activeTurnId: OptionalField<String?> = OptionalField.Absent,
+    val lifecycleState: String? = null,
     val activeAt: Long? = null,
     val updatedAt: Long? = null,
     val metadata: VersionedValue<SessionMetadata>? = null,
@@ -62,7 +64,8 @@ data class SessionPatch(
 
 object SessionPatches {
     private val KNOWN_KEYS = setOf(
-        "active", "thinking", "activeTurnStartedAt", "activeAt", "updatedAt",
+        "active", "thinking", "activeTurnStartedAt", "activeTurnId", "lifecycleState",
+        "activeAt", "updatedAt",
         "metadata", "agentState", "todos", "teamState",
         "model", "modelReasoningEffort", "effort", "serviceTier",
         "permissionMode", "collaborationMode", "copilotAgentMode",
@@ -93,6 +96,8 @@ object SessionPatches {
                 active = obj["active"]?.let { it.boolOrNull ?: return null },
                 thinking = obj["thinking"]?.let { it.boolOrNull ?: return null },
                 activeTurnStartedAt = optionalNullableLong(obj, "activeTurnStartedAt") ?: return null,
+                activeTurnId = optionalNullableString(obj, "activeTurnId") ?: return null,
+                lifecycleState = obj["lifecycleState"]?.let { it.stringOrNull ?: return null },
                 activeAt = obj["activeAt"]?.let { it.longOrNull ?: return null },
                 updatedAt = obj["updatedAt"]?.let { it.longOrNull ?: return null },
                 metadata = obj["metadata"]?.let { wrapper ->

@@ -75,13 +75,23 @@ class ToolBlockSeed(
     /** Tri-state (TS `progress?: unknown` with an `'in' data` guard at the call site). */
     val hasProgress: Boolean = false,
     val progress: JsonElement? = null,
+    val status: String? = null,
     val permission: ToolPermission? = null,
     val agentTimestamp: Long? = null,
+    val turnId: String? = null,
 )
 
 private fun isPlaceholderToolName(name: String): Boolean {
     val normalized = name.trim().lowercase()
     return normalized == "" || normalized == "tool" || normalized == "unknown" || normalized == "generic"
+}
+
+private fun mapToolUseStatusToState(status: String?): String? = when (status) {
+    ToolUseStatus.COMPLETED -> ToolState.COMPLETED
+    ToolUseStatus.FAILED, ToolUseStatus.CANCELLED, ToolUseStatus.CANCELED, ToolUseStatus.ERROR -> ToolState.ERROR
+    ToolUseStatus.PENDING -> ToolState.PENDING
+    ToolUseStatus.IN_PROGRESS, ToolUseStatus.RUNNING -> ToolState.RUNNING
+    else -> null
 }
 
 fun ensureToolBlock(
@@ -120,8 +130,24 @@ fun ensureToolBlock(
         if (seed.nativeKind != null) {
             existing.tool = existing.tool.copy(nativeKind = seed.nativeKind)
         }
-        if (seed.hasProgress && existing.tool.state == ToolState.RUNNING) {
+        if (seed.hasProgress && existing.tool.state == ToolState.RUNNING
+            && seed.status != ToolUseStatus.COMPLETED
+            && seed.status != ToolUseStatus.FAILED
+            && seed.status != ToolUseStatus.CANCELLED
+            && seed.status != ToolUseStatus.CANCELED
+            && seed.status != ToolUseStatus.ERROR
+        ) {
             existing.tool = existing.tool.copy(result = seed.progress ?: JsonNull)
+        }
+        val mappedState = mapToolUseStatusToState(seed.status)
+        if (mappedState == ToolState.COMPLETED || mappedState == ToolState.ERROR) {
+            existing.tool = existing.tool.copy(
+                state = if (existing.tool.state == ToolState.ERROR && existing.tool.completionSource != ToolCompletionSource.INVOCATION_CUTOFF) {
+                    ToolState.ERROR
+                } else mappedState,
+                completedAt = existing.tool.completedAt ?: seed.createdAt.toDouble(),
+                completionSource = null,
+            )
         }
         // tool_use records the invocation time; the tool_result's invokedAt is
         // when the result was processed — keep the original.
@@ -137,14 +163,16 @@ fun ensureToolBlock(
         if (seed.model != null) {
             existing.model = seed.model
         }
+        if (existing.turnId == null) existing.turnId = seed.turnId
         return existing
     }
 
     val initialState = when {
         seed.permission?.status == "pending" -> ToolState.PENDING
         seed.permission?.status == "denied" || seed.permission?.status == "canceled" -> ToolState.ERROR
-        else -> ToolState.RUNNING
+        else -> mapToolUseStatusToState(seed.status) ?: ToolState.RUNNING
     }
+    val isTerminalInitialState = initialState == ToolState.COMPLETED || initialState == ToolState.ERROR
 
     val tool = ChatToolCall(
         id = id,
@@ -152,16 +180,17 @@ fun ensureToolBlock(
         state = initialState,
         input = seed.input,
         createdAt = seed.createdAt,
-        startedAt = if (initialState == ToolState.RUNNING) seed.createdAt.toDouble() else null,
-        completedAt = null,
+        startedAt = if (initialState == ToolState.PENDING) null else seed.createdAt.toDouble(),
+        completedAt = if (isTerminalInitialState) seed.createdAt.toDouble() else null,
         // Exec start only ever comes from a real Claude entry timestamp.
-        execStartedAt = if (initialState == ToolState.RUNNING) seed.agentTimestamp?.toDouble() else null,
+        execStartedAt = if (initialState == ToolState.PENDING) null else seed.agentTimestamp?.toDouble(),
         execCompletedAt = null,
         description = seed.description,
         nativeTitle = seed.nativeTitle,
         nativeKind = seed.nativeKind,
         result = if (seed.hasProgress) seed.progress ?: JsonNull else null,
         permission = seed.permission,
+        completionSource = if (isTerminalInitialState) null else ToolCompletionSource.UNRESOLVED,
     )
 
     val block = ToolCallBlock(
@@ -175,6 +204,7 @@ fun ensureToolBlock(
         tool = tool,
         children = emptyList(),
         meta = seed.meta,
+        turnId = seed.turnId,
     )
 
     toolBlocksById[id] = block

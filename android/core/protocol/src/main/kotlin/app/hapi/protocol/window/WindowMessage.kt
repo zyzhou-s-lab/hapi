@@ -56,6 +56,10 @@ data class WindowMessage(
     val seq: Long? get() = wire.seq
     val localId: String? get() = wire.localId
     val createdAt: Long get() = wire.createdAt
+    val turnId: String? get() = wire.turnId
+    val turnState: String? get() = wire.turnState
+    val phase: String? get() = wire.phase
+    val lifecycleState: String? get() = wire.lifecycleState
 
     /** Position time `invokedAt ?? createdAt` (collapsed tri-state). */
     val positionAt: Long get() = wire.positionAt

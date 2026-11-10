@@ -30,6 +30,14 @@ public struct DecryptedMessage: Codable, Equatable, Sendable {
     public var scheduledAt: Int?
     /// `indeterminate` means a steer outcome is unknown and needs explicit resolution.
     public var deliveryState: String?
+    /// Explicit turn identity persisted on the message row (`turnId`).
+    public var turnId: String?
+    /// Turn lifecycle state (`running` | `completed` | `failed` | `aborted` | `cutoff` | `history`), when set.
+    public var turnState: String?
+    /// Turn phase (`execution` | `final_answer`), when set.
+    public var phase: String?
+    /// Message lifecycle state (`streaming` | `settled`), when set.
+    public var lifecycleState: String?
 
     public init(
         id: String,
@@ -39,7 +47,11 @@ public struct DecryptedMessage: Codable, Equatable, Sendable {
         createdAt: Int,
         invokedAt: Int? = nil,
         scheduledAt: Int? = nil,
-        deliveryState: String? = nil
+        deliveryState: String? = nil,
+        turnId: String? = nil,
+        turnState: String? = nil,
+        phase: String? = nil,
+        lifecycleState: String? = nil
     ) {
         self.id = id
         self.seq = seq
@@ -49,6 +61,10 @@ public struct DecryptedMessage: Codable, Equatable, Sendable {
         self.invokedAt = invokedAt
         self.scheduledAt = scheduledAt
         self.deliveryState = deliveryState
+        self.turnId = turnId
+        self.turnState = turnState
+        self.phase = phase
+        self.lifecycleState = lifecycleState
     }
 
     public init(from decoder: Decoder) throws {
@@ -61,6 +77,10 @@ public struct DecryptedMessage: Codable, Equatable, Sendable {
         invokedAt = try container.decodeIfPresent(Int.self, forKey: .invokedAt)
         scheduledAt = try container.decodeIfPresent(Int.self, forKey: .scheduledAt)
         deliveryState = try container.decodeIfPresent(String.self, forKey: .deliveryState)
+        turnId = try container.decodeIfPresent(String.self, forKey: .turnId)
+        turnState = try container.decodeIfPresent(String.self, forKey: .turnState)
+        phase = try container.decodeIfPresent(String.self, forKey: .phase)
+        lifecycleState = try container.decodeIfPresent(String.self, forKey: .lifecycleState)
     }
 }
 

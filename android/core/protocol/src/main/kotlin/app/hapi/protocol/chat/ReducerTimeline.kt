@@ -15,6 +15,7 @@ class ReduceContext(
     val consumedGroupIds: MutableSet<String>,
     val titleChangesByToolUseId: Map<String, String>,
     val emittedTitleChangeToolUseIds: MutableSet<String>,
+    val turnStates: Map<String, String> = emptyMap(),
 )
 
 class TimelineResult(
@@ -236,6 +237,7 @@ private fun normalizeTraceMessage(
                             name = asString(data["name"]) ?: "unknown",
                             input = data["input"],
                             description = null,
+                            status = normalizeToolUseStatus(data["status"]),
                             uuid = traceId,
                             parentUUID = null,
                         )
@@ -307,6 +309,16 @@ fun reduceTimeline(
     val textBlocksByStreamId = HashMap<String, AgentTextBlock>()
     val reasoningBlocksByStreamId = HashMap<String, AgentReasoningBlock>()
     var hasReadyEvent = false
+    val toolsWithUncertainOwnership = HashSet<String>()
+
+    fun recordToolOwnership(toolId: String, msg: NormalizedMessage) {
+        val existingTurnId = toolBlocksById[toolId]?.turnId
+        if (msg.isSidechain || msg.parentToolUseId != null || msg.turnId == null
+            || (existingTurnId != null && msg.turnId != null && existingTurnId != msg.turnId)
+        ) {
+            toolsWithUncertainOwnership.add(toolId)
+        }
+    }
 
     fun ensureAgentRunBlock(
         cardId: String,
@@ -417,12 +429,16 @@ fun reduceTimeline(
         toBlock.durationMs = toBlock.durationMs ?: fromBlock.durationMs
         toBlock.usage = toBlock.usage ?: fromBlock.usage
         toBlock.model = toBlock.model ?: fromBlock.model
+        toBlock.turnId = toBlock.turnId ?: fromBlock.turnId
 
         if (!isTerminalAgentRunState(toBlock.tool.state) && isTerminalAgentRunState(fromBlock.tool.state)) {
             toBlock.tool = toBlock.tool.copy(state = fromBlock.tool.state)
         }
         if (toBlock.tool.result == null && fromBlock.tool.result != null) {
             toBlock.tool = toBlock.tool.copy(result = fromBlock.tool.result)
+        }
+        if (isTerminalAgentRunState(toBlock.tool.state)) {
+            toBlock.tool = toBlock.tool.copy(completionSource = null)
         }
 
         val fromTrace = agentRunTraceMessagesByCardId[fromCardId] ?: mutableListOf()
@@ -590,7 +606,10 @@ fun reduceTimeline(
                     patch.putAll(getAgentRunDisplayPatch(event))
                     patchAgentRunInput(block, patch)
                     val nextState = mapAgentRunStatusToToolState(status)
-                    block.tool = block.tool.copy(state = nextState)
+                    block.tool = block.tool.copy(
+                        state = nextState,
+                        completionSource = if (nextState == ToolState.COMPLETED || nextState == ToolState.ERROR) null else block.tool.completionSource,
+                    )
                     if (nextState == ToolState.RUNNING) {
                         setEarliestStartedAt(block, startedAt)
                     }
@@ -622,7 +641,8 @@ fun reduceTimeline(
                     if (nextState == ToolState.COMPLETED || nextState == ToolState.ERROR) {
                         setEarliestStartedAt(block, startedAt)
                         block.tool = block.tool.copy(
-                            completedAt = getAgentRunCompletedAt(event) ?: msg.createdAt.toDouble()
+                            completedAt = getAgentRunCompletedAt(event) ?: msg.createdAt.toDouble(),
+                            completionSource = null,
                         )
                     }
                     if (event.containsKey("result")) {
@@ -903,6 +923,7 @@ fun reduceTimeline(
                             continue
                         }
 
+                        recordToolOwnership(c.id, msg)
                         val permission = context.permissionsById[c.id]?.permission
 
                         val block = ensureToolBlock(
@@ -921,18 +942,25 @@ fun reduceTimeline(
                                 nativeKind = c.nativeKind,
                                 hasProgress = c.hasProgress,
                                 progress = c.progress,
+                                status = c.status,
                                 permission = permission,
                                 agentTimestamp = msg.agentTimestamp,
+                                turnId = msg.turnId,
                             )
                         )
 
-                        if (block.tool.state == ToolState.PENDING) {
+                        if (block.tool.state == ToolState.PENDING && c.status != ToolUseStatus.PENDING) {
                             block.tool = block.tool.copy(state = ToolState.RUNNING)
                         }
                         // Backfill hub-clock and exec starts regardless of state so a
                         // tool_result reduced before its tool_use still lowers startedAt.
                         setEarliestStartedAt(block, msg.createdAt.toDouble())
                         setEarliestExecStartedAt(block, msg.agentTimestamp?.toDouble())
+                        if (block.tool.state == ToolState.COMPLETED || block.tool.state == ToolState.ERROR) {
+                            block.tool = block.tool.copy(
+                                execCompletedAt = block.tool.execCompletedAt ?: msg.agentTimestamp?.toDouble()
+                            )
+                        }
 
                         if (isSubagentToolName(c.name) && !context.consumedGroupIds.contains(msg.id)) {
                             val sidechain = context.groups[msg.id]
@@ -992,6 +1020,7 @@ fun reduceTimeline(
                             }
                         }
 
+                        recordToolOwnership(c.toolUseId, msg)
                         val block = ensureToolBlock(
                             blocks, toolBlocksById, c.toolUseId,
                             ToolBlockSeed(
@@ -1005,6 +1034,7 @@ fun reduceTimeline(
                                 input = permissionEntry?.input ?: JsonNull,
                                 description = null,
                                 permission = permission,
+                                turnId = msg.turnId,
                                 // NOTE: no agentTimestamp seed here — execStartedAt must
                                 // only ever originate from a tool_use entry.
                             )
@@ -1015,6 +1045,7 @@ fun reduceTimeline(
                             completedAt = msg.createdAt.toDouble(),
                             execCompletedAt = msg.agentTimestamp?.toDouble(),
                             state = if (c.isError) ToolState.ERROR else ToolState.COMPLETED,
+                            completionSource = null,
                         )
                     }
 
@@ -1045,6 +1076,26 @@ fun reduceTimeline(
                 }
             }
         }
+    }
+
+    for ((toolId, block) in toolBlocksById) {
+        if (block.tool.state == ToolState.COMPLETED || block.tool.state == ToolState.ERROR) {
+            if (block.tool.completionSource == ToolCompletionSource.UNRESOLVED) {
+                block.tool = block.tool.copy(completionSource = null)
+            }
+            continue
+        }
+        val turnState = block.turnId?.let { context.turnStates[it] }
+        val hasOwnedCutoff = !toolsWithUncertainOwnership.contains(toolId)
+            && !agentRunBlocksByCardId.containsKey(toolId)
+            && block.tool.name != "CodexAgent"
+            && !isSubagentToolName(block.tool.name)
+            && (turnState == "completed" || turnState == "failed" || turnState == "aborted" || turnState == "cutoff")
+        // Progress is not terminal; only the exact canonical owner can close a missing outcome.
+        block.tool = block.tool.copy(
+            state = if (hasOwnedCutoff) ToolState.ERROR else block.tool.state,
+            completionSource = if (hasOwnedCutoff) ToolCompletionSource.INVOCATION_CUTOFF else ToolCompletionSource.UNRESOLVED,
+        )
     }
 
     return TimelineResult(mergeCliOutputBlocks(blocks), toolBlocksById, hasReadyEvent)
