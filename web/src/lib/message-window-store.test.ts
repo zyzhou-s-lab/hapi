@@ -2,9 +2,11 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { ApiClient } from '@/api/client'
 import type { DecryptedMessage, MessagesResponse } from '@/types/api'
 import {
+    type MessageWindowOperation,
     VISIBLE_WINDOW_SIZE,
     activateMessageWindow,
     appendOptimisticMessage,
+    cancelOlderMessageLoad,
     clearMessageWindow,
     fetchOlderMessages,
     flushDeferredPersistedStates,
@@ -15,17 +17,27 @@ import {
     reconcileQueuedLocalIds,
     removeOptimisticMessage,
     setMessageViewMode,
+    subscribeMessageWindow,
     syncTailMessages,
     updateMessageStatus,
 } from '@/lib/message-window-store'
 import { TURN_PAGE_ROW_MAX } from '@hapi/protocol/turnBoundary'
 
 const touchedSessions = new Set<string>()
+const unsubscribers: Array<() => void> = []
 
 function sessionId(name: string): string {
     const id = `message-window-v2-${name}`
     touchedSessions.add(id)
     return id
+}
+
+function observeOperations(id: string): Array<MessageWindowOperation | null | undefined> {
+    const operations: Array<MessageWindowOperation | null | undefined> = []
+    unsubscribers.push(subscribeMessageWindow(id, (operation) => {
+        operations.push(operation)
+    }))
+    return operations
 }
 
 function makeUserMessage(props: {
@@ -252,6 +264,9 @@ function deferred<T>() {
 }
 
 afterEach(() => {
+    for (const unsubscribe of unsubscribers.splice(0)) {
+        unsubscribe()
+    }
     for (const id of touchedSessions) {
         clearMessageWindow(id)
     }
@@ -2227,6 +2242,335 @@ describe('canonical assistant snapshot compaction', () => {
             flushDeferredPersistedStates()
             const persistedAfterFlush = JSON.parse(sessionStorage.getItem(storageKey)!)
             expect(persistedAfterFlush.messages.map((m: DecryptedMessage) => m.id)).toEqual(['final-3', 'live-4'])
+        } finally {
+            vi.useRealTimers()
+        }
+    })
+})
+
+describe('message window operation transport', () => {
+    it('never publishes rejected late-live stream rows after a final snapshot', async () => {
+        vi.useFakeTimers()
+        try {
+            const id = sessionId('op-late-live-rejected')
+            const final = makeCanonicalSnapshot('final', 'assistant', 20, false, [{ type: 'text', text: 'final answer' }])
+            const olderUser = makeUserMessage({ id: 'older-user', seq: 1, createdAt: 500, invokedAt: 500 })
+            const olderLateLive = makeCanonicalSnapshot('older-live', 'assistant', 10, true)
+            const getMessages = vi.fn().mockResolvedValueOnce(beforeResponse([olderUser, olderLateLive], {
+                hasMore: false,
+                nextBeforeAt: null,
+                nextBeforeSeq: null
+            }))
+            const api = createApi(getMessages)
+
+            ingestIncomingMessages(id, [final])
+            vi.runAllTimers()
+
+            const operations = observeOperations(id)
+            ingestIncomingMessages(id, [makeCanonicalSnapshot('final', 'assistant', 21, true)])
+            vi.runAllTimers()
+            expect(operations).toEqual([])
+            expect(getMessageWindowState(id).messagesVersion).toBe(1)
+
+            operations.length = 0
+            const nextUser = makeUserMessage({ id: 'user-after-final', seq: 22, createdAt: 2_000, invokedAt: 2_000 })
+            ingestIncomingMessages(id, [makeCanonicalSnapshot('late-live-batch', 'assistant', 23, true), nextUser])
+            vi.runAllTimers()
+            expect(operations).toEqual([
+                {
+                    kind: 'append-tail',
+                    messages: [nextUser],
+                    baseRevision: 1,
+                    nextRevision: 2,
+                    generation: 0,
+                    removedIds: []
+                }
+            ])
+
+            const tailFlood = Array.from({ length: VISIBLE_WINDOW_SIZE }, (_, index) =>
+                makeAgentMessage({ id: `tail-${index}`, seq: 100 + index, at: 10_000 + index })
+            )
+            ingestIncomingMessages(id, tailFlood)
+            vi.runAllTimers()
+            setMessageViewMode(id, 'history')
+            operations.length = 0
+            await fetchOlderMessages(api, id)
+
+            expect(operations).toEqual([
+                {
+                    kind: 'prepend-history',
+                    messages: [olderUser],
+                    historyVersion: 1,
+                    baseRevision: 3,
+                    nextRevision: 4,
+                    generation: 0,
+                    removedIds: []
+                }
+            ])
+        } finally {
+            vi.useRealTimers()
+        }
+    })
+
+    it('coalesces contiguous throttled and immediate updates across multiple entities without dropping kept winners', () => {
+        vi.useFakeTimers()
+        try {
+            const id = sessionId('op-coalesced-entities')
+            const operations = observeOperations(id)
+            const streamA1 = makeCanonicalSnapshot('stream-a-1', 'stream-a', 1, true)
+            const streamA2 = makeCanonicalSnapshot('stream-a-2', 'stream-a', 2, true)
+            const streamAFinal = makeCanonicalSnapshot('stream-a-final', 'stream-a', 3, false)
+            const streamBLive = makeCanonicalSnapshot('stream-b-1', 'stream-b', 4, true)
+            const optimistic = makeUserMessage({
+                id: 'local-opt',
+                localId: 'local-opt',
+                createdAt: 5_000,
+                invokedAt: null,
+                status: 'sending'
+            })
+
+            ingestIncomingMessages(id, [streamA1])
+            ingestIncomingMessages(id, [streamA2])
+            ingestIncomingMessages(id, [streamAFinal])
+            ingestIncomingMessages(id, [streamBLive])
+            appendOptimisticMessage(id, optimistic)
+
+            expect(operations).toEqual([
+                {
+                    kind: 'append-tail',
+                    messages: [streamAFinal, streamBLive, optimistic],
+                    baseRevision: 0,
+                    nextRevision: 5,
+                    generation: 0,
+                    removedIds: ['stream-a-1', 'stream-a-2']
+                }
+            ])
+
+            operations.length = 0
+            vi.runAllTimers()
+            expect(operations).toEqual([])
+        } finally {
+            vi.useRealTimers()
+        }
+    })
+
+    it('falls back to a replacement across generations while keeping revisions monotonic through clear', () => {
+        vi.useFakeTimers()
+        try {
+            const id = sessionId('op-generation-change')
+            const operations = observeOperations(id)
+            ingestIncomingMessages(id, [makeCanonicalSnapshot('live-before-clear', 'stream-1', 1, true)])
+
+            clearMessageWindow(id)
+
+            expect(operations).toEqual([{
+                kind: 'replace-window',
+                reason: 'status-change',
+                baseRevision: 0,
+                nextRevision: 2,
+                generation: 1,
+                removedIds: ['live-before-clear']
+            }])
+            expect(getMessageWindowState(id).messagesVersion).toBe(2)
+
+            operations.length = 0
+            clearMessageWindow(id)
+            vi.runAllTimers()
+            expect(operations).toEqual([null])
+            expect(getMessageWindowState(id).messagesVersion).toBe(2)
+        } finally {
+            vi.useRealTimers()
+        }
+    })
+
+    it('tracks contiguous revisions and removedIds across stream compaction, optimistic echo replacement and window trim', () => {
+        vi.useFakeTimers()
+        try {
+            const id = sessionId('op-revisions-and-removals')
+            const operations = observeOperations(id)
+
+            ingestIncomingMessages(id, [makeCanonicalSnapshot('live-1', 'stream-1', 1, true)])
+            vi.runAllTimers()
+            ingestIncomingMessages(id, [makeCanonicalSnapshot('live-2', 'stream-1', 2, true)])
+            vi.runAllTimers()
+            const final = makeCanonicalSnapshot('final-3', 'stream-1', 3, false)
+            ingestIncomingMessages(id, [final])
+            vi.runAllTimers()
+
+            appendOptimisticMessage(id, makeUserMessage({
+                id: 'local-1',
+                localId: 'local-1',
+                createdAt: 4_000,
+                invokedAt: null,
+                status: 'queued'
+            }))
+            ingestIncomingMessages(id, [makeUserMessage({
+                id: 'server-1',
+                seq: 4,
+                localId: 'local-1',
+                createdAt: 4_000,
+                invokedAt: null
+            })])
+            vi.runAllTimers()
+
+            const flood = Array.from({ length: VISIBLE_WINDOW_SIZE }, (_, index) =>
+                makeAgentMessage({ id: `flood-${index}`, seq: 10 + index, at: 10_000 + index })
+            )
+            ingestIncomingMessages(id, flood)
+            vi.runAllTimers()
+
+            expect(operations).toEqual([
+                {
+                    kind: 'upsert-live-stream',
+                    streamId: 'output:assistant:stream-1',
+                    message: expect.objectContaining({ id: 'live-1' }),
+                    baseRevision: 0,
+                    nextRevision: 1,
+                    generation: 0,
+                    removedIds: []
+                },
+                {
+                    kind: 'upsert-live-stream',
+                    streamId: 'output:assistant:stream-1',
+                    message: expect.objectContaining({ id: 'live-2' }),
+                    baseRevision: 1,
+                    nextRevision: 2,
+                    generation: 0,
+                    removedIds: ['live-1']
+                },
+                {
+                    kind: 'append-tail',
+                    messages: [final],
+                    baseRevision: 2,
+                    nextRevision: 3,
+                    generation: 0,
+                    removedIds: ['live-2']
+                },
+                {
+                    kind: 'append-tail',
+                    messages: [expect.objectContaining({ id: 'local-1', status: 'queued' })],
+                    baseRevision: 3,
+                    nextRevision: 4,
+                    generation: 0,
+                    removedIds: []
+                },
+                {
+                    kind: 'append-tail',
+                    messages: [expect.objectContaining({ id: 'server-1', localId: 'local-1', status: 'queued' })],
+                    baseRevision: 4,
+                    nextRevision: 5,
+                    generation: 0,
+                    removedIds: ['local-1']
+                },
+                {
+                    kind: 'replace-window',
+                    reason: 'initial',
+                    baseRevision: 5,
+                    nextRevision: 6,
+                    generation: 0,
+                    removedIds: ['final-3']
+                }
+            ])
+        } finally {
+            vi.useRealTimers()
+        }
+    })
+
+    it('publishes null on metadata-only notifications and never resurrects lastOperation', async () => {
+        vi.useFakeTimers()
+        try {
+            const id = sessionId('op-metadata-null')
+            const first = makeUserMessage({ id: 'u1', seq: 1, createdAt: 1_000, invokedAt: 1_000 })
+            const older = makeUserMessage({ id: 'u0', seq: 0, createdAt: 500, invokedAt: 500 })
+            const olderDeferred = deferred<MessagesResponse>()
+            const tailDeferred = deferred<MessagesResponse>()
+            const getMessages = vi.fn()
+                .mockResolvedValueOnce(latestResponse([first], {
+                    hasMore: true,
+                    nextBeforeAt: 1_000,
+                    nextBeforeSeq: 1
+                }))
+                .mockImplementationOnce(() => olderDeferred.promise)
+                .mockImplementationOnce(() => tailDeferred.promise)
+            const api = createApi(getMessages)
+
+            await syncTailMessages(api, id)
+            vi.runAllTimers()
+            const operations = observeOperations(id)
+
+            setMessageViewMode(id, 'history')
+            expect(operations).toEqual([null])
+            expect(getMessageWindowState(id).lastOperation).toBeNull()
+
+            operations.length = 0
+            const olderPromise = fetchOlderMessages(api, id)
+            cancelOlderMessageLoad(id)
+            olderDeferred.resolve(beforeResponse([older], { hasMore: false, nextBeforeAt: null, nextBeforeSeq: null }))
+            await olderPromise
+            expect(operations).toEqual([null])
+
+            operations.length = 0
+            activateMessageWindow(id)
+            const syncPromise = syncTailMessages(api, id)
+            tailDeferred.resolve(latestResponse([
+                { ...first, content: JSON.parse(JSON.stringify(first.content)) }
+            ]))
+            await syncPromise
+            vi.runAllTimers()
+            expect(operations.length).toBeGreaterThan(0)
+            expect(operations.every((operation) => operation === null)).toBe(true)
+            expect(getMessageWindowState(id).lastOperation).toBeNull()
+        } finally {
+            vi.useRealTimers()
+        }
+    })
+
+    it.each([
+        { field: 'turnId', value: 'turn-2' },
+        { field: 'turnState', value: 'completed' },
+        { field: 'lifecycleState', value: 'settled' }
+    ])('retains REST rows whose $field changed and publishes them as updated winners', async ({ field, value }) => {
+        vi.useFakeTimers()
+        try {
+            const id = sessionId(`op-rest-${field}`)
+            const initialMessage: DecryptedMessage = {
+                ...makeAgentMessage({ id: 'assistant-1', seq: 1, at: 1_000 }),
+                turnId: 'turn-1',
+                turnState: 'running',
+                lifecycleState: 'streaming'
+            }
+            const settledMessage: DecryptedMessage = {
+                ...initialMessage,
+                [field]: value
+            }
+            const getMessages = vi.fn()
+                .mockResolvedValueOnce(latestResponse([initialMessage]))
+                .mockResolvedValueOnce(latestResponse([settledMessage]))
+            const api = createApi(getMessages)
+
+            await syncTailMessages(api, id)
+            vi.runAllTimers()
+            const initialRef = getMessageWindowState(id).messages[0]
+
+            const operations = observeOperations(id)
+            activateMessageWindow(id)
+            await syncTailMessages(api, id)
+            vi.runAllTimers()
+
+            const current = getMessageWindowState(id)
+            expect(current.messages[0]).not.toBe(initialRef)
+            expect(current.messages[0]).toMatchObject({
+                id: 'assistant-1',
+                [field]: value
+            })
+            expect(operations).toContainEqual({
+                kind: 'replace-window',
+                reason: 'initial',
+                baseRevision: 1,
+                nextRevision: 2,
+                generation: 2,
+                removedIds: []
+            })
         } finally {
             vi.useRealTimers()
         }

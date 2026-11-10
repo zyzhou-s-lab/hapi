@@ -12,6 +12,7 @@ import type {
     SessionEntityMetaSnapshot,
     SessionEntityStore,
     SessionEntityStoreSnapshot,
+    TurnHeaderSnapshot,
     TurnLayoutSnapshot,
     TimelineEntryRef,
     TurnEntitySnapshot,
@@ -72,6 +73,41 @@ export function useOptionalSessionTurnLayout(id: string | null | undefined): Tur
     ), [store, id])
     const getSnapshot = useCallback(() => store && id ? store.getTurnLayout(id) : undefined, [store, id])
     return useSyncExternalStore(subscribe, getSnapshot, getSnapshot)
+}
+export function useSessionTurnHeader(
+    store: SessionEntityStore,
+    id: string
+): TurnHeaderSnapshot | undefined {
+    const subscribe = useCallback(
+        (listener: () => void) => store.subscribeEntity(`header:${id}`, listener),
+        [store, id]
+    )
+    const getSnapshot = useCallback(
+        () => store.getTurnHeader(id),
+        [store, id]
+    )
+    return useSyncExternalStore(subscribe, getSnapshot, getSnapshot)
+}
+
+export function useOptionalSessionTurnHeader(
+    id: string | null | undefined
+): TurnHeaderSnapshot | undefined {
+    const store = useContext(SessionEntityStoreContext)
+    const subscribe = useCallback(
+        (listener: () => void) => (
+            store && id ? store.subscribeEntity(`header:${id}`, listener) : () => {}
+        ),
+        [store, id]
+    )
+    const getSnapshot = useCallback(
+        () => (store && id ? store.getTurnHeader(id) : undefined),
+        [store, id]
+    )
+    return useSyncExternalStore(
+        store && id ? subscribe : NOOP_SUBSCRIBE,
+        store && id ? getSnapshot : UNDEFINED_SNAPSHOT,
+        store && id ? getSnapshot : UNDEFINED_SNAPSHOT
+    )
 }
 
 export function useSessionVisibleEntity(

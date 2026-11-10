@@ -7,6 +7,26 @@ import { isQueuedForInvocation, mergeMessages } from '@/lib/messages'
 
 export type MessageViewMode = 'tail' | 'history'
 
+type MessageWindowOperationPayload =
+    | { readonly kind: 'append-tail'; readonly messages: readonly DecryptedMessage[] }
+    | { readonly kind: 'upsert-live-stream'; readonly streamId: string; readonly message: DecryptedMessage }
+    | { readonly kind: 'prepend-history'; readonly messages: readonly DecryptedMessage[]; readonly historyVersion: number }
+    | { readonly kind: 'replace-window'; readonly reason: 'initial' | 'epoch-reset' | 'session-switch' | 'status-change' }
+
+export type MessageWindowOperation = MessageWindowOperationPayload & {
+    readonly baseRevision: number
+    readonly nextRevision: number
+    readonly generation: number
+    readonly removedIds: readonly string[]
+}
+
+type MessageWindowOperationIntent =
+    | { readonly kind: 'append-tail' }
+    | { readonly kind: 'prepend-history'; readonly historyVersion: number }
+    | Extract<MessageWindowOperationPayload, { kind: 'replace-window' }>
+
+export type MessageWindowListener = (operation?: MessageWindowOperation | null) => void
+
 export type OlderLoadOutcome =
     | {
         kind: 'applied'
@@ -37,6 +57,7 @@ export type MessageWindowState = {
     messagesVersion: number
     historyVersion: number
     tailRevision: number
+    lastOperation?: MessageWindowOperation | null
 }
 
 export const VISIBLE_WINDOW_SIZE = 400
@@ -51,6 +72,7 @@ type MessagePosition = {
 }
 
 type InternalState = MessageWindowState & {
+    operationIntent?: MessageWindowOperationIntent
     finalizedStreamIds: Set<string>
     oldestPositionAt: number | null
     oldestPositionSeq: number | null
@@ -82,7 +104,8 @@ type TailSyncController = {
 }
 
 const states = new Map<string, InternalState>()
-const listeners = new Map<string, Set<() => void>>()
+const listeners = new Map<string, Set<MessageWindowListener>>()
+const pendingOperations = new Map<string, MessageWindowOperation>()
 const tailSyncControllers = new Map<string, TailSyncController>()
 
 const NOTIFY_THROTTLE_MS = 50
@@ -108,12 +131,98 @@ function requestNotifyFrame(): void {
     notifyRafId = setTimeout(flushNotifications, 0) as unknown as ReturnType<typeof requestAnimationFrame>
 }
 
+function coalesceWindowOperations(
+    prev: MessageWindowOperation | null | undefined,
+    next: MessageWindowOperation | null | undefined,
+    state: InternalState
+): MessageWindowOperation | null {
+    if (!prev && !next) return null
+    const latest = next ?? prev!
+    if ((!prev || !next) && latest.generation === state.syncGeneration) return latest
+    const keptIds = new Set(state.messages.map((message) => message.id))
+    const common = {
+        baseRevision: prev?.baseRevision ?? latest.baseRevision,
+        nextRevision: latest.nextRevision,
+        generation: state.syncGeneration,
+        removedIds: [...new Set([
+            ...(prev?.removedIds ?? []),
+            ...(next?.removedIds ?? [])
+        ])].filter((id) => !keptIds.has(id))
+    }
+    if (
+        latest.generation !== state.syncGeneration
+        || (prev && next && (
+            prev.generation !== next.generation
+            || prev.nextRevision !== next.baseRevision
+        ))
+    ) {
+        return { kind: 'replace-window', reason: 'status-change', ...common }
+    }
+    if (!prev || !next) return latest
+    if (prev.kind === 'replace-window' || next.kind === 'replace-window') {
+        return {
+            kind: 'replace-window',
+            reason: next.kind === 'replace-window' ? next.reason : prev.kind === 'replace-window' ? prev.reason : 'status-change',
+            ...common
+        }
+    }
+    const previousMessages = prev.kind === 'upsert-live-stream' ? [prev.message] : prev.messages
+    const nextMessages = next.kind === 'upsert-live-stream' ? [next.message] : next.messages
+    const changedIds = new Set([...previousMessages, ...nextMessages].map((message) => message.id))
+    const messages = state.messages.filter((message) => changedIds.has(message.id))
+    if (
+        prev.kind === 'upsert-live-stream'
+        && next.kind === 'upsert-live-stream'
+        && prev.streamId === next.streamId
+        && messages.length === 1
+    ) {
+        return { kind: 'upsert-live-stream', streamId: next.streamId, message: messages[0]!, ...common }
+    }
+    if (prev.kind === 'prepend-history' && next.kind === 'prepend-history') {
+        return { kind: 'prepend-history', messages, historyVersion: next.historyVersion, ...common }
+    }
+    if (prev.kind !== 'prepend-history' && next.kind !== 'prepend-history') {
+        return { kind: 'append-tail', messages, ...common }
+    }
+    return { kind: 'replace-window', reason: 'status-change', ...common }
+}
+
+function recordPendingOperation(sessionId: string, operation?: MessageWindowOperation | null): void {
+    if (!operation) return
+    const coalesced = coalesceWindowOperations(pendingOperations.get(sessionId), operation, getState(sessionId))
+    if (coalesced) {
+        pendingOperations.set(sessionId, coalesced)
+    }
+}
+
+function cancelPendingNotifyIfIdle(resetThrottle = false): void {
+    if (pendingNotifySessionIds.size > 0) {
+        return
+    }
+    if (notifyTimerId !== null) {
+        clearTimeout(notifyTimerId)
+        notifyTimerId = null
+    }
+    if (notifyRafId !== null) {
+        if (typeof cancelAnimationFrame === 'function') {
+            cancelAnimationFrame(notifyRafId)
+        } else {
+            clearTimeout(notifyRafId)
+        }
+        notifyRafId = null
+    }
+    if (resetThrottle) {
+        lastNotifyAt = 0
+    }
+}
+
 function scheduleNotify(sessionId: string): void {
     pendingNotifySessionIds.add(sessionId)
     if (notifyRafId !== null || notifyTimerId !== null) {
         return
     }
-    const remaining = NOTIFY_THROTTLE_MS - (Date.now() - lastNotifyAt)
+    const elapsed = Date.now() - lastNotifyAt
+    const remaining = elapsed < 0 ? 0 : NOTIFY_THROTTLE_MS - elapsed
     if (remaining <= 0) {
         requestNotifyFrame()
         return
@@ -130,10 +239,12 @@ function flushNotifications(): void {
     const sessionIds = [...pendingNotifySessionIds]
     pendingNotifySessionIds.clear()
     for (const sessionId of sessionIds) {
+        const operation = coalesceWindowOperations(pendingOperations.get(sessionId), null, getState(sessionId))
+        pendingOperations.delete(sessionId)
         const subscribers = listeners.get(sessionId)
         if (!subscribers) continue
         for (const listener of subscribers) {
-            listener()
+            listener(operation)
         }
     }
 }
@@ -280,6 +391,7 @@ function createState(sessionId: string): InternalState {
         messagesVersion: 0,
         historyVersion: 0,
         tailRevision: 0,
+        lastOperation: null,
         oldestPositionAt: null,
         oldestPositionSeq: null,
         newestPositionAt: null,
@@ -352,11 +464,19 @@ function getState(sessionId: string): InternalState {
     return created
 }
 
-function notifyImmediate(sessionId: string): void {
+function notifyImmediate(sessionId: string, operation?: MessageWindowOperation | null): void {
+    const effectiveOp = coalesceWindowOperations(
+        pendingOperations.get(sessionId),
+        operation,
+        getState(sessionId)
+    )
+    pendingOperations.delete(sessionId)
+    pendingNotifySessionIds.delete(sessionId)
+    cancelPendingNotifyIfIdle()
     const subscribers = listeners.get(sessionId)
     if (!subscribers) return
     for (const listener of subscribers) {
-        listener()
+        listener(effectiveOp)
     }
 }
 
@@ -366,11 +486,13 @@ function setState(
     immediate = false,
     deferPersist = false
 ): void {
+    finalizeWindowCommit(states.get(sessionId) ?? createState(sessionId), next)
     states.set(sessionId, next)
     schedulePersist(sessionId, deferPersist)
     if (immediate) {
-        notifyImmediate(sessionId)
+        notifyImmediate(sessionId, next.lastOperation)
     } else {
+        recordPendingOperation(sessionId, next.lastOperation)
         scheduleNotify(sessionId)
     }
 }
@@ -475,9 +597,11 @@ function buildState(
         | 'olderGeneration'
         | 'historyVersion'
         | 'tailRevision'
+        | 'operationIntent'
     >>
 ): InternalState {
-    const messages = updates.messages ?? previous.messages
+    const candidateMessages = updates.messages ?? previous.messages
+    const messages = reuseWindowMessages(previous.messages, candidateMessages)
     const bounds = deriveSeqBounds(messages)
     return {
         ...previous,
@@ -489,6 +613,51 @@ function buildState(
             ? previous.messagesVersion
             : previous.messagesVersion + 1
     }
+}
+
+function reuseWindowMessages(previous: DecryptedMessage[], next: DecryptedMessage[]): DecryptedMessage[] {
+    return next.length === previous.length && next.every((message, index) => message === previous[index])
+        ? previous
+        : next
+}
+
+/** Bind deltas once, after all merge, compaction, trimming and metadata stages. */
+function finalizeWindowCommit(previous: InternalState, next: InternalState): void {
+    next.messages = reuseWindowMessages(previous.messages, next.messages)
+    next.messagesVersion = previous.messagesVersion + (next.messages === previous.messages ? 0 : 1)
+    next.lastOperation = null
+    const intent = next.operationIntent
+    next.operationIntent = undefined
+    if (next.messages === previous.messages) return
+
+    const previousById = new Map(previous.messages.map((message) => [message.id, message]))
+    const keptIds = new Set(next.messages.map((message) => message.id))
+    const messages = next.messages.filter((message) => previousById.get(message.id) !== message)
+    const removed = previous.messages.filter((message) => !keptIds.has(message.id))
+    const common = {
+        baseRevision: previous.messagesVersion,
+        nextRevision: next.messagesVersion,
+        generation: next.syncGeneration,
+        removedIds: removed.map((message) => message.id)
+    }
+    if (!intent || intent.kind === 'replace-window' || messages.length === 0) {
+        next.lastOperation = {
+            kind: 'replace-window',
+            reason: intent?.kind === 'replace-window' ? intent.reason : 'status-change',
+            ...common
+        }
+        return
+    }
+    if (intent.kind === 'prepend-history') {
+        next.lastOperation = { kind: 'prepend-history', messages, historyVersion: intent.historyVersion, ...common }
+        return
+    }
+    const streamId = messages.length === 1 ? getLiveMessageStreamId(messages[0]!.content) : null
+    if (streamId !== null && removed.every((message) => getMessageStreamId(message.content) === streamId)) {
+        next.lastOperation = { kind: 'upsert-live-stream', streamId, message: messages[0]!, ...common }
+        return
+    }
+    next.lastOperation = { kind: 'append-tail', messages, ...common }
 }
 
 function sliceForTrim<T>(
@@ -658,6 +827,17 @@ function shouldRetainWindowMessage(message: DecryptedMessage): boolean {
         || normalizeDecryptedMessage(message) !== null
 }
 
+function retainIncomingWindowMessages(
+    incoming: DecryptedMessage[],
+    finalizedStreamIds: Set<string>
+): DecryptedMessage[] {
+    return incoming.filter((message) => {
+        if (!shouldRetainWindowMessage(message)) return false
+        const liveStreamId = getLiveMessageStreamId(message.content)
+        return liveStreamId === null || !finalizedStreamIds.has(liveStreamId)
+    })
+}
+
 function countNewRenderableMessages(
     previous: InternalState,
     incoming: DecryptedMessage[]
@@ -690,7 +870,7 @@ function mergeIntoWindow(
         advanceTailRevision?: boolean
     } = {}
 ): InternalState {
-    const retainedIncoming = incoming.filter(shouldRetainWindowMessage)
+    const retainedIncoming = retainIncomingWindowMessages(incoming, previous.finalizedStreamIds)
     if (retainedIncoming.length === 0) {
         return previous
     }
@@ -722,8 +902,14 @@ function mergeIntoWindow(
             reserveQueuedBudget: options.reserveQueuedBudget ?? !retainHistory,
         }
     )
+    const operationIntent: MessageWindowOperationIntent = dropped.length > 0
+        ? { kind: 'replace-window', reason: 'initial' }
+        : mode === 'prepend'
+            ? { kind: 'prepend-history', historyVersion: previous.historyVersion }
+            : { kind: 'append-tail' }
     let next = buildState(previous, {
         messages: kept,
+        operationIntent,
         ...(options.advanceTailRevision
             ? { tailRevision: previous.tailRevision + 1 }
             : {})
@@ -761,8 +947,7 @@ function applyLatestResponse(
     }
 ): InternalState {
     const previousById = new Map(previous.messages.map((message) => [message.id, message]))
-    const retainedResponseMessages = response.messages
-        .filter(shouldRetainWindowMessage)
+    const retainedResponseMessages = retainIncomingWindowMessages(response.messages, previous.finalizedStreamIds)
         .map((message) => {
             const existing = previousById.get(message.id)
             if (
@@ -775,6 +960,9 @@ function applyLatestResponse(
                 && existing.scheduledAt === message.scheduledAt
                 && existing.deliveryState === message.deliveryState
                 && existing.steered === message.steered
+                && existing.turnId === message.turnId
+                && existing.turnState === message.turnState
+                && existing.lifecycleState === message.lifecycleState
                 && JSON.stringify(existing.content) === JSON.stringify(message.content)
             ) {
                 return existing
@@ -824,8 +1012,12 @@ function applyLatestResponse(
         : options.replaceServerRows
             ? responseOldest
             : responseOldest ?? previousOldest
+    const operationIntent: MessageWindowOperationIntent = options.replaceServerRows || dropped.length > 0
+        ? { kind: 'replace-window', reason: response.page.reset ? 'epoch-reset' : 'initial' }
+        : { kind: 'append-tail' }
     return buildState(previous, {
         messages: kept,
+        operationIntent,
         hasMore: response.page.hasMore || (!options.replaceServerRows && previous.hasMore) || dropped.length > 0,
         epoch: response.page.epoch,
         oldestPositionAt: oldest?.at ?? null,
@@ -1252,7 +1444,8 @@ export async function fetchOlderMessages(
                 isLoadingMore: false,
                 historyVersion,
                 hasExpandedHistory: true,
-                warning: null
+                warning: null,
+                operationIntent: { kind: 'prepend-history', historyVersion }
             })
         }, true)
         if (applyRejected || historyVersion === 0) {
@@ -1341,7 +1534,7 @@ export function getMessageWindowState(sessionId: string): MessageWindowState {
     return getState(sessionId)
 }
 
-export function subscribeMessageWindow(sessionId: string, listener: () => void): () => void {
+export function subscribeMessageWindow(sessionId: string, listener: MessageWindowListener): () => void {
     const subscribers = listeners.get(sessionId) ?? new Set()
     subscribers.add(listener)
     listeners.set(sessionId, subscribers)
@@ -1359,13 +1552,22 @@ export function clearMessageWindow(sessionId: string): void {
     tailSyncControllers.delete(sessionId)
     clearPersistedState(sessionId)
     const previous = states.get(sessionId)
-    if (!previous) return
-    states.set(sessionId, {
+    if (!previous) {
+        pendingOperations.delete(sessionId)
+        pendingNotifySessionIds.delete(sessionId)
+        cancelPendingNotifyIfIdle(true)
+        return
+    }
+    const next: InternalState = {
         ...createState(sessionId),
+        operationIntent: { kind: 'replace-window', reason: 'session-switch' },
         syncGeneration: previous.syncGeneration + 1,
         olderGeneration: previous.olderGeneration + 1
-    })
-    notifyImmediate(sessionId)
+    }
+    finalizeWindowCommit(previous, next)
+    states.set(sessionId, next)
+    notifyImmediate(sessionId, next.lastOperation)
+    cancelPendingNotifyIfIdle(true)
 }
 
 export function seedMessageWindowFromSession(fromSessionId: string, toSessionId: string): void {
@@ -1380,7 +1582,8 @@ export function seedMessageWindowFromSession(fromSessionId: string, toSessionId:
         oldestPositionSeq: source.oldestPositionSeq,
         requiresLatestReset: true,
         syncGeneration: target.syncGeneration + 1,
-        olderGeneration: target.olderGeneration + 1
+        olderGeneration: target.olderGeneration + 1,
+        operationIntent: { kind: 'replace-window', reason: 'session-switch' }
     })
     seeded.finalizedStreamIds = new Set(source.finalizedStreamIds)
     tailSyncControllers.delete(toSessionId)
@@ -1418,7 +1621,10 @@ export function reconcileQueuedLocalIds(
         })
         return messages.length === previous.messages.length
             ? previous
-            : buildState(previous, { messages })
+            : buildState(previous, {
+                messages,
+                operationIntent: { kind: 'replace-window', reason: 'status-change' }
+            })
     }, true)
 }
 
@@ -1440,7 +1646,12 @@ export function updateMessageStatus(sessionId: string, localId: string, status: 
             changed = true
             return { ...message, status }
         })
-        return changed ? buildState(previous, { messages }) : previous
+        return changed
+            ? buildState(previous, {
+                messages,
+                operationIntent: { kind: 'replace-window', reason: 'status-change' }
+            })
+            : previous
     }, true)
 }
 
@@ -1452,7 +1663,10 @@ export function removeOptimisticMessage(sessionId: string, localId: string): voi
         )
         return messages.length === previous.messages.length
             ? previous
-            : buildState(previous, { messages })
+            : buildState(previous, {
+                messages,
+                operationIntent: { kind: 'replace-window', reason: 'status-change' }
+            })
     }, true)
 }
 
@@ -1468,7 +1682,12 @@ export function markMessagesIndeterminate(sessionId: string, localIds: string[])
             changed = true
             return { ...message, deliveryState: 'indeterminate' as const }
         })
-        return changed ? buildState(previous, { messages }) : previous
+        return changed
+            ? buildState(previous, {
+                messages,
+                operationIntent: { kind: 'replace-window', reason: 'status-change' }
+            })
+            : previous
     }, true)
 }
 
@@ -1485,7 +1704,12 @@ export function markMessagesRequeued(sessionId: string, localIds: string[]): voi
             const { deliveryState: _deliveryState, ...requeued } = message
             return requeued
         })
-        return changed ? buildState(previous, { messages }) : previous
+        return changed
+            ? buildState(previous, {
+                messages,
+                operationIntent: { kind: 'replace-window', reason: 'status-change' }
+            })
+            : previous
     }, true)
 }
 
@@ -1523,7 +1747,8 @@ export function markMessagesConsumed(
         if (!changed) return previous
         return buildState(previous, {
             messages: mergeMessages([], updated),
-            tailRevision: previous.tailRevision + 1
+            tailRevision: previous.tailRevision + 1,
+            operationIntent: { kind: 'replace-window', reason: 'status-change' }
         })
     }, true)
 }

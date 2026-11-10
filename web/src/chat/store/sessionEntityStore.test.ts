@@ -1,8 +1,30 @@
 import { describe, expect, it, vi } from 'vitest'
 import { createSessionEntityStore } from './sessionEntityStore'
-import { normalizeDecryptedMessage } from '../normalize'
-import { reduceChatBlocks } from '../reducer'
+import * as normalizeModule from '../normalize'
+import * as reducerModule from '../reducer'
 import { buildVisibleChatBlocks } from '../toolGroups'
+
+type NormalizeModule = typeof normalizeModule
+type ReducerModule = typeof reducerModule
+
+vi.mock('../normalize', async (importOriginal) => {
+    const actual = await importOriginal<NormalizeModule>()
+    return {
+        ...actual,
+        normalizeDecryptedMessage: vi.fn(actual.normalizeDecryptedMessage),
+    }
+})
+
+vi.mock('../reducer', async (importOriginal) => {
+    const actual = await importOriginal<ReducerModule>()
+    return {
+        ...actual,
+        reduceChatBlocks: vi.fn(actual.reduceChatBlocks),
+    }
+})
+
+const { normalizeDecryptedMessage } = normalizeModule
+const { reduceChatBlocks } = reducerModule
 import {
     partitionTurn,
     projectTurn,
@@ -314,13 +336,29 @@ describe('SessionEntityStore', () => {
         expect(snapPerm.blocks[1]?.kind === 'tool-call' && snapPerm.blocks[1].tool.permission?.status).toBe('approved')
     })
 
-    it('handles pagination prepend and session switches cleanly', () => {
+    it('handles pagination prepend with dependency-closed checkpointing and session switches cleanly', () => {
         const store = createSessionEntityStore()
+        const readyEvent: DecryptedMessage = {
+            id: 'ev-ready',
+            seq: 14,
+            localId: null,
+            createdAt: 14_000,
+            content: { role: 'agent', content: { type: 'event', data: { type: 'ready' } } },
+        }
+        const compactEndEvent: DecryptedMessage = {
+            id: 'ev-compact-end',
+            seq: 9,
+            localId: null,
+            createdAt: 9_000,
+            content: { role: 'agent', content: { type: 'event', data: { type: 'message', message: 'Conversation compacted' } } },
+        }
         const tailMessages: DecryptedMessage[] = [
+            compactEndEvent,
             makeUserMessage('u2', 'Turn 2', 10),
             makeAssistantTextMessage('a2', 'Answer 2', 11),
             makeUserMessage('u3', 'Turn 3', 12),
             makeAssistantTextMessage('a3', 'Answer 3', 13),
+            readyEvent,
         ]
 
         const snapTail = store.reconcileInput({
@@ -329,13 +367,39 @@ describe('SessionEntityStore', () => {
             agentState: null,
             hasMoreMessages: true,
             codexExplorationCollapsed: false,
+            windowOperation: {
+                kind: 'replace-window',
+                reason: 'initial',
+                baseRevision: 0,
+                nextRevision: 1,
+                generation: 1,
+                removedIds: [],
+            },
         })
-        expect(snapTail.timelineIndex.map((e) => e.id)).toEqual(['user-text:u2', 'agent-text:a2:0', 'user-text:u3', 'agent-text:a3:0'])
+        expect(snapTail.hasReadyEvent).toBe(true)
+        expect(snapTail.timelineIndex.map((e) => e.id)).toEqual([
+            'agent-event:ev-compact-end',
+            'user-text:u2',
+            'agent-text:a2:0',
+            'user-text:u3',
+            'agent-text:a3:0',
+        ])
 
-        // Prepend older turn u1/a1
-        const prependedMessages: DecryptedMessage[] = [
+        // Prepend older turn u1/a1 + a compaction start event that folds with ev-compact-end across the prepend boundary
+        const compactStartEvent: DecryptedMessage = {
+            id: 'ev-compact-start',
+            seq: 8,
+            localId: null,
+            createdAt: 8_000,
+            content: { role: 'agent', content: { type: 'event', data: { type: 'message', message: 'Compacting conversation...' } } },
+        }
+        const prependedPage: DecryptedMessage[] = [
             makeUserMessage('u1', 'Turn 1', 1),
             makeAssistantTextMessage('a1', 'Answer 1', 2),
+            compactStartEvent,
+        ]
+        const prependedMessages: DecryptedMessage[] = [
+            ...prependedPage,
             ...tailMessages,
         ]
         const snapPrepended = store.reconcileInput({
@@ -344,12 +408,53 @@ describe('SessionEntityStore', () => {
             agentState: null,
             hasMoreMessages: false,
             codexExplorationCollapsed: false,
+            windowOperation: {
+                kind: 'prepend-history',
+                messages: prependedPage,
+                historyVersion: 1,
+                baseRevision: 1,
+                nextRevision: 2,
+                generation: 1,
+                removedIds: [],
+            },
         })
-        expect(snapPrepended.timelineIndex.map((e) => e.id)).toEqual(['user-text:u1', 'agent-text:a1:0', 'user-text:u2', 'agent-text:a2:0', 'user-text:u3', 'agent-text:a3:0'])
+        expect(snapPrepended.reductionMode).toBe('incremental-prepend')
+        expect(snapPrepended.replay).toEqual({
+            rows: 3,
+            reason: 'prepend-dependency-closed-prefix',
+        })
+        expect(snapPrepended.hasReadyEvent).toBe(true)
+        expect(snapPrepended.blocks.map((b) => b.id)).toEqual([
+            'u1',
+            'a1:0',
+            'ev-compact-start',
+            'u2',
+            'a2:0',
+            'u3',
+            'a3:0',
+        ])
+        expect(snapPrepended.timelineIndex.map((e) => e.id)).toEqual([
+            'user-text:u1',
+            'agent-text:a1:0',
+            'user-text:u2',
+            'agent-text:a2:0',
+            'user-text:u3',
+            'agent-text:a3:0',
+        ])
         // Reconciled blocks from u2..a3 preserve object identity
-        expect(snapPrepended.blocks[2]).toBe(snapTail.blocks[0])
         expect(snapPrepended.blocks[3]).toBe(snapTail.blocks[1])
+        expect(snapPrepended.blocks[4]).toBe(snapTail.blocks[2])
 
+        const coldStore = createSessionEntityStore()
+        const coldSnap = coldStore.reconcileInput({
+            sessionId: 'sess-1',
+            messages: prependedMessages,
+            agentState: null,
+            hasMoreMessages: false,
+            codexExplorationCollapsed: false,
+        })
+        expect(snapPrepended.blocks).toEqual(coldSnap.blocks)
+        expect(snapPrepended.hasReadyEvent).toBe(coldSnap.hasReadyEvent)
         // Switch session
         const snapOtherSession = store.reconcileInput({
             sessionId: 'sess-other',
@@ -369,6 +474,7 @@ describe('SessionEntityStore', () => {
             seq: 1,
             localId: null,
             createdAt: 1000,
+            turnId: 'turn-abc',
             content: {
                 role: 'agent',
                 content: {
@@ -407,6 +513,7 @@ describe('SessionEntityStore', () => {
             ...codexLiveMsg,
             id: 'codex-msg-2',
             seq: 2,
+            turnId: 'turn-abc',
             content: {
                 role: 'agent',
                 content: {
@@ -614,6 +721,190 @@ describe('SessionEntityStore', () => {
         expect(assistant).toHaveLength(1)
         expect(snapshot.turnsById.get(assistant[0]!.id)?.parts.filter((part) => part.type === 'text').map((part) => part.text)).toEqual(['Answer', 'More answer'])
         expect(snapshot.timelineIndex.filter((entry) => entry.role === 'user').map((entry) => entry.id)).toEqual(['user-text:u1', 'user-text:u2'])
+    })
+
+    it('processes 100 live-stream chunks and 1 historical tool-result backfill over 1,000 historical messages with 0 prefix normalize/reduce calls', () => {
+        const store = createSessionEntityStore()
+        let revision = 0
+        const historicalMessages: DecryptedMessage[] = []
+        let seq = 1
+        for (let turn = 0; turn < 250; turn += 1) {
+            historicalMessages.push(makeUserMessage(`u-hist-${turn}`, `Historical question ${turn}`, seq++))
+            if (turn === 120) {
+                historicalMessages.push(
+                    makeClaudeToolUseMessage(
+                        `a-hist-use-${turn}`,
+                        `uuid-hist-use-${turn}`,
+                        'tool-bg-task',
+                        'Task',
+                        { description: 'Background subagent' },
+                        seq++
+                    )
+                )
+                historicalMessages.push(makeAssistantTextMessage(`a-hist-txt-${turn}`, `Spawned background task ${turn}`, seq++))
+                historicalMessages.push(makeAssistantTextMessage(`a-hist-fin-${turn}`, `Turn ${turn} follow-up`, seq++))
+            } else {
+                historicalMessages.push(
+                    makeClaudeToolUseMessage(
+                        `a-hist-use-${turn}`,
+                        `uuid-hist-use-${turn}`,
+                        `tool-hist-${turn}`,
+                        'Read',
+                        { file_path: `src/file-${turn}.ts` },
+                        seq++
+                    )
+                )
+                historicalMessages.push(
+                    makeClaudeToolResultMessage(
+                        `a-hist-res-${turn}`,
+                        `uuid-hist-res-${turn}`,
+                        `tool-hist-${turn}`,
+                        `contents of file-${turn}.ts`,
+                        seq++
+                    )
+                )
+                historicalMessages.push(makeAssistantTextMessage(`a-hist-txt-${turn}`, `Completed turn ${turn}`, seq++))
+            }
+        }
+        expect(historicalMessages).toHaveLength(1000)
+
+        const activeUserMsg = makeUserMessage('u-active', 'Stream the active turn answer', seq++)
+        const initialLiveMsg = makeAssistantTextMessage('a-active', 'Chunk 0', seq++, { live: true })
+        const prefixMessageIds = new Set([...historicalMessages.map((m) => m.id), activeUserMsg.id])
+
+        const initialSnap = store.reconcileInput({ sessionId: 'sess-1000',
+        messages: [...historicalMessages, activeUserMsg, initialLiveMsg],
+        agentState: null,
+        hasMoreMessages: false,
+        codexExplorationCollapsed: false, windowOperation: { ...{ kind: 'replace-window', reason: 'initial' }, baseRevision: revision, nextRevision: ++revision, generation: 1, removedIds: [] },  })
+        expect(initialSnap.reductionMode).toBe('full')
+        expect(initialSnap.splitIndex).toBe(1000)
+
+        const assistantEntries = initialSnap.timelineIndex.filter((e) => e.role === 'assistant')
+        const firstHistTurnId = assistantEntries[0]!.id
+        const bgTaskTurnId = assistantEntries[120]!.id
+        const activeTurnId = assistantEntries.at(-1)!.id
+
+        const firstHistListener = vi.fn()
+        const bgTaskTurnListener = vi.fn()
+        const activeTurnListener = vi.fn()
+        const timelineListener = vi.fn()
+        const runtimeTopologyListener = vi.fn()
+
+        store.subscribeEntity(firstHistTurnId, firstHistListener)
+        store.subscribeEntity(bgTaskTurnId, bgTaskTurnListener)
+        store.subscribeEntity(activeTurnId, activeTurnListener)
+        store.subscribeTimeline(timelineListener)
+        store.subscribeRuntimeTopology(runtimeTopologyListener)
+
+        const normalizeSpy = vi.mocked(normalizeDecryptedMessage)
+        const reduceSpy = vi.mocked(reduceChatBlocks)
+        normalizeSpy.mockClear()
+        reduceSpy.mockClear()
+
+        let currentLiveMsg = initialLiveMsg
+        for (let chunk = 1; chunk <= 100; chunk += 1) {
+            currentLiveMsg = makeAssistantTextMessage(
+                'a-active',
+                `Chunk ${chunk}: streaming tokens for active turn`,
+                initialLiveMsg.seq ?? 1002,
+                { live: true, createdAt: initialLiveMsg.createdAt }
+            )
+            const snap = store.reconcileInput({ sessionId: 'sess-1000',
+            messages: [...historicalMessages, activeUserMsg, currentLiveMsg],
+            agentState: null,
+            hasMoreMessages: false,
+            codexExplorationCollapsed: false, windowOperation: { ...{ kind: 'upsert-live-stream', streamId: 'stream-a-active', message: currentLiveMsg }, baseRevision: revision, nextRevision: ++revision, generation: 1, removedIds: [] },  })
+            expect(snap.reductionMode).toBe('incremental-tail')
+        }
+
+        const prefixNormalizeCallsDuringStream = normalizeSpy.mock.calls.filter(([msg]) =>
+            prefixMessageIds.has(msg.id)
+        )
+        expect(prefixNormalizeCallsDuringStream).toHaveLength(0)
+        expect(normalizeSpy).toHaveBeenCalledTimes(100)
+
+        const prefixReduceCallsDuringStream = reduceSpy.mock.calls.filter(([msgs]) =>
+            msgs.some((m) => prefixMessageIds.has(m.id))
+        )
+        expect(prefixReduceCallsDuringStream).toHaveLength(0)
+        expect(reduceSpy).toHaveBeenCalledTimes(100)
+        for (const [msgs] of reduceSpy.mock.calls) {
+            expect(msgs).toHaveLength(1)
+            expect(msgs[0]?.id).toBe('a-active')
+        }
+
+        expect(firstHistListener).not.toHaveBeenCalled()
+        expect(bgTaskTurnListener).not.toHaveBeenCalled()
+        expect(timelineListener).not.toHaveBeenCalled()
+        expect(runtimeTopologyListener).not.toHaveBeenCalled()
+        expect(activeTurnListener).toHaveBeenCalledTimes(100)
+
+        normalizeSpy.mockClear()
+        reduceSpy.mockClear()
+
+        const backfillResultMsg = makeClaudeToolResultMessage(
+            'a-bg-task-res',
+            'uuid-bg-task-res',
+            'tool-bg-task',
+            'subagent done',
+            seq++
+        )
+        const snapAfterBackfill = store.reconcileInput({ sessionId: 'sess-1000',
+        messages: [...historicalMessages, activeUserMsg, currentLiveMsg, backfillResultMsg],
+        agentState: null,
+        hasMoreMessages: false,
+        codexExplorationCollapsed: false, windowOperation: { ...{ kind: 'append-tail', messages: [backfillResultMsg] }, baseRevision: revision, nextRevision: ++revision, generation: 1, removedIds: [] },  })
+        expect(snapAfterBackfill.reductionMode).toBe('incremental-tail')
+
+        const prefixNormalizeCallsOnBackfill = normalizeSpy.mock.calls.filter(([msg]) =>
+            prefixMessageIds.has(msg.id)
+        )
+        expect(prefixNormalizeCallsOnBackfill).toHaveLength(0)
+        const prefixReduceCallsOnBackfill = reduceSpy.mock.calls.filter(([msgs]) =>
+            msgs.some((m) => prefixMessageIds.has(m.id))
+        )
+        expect(prefixReduceCallsOnBackfill).toHaveLength(0)
+        expect(reduceSpy).toHaveBeenCalledTimes(1)
+        expect(reduceSpy.mock.calls[0]?.[0]?.map((m) => m.id)).toEqual(['a-active'])
+
+        expect(bgTaskTurnListener).toHaveBeenCalledTimes(1)
+        expect(firstHistListener).not.toHaveBeenCalled()
+        const patchedBlock = snapAfterBackfill.byId.get('tool-bg-task')
+        expect(patchedBlock?.kind === 'tool-call' && patchedBlock.tool.state).toBe('completed')
+        expect(patchedBlock?.kind === 'tool-call' && patchedBlock.tool.result).toBe('subagent done')
+
+        // Subsequent streaming chunk must not re-patch or re-notify bgTaskTurnListener
+        const postBackfillLiveMsg = makeAssistantTextMessage(
+            'a-active',
+            'Chunk 101: after backfill',
+            initialLiveMsg.seq ?? 1002,
+            { live: true, createdAt: initialLiveMsg.createdAt }
+        )
+        const finalMessages = [...historicalMessages, activeUserMsg, postBackfillLiveMsg, backfillResultMsg]
+        const snapFinal = store.reconcileInput({ sessionId: 'sess-1000',
+        messages: finalMessages,
+        agentState: null,
+        hasMoreMessages: false,
+        codexExplorationCollapsed: false, windowOperation: { ...{ kind: 'upsert-live-stream', streamId: 'stream-a-active', message: postBackfillLiveMsg }, baseRevision: revision, nextRevision: ++revision, generation: 1, removedIds: [] },  })
+        expect(snapFinal.reductionMode).toBe('incremental-tail')
+        expect(bgTaskTurnListener).toHaveBeenCalledTimes(1)
+
+        const coldStore = createSessionEntityStore()
+        const coldSnap = coldStore.reconcileInput({
+            sessionId: 'sess-1000',
+            messages: finalMessages,
+            agentState: null,
+            hasMoreMessages: false,
+            codexExplorationCollapsed: false,
+        })
+        expect(snapFinal.blocks).toEqual(coldSnap.blocks)
+        expect(snapFinal.visibleBlocks).toEqual(coldSnap.visibleBlocks)
+        expect(snapFinal.timelineIndex).toEqual(coldSnap.timelineIndex)
+        expect(snapFinal.outlineItems).toEqual(coldSnap.outlineItems)
+        expect(snapFinal.sessionStatus).toEqual(coldSnap.sessionStatus)
+        expect(snapFinal.turnsById.get(bgTaskTurnId)).toEqual(coldSnap.turnsById.get(bgTaskTurnId))
+        expect(snapFinal.turnsById.get(activeTurnId)).toEqual(coldSnap.turnsById.get(activeTurnId))
     })
 })
 

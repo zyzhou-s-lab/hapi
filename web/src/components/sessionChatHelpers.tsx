@@ -11,7 +11,7 @@ import {
     type SessionEntityStore,
 } from '@/chat/store/sessionEntityStore'
 import { getInitialCodexExplorationCollapsed, useCodexExplorationCollapse } from '@/hooks/useCodexExplorationCollapse'
-import { getMessageWindowState, subscribeMessageWindow } from '@/lib/message-window-store'
+import { getMessageWindowState, subscribeMessageWindow, type MessageWindowOperation } from '@/lib/message-window-store'
 import { useToast } from '@/lib/toast-context'
 import { useTranslation } from '@/lib/use-translation'
 import { queryKeys } from '@/lib/query-keys'
@@ -446,6 +446,9 @@ export function useSessionChatPipeline(props: UseSessionChatPipelineParams): { e
         backgroundTaskCount: session?.backgroundTaskCount,
         hasMoreMessages: window?.hasMore ?? props.hasMoreMessages,
         codexExplorationCollapsed: getInitialCodexExplorationCollapsed(),
+        activeTurnId: session?.activeTurnId,
+        sessionThinking: session?.thinking,
+        windowOperation: window?.lastOperation,
     }, { deferNotifications: true })
     useEffect(() => entityStore.flushNotifications())
     return { entityStore }
@@ -456,7 +459,7 @@ export function SessionEntityStoreIngestionBridge(props: UseSessionChatPipelineP
     const queryClient = useSessionChatQueryClient()
     const { codexExplorationCollapsed } = useCodexExplorationCollapse()
     useEffect(() => {
-        const sync = () => {
+        const sync = (windowOperation?: MessageWindowOperation | null) => {
             const session = queryClient.getQueryData<{ session: Session }>(queryKeys.session(props.sessionId))?.session ?? props.session
             const window = props.messages === undefined ? getMessageWindowState(props.sessionId) : null
             props.entityStore.reconcileInput({
@@ -467,6 +470,9 @@ export function SessionEntityStoreIngestionBridge(props: UseSessionChatPipelineP
                 backgroundTaskCount: session?.backgroundTaskCount,
                 hasMoreMessages: window?.hasMore ?? props.hasMoreMessages,
                 codexExplorationCollapsed,
+                activeTurnId: session?.activeTurnId,
+                sessionThinking: session?.thinking,
+                windowOperation: windowOperation ?? window?.lastOperation,
             })
         }
         const unsubscribeSession = queryClient.getQueryCache().subscribe((event) => {
@@ -489,24 +495,23 @@ export function ModelRefusalToastConsumer(props: { entityStore: SessionEntitySto
     const handled = useRef(new Set<string>())
     useEffect(() => {
         const report = () => {
-            for (const message of props.entityStore.getSnapshot().normalizedMessages) {
-                if (message.role !== 'event' || !isModelRefusalFallbackEvent(message.content) || handled.current.has(message.id)) continue
-                handled.current.add(message.id)
-                addToast({
-                    title: t('toast.modelRefusalFallback.title'),
-                    body: t('toast.modelRefusalFallback.body', {
-                        originalModel: message.content.originalModel,
-                        message: message.content.message,
-                    }),
-                    sessionId: props.sessionId,
-                    url: `/sessions/${props.sessionId}`,
-                    variant: 'warning',
-                    durationMs: MODEL_REFUSAL_FALLBACK_TOAST_DURATION_MS,
-                })
-            }
+            const message = props.entityStore.getMeta().latestRefusalEvent
+            if (!message || message.role !== 'event' || !isModelRefusalFallbackEvent(message.content) || handled.current.has(message.id)) return
+            handled.current.add(message.id)
+            addToast({
+                title: t('toast.modelRefusalFallback.title'),
+                body: t('toast.modelRefusalFallback.body', {
+                    originalModel: message.content.originalModel,
+                    message: message.content.message,
+                }),
+                sessionId: props.sessionId,
+                url: `/sessions/${props.sessionId}`,
+                variant: 'warning',
+                durationMs: MODEL_REFUSAL_FALLBACK_TOAST_DURATION_MS,
+            })
         }
         report()
-        return props.entityStore.subscribe(report)
+        return props.entityStore.subscribeMeta(report)
     }, [addToast, props.entityStore, props.sessionId, t])
     return null
 }
