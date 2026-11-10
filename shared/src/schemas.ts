@@ -374,6 +374,16 @@ export const TurnPhaseSchema = z.enum([
 ])
 export type TurnPhase = z.infer<typeof TurnPhaseSchema>
 
+export const TurnStateSchema = z.enum([
+    'running',
+    'completed',
+    'failed',
+    'aborted',
+    'cutoff',
+    'history'
+])
+export type TurnState = z.infer<typeof TurnStateSchema>
+
 export const MessageLifecycleStateSchema = z.enum([
     'streaming',
     'settled'
@@ -406,7 +416,8 @@ export const DecryptedMessageSchema = z.object({
     // Explicit turn and phase identity persisted in SQLite messages table.
     turnId: z.string().nullable().optional(),
     phase: TurnPhaseSchema.nullable().optional(),
-    lifecycleState: MessageLifecycleStateSchema.optional()
+    lifecycleState: MessageLifecycleStateSchema.optional(),
+    turnState: TurnStateSchema.nullable().optional()
 })
 
 export type DecryptedMessage = z.infer<typeof DecryptedMessageSchema>

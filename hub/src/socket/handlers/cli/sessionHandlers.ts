@@ -1,10 +1,10 @@
-import type { ClientToServerEvents } from '@hapi/protocol'
+import type { ClientToServerEvents, MessageAck, SessionLifecycleState } from '@hapi/protocol'
 import { z } from 'zod'
 import { randomUUID } from 'node:crypto'
 import type { CopilotAgentMode } from '@hapi/protocol'
 import type { AgentState, CodexCollaborationMode, Metadata, PermissionMode } from '@hapi/protocol/types'
-import { getLiveMessageStreamId, isRedundantGoalStatusEventContent } from '@hapi/protocol/messages'
-import type { Store, StoredSession } from '../../../store'
+import { getLiveMessageStreamId, getMessageSourceAuthority, getTurnLifecycleEvent, isRedundantGoalStatusEventContent, unwrapRoleWrappedRecordEnvelope } from '@hapi/protocol/messages'
+import type { Store, StoredSession, StoredMessage } from '../../../store'
 import type { SyncEvent } from '../../../sync/syncEngine'
 import { TodosSchema } from '../../../sync/todos'
 import { applyTodoMessageContent } from '../../../fork-features/task-panel/taskProjection'
@@ -30,18 +30,13 @@ type SessionAlivePayload = {
     serviceTier?: string | null
     collaborationMode?: CodexCollaborationMode
     copilotAgentMode?: CopilotAgentMode
+    sourceInstanceId?: string
+    sourceGeneration?: number
 }
 
-type SessionEndPayload = {
-    sid: string
-    time: number
-    reason?: SessionEndReason
-}
+type SessionEndPayload = Parameters<ClientToServerEvents['session-end']>[0]
 
-type SessionReadyPayload = {
-    sid: string
-    time: number
-}
+type SessionReadyPayload = Parameters<ClientToServerEvents['session-ready']>[0]
 
 type ResolveSessionAccess = (sessionId: string) => AccessResult<StoredSession>
 
@@ -115,9 +110,60 @@ export type SessionHandlersDeps = {
 export function registerSessionHandlers(socket: CliSocketWithData, deps: SessionHandlersDeps): void {
     const { store, resolveSessionAccess, emitAccessError, onSessionAlive, onSessionReady, onSessionEnd, onWebappEvent, onBackgroundTaskDelta, onSessionActivity, onSweepImmediateQueued, onMessagesConsumed } = deps
 
-    socket.on('message', (data: unknown) => {
+    const publishMessage = (sid: string, msg: StoredMessage): void => {
+        const message = {
+            id: msg.id,
+            seq: msg.seq,
+            createdAt: msg.createdAt,
+            localId: msg.localId,
+            content: msg.content,
+            invokedAt: msg.invokedAt,
+            ...(msg.turnId ? { turnId: msg.turnId } : {}),
+            ...(msg.turnState ? { turnState: msg.turnState } : {}),
+            ...((msg.turnPhase ?? msg.phase) ? { phase: msg.turnPhase ?? msg.phase } : {}),
+            ...(msg.lifecycleState ? { lifecycleState: msg.lifecycleState } : {})
+        }
+        socket.to(`session:${sid}`).emit('update', {
+            id: randomUUID(), seq: msg.seq, createdAt: Date.now(),
+            body: { t: 'new-message', sid, message }
+        })
+        onWebappEvent?.({ type: 'message-received', sessionId: sid, message })
+    }
+
+    const publishLifecycle = (sid: string, state: { activeTurnId: string | null; lifecycleState: SessionLifecycleState }): void => {
+        onWebappEvent?.({
+            type: 'session-updated', sessionId: sid,
+            data: {
+                activeTurnId: state.activeTurnId,
+                lifecycleState: state.lifecycleState,
+                thinking: state.activeTurnId !== null,
+                ...(state.activeTurnId === null ? { activeTurnStartedAt: null } : {})
+            }
+        })
+    }
+
+    socket.on('session-source-bind', (data, ack) => {
+        const parsed = z.object({ sid: z.string().min(1), sourceInstanceId: z.string().trim().min(1) }).safeParse(data)
+        if (!parsed.success) {
+            ack?.({ ok: false, sourceInstanceId: '', sourceGeneration: 0, reason: 'invalid-payload' })
+            return
+        }
+        const { sid, sourceInstanceId } = parsed.data
+        const access = resolveSessionAccess(sid)
+        if (!access.ok) {
+            ack?.({ ok: false, sourceInstanceId, sourceGeneration: 0, reason: access.reason })
+            return
+        }
+        const bound = store.messages.bindSessionSource(sid, sourceInstanceId, Date.now(), access.value.namespace)
+        for (const msg of bound.finalizedMessages) publishMessage(sid, msg)
+        if (bound.lifecycleChanged) publishLifecycle(sid, bound)
+        ack?.({ ok: !bound.fenced, sourceInstanceId, sourceGeneration: bound.sourceGeneration, fenced: bound.fenced })
+    })
+
+    socket.on('message', (data: unknown, ack?: (response: MessageAck) => void) => {
         const parsed = messageSchema.safeParse(data)
         if (!parsed.success) {
+            ack?.({ ok: false, reason: 'invalid-payload' })
             return
         }
 
@@ -137,19 +183,53 @@ export function registerSessionHandlers(socket: CliSocketWithData, deps: Session
         const sessionAccess = resolveSessionAccess(sid)
         if (!sessionAccess.ok) {
             emitAccessError('session', sid, sessionAccess.reason)
+            ack?.({ ok: false, eventId: localId, reason: sessionAccess.reason })
             return
         }
         const session = sessionAccess.value
 
+        const lifecycle = getTurnLifecycleEvent(content)
+        const record = unwrapRoleWrappedRecordEnvelope(content)
+        const authority = getMessageSourceAuthority(content)
+        const isAgent = record?.role === 'agent'
+        const receipt = localId && isAgent
+            ? store.messages.checkSessionMessageReceipt(sid, localId, store.messages.buildMessageReceiptInfo(content))
+            : 'absent'
+        const committed = (): void => ack?.({
+            ok: true, eventId: localId, committed: true,
+            ...(authority.sourceGeneration !== null ? { sourceGeneration: authority.sourceGeneration } : {})
+        })
+        if (receipt === 'matched') {
+            committed()
+            return
+        }
+        if (receipt === 'conflict' || (lifecycle && localId !== lifecycle.eventId)) {
+            ack?.({ ok: false, eventId: localId, reason: 'invalid-payload' })
+            return
+        }
+        if (isAgent && !store.messages.isSessionSourceAuthoritative(sid, authority.sourceInstanceId, authority.sourceGeneration)) {
+            ack?.({ ok: false, eventId: localId, reason: 'fenced-source' })
+            return
+        }
         if (isRedundantGoalStatusEventContent(content)) {
+            committed()
             return
         }
 
-        const msg = store.messages.addMessage(sid, content, localId, undefined, createdAt)
+        const result = lifecycle && localId
+            ? store.messages.addLifecycleMessage(sid, session.namespace, content, lifecycle, localId, createdAt)
+            : null
+        const msg = result?.message ?? store.messages.addMessage(sid, content, localId, undefined, createdAt)
+        committed()
+        if (result) {
+            for (const finalized of result.transition.finalizedMessages) publishMessage(sid, finalized)
+            publishMessage(sid, msg)
+            if (result.transition.lifecycleChanged) publishLifecycle(sid, result.transition)
+            return
+        }
 
         const liveSnapshot = getLiveMessageStreamId(content) !== null
-        // Storage returns the authoritative final when a late provisional row
-        // is rejected. Do not replay that final's side effects or broadcast it.
+        // A rejected provisional row must not replay the authoritative final's side effects.
         if (liveSnapshot && getLiveMessageStreamId(msg.content) === null) return
 
         if (!liveSnapshot && shouldRecordSessionActivity(content)) {
@@ -218,65 +298,13 @@ export function registerSessionHandlers(socket: CliSocketWithData, deps: Session
         if (bgDelta) {
             onBackgroundTaskDelta?.(sid, bgDelta)
         }
-        if (msg.turnId) {
-            const msgPhase = msg.turnPhase ?? msg.phase
-            const nextLifecycleState = msgPhase === 'final_answer'
-                ? (msg.lifecycleState === 'streaming' ? 'streaming-answer' : 'completed')
-                : 'thinking'
-            store.sessions.setSessionLifecycle(
-                sid,
-                msg.turnId,
-                nextLifecycleState,
-                session.namespace
-            )
-            if (!liveSnapshot) {
-                onWebappEvent?.({
-                    type: 'session-updated',
-                    sessionId: sid,
-                    data: {
-                        activeTurnId: msg.turnId,
-                        lifecycleState: nextLifecycleState
-                    }
-                })
+        publishMessage(sid, msg)
+        if (msg.turnId && msg.turnState === 'running' && session.activeTurnId === msg.turnId) {
+            const nextPhase = (msg.turnPhase ?? msg.phase) === 'final_answer' ? 'streaming-answer' : 'thinking'
+            if (store.sessions.setSessionLifecycle(sid, msg.turnId, nextPhase, session.namespace)) {
+                publishLifecycle(sid, { activeTurnId: msg.turnId, lifecycleState: nextPhase })
             }
         }
-
-        const update = {
-            id: randomUUID(),
-            seq: msg.seq,
-            createdAt: Date.now(),
-            body: {
-                t: 'new-message' as const,
-                sid,
-                message: {
-                    id: msg.id,
-                    seq: msg.seq,
-                    createdAt: msg.createdAt,
-                    localId: msg.localId,
-                    content: msg.content,
-                    ...(msg.turnId ? { turnId: msg.turnId } : {}),
-                    ...((msg.turnPhase ?? msg.phase) ? { phase: (msg.turnPhase ?? msg.phase) } : {}),
-                    ...(msg.lifecycleState ? { lifecycleState: msg.lifecycleState } : {})
-                }
-            }
-        }
-        socket.to(`session:${sid}`).emit('update', update)
-
-        onWebappEvent?.({
-            type: 'message-received',
-            sessionId: sid,
-            message: {
-                id: msg.id,
-                seq: msg.seq,
-                localId: msg.localId,
-                content: msg.content,
-                createdAt: msg.createdAt,
-                invokedAt: msg.invokedAt,
-                ...(msg.turnId ? { turnId: msg.turnId } : {}),
-                ...((msg.turnPhase ?? msg.phase) ? { phase: (msg.turnPhase ?? msg.phase) } : {}),
-                ...(msg.lifecycleState ? { lifecycleState: msg.lifecycleState } : {})
-            }
-        })
     })
 
     socket.on('generated-image:upload', async (data: unknown) => {
@@ -435,6 +463,7 @@ export function registerSessionHandlers(socket: CliSocketWithData, deps: Session
             emitAccessError('session', data.sid, sessionAccess.reason)
             return
         }
+        if (!store.messages.isSessionSourceAuthoritative(data.sid, data.sourceInstanceId, data.sourceGeneration)) return
         onSessionAlive?.(data)
     })
 
@@ -447,6 +476,7 @@ export function registerSessionHandlers(socket: CliSocketWithData, deps: Session
             emitAccessError('session', data.sid, sessionAccess.reason)
             return
         }
+        if (!store.messages.isSessionSourceAuthoritative(data.sid, data.sourceInstanceId, data.sourceGeneration)) return
         onSessionReady?.(data)
     })
 
@@ -565,6 +595,7 @@ export function registerSessionHandlers(socket: CliSocketWithData, deps: Session
             emitAccessError('session', data.sid, sessionAccess.reason)
             return
         }
+        if (!store.messages.isSessionSourceAuthoritative(data.sid, data.sourceInstanceId, data.sourceGeneration)) return
 
         // Force-invoke only immediate-queued messages (scheduled_at IS NULL) at
         // session end.  *All* scheduled rows — mature or future — are deliberately

@@ -1140,7 +1140,13 @@ export class SyncEngine {
         decision?: 'approved' | 'approved_for_session' | 'denied' | 'abort',
         answers?: Record<string, string[]> | Record<string, { answers: string[] }>
     ): Promise<void> {
+        const targetTurnIds = decision === 'abort'
+            ? this.store.messages.getRunningTurnIdsForSession(sessionId)
+            : null
         await this.rpcGateway.approvePermission(sessionId, requestId, mode, allowTools, decision, answers)
+        if (decision === 'abort') {
+            this.sessionCache.handleSessionAborted(sessionId, Date.now(), targetTurnIds)
+        }
     }
 
     async denyPermission(
@@ -1148,11 +1154,19 @@ export class SyncEngine {
         requestId: string,
         decision?: 'approved' | 'approved_for_session' | 'denied' | 'abort'
     ): Promise<void> {
+        const targetTurnIds = decision === 'abort'
+            ? this.store.messages.getRunningTurnIdsForSession(sessionId)
+            : null
         await this.rpcGateway.denyPermission(sessionId, requestId, decision)
+        if (decision === 'abort') {
+            this.sessionCache.handleSessionAborted(sessionId, Date.now(), targetTurnIds)
+        }
     }
 
     async abortSession(sessionId: string): Promise<void> {
+        const targetTurnIds = this.store.messages.getRunningTurnIdsForSession(sessionId)
         await this.rpcGateway.abortSession(sessionId)
+        this.sessionCache.handleSessionAborted(sessionId, Date.now(), targetTurnIds)
     }
 
     private assertConversationHistoryIdle(session: Session): void {

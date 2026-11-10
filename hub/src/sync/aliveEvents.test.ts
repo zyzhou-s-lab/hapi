@@ -501,4 +501,66 @@ describe('alive incremental events', () => {
         }
         expect(update.data).toEqual(expect.objectContaining({ thinking: false }))
     })
+
+    it('preserves canonical active turn across alive(false) heartbeat and finalizes open live streams on abort, end, and inactivity expiry', () => {
+        const store = new Store(':memory:')
+        const events: SyncEvent[] = []
+        const cache = new SessionCache(store, createPublisher(events))
+        const now = Date.now()
+
+        const session = cache.getOrCreateSession(
+            'session-lifecycle-cutoff',
+            { path: '/tmp/project', host: 'localhost', flavor: 'codex' },
+            { requests: {}, completedRequests: {} },
+            'default'
+        )
+
+        store.messages.addMessage(session.id, {
+            role: 'agent',
+            content: {
+                type: 'codex',
+                data: {
+                    type: 'message',
+                    id: 'live-stream-1',
+                    phase: 'final_answer',
+                    streamSnapshot: true,
+                    live: true,
+                    message: 'partial answer'
+                }
+            },
+            meta: {
+                turnId: 'turn-live-1'
+            }
+        })
+        store.sessions.setSessionLifecycle(session.id, 'turn-live-1', 'streaming-answer', 'default')
+        cache.applySessionPatch(session.id, {
+            thinking: true,
+            activeTurnId: 'turn-live-1',
+            lifecycleState: 'streaming-answer'
+        })
+        events.length = 0
+
+        cache.handleSessionAlive({ sid: session.id, time: now + 1_000, thinking: false })
+
+        const storedAfterAlive = store.sessions.getSession(session.id)
+        expect(storedAfterAlive?.activeTurnId ?? null).toBe('turn-live-1')
+        expect(storedAfterAlive?.lifecycleState).toBe('streaming-answer')
+        expect(cache.getSession(session.id)?.thinking).toBe(true)
+        expect(store.messages.getAllMessages(session.id)[0]?.lifecycleState).toBe('streaming')
+
+        cache.handleSessionAborted(session.id, now + 2_000)
+
+        const storedAfterAbort = store.sessions.getSession(session.id)
+        expect(storedAfterAbort?.activeTurnId ?? null).toBeNull()
+        expect(storedAfterAbort?.lifecycleState).toBe('idle')
+        const refreshed = cache.refreshSession(session.id)
+        expect(refreshed?.activeTurnId).toBeNull()
+        expect(refreshed?.lifecycleState).toBe('idle')
+
+        const allMessages = store.messages.getAllMessages(session.id)
+        expect(allMessages).toHaveLength(1)
+        expect(allMessages[0]?.lifecycleState).toBe('settled')
+        expect(allMessages[0]?.turnState).toBe('aborted')
+        expect(events.some((event) => event.type === 'message-received' && event.message.lifecycleState === 'settled')).toBe(true)
+    })
 })

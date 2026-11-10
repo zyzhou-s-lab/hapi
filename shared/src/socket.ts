@@ -159,7 +159,11 @@ export const UpdateNewMessageBodySchema = z.object({
         seq: z.number(),
         createdAt: z.number(),
         localId: z.string().nullable().optional(),
-        content: z.unknown()
+        content: z.unknown(),
+        turnId: z.string().nullable().optional(),
+        turnState: z.enum(['running', 'completed', 'failed', 'aborted', 'cutoff', 'history']).nullable().optional(),
+        phase: z.enum(['execution', 'final_answer']).nullable().optional(),
+        lifecycleState: z.enum(['streaming', 'settled']).nullable().optional()
     })
 })
 
@@ -285,6 +289,22 @@ export type MachineUpdateStateAck = {
     runnerState: unknown | null
 }
 
+export type MessageAck = {
+    ok: boolean
+    eventId?: string
+    committed?: boolean
+    sourceGeneration?: number
+    reason?: SocketErrorReason | 'invalid-payload' | 'fenced-source'
+}
+
+export type SessionSourceBindAck = {
+    ok: boolean
+    sourceInstanceId: string
+    sourceGeneration: number
+    fenced?: boolean
+    reason?: SocketErrorReason | 'invalid-payload'
+}
+
 export interface ServerToClientEvents {
     update: (data: Update, ack?: (response: CancelQueuedMessageAck & { accepted?: boolean }) => void) => void
     'rpc-request': (data: { method: string; params: string }, callback: (response: string) => void) => void
@@ -310,7 +330,12 @@ export interface ClientToServerEvents {
     // own origin time (e.g. a Claude transcript entry's timestamp). Currently
     // only honored by the hub for agent messages (no localId) — see
     // messages.ts addMessage. Absent -> hub falls back to Date.now().
-    message: (data: { sid: string; message: unknown; localId?: string; createdAt?: number }) => void
+    message: (data: { sid: string; message: unknown; localId?: string; createdAt?: number }, cb?: (response: MessageAck) => void) => void
+    'session-source-bind': (data: {
+        sid: string
+        sourceInstanceId: string
+        isReconnect?: boolean
+    }, cb?: (response: SessionSourceBindAck) => void) => void
     'generated-image:upload': (data: {
         sid: string
         imageId: string
@@ -321,7 +346,9 @@ export interface ClientToServerEvents {
     'session-alive': (data: {
         sid: string
         time: number
-        thinking: boolean
+        thinking?: boolean
+        sourceInstanceId?: string
+        sourceGeneration?: number
         mode?: 'local' | 'remote'
         permissionMode?: PermissionMode
         model?: string | null
@@ -332,8 +359,8 @@ export interface ClientToServerEvents {
         copilotAgentMode?: CopilotAgentMode
     }) => void
   /** CLI agent finished session/load (or equivalent) and can accept prompts. */
-    'session-ready': (data: { sid: string; time: number }) => void
-    'session-end': (data: { sid: string; time: number; reason?: SessionEndReason }) => void
+    'session-ready': (data: { sid: string; time: number; sourceInstanceId?: string; sourceGeneration?: number }) => void
+    'session-end': (data: { sid: string; time: number; reason?: SessionEndReason; sourceInstanceId?: string; sourceGeneration?: number }) => void
     'messages-consumed': (data: { sid: string; localIds: string[]; clearQueuedThinkingGrace?: boolean; steered?: boolean }) => void
     'messages-indeterminate': (data: { sid: string; localIds: string[] }) => void
     'messages-steer-state': (data: { sid: string; localIds: string[]; state: 'queued' | 'dispatching' }, cb: (response: { ok: boolean }) => void) => void

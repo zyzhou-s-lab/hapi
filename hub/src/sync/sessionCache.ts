@@ -222,10 +222,10 @@ export class SessionCache {
             thinkingAt: existing?.thinkingAt ?? 0,
             activeTurnStartedAt: existing?.activeTurnStartedAt ?? null,
             ...(existing?.activeTurnId !== undefined || stored.activeTurnId !== undefined
-                ? { activeTurnId: existing?.activeTurnId ?? stored.activeTurnId ?? null }
+                ? { activeTurnId: stored.activeTurnId ?? null }
                 : {}),
             ...(existing?.lifecycleState !== undefined || stored.lifecycleState !== undefined
-                ? { lifecycleState: existing?.lifecycleState ?? stored.lifecycleState }
+                ? { lifecycleState: stored.lifecycleState ?? existing?.lifecycleState }
                 : {}),
             backgroundTaskCount: existing?.backgroundTaskCount ?? 0,
             todos,
@@ -412,14 +412,15 @@ export class SessionCache {
 
         session.active = true
         session.activeAt = Math.max(session.activeAt, t)
-        session.thinking = requestedThinking || preserveQueuedThinking
+        const hasCanonicalActiveTurn = session.activeTurnId != null
+        session.thinking = requestedThinking || preserveQueuedThinking || hasCanonicalActiveTurn
         session.thinkingAt = t
+        const previousActiveTurnId = session.activeTurnId
+        const previousLifecycleState = session.lifecycleState
         if (!requestedThinking && preserveQueuedThinking && hasUnconsumedPrompt) {
             session.activeTurnStartedAt = hubNow
-        } else if (wasThinking && !session.thinking) {
+        } else if (!session.thinking && wasThinking) {
             session.activeTurnStartedAt = null
-            if (session.activeTurnId !== undefined) session.activeTurnId = null
-            if (session.lifecycleState !== undefined) session.lifecycleState = 'idle'
         }
         if (requestedThinking || pendingThinkingUntil <= hubNow) {
             this.pendingThinkingUntilBySessionId.delete(session.id)
@@ -478,6 +479,8 @@ export class SessionCache {
             || previousCollaborationMode !== session.collaborationMode
             || previousCopilotAgentMode !== session.copilotAgentMode
         const turnBoundaryChanged = previousActiveTurnStartedAt !== session.activeTurnStartedAt
+            || previousActiveTurnId !== session.activeTurnId
+            || previousLifecycleState !== session.lifecycleState
         const shouldBroadcast = (!wasActive && session.active)
             || (wasThinking !== session.thinking)
             || turnBoundaryChanged
@@ -494,6 +497,8 @@ export class SessionCache {
                     activeAt: session.activeAt,
                     thinking: session.thinking,
                     activeTurnStartedAt: session.activeTurnStartedAt,
+                    ...(session.activeTurnId !== undefined ? { activeTurnId: session.activeTurnId } : {}),
+                    ...(session.lifecycleState !== undefined ? { lifecycleState: session.lifecycleState } : {}),
                     permissionMode: session.permissionMode,
                     model: session.model,
                     modelReasoningEffort: session.modelReasoningEffort,
@@ -640,7 +645,7 @@ export class SessionCache {
         const session = this.sessions.get(payload.sid) ?? this.refreshSession(payload.sid)
         if (!session) return
 
-        if (!session.active && !session.thinking) {
+        if (!session.active && !session.thinking && !session.activeTurnId && (session.lifecycleState === undefined || session.lifecycleState === 'idle')) {
             return
         }
 
@@ -648,16 +653,47 @@ export class SessionCache {
         this.store.sessions.setSessionActive(session.id, false, t, session.namespace)
         session.thinking = false
         session.thinkingAt = t
-        session.activeTurnStartedAt = null
-        if (session.activeTurnId !== undefined) session.activeTurnId = null
-        if (session.lifecycleState !== undefined) session.lifecycleState = 'idle'
+        this.cutoffSessionExecutions(session, 'session-end', t, { retireSource: true })
         session.backgroundTaskCount = 0
         this.pendingThinkingUntilBySessionId.delete(session.id)
 
         this.publisher.emit({
             type: 'session-updated',
             sessionId: session.id,
-            data: { active: false, thinking: false, activeTurnStartedAt: null, backgroundTaskCount: 0 } satisfies SessionPatch
+            data: {
+                active: false,
+                thinking: false,
+                activeTurnStartedAt: null,
+                activeTurnId: null,
+                lifecycleState: 'idle',
+                backgroundTaskCount: 0
+            } satisfies SessionPatch
+        })
+    }
+
+    handleSessionAborted(sessionId: string, time: number = Date.now(), turnIds?: string[] | null): void {
+        const t = clampAliveTime(time) ?? Date.now()
+        const session = this.sessions.get(sessionId) ?? this.refreshSession(sessionId)
+        if (!session) return
+
+        this.cutoffSessionExecutions(session, 'session-abort', t, {
+            ...(Array.isArray(turnIds) ? { turnIds } : {})
+        })
+        session.thinking = session.activeTurnId != null
+        session.thinkingAt = t
+        if (!session.thinking) {
+            this.pendingThinkingUntilBySessionId.delete(session.id)
+        }
+
+        this.publisher.emit({
+            type: 'session-updated',
+            sessionId: session.id,
+            data: {
+                thinking: session.thinking,
+                activeTurnStartedAt: session.activeTurnStartedAt,
+                activeTurnId: session.activeTurnId ?? null,
+                lifecycleState: session.lifecycleState ?? 'idle'
+            } satisfies SessionPatch
         })
     }
 
@@ -671,16 +707,62 @@ export class SessionCache {
             session.active = false
             this.store.sessions.setSessionActive(session.id, false, now, session.namespace)
             session.thinking = false
+            this.cutoffSessionExecutions(session, 'session-inactive', now, { bumpGeneration: true })
             this.pendingThinkingUntilBySessionId.delete(session.id)
             expired.push(session.id)
             this.publisher.emit({
                 type: 'session-updated',
                 sessionId: session.id,
-                data: { active: false } satisfies SessionPatch
+                data: {
+                    active: false,
+                    thinking: false,
+                    activeTurnStartedAt: null,
+                    activeTurnId: null,
+                    lifecycleState: 'idle'
+                } satisfies SessionPatch
             })
         }
 
         return expired
+    }
+
+    private cutoffSessionExecutions(
+        session: Session,
+        reason: 'session-abort' | 'session-end' | 'session-inactive',
+        now: number,
+        options?: { turnIds?: string[]; bumpGeneration?: boolean; retireSource?: boolean }
+    ): void {
+        const cutoff = this.store.messages.closeRunningTurnsForSession(session.id, session.namespace, {
+            reason,
+            now,
+            ...(options?.turnIds !== undefined ? { turnIds: options.turnIds } : {}),
+            ...(options?.bumpGeneration !== undefined ? { bumpGeneration: options.bumpGeneration } : {}),
+            ...(options?.retireSource !== undefined ? { retireSource: options.retireSource } : {})
+        })
+        session.activeTurnId = cutoff.activeTurnId
+        session.lifecycleState = cutoff.lifecycleState
+        if (cutoff.activeTurnId === null) {
+            session.activeTurnStartedAt = null
+        }
+        for (const msg of cutoff.finalizedMessages) {
+            this.publisher.emit({
+                type: 'message-received',
+                sessionId: session.id,
+                namespace: session.namespace,
+                message: {
+                    id: msg.id,
+                    seq: msg.seq,
+                    localId: msg.localId,
+                    content: msg.content,
+                    createdAt: msg.createdAt,
+                    invokedAt: msg.invokedAt,
+                    ...(msg.turnId ? { turnId: msg.turnId } : {}),
+                    ...(msg.turnState ? { turnState: msg.turnState } : {}),
+                    ...((msg.turnPhase ?? msg.phase) ? { phase: msg.turnPhase ?? msg.phase } : {}),
+                    ...(msg.lifecycleState ? { lifecycleState: msg.lifecycleState } : {})
+                }
+            })
+        }
     }
 
     applySessionConfig(

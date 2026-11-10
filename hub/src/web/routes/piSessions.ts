@@ -166,7 +166,21 @@ function classifyImportDelta(
         message.localId,
         truncateOversizedMessageContent(message.content)
     ]))
-    const changed = storedImported.find((message) => !isDeepStrictEqual(sourceByLocalId.get(message.localId!), message.content))
+    const stripImportedHistoryMeta = (value: unknown): unknown => {
+        if (typeof value !== 'object' || value === null || Array.isArray(value)) return value
+        const record = value as Record<string, unknown>
+        if (typeof record.meta !== 'object' || record.meta === null || Array.isArray(record.meta)) return value
+        const { scope: _scope, replayedHistory: _replayedHistory, ...restMeta } = record.meta as Record<string, unknown>
+        return {
+            ...record,
+            meta: restMeta
+        }
+    }
+    const changed = storedImported.find((message) => {
+        const expected = sourceByLocalId.get(message.localId!)
+        return !isDeepStrictEqual(expected, message.content)
+            && !isDeepStrictEqual(expected, stripImportedHistoryMeta(message.content))
+    })
     if (changed?.localId) {
         return { messages: [], error: `Local Pi transcript changed imported entry ${changed.localId}` }
     }

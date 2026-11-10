@@ -29,6 +29,7 @@ export type {
     ThreadGoalStatus,
     TodoItem,
     TurnPhase,
+    TurnState,
     WorktreeMetadata
 } from './schemas'
 

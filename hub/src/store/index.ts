@@ -470,6 +470,7 @@ export class Store {
                 delivery_state TEXT NOT NULL DEFAULT 'queued',
                 stream_id TEXT,
                 stream_live INTEGER NOT NULL DEFAULT 0,
+                stream_provisional INTEGER NOT NULL DEFAULT 0,
                 turn_id TEXT,
                 turn_phase TEXT,
                 FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
@@ -487,6 +488,57 @@ export class Store {
             CREATE TABLE IF NOT EXISTS message_epochs (
                 session_id TEXT PRIMARY KEY,
                 epoch INTEGER NOT NULL DEFAULT 0,
+                FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
+            );
+            CREATE TABLE IF NOT EXISTS session_turns (
+                session_id TEXT NOT NULL,
+                turn_id TEXT NOT NULL,
+                invocation_id TEXT,
+                provider_turn_id TEXT,
+                source_instance_id TEXT,
+                source_generation INTEGER,
+                scope TEXT NOT NULL DEFAULT 'main',
+                start_order INTEGER,
+                status TEXT NOT NULL DEFAULT 'running',
+                outcome TEXT,
+                cutoff_source TEXT,
+                start_event_id TEXT,
+                end_event_id TEXT,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL,
+                PRIMARY KEY (session_id, turn_id),
+                FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
+            );
+            CREATE INDEX IF NOT EXISTS idx_session_turns_order
+                ON session_turns(session_id, start_order DESC);
+            CREATE INDEX IF NOT EXISTS idx_session_turns_status
+                ON session_turns(session_id, status, scope, start_order DESC);
+            CREATE TABLE IF NOT EXISTS session_sources (
+                session_id TEXT NOT NULL,
+                source_instance_id TEXT NOT NULL,
+                generation INTEGER NOT NULL DEFAULT 1,
+                status TEXT NOT NULL DEFAULT 'active',
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL,
+                PRIMARY KEY (session_id, source_instance_id),
+                FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
+            );
+            CREATE INDEX IF NOT EXISTS idx_session_sources_status
+                ON session_sources(session_id, status, updated_at DESC);
+            CREATE TABLE IF NOT EXISTS session_message_receipts (
+                session_id TEXT NOT NULL,
+                event_id TEXT NOT NULL,
+                kind TEXT NOT NULL,
+                source_instance_id TEXT,
+                source_generation INTEGER,
+                turn_id TEXT,
+                transition TEXT,
+                outcome TEXT,
+                stream_id TEXT,
+                committed_at INTEGER NOT NULL,
+                position_at INTEGER NOT NULL,
+                position_seq INTEGER NOT NULL,
+                PRIMARY KEY (session_id, event_id),
                 FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
             );
 
@@ -1067,6 +1119,7 @@ export class Store {
         const columns = this.getMessageColumnNames()
         if (!columns.has('stream_id')) this.db.exec('ALTER TABLE messages ADD COLUMN stream_id TEXT')
         if (!columns.has('stream_live')) this.db.exec('ALTER TABLE messages ADD COLUMN stream_live INTEGER NOT NULL DEFAULT 0')
+        if (!columns.has('stream_provisional')) this.db.exec('ALTER TABLE messages ADD COLUMN stream_provisional INTEGER NOT NULL DEFAULT 0')
         this.db.exec(`CREATE INDEX IF NOT EXISTS idx_messages_stream
             ON messages(session_id, stream_id, stream_live, seq DESC)`)
         backfillMessageStreams(this.db)
@@ -1095,6 +1148,12 @@ export class Store {
         }
         const messageColumns = this.getMessageColumnNames()
         if (messageColumns.size > 0) {
+            if (!messageColumns.has('stream_provisional')) {
+                this.db.exec('ALTER TABLE messages ADD COLUMN stream_provisional INTEGER NOT NULL DEFAULT 0')
+                this.db.exec('UPDATE messages SET stream_provisional = stream_live')
+            }
+            this.db.exec(`CREATE INDEX IF NOT EXISTS idx_messages_stream_priority
+                ON messages(session_id, stream_id, stream_provisional, seq DESC)`)
             if (!messageColumns.has('turn_id')) {
                 this.db.exec('ALTER TABLE messages ADD COLUMN turn_id TEXT')
             }
@@ -1103,6 +1162,82 @@ export class Store {
             }
             this.db.exec(`CREATE INDEX IF NOT EXISTS idx_messages_turn
                 ON messages(session_id, turn_id, seq ASC)`)
+        }
+        this.db.exec(`
+            CREATE TABLE IF NOT EXISTS session_turns (
+                session_id TEXT NOT NULL,
+                turn_id TEXT NOT NULL,
+                invocation_id TEXT,
+                provider_turn_id TEXT,
+                source_instance_id TEXT,
+                source_generation INTEGER,
+                scope TEXT NOT NULL DEFAULT 'main',
+                start_order INTEGER,
+                status TEXT NOT NULL DEFAULT 'running',
+                outcome TEXT,
+                cutoff_source TEXT,
+                start_event_id TEXT,
+                end_event_id TEXT,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL,
+                PRIMARY KEY (session_id, turn_id),
+                FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
+            );
+            CREATE INDEX IF NOT EXISTS idx_session_turns_order
+                ON session_turns(session_id, start_order DESC);
+            CREATE TABLE IF NOT EXISTS session_sources (
+                session_id TEXT NOT NULL,
+                source_instance_id TEXT NOT NULL,
+                generation INTEGER NOT NULL DEFAULT 1,
+                status TEXT NOT NULL DEFAULT 'active',
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL,
+                PRIMARY KEY (session_id, source_instance_id),
+                FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
+            );
+            CREATE INDEX IF NOT EXISTS idx_session_sources_status
+                ON session_sources(session_id, status, updated_at DESC);
+            CREATE TABLE IF NOT EXISTS session_message_receipts (
+                session_id TEXT NOT NULL,
+                event_id TEXT NOT NULL,
+                kind TEXT NOT NULL,
+                source_instance_id TEXT,
+                source_generation INTEGER,
+                turn_id TEXT,
+                transition TEXT,
+                outcome TEXT,
+                stream_id TEXT,
+                committed_at INTEGER NOT NULL,
+                PRIMARY KEY (session_id, event_id),
+                FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
+            );
+        `)
+        const receiptColumns = new Set(
+            (this.db.prepare('PRAGMA table_info(session_message_receipts)').all() as Array<{ name: string }>).map((row) => row.name)
+        )
+        if (!receiptColumns.has('position_at')) this.db.exec('ALTER TABLE session_message_receipts ADD COLUMN position_at INTEGER')
+        if (!receiptColumns.has('position_seq')) this.db.exec('ALTER TABLE session_message_receipts ADD COLUMN position_seq INTEGER')
+        this.db.exec(`UPDATE session_message_receipts SET
+            position_at = COALESCE((SELECT COALESCE(invoked_at, created_at) FROM messages
+                WHERE messages.session_id = session_message_receipts.session_id AND local_id = event_id), committed_at),
+            position_seq = COALESCE((SELECT seq FROM messages
+                WHERE messages.session_id = session_message_receipts.session_id AND local_id = event_id), 0)
+            WHERE position_at IS NULL OR position_seq IS NULL`)
+        const turnColumns = new Set(
+            (this.db.prepare('PRAGMA table_info(session_turns)').all() as Array<{ name: string }>).map((row) => row.name)
+        )
+        if (turnColumns.size > 0) {
+            if (!turnColumns.has('invocation_id')) this.db.exec('ALTER TABLE session_turns ADD COLUMN invocation_id TEXT')
+            if (!turnColumns.has('provider_turn_id')) this.db.exec('ALTER TABLE session_turns ADD COLUMN provider_turn_id TEXT')
+            if (!turnColumns.has('source_instance_id')) this.db.exec('ALTER TABLE session_turns ADD COLUMN source_instance_id TEXT')
+            if (!turnColumns.has('source_generation')) this.db.exec('ALTER TABLE session_turns ADD COLUMN source_generation INTEGER')
+            if (!turnColumns.has('scope')) this.db.exec("ALTER TABLE session_turns ADD COLUMN scope TEXT NOT NULL DEFAULT 'main'")
+            if (!turnColumns.has('outcome')) this.db.exec('ALTER TABLE session_turns ADD COLUMN outcome TEXT')
+            if (!turnColumns.has('cutoff_source')) this.db.exec('ALTER TABLE session_turns ADD COLUMN cutoff_source TEXT')
+            if (!turnColumns.has('start_event_id')) this.db.exec('ALTER TABLE session_turns ADD COLUMN start_event_id TEXT')
+            if (!turnColumns.has('end_event_id')) this.db.exec('ALTER TABLE session_turns ADD COLUMN end_event_id TEXT')
+            this.db.exec(`CREATE INDEX IF NOT EXISTS idx_session_turns_status
+                ON session_turns(session_id, status, scope, start_order DESC)`)
         }
     }
     /** Standalone copy, not a WAL sidecar. Downgrade by replacing the live db

@@ -58,6 +58,7 @@ export type StoredMessage = {
     turnPhase?: import('@hapi/protocol').TurnPhase | null
     phase?: import('@hapi/protocol').TurnPhase | null
     lifecycleState?: import('@hapi/protocol').MessageLifecycleState
+    turnState?: import('@hapi/protocol').TurnState | null
 }
 
 export type StoredUser = {

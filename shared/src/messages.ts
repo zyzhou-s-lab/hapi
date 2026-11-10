@@ -81,14 +81,17 @@ function readMessageStreamId(value: unknown, liveOnly: boolean): string | null {
     const data = isObject(content.data) ? content.data : null
     if (!data || (liveOnly && data.live !== true)) return null
 
+    const turnScope = isObject(record.meta) ? readNonEmptyTurnId(record.meta.turnId) : null
     if (content.type === AGENT_MESSAGE_PAYLOAD_TYPE
         && (data.type === 'reasoning' || (data.type === 'message' && data.streamSnapshot === true))) {
         const id = data.id
-        return typeof id === 'string' && id.trim().length > 0 ? `codex:${data.type}:${id}` : null
+        if (typeof id !== 'string' || id.trim().length === 0) return null
+        return turnScope ? `codex:${data.type}:${turnScope}:${id}` : `codex:${data.type}:${id}`
     }
     if (content.type === 'output' && data.type === 'assistant' && data.streamSnapshot === true) {
         const uuid = data.uuid
-        return typeof uuid === 'string' && uuid.trim().length > 0 ? `output:assistant:${uuid}` : null
+        if (typeof uuid !== 'string' || uuid.trim().length === 0) return null
+        return turnScope ? `output:assistant:${turnScope}:${uuid}` : `output:assistant:${uuid}`
     }
     return null
 }
@@ -101,32 +104,13 @@ export function getLiveMessageStreamId(value: unknown): string | null {
     return readMessageStreamId(value, true)
 }
 
-export function getMessageTurnId(value: unknown): string | null {
-    const record = unwrapRoleWrappedRecordEnvelope(value)
-    if (!record) return null
-    if (isObject(record.meta) && typeof record.meta.turnId === 'string' && record.meta.turnId.trim().length > 0) {
-        return record.meta.turnId.trim()
-    }
-    const content = record.content
-    if (!isObject(content)) return null
-    if (typeof content.turnId === 'string' && content.turnId.trim().length > 0) {
-        return content.turnId.trim()
-    }
-    const data = isObject(content.data) ? content.data : null
-    if (!data) return null
-    if (typeof data.turnId === 'string' && data.turnId.trim().length > 0) {
-        return data.turnId.trim()
-    }
-    return null
+function readNonEmptyTurnId(value: unknown): string | null {
+    if (typeof value !== 'string') return null
+    const trimmed = value.trim()
+    return trimmed.length > 0 ? trimmed : null
 }
 
-export function getMessageTurnPhase(value: unknown): 'execution' | 'final_answer' | null {
-    const record = unwrapRoleWrappedRecordEnvelope(value)
-    if (!record) return null
-    const content = record.content
-    if (!isObject(content)) return null
-    const data = isObject(content.data) ? content.data : null
-    const rawPhase = data?.phase ?? content.phase
+function readTurnPhaseValue(rawPhase: unknown): 'execution' | 'final_answer' | null {
     if (rawPhase === 'execution' || rawPhase === 'commentary') {
         return 'execution'
     }
@@ -136,6 +120,176 @@ export function getMessageTurnPhase(value: unknown): 'execution' | 'final_answer
     return null
 }
 
+export type HapiMessageScope = 'main' | 'child' | 'history'
+
+export type TurnLifecycleOutcome = 'completed' | 'failed' | 'aborted'
+
+export type TurnLifecycleEventPayload = {
+    type: 'turn-lifecycle'
+    eventId: string
+    transition: 'started' | 'finished'
+    turnId: string
+    invocationId?: string
+    providerTurnId?: string
+    sourceInstanceId?: string
+    sourceGeneration?: number
+    scope: HapiMessageScope
+    outcome?: TurnLifecycleOutcome
+    source?: string
+    preHandshake?: boolean
+}
+
+export function getMessageTurnId(value: unknown): string | null {
+    const record = unwrapRoleWrappedRecordEnvelope(value)
+    if (!record || !isObject(record.meta)) return null
+    return readNonEmptyTurnId(record.meta.turnId)
+}
+
+export function getLegacyMessageTurnId(value: unknown): string | null {
+    const canonical = getMessageTurnId(value)
+    if (canonical) return canonical
+    const record = unwrapRoleWrappedRecordEnvelope(value)
+    if (!record) return null
+    if (isObject(record.meta)) {
+        const metaLegacy = readNonEmptyTurnId(record.meta.turn_id)
+        if (metaLegacy) return metaLegacy
+    }
+    const content = record.content
+    if (!isObject(content)) return null
+    const contentTurnId = readNonEmptyTurnId(content.turnId) ?? readNonEmptyTurnId(content.turn_id)
+    if (contentTurnId) return contentTurnId
+    const data = isObject(content.data) ? content.data : null
+    if (!data) return null
+    const dataTurnId = readNonEmptyTurnId(data.turnId) ?? readNonEmptyTurnId(data.turn_id)
+    if (dataTurnId) return dataTurnId
+    if (isObject(data.message)) {
+        return readNonEmptyTurnId(data.message.turnId) ?? readNonEmptyTurnId(data.message.turn_id)
+    }
+    return null
+}
+
+export function getMessageTurnPhase(value: unknown): 'execution' | 'final_answer' | null {
+    const record = unwrapRoleWrappedRecordEnvelope(value)
+    if (!record) return null
+    if (isObject(record.meta)) {
+        const metaPhase = readTurnPhaseValue(record.meta.turnPhase ?? record.meta.phase)
+        if (metaPhase) return metaPhase
+    }
+    const content = record.content
+    if (!isObject(content)) return null
+    const data = isObject(content.data) ? content.data : null
+    return readTurnPhaseValue(data?.turnPhase ?? data?.phase ?? content.turnPhase ?? content.phase)
+}
+
+export function getMessageScope(value: unknown): HapiMessageScope | null {
+    const record = unwrapRoleWrappedRecordEnvelope(value)
+    if (!record) return null
+    if (isObject(record.meta)) {
+        if (record.meta.replayedHistory === true || record.meta.importedHistory === true || record.meta.scope === 'history') {
+            return 'history'
+        }
+        if (record.meta.scope === 'child') return 'child'
+        if (record.meta.scope === 'main') return 'main'
+    }
+    const content = isObject(record.content) ? record.content : null
+    const data = content && isObject(content.data) ? content.data : null
+    if (data?.replayedHistory === true || data?.importedHistory === true) {
+        return 'history'
+    }
+    if (data?.scope === 'child' || data?.isSidechain === true || typeof data?.parentToolUseId === 'string' || typeof data?.parent_tool_use_id === 'string') {
+        return 'child'
+    }
+    return null
+}
+
+export type MessageSourceAuthorityMetadata = {
+    sourceInstanceId: string | null
+    sourceGeneration: number | null
+    preHandshake: boolean
+}
+
+export function getMessageSourceAuthority(value: unknown): MessageSourceAuthorityMetadata {
+    const record = unwrapRoleWrappedRecordEnvelope(value)
+    const meta = record && isObject(record.meta) ? record.meta : null
+    const content = record && isObject(record.content) ? record.content : null
+    const data = content && isObject(content.data) ? content.data : null
+    const sourceInstanceId = readNonEmptyTurnId(meta?.sourceInstanceId) ?? readNonEmptyTurnId(data?.sourceInstanceId)
+    const rawGeneration = typeof meta?.sourceGeneration === 'number' && Number.isFinite(meta.sourceGeneration)
+        ? meta.sourceGeneration
+        : typeof data?.sourceGeneration === 'number' && Number.isFinite(data.sourceGeneration)
+            ? data.sourceGeneration
+            : null
+    const preHandshake = meta?.preHandshake === true || data?.preHandshake === true
+    return {
+        sourceInstanceId,
+        sourceGeneration: rawGeneration,
+        preHandshake
+    }
+}
+
+export function getTurnLifecycleEvent(value: unknown): TurnLifecycleEventPayload | null {
+    const record = unwrapRoleWrappedRecordEnvelope(value)
+    if (record?.role !== 'agent') return null
+    const content = isObject(record.content) ? record.content : null
+    if (!content || content.type !== 'event') return null
+    const data = isObject(content.data) ? content.data : null
+    if (!data || data.type !== 'turn-lifecycle') return null
+    const transition = data.transition === 'started' || data.transition === 'finished' ? data.transition : null
+    const turnId = readNonEmptyTurnId(data.turnId) ?? getMessageTurnId(value)
+    if (!transition || !turnId) return null
+    const eventId = readNonEmptyTurnId(data.eventId) ?? readNonEmptyTurnId(content.id) ?? `${turnId}:${transition}`
+    const rawScope = data.scope ?? (isObject(record.meta) ? record.meta.scope : undefined)
+    const replayed = data.replayedHistory === true
+        || data.importedHistory === true
+        || (isObject(record.meta) && (record.meta.replayedHistory === true || record.meta.importedHistory === true))
+    const scope: HapiMessageScope = replayed
+        ? 'history'
+        : rawScope === 'child'
+            ? 'child'
+            : rawScope === 'history'
+                ? 'history'
+                : 'main'
+    const rawOutcome = data.outcome
+    const outcome: TurnLifecycleOutcome | undefined = rawOutcome === 'completed' || rawOutcome === 'failed' || rawOutcome === 'aborted'
+        ? rawOutcome
+        : undefined
+    if (transition === 'finished' && !outcome) return null
+    const invocationId = readNonEmptyTurnId(data.invocationId)
+        ?? (isObject(record.meta) ? readNonEmptyTurnId(record.meta.invocationId) : null)
+        ?? undefined
+    const providerTurnId = readNonEmptyTurnId(data.providerTurnId)
+        ?? (isObject(record.meta) ? readNonEmptyTurnId(record.meta.providerTurnId) : null)
+        ?? undefined
+    const sourceInstanceId = readNonEmptyTurnId(data.sourceInstanceId)
+        ?? (isObject(record.meta) ? readNonEmptyTurnId(record.meta.sourceInstanceId) : null)
+        ?? undefined
+    const sourceGeneration = typeof data.sourceGeneration === 'number' && Number.isFinite(data.sourceGeneration)
+        ? data.sourceGeneration
+        : isObject(record.meta) && typeof record.meta.sourceGeneration === 'number' && Number.isFinite(record.meta.sourceGeneration)
+            ? record.meta.sourceGeneration
+            : undefined
+    const preHandshake = data.preHandshake === true || (isObject(record.meta) && record.meta.preHandshake === true)
+    return {
+        type: 'turn-lifecycle',
+        eventId,
+        transition,
+        turnId,
+        ...(invocationId ? { invocationId } : {}),
+        ...(providerTurnId ? { providerTurnId } : {}),
+        ...(sourceInstanceId ? { sourceInstanceId } : {}),
+        ...(sourceGeneration !== undefined ? { sourceGeneration } : {}),
+        scope,
+        ...(outcome ? { outcome } : {}),
+        ...(typeof data.source === 'string' && data.source.trim().length > 0 ? { source: data.source.trim() } : {}),
+        ...(preHandshake ? { preHandshake: true } : {}),
+    }
+}
+
+export function isTurnStartAuthorizedMessage(value: unknown): boolean {
+    const lifecycle = getTurnLifecycleEvent(value)
+    if (!lifecycle) return false
+    return lifecycle.transition === 'started' && lifecycle.scope === 'main'
+}
 export function getMessageLifecycleState(value: unknown): 'streaming' | 'settled' {
     return getLiveMessageStreamId(value) !== null ? 'streaming' : 'settled'
 }

@@ -765,17 +765,518 @@ describe('message stream snapshots', () => {
             const target = makeSession(store, 'target')
             const live = snapshot('assistant', 'live', true)
             const final = snapshot('assistant', 'final', false)
+            const historyFinal = {
+                ...final,
+                meta: {
+                    scope: 'history',
+                    replayedHistory: true
+                }
+            }
             store.messages.addImportedMessage(source.id, live, 'import-live', 1)
             const settled = store.messages.addImportedMessage(source.id, final, 'import-final', 2).message
-            expect(store.messages.addImportedMessage(source.id, live, 'import-late', 3).inserted).toBe(false)
+            expect(settled.content).toEqual(historyFinal)
             store.messages.copyMessageToSession(target.id, settled)
             store.messages.copyMessagesToSession(target.id, [{ ...settled, content: live, localId: null }])
-            expect(store.messages.getAllMessages(target.id).map(message => message.content)).toEqual([final])
+            expect(store.messages.getAllMessages(target.id).map(message => message.content)).toEqual([historyFinal])
             store.messages.mergeSessionMessages(source.id, target.id)
-            expect(store.messages.getAllMessages(target.id).map(message => message.content)).toEqual([final])
+            expect(store.messages.getAllMessages(target.id).map(message => message.content)).toEqual([historyFinal])
             store.messages.addMessage(target.id, { role: 'user', content: 'anchor' }, 'anchor')
             store.messages.truncateMessagesFromLocalId(target.id, 'anchor', [{ content: live }, { content: final }])
-            expect(store.messages.getAllMessages(target.id).map(message => message.content)).toEqual([final])
+            expect(store.messages.getAllMessages(target.id).map(message => message.content)).toEqual([historyFinal])
         } finally { store.close() }
     })
+
+    it('settles only owned live rows and rejects late live replay', () => {
+        const store = makeStore()
+        try {
+            const session = makeSession(store, 'finalize-live-streams')
+            const turn1Live = {
+                role: 'agent',
+                meta: {
+                    turnId: 'turn-1'
+                },
+                content: {
+                    type: AGENT_MESSAGE_PAYLOAD_TYPE,
+                    data: {
+                        type: 'message',
+                        id: 'turn1-msg',
+                        turnId: 'turn-1',
+                        phase: 'commentary',
+                        streamSnapshot: true,
+                        live: true,
+                        message: 'streaming turn 1'
+                    }
+                }
+            }
+            const inserted = store.messages.addMessage(session.id, turn1Live)
+            expect(inserted.lifecycleState).toBe('streaming')
+            expect(store.sessions.setSessionLifecycle(session.id, 'turn-1', 'thinking', 'default')).toBe(true)
+
+            const settledRows = store.messages.finalizeOpenLiveStreamsForSession(session.id, 'turn-1')
+            expect(settledRows).toHaveLength(1)
+            expect(settledRows[0]!.id).toBe(inserted.id)
+            expect(settledRows[0]!.lifecycleState).toBe('settled')
+            expect(settledRows[0]!.content).toEqual({
+                ...turn1Live,
+                content: {
+                    ...turn1Live.content,
+                    data: {
+                        ...turn1Live.content.data,
+                        live: false
+                    }
+                }
+            })
+
+            // Late liveSnapshot packet for the finalized stream must be rejected and return the settled row
+            const lateLive = store.messages.addMessage(session.id, {
+                ...turn1Live,
+                content: {
+                    ...turn1Live.content,
+                    data: {
+                        ...turn1Live.content.data,
+                        message: 'late live packet'
+                    }
+                }
+            })
+            expect(lateLive.id).toBe(inserted.id)
+            expect(lateLive.lifecycleState).toBe('settled')
+            expect(lateLive.content).toEqual(settledRows[0]!.content)
+
+        } finally { store.close() }
+    })
+
+    it('enforces canonical turn lifecycle ordering, source fencing, and durable receipt idempotency', () => {
+        const store = makeStore()
+        try {
+            const session = makeSession(store, 'canonical-lifecycle')
+            const bind1 = store.messages.bindSessionSource(session.id, 'src-1', 1000, 'default')
+            expect(bind1).toMatchObject({
+                sourceInstanceId: 'src-1',
+                sourceGeneration: 1,
+                fenced: false
+            })
+
+            const t1Start = {
+                role: 'agent',
+                meta: {
+                    turnId: 'turn-1',
+                    invocationId: 'inv-1',
+                    scope: 'main' as const,
+                    sourceInstanceId: 'src-1',
+                    sourceGeneration: 1
+                },
+                content: {
+                    id: 'evt-t1-start',
+                    type: 'event',
+                    data: {
+                        type: 'turn-lifecycle' as const,
+                        transition: 'started' as const,
+                        turnId: 'turn-1',
+                        invocationId: 'inv-1',
+                        scope: 'main' as const,
+                        sourceInstanceId: 'src-1',
+                        sourceGeneration: 1,
+                        eventId: 'evt-t1-start'
+                    }
+                }
+            }
+            const t1Started = store.messages.addLifecycleMessage(
+                session.id,
+                'default',
+                t1Start,
+                t1Start.content.data,
+                'evt-t1-start',
+                1010
+            )
+            expect(t1Started.transition.fenced).toBe(false)
+            expect(store.sessions.getSession(session.id)).toMatchObject({
+                activeTurnId: 'turn-1',
+                lifecycleState: 'thinking'
+            })
+
+            const t1StreamLive = {
+                role: 'agent',
+                meta: {
+                    turnId: 'turn-1',
+                    invocationId: 'inv-1',
+                    scope: 'main' as const,
+                    sourceInstanceId: 'src-1',
+                    sourceGeneration: 1
+                },
+                content: {
+                    type: AGENT_MESSAGE_PAYLOAD_TYPE,
+                    data: {
+                        type: 'message',
+                        id: 'shared-stream',
+                        phase: 'commentary',
+                        streamSnapshot: true,
+                        live: true,
+                        message: 'turn-1 partial'
+                    }
+                }
+            }
+            const t1LiveMsg = store.messages.addMessage(session.id, t1StreamLive, 'msg-t1-live-1', undefined, 1020)
+            expect(t1LiveMsg.lifecycleState).toBe('streaming')
+
+            // Subsequent live revision deletes msg-t1-live-1 row, but durable receipt remains matched
+            const t1StreamLive2 = {
+                ...t1StreamLive,
+                content: {
+                    ...t1StreamLive.content,
+                    data: {
+                        ...t1StreamLive.content.data,
+                        message: 'turn-1 partial 2'
+                    }
+                }
+            }
+            store.messages.addMessage(session.id, t1StreamLive2, 'msg-t1-live-2', undefined, 1030)
+            expect(store.messages.getMessageByLocalId(session.id, 'msg-t1-live-1')).toBeNull()
+            expect(store.messages.checkSessionMessageReceipt(
+                session.id,
+                'msg-t1-live-1',
+                store.messages.buildMessageReceiptInfo(t1StreamLive)
+            )).toBe('matched')
+
+            // Turn 2 starts on the same source and reuses the same provider stream id 'shared-stream'
+            const t2Start = {
+                role: 'agent',
+                meta: {
+                    turnId: 'turn-2',
+                    invocationId: 'inv-2',
+                    scope: 'main' as const,
+                    sourceInstanceId: 'src-1',
+                    sourceGeneration: 1
+                },
+                content: {
+                    id: 'evt-t2-start',
+                    type: 'event',
+                    data: {
+                        type: 'turn-lifecycle' as const,
+                        transition: 'started' as const,
+                        turnId: 'turn-2',
+                        invocationId: 'inv-2',
+                        scope: 'main' as const,
+                        sourceInstanceId: 'src-1',
+                        sourceGeneration: 1,
+                        eventId: 'evt-t2-start'
+                    }
+                }
+            }
+            store.messages.addLifecycleMessage(session.id, 'default', t2Start, t2Start.content.data, 'evt-t2-start', 1040)
+            const t2StreamLive = {
+                role: 'agent',
+                meta: {
+                    turnId: 'turn-2',
+                    invocationId: 'inv-2',
+                    scope: 'main' as const,
+                    sourceInstanceId: 'src-1',
+                    sourceGeneration: 1
+                },
+                content: {
+                    type: AGENT_MESSAGE_PAYLOAD_TYPE,
+                    data: {
+                        type: 'message',
+                        id: 'shared-stream',
+                        phase: 'commentary',
+                        streamSnapshot: true,
+                        live: true,
+                        message: 'turn-2 live'
+                    }
+                }
+            }
+            const t2LiveMsg = store.messages.addMessage(session.id, t2StreamLive, 'msg-t2-live', undefined, 1050)
+            expect(t2LiveMsg.id).not.toBe(t1LiveMsg.id)
+            expect(store.sessions.getSession(session.id)?.activeTurnId).toBe('turn-2')
+
+            // Late turn-1 final content and terminal event settle turn-1 without preempting turn-2
+            const t1FinalContent = {
+                ...t1StreamLive,
+                content: {
+                    ...t1StreamLive.content,
+                    data: {
+                        ...t1StreamLive.content.data,
+                        live: false,
+                        message: 'turn-1 final'
+                    }
+                }
+            }
+            store.messages.addMessage(session.id, t1FinalContent, 'msg-t1-final', undefined, 1060)
+            const t1End = {
+                role: 'agent',
+                meta: {
+                    turnId: 'turn-1',
+                    invocationId: 'inv-1',
+                    scope: 'main' as const,
+                    sourceInstanceId: 'src-1',
+                    sourceGeneration: 1
+                },
+                content: {
+                    id: 'evt-t1-end',
+                    type: 'event',
+                    data: {
+                        type: 'turn-lifecycle' as const,
+                        transition: 'finished' as const,
+                        outcome: 'completed' as const,
+                        turnId: 'turn-1',
+                        invocationId: 'inv-1',
+                        scope: 'main' as const,
+                        sourceInstanceId: 'src-1',
+                        sourceGeneration: 1,
+                        eventId: 'evt-t1-end'
+                    }
+                }
+            }
+            const t1Ended = store.messages.addLifecycleMessage(session.id, 'default', t1End, t1End.content.data, 'evt-t1-end', 1070)
+            expect(t1Ended.transition.fenced).toBe(false)
+            expect(store.sessions.getSession(session.id)).toMatchObject({
+                activeTurnId: 'turn-2',
+                lifecycleState: 'thinking'
+            })
+            const remaining = store.messages.getAllMessages(session.id)
+            expect(remaining.find(m => m.id === t2LiveMsg.id)?.lifecycleState).toBe('streaming')
+
+            // Binding a replacement source fences src-1 and cuts off running turn-2
+            const bind2 = store.messages.bindSessionSource(session.id, 'src-2', 1080, 'default')
+            expect(bind2.sourceGeneration).toBe(1)
+            expect(bind2.closedTurnIds).toEqual(['turn-2'])
+            expect(bind2.finalizedMessages.map(m => m.id)).toEqual([t2LiveMsg.id])
+            expect(store.messages.isSessionSourceAuthoritative(session.id, 'src-1', 1)).toBe(false)
+            expect(store.messages.isSessionSourceAuthoritative(session.id, 'src-2', 1)).toBe(true)
+        } finally { store.close() }
+    })
+})
+
+
+describe('lifecycle edge contracts', () => {
+    type LifecycleEvent = Parameters<Store['messages']['recordTurnLifecycleEvent']>[2]
+    const source = { sourceInstanceId: 'src-1', sourceGeneration: 1 }
+
+    function withSession(tag: string, run: (store: Store, session: ReturnType<typeof makeSession>) => void) {
+        const store = makeStore()
+        try { run(store, makeSession(store, tag)) } finally { store.close() }
+    }
+
+    function lifecycle(
+        store: Store,
+        sessionId: string,
+        turnId: string,
+        transition: LifecycleEvent['transition'] = 'started',
+        overrides: Partial<LifecycleEvent> = {},
+        createdAt = 1000
+    ) {
+        const event: LifecycleEvent = {
+            type: 'turn-lifecycle', eventId: turnId + ':' + transition, transition, turnId,
+            invocationId: 'inv-' + turnId, scope: 'main', ...source,
+            ...(transition === 'finished' ? { outcome: 'completed' as const } : {}),
+            ...overrides
+        }
+        const content = {
+            role: 'agent',
+            meta: {
+                turnId: event.turnId, invocationId: event.invocationId, scope: event.scope,
+                sourceInstanceId: event.sourceInstanceId, sourceGeneration: event.sourceGeneration
+            },
+            content: { type: 'event', id: event.eventId, data: event }
+        }
+        return store.messages.addLifecycleMessage(sessionId, 'default', content, event, event.eventId, createdAt)
+    }
+
+    function stream(turnId: string | null, text: string, authority = source, id = 'shared-stream') {
+        return {
+            role: 'agent',
+            meta: {
+                ...authority, scope: 'main' as const,
+                ...(turnId ? { turnId, invocationId: 'inv-' + turnId } : {})
+            },
+            content: {
+                type: AGENT_MESSAGE_PAYLOAD_TYPE,
+                data: { type: 'message', id, streamSnapshot: true, live: true, message: text }
+            }
+        }
+    }
+
+    for (const reason of ['session-abort', 'session-end'] as const) {
+        it('targets only the captured turns on ' + reason, () => withSession(reason + '-targeted', (store, session) => {
+            store.messages.bindSessionSource(session.id, source.sourceInstanceId, 1000, 'default')
+            lifecycle(store, session.id, 'older')
+            const older = store.messages.addMessage(session.id, stream('older', 'older live'), 'older-live')
+            const captured = store.messages.getRunningTurnIdsForSession(session.id)
+            expect(captured).toEqual(['older'])
+            lifecycle(store, session.id, 'newer')
+            const newer = store.messages.addMessage(session.id, stream('newer', 'newer live'), 'newer-live')
+            const unknown = store.messages.addMessage(session.id, stream(null, 'unattributed live'), 'unknown-live')
+            expect([older, newer, unknown].map(message => message.lifecycleState)).toEqual(['streaming', 'streaming', 'streaming'])
+            expect(unknown.turnId).toBeUndefined()
+
+            const closed = store.messages.closeRunningTurnsForSession(session.id, 'default', { reason, turnIds: captured })
+            const terminal = reason === 'session-abort' ? 'aborted' : 'cutoff'
+            expect(closed.closedTurnIds).toEqual(['older'])
+            expect(closed.finalizedMessages.map(message => message.id)).toEqual([older.id])
+            expect(closed).toMatchObject({ activeTurnId: 'newer', lifecycleState: 'thinking', turnState: terminal })
+            expect(store.messages.getMessageByLocalId(session.id, 'older-live')).toMatchObject({ turnState: terminal, lifecycleState: 'settled' })
+            expect(store.messages.getMessageByLocalId(session.id, 'newer-live')).toMatchObject({ id: newer.id, turnState: 'running', lifecycleState: 'streaming' })
+            expect(store.messages.getMessageByLocalId(session.id, 'unknown-live')).toMatchObject({ id: unknown.id, lifecycleState: 'streaming' })
+            expect(store.messages.getRunningTurnIdsForSession(session.id)).toEqual(['newer'])
+            expect(store.sessions.getSession(session.id)).toMatchObject({ activeTurnId: 'newer', lifecycleState: 'thinking' })
+        }))
+    }
+
+    it('preserves the current generation and execution when the same source reconnects', () => withSession('source-reconnect', (store, session) => {
+        store.messages.bindSessionSource(session.id, source.sourceInstanceId, 1000, 'default')
+        lifecycle(store, session.id, 'expired')
+        const expired = store.messages.addMessage(session.id, stream('expired', 'expired live'), 'expired-live')
+        const cutoff = store.messages.closeRunningTurnsForSession(session.id, 'default', {
+            reason: 'session-inactive', sourceInstanceId: source.sourceInstanceId, bumpGeneration: true, now: 1100
+        })
+        expect(cutoff.nextSourceGeneration).toBe(2)
+        expect(cutoff.finalizedMessages.map(message => message.id)).toEqual([expired.id])
+        const currentSource = { ...source, sourceGeneration: 2 }
+        const started = lifecycle(store, session.id, 'current', 'started', currentSource)
+        expect(started.transition).toMatchObject({ fenced: false, turnState: 'running' })
+        const current = store.messages.addMessage(session.id, stream('current', 'current live', currentSource), 'current-live')
+
+        const rebound = store.messages.bindSessionSource(session.id, source.sourceInstanceId, 1200, 'default')
+        expect(rebound).toMatchObject({
+            ...currentSource, fenced: false, closedTurnIds: [], finalizedMessages: [],
+            activeTurnId: 'current', lifecycleState: 'thinking', lifecycleChanged: false
+        })
+        expect(store.messages.isSessionSourceAuthoritative(session.id, source.sourceInstanceId, 1)).toBe(false)
+        expect(store.messages.isSessionSourceAuthoritative(session.id, source.sourceInstanceId, 2)).toBe(true)
+        expect(store.messages.getMessageByLocalId(session.id, 'current-live')).toMatchObject({ id: current.id, turnState: 'running', lifecycleState: 'streaming' })
+
+        const finished = lifecycle(store, session.id, 'current', 'finished', currentSource)
+        expect(finished.transition).toMatchObject({ fenced: false, turnState: 'completed', activeTurnId: null, lifecycleState: 'completed' })
+        expect(finished.transition.finalizedMessages.map(message => message.id)).toEqual([current.id])
+        const replay = lifecycle(store, session.id, 'current', 'started', { ...currentSource, eventId: 'current:late-start' })
+        expect(replay.transition).toMatchObject({ fenced: false, turnState: 'completed', activeTurnId: null })
+    }))
+
+    it('keeps a retired bind fenced without cutting off the replacement source', () => withSession('retired-bind', (store, session) => {
+        store.messages.bindSessionSource(session.id, source.sourceInstanceId, 1000, 'default')
+        store.messages.closeRunningTurnsForSession(session.id, 'default', {
+            reason: 'session-inactive', sourceInstanceId: source.sourceInstanceId, bumpGeneration: true, now: 1100
+        })
+        const replacement = store.messages.bindSessionSource(session.id, 'src-2', 1200, 'default')
+        expect(replacement).toMatchObject({ sourceInstanceId: 'src-2', sourceGeneration: 1, fenced: false })
+        const currentSource = { sourceInstanceId: 'src-2', sourceGeneration: 1 }
+        lifecycle(store, session.id, 'replacement-turn', 'started', currentSource)
+        const current = store.messages.addMessage(session.id, stream('replacement-turn', 'replacement live', currentSource), 'replacement-live')
+
+        const retired = store.messages.bindSessionSource(session.id, source.sourceInstanceId, 1300, 'default')
+        expect(retired).toMatchObject({
+            sourceInstanceId: 'src-1', sourceGeneration: 2, fenced: true,
+            closedTurnIds: [], finalizedMessages: [], lifecycleChanged: false,
+            activeTurnId: 'replacement-turn', lifecycleState: 'thinking'
+        })
+        expect(store.messages.isSessionSourceAuthoritative(session.id, 'src-1', 2)).toBe(false)
+        expect(store.messages.isSessionSourceAuthoritative(session.id, 'src-2', 1)).toBe(true)
+        const rejected = lifecycle(store, session.id, 'retired-late-turn', 'started', { sourceGeneration: 2 })
+        expect(rejected.transition).toMatchObject({ fenced: true, turnState: 'cutoff', activeTurnId: 'replacement-turn' })
+        expect(store.messages.getRunningTurnIdsForSession(session.id)).toEqual(['replacement-turn'])
+        expect(store.messages.getMessageByLocalId(session.id, 'replacement-live')).toMatchObject({ id: current.id, turnState: 'running', lifecycleState: 'streaming' })
+        expect(store.sessions.getSession(session.id)).toMatchObject({ activeTurnId: 'replacement-turn', lifecycleState: 'thinking' })
+    }))
+
+    for (const [label, sourceGeneration] of [
+        ['fractional', 1.5], ['oversized', Number.MAX_SAFE_INTEGER + 1], ['negative', -1]
+    ] as const) {
+        it('rejects a ' + label + ' source generation without stealing the active turn', () => withSession('invalid-generation-' + label, (store, session) => {
+            store.messages.bindSessionSource(session.id, source.sourceInstanceId, 1000, 'default')
+            lifecycle(store, session.id, 'valid')
+            const valid = store.messages.addMessage(session.id, stream('valid', 'valid live'), 'valid-live')
+            expect(store.messages.isSessionSourceAuthoritative(session.id, source.sourceInstanceId, sourceGeneration)).toBe(false)
+
+            const rejected = lifecycle(store, session.id, 'invalid-' + label, 'started', { sourceGeneration })
+            expect(rejected.transition).toMatchObject({ fenced: true, turnState: 'cutoff', activeTurnId: 'valid', lifecycleState: 'thinking' })
+            expect(rejected.message).toMatchObject({ turnId: 'invalid-' + label, turnState: 'cutoff', lifecycleState: 'settled' })
+            expect(store.messages.getRunningTurnIdsForSession(session.id)).toEqual(['valid'])
+            expect(store.messages.getMessageByLocalId(session.id, 'valid-live')).toMatchObject({ id: valid.id, turnState: 'running', lifecycleState: 'streaming' })
+            expect(store.sessions.getSession(session.id)).toMatchObject({ activeTurnId: 'valid', lifecycleState: 'thinking' })
+        }))
+    }
+
+    it('merges lifecycle and compacted snapshot receipts with the transcript', () => withSession('receipt-merge-source', (store, session) => {
+        const target = makeSession(store, 'receipt-merge-target')
+        store.messages.bindSessionSource(session.id, source.sourceInstanceId, 1000, 'default')
+        const started = lifecycle(store, session.id, 'merged')
+        const first = stream('merged', 'first')
+        const second = stream('merged', 'second')
+        store.messages.addMessage(session.id, first, 'merged-live-1')
+        const current = store.messages.addMessage(session.id, second, 'merged-live-2')
+        const finished = lifecycle(store, session.id, 'merged', 'finished')
+        expect(finished.transition).toMatchObject({ fenced: false, turnState: 'completed' })
+        expect(store.messages.getMessageByLocalId(session.id, 'merged-live-1')).toBeNull()
+        const compactedReceipt = store.messages.buildMessageReceiptInfo(first)
+        expect(store.messages.checkSessionMessageReceipt(session.id, 'merged-live-1', compactedReceipt)).toBe('matched')
+        expect(store.messages.checkSessionMessageReceipt(session.id, 'merged-live-1', { ...compactedReceipt, sourceGeneration: 2 })).toBe('conflict')
+
+        store.messages.mergeSessionMessages(session.id, target.id)
+        expect(store.messages.getAllMessages(session.id)).toEqual([])
+        expect(store.messages.getMessageByLocalId(target.id, 'merged-live-2')).toMatchObject({ id: current.id, turnState: 'history', lifecycleState: 'settled' })
+        for (const [eventId, content] of [
+            ['merged:started', started.message.content], ['merged-live-1', first],
+            ['merged-live-2', second], ['merged:finished', finished.message.content]
+        ] as const) {
+            expect(store.messages.checkSessionMessageReceipt(target.id, eventId, store.messages.buildMessageReceiptInfo(content))).toBe('matched')
+        }
+        expect(store.messages.checkSessionMessageReceipt(target.id, 'merged-live-1', { ...compactedReceipt, turnId: 'different-turn' })).toBe('conflict')
+    }))
+
+    for (const mode of ['single', 'batch'] as const) {
+        it('copies ' + mode + ' history as settled rows without copying durable receipts', () => withSession('receipt-copy-' + mode, (store, session) => {
+            const target = makeSession(store, 'receipt-copy-target-' + mode)
+            store.messages.bindSessionSource(session.id, source.sourceInstanceId, 1000, 'default')
+            const started = lifecycle(store, session.id, 'copied')
+            const first = stream('copied', 'first')
+            const second = stream('copied', 'second')
+            store.messages.addMessage(session.id, first, 'copied-live-1')
+            const current = store.messages.addMessage(session.id, second, 'copied-live-2')
+            expect(store.messages.getMessageByLocalId(session.id, 'copied-live-1')).toBeNull()
+            expect(store.messages.checkSessionMessageReceipt(session.id, 'copied-live-1', store.messages.buildMessageReceiptInfo(first))).toBe('matched')
+
+            if (mode === 'single') store.messages.copyMessageToSession(target.id, current)
+            else expect(store.messages.copyMessagesToSession(target.id, store.messages.getAllMessages(session.id))).toBe(2)
+            for (const [eventId, content] of [
+                ['copied:started', started.message.content], ['copied-live-1', first], ['copied-live-2', second]
+            ] as const) {
+                expect(store.messages.checkSessionMessageReceipt(target.id, eventId, store.messages.buildMessageReceiptInfo(content))).toBe('absent')
+            }
+            const copied = store.messages.getMessageByLocalId(target.id, 'copied-live-2')
+            expect(copied).toMatchObject({ turnId: 'copied', turnState: 'history', lifecycleState: 'settled' })
+            expect(copied?.content).toMatchObject({ meta: { scope: 'history', replayedHistory: true }, content: { data: { live: false } } })
+            expect(store.messages.getMessageByLocalId(session.id, 'copied-live-2')).toMatchObject({ turnState: 'running', lifecycleState: 'streaming' })
+            expect(store.messages.getRunningTurnIdsForSession(target.id)).toEqual([])
+        }))
+    }
+
+    it('truncates suffix receipts even when their snapshot rows were compacted away and keeps pre-anchor lifecycle receipts', () => withSession('receipt-truncate', (store, session) => {
+        store.messages.bindSessionSource(session.id, source.sourceInstanceId, 1, 'default')
+        const preAnchorStarted = lifecycle(store, session.id, 'kept-turn', 'started', {}, 5)
+        const before = stream('kept-turn', 'keep before anchor', source, 'before-anchor')
+        const kept = store.messages.addMessage(session.id, before, 'before-receipt', undefined, 10)
+        const preAnchorFinished = lifecycle(store, session.id, 'kept-turn', 'finished', { outcome: 'completed' }, 15)
+        store.messages.addMessage(session.id, { role: 'user', content: 'rewind here' }, 'truncate-anchor', undefined, 20)
+        const started = lifecycle(store, session.id, 'truncated', 'started', {}, 25)
+        const first = stream('truncated', 'first suffix snapshot')
+        const second = stream('truncated', 'second suffix snapshot')
+        store.messages.addMessage(session.id, first, 'truncated-live-1', undefined, 30)
+        store.messages.addMessage(session.id, second, 'truncated-live-2', undefined, 40)
+        expect(store.messages.getMessageByLocalId(session.id, 'truncated-live-1')).toBeNull()
+        expect(store.messages.checkSessionMessageReceipt(session.id, 'truncated-live-1', store.messages.buildMessageReceiptInfo(first))).toBe('matched')
+
+        const result = store.messages.truncateMessagesFromLocalId(session.id, 'truncate-anchor')
+        expect(result).toMatchObject({ deleted: 3, inserted: 0 })
+        expect(store.messages.getAllMessages(session.id).map((m) => m.id)).toEqual([preAnchorStarted.message.id, kept.id, preAnchorFinished.message.id])
+        expect(store.messages.checkSessionMessageReceipt(session.id, 'kept-turn:started', store.messages.buildMessageReceiptInfo(preAnchorStarted.message.content))).toBe('matched')
+        expect(store.messages.checkSessionMessageReceipt(session.id, 'before-receipt', store.messages.buildMessageReceiptInfo(before))).toBe('matched')
+        expect(store.messages.checkSessionMessageReceipt(session.id, 'kept-turn:finished', store.messages.buildMessageReceiptInfo(preAnchorFinished.message.content))).toBe('matched')
+        for (const [eventId, content] of [
+            ['truncated:started', started.message.content], ['truncated-live-2', second], ['truncated-live-1', first]
+        ] as const) {
+            expect(store.messages.checkSessionMessageReceipt(session.id, eventId, store.messages.buildMessageReceiptInfo(content))).toBe('absent')
+        }
+        expect(store.messages.getRunningTurnIdsForSession(session.id)).toEqual([])
+        expect(store.sessions.getSession(session.id)?.activeTurnId ?? null).toBeNull()
+        expect(store.sessions.getSession(session.id)?.lifecycleState).toBe('idle')
+    }))
 })

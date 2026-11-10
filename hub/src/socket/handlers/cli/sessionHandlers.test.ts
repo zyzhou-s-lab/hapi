@@ -643,4 +643,156 @@ describe('cli session handlers', () => {
             supersededBySessionId: 'owned-target', opencodeClearOperation: operation, lifecycleState: 'archived'
         })
     })
+
+    it('binds sources, deduplicates replayed receipts across stream compaction, and fences retired sources', () => {
+        const store = new Store(':memory:')
+        try {
+            const session = store.sessions.getOrCreateSession('source-bind-receipts', {}, null, 'default')
+            const socket = new FakeSocket()
+            const events: SyncEvent[] = []
+            registerSessionHandlers(socket as unknown as CliSocketWithData, {
+                store,
+                resolveSessionAccess: () => ({ ok: true, value: session }),
+                emitAccessError: () => { throw new Error('unexpected access error') },
+                onWebappEvent: event => events.push(event)
+            })
+
+            let bindAck1: unknown
+            socket.trigger('session-source-bind', {
+                sid: session.id,
+                sourceInstanceId: 'cli-source-1',
+                isReconnect: false
+            }, ack => { bindAck1 = ack })
+            expect(bindAck1).toEqual({
+                ok: true,
+                sourceInstanceId: 'cli-source-1',
+                sourceGeneration: 1,
+                fenced: false
+            })
+
+            const sendLive = (localId: string, text: string) => {
+                let ackResult: unknown
+                socket.trigger('message', {
+                    sid: session.id,
+                    localId,
+                    message: {
+                        role: 'agent',
+                        meta: {
+                            turnId: 'turn-a',
+                            invocationId: 'inv-a',
+                            scope: 'main',
+                            sourceInstanceId: 'cli-source-1',
+                            sourceGeneration: 1
+                        },
+                        content: {
+                            type: AGENT_MESSAGE_PAYLOAD_TYPE,
+                            data: {
+                                type: 'message',
+                                id: 'stream-a',
+                                streamSnapshot: true,
+                                live: true,
+                                message: text
+                            }
+                        }
+                    }
+                }, ack => { ackResult = ack })
+                return ackResult
+            }
+
+            let startAck: unknown
+            socket.trigger('message', {
+                sid: session.id,
+                localId: 'evt-start-a',
+                message: {
+                    role: 'agent',
+                    meta: {
+                        turnId: 'turn-a',
+                        invocationId: 'inv-a',
+                        scope: 'main',
+                        sourceInstanceId: 'cli-source-1',
+                        sourceGeneration: 1
+                    },
+                    content: {
+                        id: 'evt-start-a',
+                        type: 'event',
+                        data: {
+                            type: 'turn-lifecycle',
+                            transition: 'started',
+                            turnId: 'turn-a',
+                            invocationId: 'inv-a',
+                            scope: 'main',
+                            sourceInstanceId: 'cli-source-1',
+                            sourceGeneration: 1,
+                            eventId: 'evt-start-a'
+                        }
+                    }
+                }
+            }, ack => { startAck = ack })
+            expect(startAck).toMatchObject({ ok: true, committed: true, eventId: 'evt-start-a', sourceGeneration: 1 })
+
+            expect(sendLive('live-1', 'hello')).toMatchObject({ ok: true, committed: true, eventId: 'live-1', sourceGeneration: 1 })
+            expect(sendLive('live-2', 'hello world')).toMatchObject({ ok: true, committed: true, eventId: 'live-2', sourceGeneration: 1 })
+            // Replay of compacted live-1 after ACK loss must still ACK committed without resurrecting the old snapshot
+            const eventCountBeforeReplay = events.length
+            expect(sendLive('live-1', 'hello')).toMatchObject({ ok: true, committed: true, eventId: 'live-1', sourceGeneration: 1 })
+            expect(events).toHaveLength(eventCountBeforeReplay)
+
+            // Conflicting payload under the same localId must be rejected as invalid-payload
+            expect(sendLive('live-1', 'mutated-other-stream-id-check')).toMatchObject({ ok: true, committed: true })
+            let conflictAck: unknown
+            socket.trigger('message', {
+                sid: session.id,
+                localId: 'live-1',
+                message: {
+                    role: 'agent',
+                    meta: {
+                        turnId: 'turn-other',
+                        invocationId: 'inv-a',
+                        scope: 'main',
+                        sourceInstanceId: 'cli-source-1',
+                        sourceGeneration: 1
+                    },
+                    content: {
+                        type: AGENT_MESSAGE_PAYLOAD_TYPE,
+                        data: {
+                            type: 'message',
+                            id: 'stream-other',
+                            streamSnapshot: true,
+                            live: true,
+                            message: 'conflict'
+                        }
+                    }
+                }
+            }, ack => { conflictAck = ack })
+            expect(conflictAck).toEqual({
+                ok: false,
+                eventId: 'live-1',
+                reason: 'invalid-payload'
+            })
+
+            // New source binds and fences cli-source-1; finalized message is published before session-updated
+            events.length = 0
+            let bindAck2: unknown
+            socket.trigger('session-source-bind', {
+                sid: session.id,
+                sourceInstanceId: 'cli-source-2',
+                isReconnect: false
+            }, ack => { bindAck2 = ack })
+            expect(bindAck2).toEqual({
+                ok: true,
+                sourceInstanceId: 'cli-source-2',
+                sourceGeneration: 1,
+                fenced: false
+            })
+            expect(events.map(e => e.type)).toEqual(['message-received', 'session-updated'])
+
+            // Stale source new message is fenced, while already-committed receipt replay still returns idempotent ACK
+            expect(sendLive('live-1', 'hello')).toMatchObject({ ok: true, committed: true, eventId: 'live-1', sourceGeneration: 1 })
+            expect(sendLive('live-3', 'from fenced source')).toEqual({
+                ok: false,
+                eventId: 'live-3',
+                reason: 'fenced-source'
+            })
+        } finally { store.close() }
+    })
 })
