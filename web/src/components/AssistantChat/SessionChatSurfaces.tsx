@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef } from 'react'
 import type { ApiClient } from '@/api/client'
 import { areSessionStatusDataEqual, type SessionStatusData } from '@/chat/sessionStatus'
 import type { ConversationOutlineItem } from '@/chat/outline'
-import type { SessionEntityStore, SessionEntityStoreSnapshot } from '@/chat/store/sessionEntityStore'
+import type { SessionEntityMetaSnapshot, SessionEntityStore, SessionEntityStoreSnapshot } from '@/chat/store/sessionEntityStore'
 import { countUnseenBlocks, createUnseenWatermark, type UnseenWatermark } from '@/chat/unseenBlocks'
 import { AgentTerminalView } from '@/components/AgentTerminal/AgentTerminalView'
 import { getEffectiveCodexServiceTier } from '@/components/AssistantChat/codexFastMode'
@@ -14,10 +14,12 @@ import { resolveLatestCompletedBoundaryIdForView } from '@/components/sessionCha
 import {
     createSessionBase,
     sameShallowSelection,
-    selectVisibleMessageCount,
+    selectHasVisibleMessages,
     useSessionCacheSelector,
     useSessionChatQueryClient,
+    useSessionSurfaceMetaSelector,
     useSessionSurfaceSelector,
+    useSessionSurfaceTimelineSelector,
 } from '@/components/SessionChat/sessionState'
 import { SessionHeader } from '@/components/SessionHeader'
 import { SessionStatusPanel } from '@/components/SessionStatusPanel'
@@ -43,10 +45,10 @@ import type { Session, SessionSummary } from '@/types/api'
 
 const EMPTY_OUTLINE_ITEMS: readonly ConversationOutlineItem[] = Object.freeze([])
 
-const selectSessionStatus = (snapshot: SessionEntityStoreSnapshot): SessionStatusData | null => snapshot.sessionStatus
+const selectSessionStatus = (meta: SessionEntityMetaSnapshot): SessionStatusData | null => meta.sessionStatus
 
 export function SessionStatusSlot(props: { entityStore: SessionEntityStore }) {
-    const sessionStatus = useSessionSurfaceSelector(
+    const sessionStatus = useSessionSurfaceMetaSelector(
         props.entityStore,
         selectSessionStatus,
         (a, b) => (a === b) || (a !== null && b !== null && areSessionStatusDataEqual(a, b))
@@ -83,7 +85,7 @@ export function SessionHeaderSlot(props: {
     )
     const runStateSlice = useSessionRunState(props.api, props.sessionId, props.fallbackSession)
     const composerSlice = useSessionComposerSlice(props.api, props.sessionId, props.fallbackSession)
-    const visibleMessageCount = useSessionSurfaceSelector(props.entityStore, selectVisibleMessageCount)
+    const hasVisibleMessages = useSessionSurfaceTimelineSelector(props.entityStore, selectHasVisibleMessages)
 
     const resolvedSession = useMemo<Session>(() => {
         const base = props.fallbackSession
@@ -148,7 +150,7 @@ export function SessionHeaderSlot(props: {
         : undefined
     const inactiveCanResume = inactiveSessionCanResume(
         resolvedSession,
-        visibleMessageCount,
+        hasVisibleMessages ? 1 : 0,
         props.cursorChatOnDisk
     )
     const canViewAgentTerminal = sessionMetadata?.startingMode === 'pty' && sessionActive
@@ -195,7 +197,7 @@ export function SessionTeamAndInactiveSlot(props: {
         props.fallbackSession?.metadata
     )
     const runStateSlice = useSessionRunState(props.api, props.sessionId, props.fallbackSession)
-    const visibleMessageCount = useSessionSurfaceSelector(props.entityStore, selectVisibleMessageCount)
+    const hasVisibleMessages = useSessionSurfaceTimelineSelector(props.entityStore, selectHasVisibleMessages)
 
     const sessionActive = runStateSlice?.active ?? headerSlice?.active ?? props.fallbackSession?.active ?? false
     const sessionInactive = !sessionActive
@@ -209,7 +211,7 @@ export function SessionTeamAndInactiveSlot(props: {
     }), [metadata, props.sessionId, sessionActive])
 
     const inactiveCanResume = sessionInactive
-        ? inactiveSessionCanResume(resumeCandidate, visibleMessageCount, props.cursorChatOnDisk)
+        ? inactiveSessionCanResume(resumeCandidate, hasVisibleMessages ? 1 : 0, props.cursorChatOnDisk)
         : true
 
     return (
@@ -377,7 +379,10 @@ export function SessionThreadSection(props: {
         }
     }, [props.historyVersion, props.messagesVersion, props.sessionId])
 
-    const threadSelection = useSessionSurfaceSelector(
+    const threadSelectorHook = props.viewMode === 'tail' && props.messagesVersion === undefined
+        ? useSessionSurfaceTimelineSelector
+        : useSessionSurfaceSelector
+    const threadSelection = threadSelectorHook(
         props.entityStore,
         selectThreadSection,
         sameShallowSelection

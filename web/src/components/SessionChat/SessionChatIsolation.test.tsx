@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { act, cleanup, render, screen } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import type { ApiClient } from '@/api/client'
+import type { SessionEntityStore } from '@/chat/store/sessionEntityStore'
 import {
     ModelRefusalToastConsumer,
     SessionEntityStoreIngestionBridge,
@@ -9,8 +10,16 @@ import {
 } from '@/components/sessionChatHelpers'
 import {
     SessionStatusSlot,
+    SessionTeamAndInactiveSlot,
     useSessionMentionTooltipResolver,
 } from '@/components/AssistantChat/SessionChatSurfaces'
+import {
+    selectHasRunningChildAgent,
+    selectHasVisibleMessages,
+    selectTimelineVersion,
+    useSessionSurfaceMetaSelector,
+    useSessionSurfaceTimelineSelector,
+} from '@/components/SessionChat/sessionState'
 import { I18nProvider } from '@/lib/i18n-context'
 import { useMessageWindowControls } from '@/hooks/queries/useMessages'
 import { appendOptimisticMessage, clearMessageWindow, ingestIncomingMessages } from '@/lib/message-window-store'
@@ -61,7 +70,20 @@ describe('SessionChat surface isolation and imperative ingestion bridge', () => 
         queryClient.setQueryData(queryKeys.session('sess-iso-1'), { session: initialSession })
 
         let shellRenders = 0
-        let capturedStore: import('@/chat/store/sessionEntityStore').SessionEntityStore | null = null
+        let runtimeSelectorsRenders = 0
+        let capturedStore: SessionEntityStore | null = null
+
+        function RuntimeSelectorsProbe({
+            entityStore,
+        }: {
+            entityStore: SessionEntityStore
+        }) {
+            runtimeSelectorsRenders += 1
+            useSessionSurfaceTimelineSelector(entityStore, selectHasVisibleMessages)
+            useSessionSurfaceMetaSelector(entityStore, selectHasRunningChildAgent)
+            useSessionSurfaceTimelineSelector(entityStore, selectTimelineVersion)
+            return null
+        }
 
         function TestShell() {
             shellRenders += 1
@@ -75,6 +97,12 @@ describe('SessionChat surface isolation and imperative ingestion bridge', () => 
                     <SessionEntityStoreIngestionBridge
                         sessionId="sess-iso-1"
                         hasMoreMessages={false}
+                        entityStore={entityStore}
+                    />
+                    <RuntimeSelectorsProbe entityStore={entityStore} />
+                    <SessionTeamAndInactiveSlot
+                        api={{} as ApiClient}
+                        sessionId="sess-iso-1"
                         entityStore={entityStore}
                     />
                     <SessionStatusSlot entityStore={entityStore} />
@@ -139,6 +167,7 @@ describe('SessionChat surface isolation and imperative ingestion bridge', () => 
         }
         render(<ControlsHost />)
         expect(controlsRenders).toBe(1)
+        let rendersAfterFirstChunk = 0
 
         vi.useFakeTimers()
         try {
@@ -168,6 +197,9 @@ describe('SessionChat surface isolation and imperative ingestion bridge', () => 
                     }])
                     vi.advanceTimersByTime(100)
                 })
+                if (step === 1) {
+                    rendersAfterFirstChunk = runtimeSelectorsRenders
+                }
             }
         } finally {
             vi.useRealTimers()
@@ -175,6 +207,7 @@ describe('SessionChat surface isolation and imperative ingestion bridge', () => 
 
         expect(controlsRenders).toBe(1)
         expect(shellRenders).toBe(1)
+        expect(runtimeSelectorsRenders).toBe(rendersAfterFirstChunk)
         expect(capturedStore!.getSnapshot().visibleBlocks.at(-1)).toMatchObject({
             kind: 'agent-text',
             text: 'Streaming chunk 3',

@@ -1,6 +1,5 @@
-import { useMemo } from 'react'
-import { summarizeTurnActivity, type TurnPartition, type TurnRow } from './turnBlockModel'
-import { useLiveTurnRows } from './useLiveTurnRows'
+import type { TurnPartition, TurnRow } from './turnBlockModel'
+import { useLiveTurnSummary } from './useLiveTurnRows'
 import { cn } from '@/lib/utils'
 
 export function TurnRailSummary(props: {
@@ -10,10 +9,10 @@ export function TurnRailSummary(props: {
     activeTodoText?: string | null
     lang: 'en' | 'zh-CN'
 }) {
-    const rows = useLiveTurnRows(props.rows)
-    const summary = useMemo(() => summarizeTurnActivity({ ...props.partition, rows: [...rows] }, {
-        activeTodoText: props.activeTodoText, lang: props.lang,
-    }), [rows, props.partition, props.activeTodoText, props.lang])
+    const summary = useLiveTurnSummary(props.rows, props.partition, {
+        activeTodoText: props.activeTodoText,
+        lang: props.lang,
+    })
     return <span className={cn('truncate', props.streaming ? 'turn-text-shimmer font-medium' : 'font-normal')}>
         {props.streaming ? summary.workingHeader : summary.completedHeader}
     </span>

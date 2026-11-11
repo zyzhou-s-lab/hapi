@@ -7,7 +7,10 @@ import type { HappyRuntimeExtras } from '@/lib/assistant-runtime'
 import type { Session, SessionMetadataSummary } from '@/types/api'
 import type { ConversationOutlineItem } from '@/chat/outline'
 import { formatMessageTimestampTitle, formatOutlineTimestamp } from '@/chat/presentation'
-import type { SessionEntityStore, SessionEntityStoreSnapshot } from '@/chat/store/sessionEntityStore'
+import type {
+    SessionEntityMetaSnapshot,
+    SessionEntityStore,
+} from '@/chat/store/sessionEntityStore'
 import {
     HappyChatHistoryContext,
     HappyChatSessionStateContext,
@@ -28,7 +31,7 @@ import {
 } from '@/hooks/queries/useSession'
 import {
     useOptionalSessionEntityStore,
-    useSessionEntitySelector,
+    useSessionMetaSelector,
     useSessionTimelineIndex,
 } from '@/hooks/useSessionEntityStore'
 import { HappyAssistantMessage } from '@/components/AssistantChat/messages/AssistantMessage'
@@ -150,7 +153,7 @@ export function ThreadMessagesById({ components }: { components: ThreadMessageCo
     return <RuntimeThreadMessagesById components={components} />
 }
 
-const selectOutlineItems = (snapshot: SessionEntityStoreSnapshot): readonly ConversationOutlineItem[] => snapshot.outlineItems
+const selectOutlineItems = (meta: SessionEntityMetaSnapshot): readonly ConversationOutlineItem[] => meta.outlineItems
 
 function StoreConversationOutlineSlot(props: {
     store: SessionEntityStore
@@ -161,7 +164,7 @@ function StoreConversationOutlineSlot(props: {
     onClose: () => void
     bottomInsetPx?: number
 }) {
-    const items = useSessionEntitySelector(props.store, selectOutlineItems)
+    const items = useSessionMetaSelector(props.store, selectOutlineItems)
     return (
         <ConversationOutlinePanel
             items={items}

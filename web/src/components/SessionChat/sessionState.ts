@@ -1,8 +1,12 @@
 import { useCallback, useMemo, useRef, useSyncExternalStore } from 'react'
 import { useQueryClient, type QueryClient } from '@tanstack/react-query'
 import type { Session } from '@/types/api'
-import type { SessionEntityStoreSnapshot } from '@/chat/store/sessionEntityStore'
-import { useSessionEntitySelector } from '@/hooks/useSessionEntityStore'
+import type { SessionEntityMetaSnapshot, SessionEntityStoreSnapshot } from '@/chat/store/sessionEntityStore'
+import {
+    useSessionEntitySelector,
+    useSessionMetaSelector,
+    useSessionTimelineSelector,
+} from '@/hooks/useSessionEntityStore'
 import {
     areSessionMetadataSummariesEqual,
     type SessionMetadataSummary,
@@ -127,7 +131,10 @@ export function useSessionControlSession(api: import('@/api/client').ApiClient, 
 }
 
 export const useSessionSurfaceSelector = useSessionEntitySelector
+export const useSessionSurfaceTimelineSelector = useSessionTimelineSelector
+export const useSessionSurfaceMetaSelector = useSessionMetaSelector
 
 export const selectVisibleMessageCount = (snapshot: SessionEntityStoreSnapshot): number => snapshot.visibleMessages.length
-export const selectHasRunningChildAgent = (snapshot: SessionEntityStoreSnapshot): boolean => snapshot.hasRunningChildAgent
+export const selectHasVisibleMessages = (snapshot: SessionEntityStoreSnapshot): boolean => snapshot.visibleMessages.length > 0
+export const selectHasRunningChildAgent = (meta: SessionEntityMetaSnapshot): boolean => meta.hasRunningChildAgent
 export const selectTimelineVersion = (snapshot: SessionEntityStoreSnapshot): number => snapshot.timelineVersion

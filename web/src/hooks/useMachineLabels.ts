@@ -48,14 +48,18 @@ function writeCachedLabels(labels: Record<string, string>): void {
  * query has not loaded yet keeps its last known name instead of falling
  * back to a raw id prefix.
  */
+export function resolveMachineLabelsMap(machines: readonly Machine[]): Record<string, string> {
+    const merged = readCachedLabels()
+    for (const machine of machines) {
+        merged[machine.id] = getMachineTitle(machine)
+    }
+    return merged
+}
+
 export function useMachineLabels(machines: Machine[]): Record<string, string> {
     const previousLabelsRef = useRef<Record<string, string> | null>(null)
     const labels = useMemo(() => {
-        const merged = readCachedLabels()
-        for (const machine of machines) {
-            merged[machine.id] = getMachineTitle(machine)
-        }
-
+        const merged = resolveMachineLabelsMap(machines)
         const previous = previousLabelsRef.current
         if (previous) {
             const previousKeys = Object.keys(previous)

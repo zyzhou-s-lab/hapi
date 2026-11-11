@@ -175,6 +175,13 @@ describe('architecture & CSS cascade boundaries', () => {
         const happyThreadSpecifiers = parseModuleSpecifiers(path.join(WEB_SRC_DIR, 'components/AssistantChat/HappyThread.tsx'))
         expect(happyThreadSpecifiers).toContain('@/components/AssistantChat/useThreadScrollAndHistoryController')
         expect(happyThreadSpecifiers).toContain('@/components/AssistantChat/useShareTurnCapture')
+
+        const routerSrc = readFileSync(path.join(WEB_SRC_DIR, 'router.tsx'), 'utf8')
+        const sessionPageMatch = routerSrc.match(/function SessionPage\(\)[\s\S]*?(?=\nfunction |\nconst )/)
+        expect(sessionPageMatch).not.toBeNull()
+        expect(sessionPageMatch![0]).not.toMatch(/\buseSessions\s*\(/)
+        expect(sessionPageMatch![0]).not.toMatch(/\buseMachines\s*\(/)
+        expect(sessionPageMatch![0]).not.toMatch(/\buseMachineLabels\s*\(/)
     })
 
     it('enforces pluggable toolPreviewRegistry and standaloneBlockRendererRegistry dispatch boundaries', () => {

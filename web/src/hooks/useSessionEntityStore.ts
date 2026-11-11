@@ -66,6 +66,44 @@ export function useSessionEntitySelector<T>(
     return useSyncExternalStore(store.subscribe, getSnapshot, getSnapshot)
 }
 
+export function useSessionTimelineSelector<T>(
+    store: SessionEntityStore,
+    selector: (snapshot: SessionEntityStoreSnapshot) => T,
+    isEqual: (a: T, b: T) => boolean = Object.is
+): T {
+    const getSnapshot = useMemo(() => {
+        let current: { snapshot: SessionEntityStoreSnapshot; value: T } | undefined
+        return () => {
+            const snapshot = store.getSnapshot()
+            if (current?.snapshot === snapshot) return current.value
+            const selected = selector(snapshot)
+            const value = current && isEqual(current.value, selected) ? current.value : selected
+            current = { snapshot, value }
+            return value
+        }
+    }, [store, selector, isEqual])
+    return useSyncExternalStore(store.subscribeTimeline, getSnapshot, getSnapshot)
+}
+
+export function useSessionMetaSelector<T>(
+    store: SessionEntityStore,
+    selector: (meta: SessionEntityMetaSnapshot) => T,
+    isEqual: (a: T, b: T) => boolean = Object.is
+): T {
+    const getSnapshot = useMemo(() => {
+        let current: { meta: SessionEntityMetaSnapshot; value: T } | undefined
+        return () => {
+            const meta = store.getMeta()
+            if (current?.meta === meta) return current.value
+            const selected = selector(meta)
+            const value = current && isEqual(current.value, selected) ? current.value : selected
+            current = { meta, value }
+            return value
+        }
+    }, [store, selector, isEqual])
+    return useSyncExternalStore(store.subscribeMeta, getSnapshot, getSnapshot)
+}
+
 export function useOptionalSessionTurnLayout(id: string | null | undefined): TurnLayoutSnapshot | undefined {
     const store = useContext(SessionEntityStoreContext)
     const subscribe = useCallback((listener: () => void) => (

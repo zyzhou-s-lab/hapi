@@ -1,7 +1,7 @@
 import { createContext, useCallback, useContext, useMemo, type MutableRefObject, type ReactNode, type RefObject } from 'react'
 import { AssistantRuntimeProvider, type AttachmentAdapter } from '@assistant-ui/react'
 import { isSteeringSupportedForSession } from '@hapi/protocol'
-import type { SessionEntityStore, SessionEntityStoreSnapshot } from '@/chat/store/sessionEntityStore'
+import type { SessionEntityMetaSnapshot, SessionEntityStore } from '@/chat/store/sessionEntityStore'
 import { DragDropZone } from '@/components/AssistantChat/DragDropZone'
 import { HappyComposer, type HappyComposerProps } from '@/components/AssistantChat/HappyComposer'
 import { useSessionFlavorModelController } from '@/components/AssistantChat/composer/useSessionFlavorModelController'
@@ -24,10 +24,11 @@ import { isRemoteTerminalSupported } from '@/utils/terminalSupport'
 import {
     sameShallowSelection,
     selectHasRunningChildAgent,
+    selectHasVisibleMessages,
     selectTimelineVersion,
-    selectVisibleMessageCount,
     useSessionControlSession,
-    useSessionSurfaceSelector,
+    useSessionSurfaceMetaSelector,
+    useSessionSurfaceTimelineSelector,
 } from './sessionState'
 import type { SessionSurfaceProps } from './types'
 
@@ -100,10 +101,10 @@ export function SessionRuntimeController(props: SessionSurfaceProps & {
     onAcceptedChatSend: () => void
 }) {
     const session = useSessionControlSession(props.api, props.sessionId, props.session)
-    const visibleMessagesCount = useSessionSurfaceSelector(props.entityStore, selectVisibleMessageCount)
-    const hasRunningChildAgent = useSessionSurfaceSelector(props.entityStore, selectHasRunningChildAgent)
-    const timelineVersion = useSessionSurfaceSelector(props.entityStore, selectTimelineVersion)
-    const inactiveCanResume = inactiveSessionCanResume(session, visibleMessagesCount, props.cursorChatOnDisk)
+    const hasVisibleMessages = useSessionSurfaceTimelineSelector(props.entityStore, selectHasVisibleMessages)
+    const hasRunningChildAgent = useSessionSurfaceMetaSelector(props.entityStore, selectHasRunningChildAgent)
+    const timelineVersion = useSessionSurfaceTimelineSelector(props.entityStore, selectTimelineVersion)
+    const inactiveCanResume = inactiveSessionCanResume(session, hasVisibleMessages ? 1 : 0, props.cursorChatOnDisk)
     const flavorController = useSessionFlavorModelController({
         api: props.api,
         session,
@@ -288,11 +289,11 @@ export function SessionRuntimeController(props: SessionSurfaceProps & {
     )
 }
 
-function selectComposerMeta(snapshot: SessionEntityStoreSnapshot) {
+function selectComposerMeta(meta: SessionEntityMetaSnapshot) {
     return {
-        latestGoal: snapshot.latestGoal,
-        latestUsage: snapshot.latestUsage,
-        activityLabel: snapshot.activityLabel,
+        latestGoal: meta.latestGoal,
+        latestUsage: meta.latestUsage,
+        activityLabel: meta.activityLabel,
     }
 }
 
@@ -306,7 +307,7 @@ export function SessionComposerSection(props: SessionSurfaceProps & {
     if (!controller) throw new Error('SessionRuntimeController is missing')
     const { t } = useTranslation()
     const todos = useSessionTodoSnapshot(props.api, props.sessionId, props.session)
-    const meta = useSessionSurfaceSelector(props.entityStore, selectComposerMeta, sameShallowSelection)
+    const meta = useSessionSurfaceMetaSelector(props.entityStore, selectComposerMeta, sameShallowSelection)
     const { status: gitStatus } = useGitStatusFiles(props.api, controller.session.active ? props.sessionId : null)
     const resolveSessionMentionTooltip = useSessionMentionTooltipResolver(props.api)
     const { composerProps, session } = controller

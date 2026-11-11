@@ -31,8 +31,8 @@ import { useSidebarResize } from '@/hooks/useSidebarResize'
 import { useHideArchivedSessions } from '@/hooks/useHideArchivedSessions'
 import { filterVisibleSessions } from '@/lib/sessionListFilters'
 import { useMessageWindowControls } from '@/hooks/queries/useMessages'
-import { useMachines } from '@/hooks/queries/useMachines'
-import { useMachineLabels } from '@/hooks/useMachineLabels'
+import { presentMachines, useMachines } from '@/hooks/queries/useMachines'
+import { resolveMachineLabelsMap, useMachineLabels } from '@/hooks/useMachineLabels'
 import {
     getCachedSessionOrPlaceholder,
     useSessionRouteState,
@@ -47,7 +47,7 @@ import { SessionTabsBar, useHasSessionTabs, useSessionTabsSync } from '@/fork-fe
 import { PhoneWorkPaneProvider, PhoneWorkToggle, usePhoneWorkPane, WorkOverview } from '@/fork-features/work-lines/WorkOverview'
 import { Workbench } from '@/fork-features/work-lines/Workbench'
 import { parseWorkSearch } from '@/fork-features/work-lines/workSearch'
-import type { Session, SessionSummary } from '@/types/api'
+import type { Machine, Session, SessionSummary } from '@/types/api'
 import { buildSessionReferenceText, matchSessionsForMention } from '@/lib/sessionReference'
 import type { Suggestion } from '@/hooks/useActiveSuggestions'
 import { useSendMessage, type SendErrorInfo } from '@/hooks/mutations/useSendMessage'
@@ -754,24 +754,37 @@ function SessionPage() {
     const {
         getSuggestions: getSkillSuggestions,
     } = useSkills(api, sessionId)
-    // Mention pool is stricter than sidebar (#1506): titled sessions only; match via sessionMatchesQuery.
-    const { sessions: allSessions } = useSessions(api)
-    const { machines: mentionMachines } = useMachines(api, true)
-    const mentionMachineLabelsById = useMachineLabels(mentionMachines)
-    // Same fallbacks as share picker / SessionList search.
-    const resolveMentionMachineLabel = useCallback((machineId: string | null) => {
-        if (machineId && mentionMachineLabelsById[machineId]) {
-            return mentionMachineLabelsById[machineId]
-        }
-        if (machineId) {
-            return machineId.slice(0, 8)
-        }
-        return t('machine.unknown')
-    }, [mentionMachineLabelsById, t])
-
     const getAutocompleteSuggestions = useCallback(async (query: string) => {
         if (query.startsWith('@')) {
             const search = query.slice(1)
+            const cachedSessions = queryClient.getQueryData<{ sessions: SessionSummary[] }>(queryKeys.sessions)?.sessions
+            const allSessions = cachedSessions
+                ?? (api
+                    ? (await queryClient.ensureQueryData({
+                        queryKey: queryKeys.sessions,
+                        queryFn: () => api.getSessions(),
+                    }).catch(() => ({ sessions: [] as SessionSummary[] }))).sessions
+                    : [])
+            const cachedMachines = queryClient.getQueryData<{ machines: Machine[] }>(queryKeys.machines)?.machines
+            const mentionMachines = presentMachines(
+                cachedMachines
+                    ?? (api
+                        ? (await queryClient.ensureQueryData({
+                            queryKey: queryKeys.machines,
+                            queryFn: () => api.getMachines(),
+                        }).catch(() => ({ machines: [] as Machine[] }))).machines
+                        : [])
+            )
+            const mentionMachineLabelsById = resolveMachineLabelsMap(mentionMachines)
+            const resolveMentionMachineLabel = (machineId: string | null) => {
+                if (machineId && mentionMachineLabelsById[machineId]) {
+                    return mentionMachineLabelsById[machineId]
+                }
+                if (machineId) {
+                    return machineId.slice(0, 8)
+                }
+                return t('machine.unknown')
+            }
             // v1: plain-text expansion (same grammar as Copy reference) — #1213.
             // v2: segmented rich composer with inline session tokens — #1215.
             // Match via sessionMatchesQuery (share/sidebar); label/insert via getSessionTitle.
@@ -823,9 +836,9 @@ function SessionPage() {
     }, [
         agentType,
         api,
+        queryClient,
         sessionId,
-        allSessions,
-        resolveMentionMachineLabel,
+        t,
         getSkillSuggestions,
         getSlashSuggestions,
     ])
