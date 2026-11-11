@@ -1,4 +1,4 @@
-import { createContext, memo, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
+import { type ComponentType, createContext, memo, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import {
     describeCoalescedTurnStep,
     describeTurnToolStep,
@@ -13,8 +13,7 @@ import {
     type TurnStepPreview,
     type TurnToolRow,
 } from '@/components/AssistantChat/messages/turnBlockModel'
-import { TimelineTodoChecklistCard } from '@/components/AssistantChat/messages/TurnTodoSection'
-import { ToolDetailDialogContent } from '@/components/ToolCard/ToolCard'
+import { CopyButton, getToolPreviewRenderer, type ToolPreviewRenderProps } from '@/components/AssistantChat/messages/toolPreviewRegistry'
 import { AskUserQuestionFooter } from '@/components/ToolCard/AskUserQuestionFooter'
 import { RequestUserInputFooter } from '@/components/ToolCard/RequestUserInputFooter'
 import { isAskUserQuestionToolName } from '@/components/ToolCard/askUserQuestion'
@@ -29,7 +28,7 @@ import { useOptionalSessionBlockEntity, useOptionalSessionVisibleEntity } from '
 import { cn } from '@/lib/utils'
 import { useLiveTurnRows } from './useLiveTurnRows'
 
-export { SmallChevron }
+export { CopyButton, SmallChevron }
 
 export type StepExpansionEntry = {
     readonly open: boolean
@@ -87,50 +86,6 @@ function useTurnStepExpansion(stepId: string, defaultExpanded: boolean) {
     return { open: entry.open, hasOpened: entry.hasOpened, toggle }
 }
 
-export function CopyButton(props: { text: string; label?: string }) {
-    const [copied, setCopied] = useState(false)
-    const label = props.label ?? 'Copy command'
-    return (
-        <button
-            type="button"
-            onClick={(e) => {
-                e.stopPropagation()
-                void navigator.clipboard?.writeText(props.text)
-                setCopied(true)
-            }}
-            className="inline-flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5 text-[11px] text-[var(--app-hint)] transition-colors hover:bg-[var(--app-subtle-bg)] hover:text-[var(--app-fg)]"
-            title={label}
-            aria-label={label}
-        >
-            {copied ? (
-                <span
-                    className="turn-copy-feedback"
-                    onAnimationEnd={() => setCopied(false)}
-                >
-                    Copied
-                </span>
-            ) : (
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                    <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
-                    <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
-                </svg>
-            )}
-        </button>
-    )
-}
-
-function DomainFaviconBadge(props: { domain: string }) {
-    const letter = (props.domain.replace(/^www\./, '')[0] ?? 'W').toUpperCase()
-    return (
-        <span
-            aria-hidden="true"
-            className="inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-[4px] border border-[var(--app-border)] bg-[var(--app-subtle-bg)] text-[10px] font-semibold text-[var(--app-hint)]"
-        >
-            {letter}
-        </span>
-    )
-}
-
 export function extractToolChecklistItems(
     block: ToolCallBlock,
     allRows?: readonly TurnRow[],
@@ -145,217 +100,8 @@ export function extractToolChecklistItems(
 export function StepInlinePreviewCard(props: { preview: TurnStepPreview }) {
     const ctx = useOptionalHappyChatStaticContext()
     const { preview } = props
-
-    if (preview.kind === 'bash') {
-        return (
-            <div
-                className="mt-1.5 mb-2 overflow-hidden rounded-lg border border-[var(--app-border)] bg-[var(--app-subtle-bg)]/45 text-xs"
-                data-testid="turn-level2-bash"
-            >
-                <div className="flex items-center justify-between border-b border-[var(--app-border)]/70 px-3 py-1.5 text-[11px] font-medium text-[var(--app-hint)]">
-                    <span>Bash</span>
-                    <CopyButton text={preview.command} />
-                </div>
-                <div className="px-3 py-2 font-mono text-[12px] leading-5 text-[var(--app-fg)] break-all">
-                    {preview.command}
-                </div>
-                {preview.output ? (
-                    <div
-                        className={cn(
-                            'max-h-48 overflow-y-auto border-t border-[var(--app-border)]/70 bg-black/[0.03] dark:bg-black/25 px-3 py-2 font-mono text-[11.5px] leading-5 whitespace-pre-wrap',
-                            preview.isError ? 'text-[var(--app-badge-error-text)]' : 'text-[var(--app-hint)]'
-                        )}
-                    >
-                        {preview.output}
-                    </div>
-                ) : null}
-            </div>
-        )
-    }
-
-    if (preview.kind === 'web-fetch') {
-        return (
-            <div
-                className="mt-1.5 mb-2 overflow-hidden rounded-lg border border-[var(--app-border)] bg-[var(--app-subtle-bg)]/45 p-3 text-xs"
-                data-testid="turn-level2-webfetch"
-            >
-                <div className="font-medium text-[13px] text-[var(--app-fg)]">{preview.title}</div>
-                {preview.url ? (
-                    <a
-                        href={preview.url}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="mt-0.5 block truncate text-[12px] text-[var(--app-hint)] hover:text-[var(--app-link)] hover:underline"
-                    >
-                        {preview.url}
-                    </a>
-                ) : null}
-                {preview.excerpt ? (
-                    <div className="mt-2 line-clamp-3 text-[12px] leading-relaxed text-[var(--app-hint)]">
-                        {preview.excerpt}
-                    </div>
-                ) : null}
-                <div className="mt-2 text-[11px] tabular-nums text-[var(--app-hint)]">
-                    {preview.sizeLabel}
-                    {preview.linesCount > 0 ? ` · ${preview.linesCount} lines` : ''}
-                </div>
-            </div>
-        )
-    }
-
-    if (preview.kind === 'web-search') {
-        return (
-            <div
-                className="mt-1.5 mb-2 overflow-hidden rounded-lg border border-[var(--app-border)] bg-[var(--app-subtle-bg)]/45 p-1.5 text-xs"
-                data-testid="turn-level2-websearch"
-            >
-                {preview.query ? (
-                    <div className="border-b border-[var(--app-border)]/60 px-2 py-1 text-[11.5px] font-mono text-[var(--app-hint)]">
-                        {preview.query}
-                    </div>
-                ) : null}
-                <div className="max-h-48 overflow-y-auto divide-y divide-[var(--app-border)]/30">
-                    {preview.results.map((item, idx) => (
-                        <a
-                            key={`${item.url}-${idx}`}
-                            href={item.url || '#'}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="flex items-center gap-2.5 rounded px-2 py-1.5 transition-colors hover:bg-[var(--app-subtle-bg)]"
-                        >
-                            <DomainFaviconBadge domain={item.domain || item.url} />
-                            <span className="min-w-0 flex-1 truncate text-[12.5px] text-[var(--app-fg)]">
-                                {item.title}
-                            </span>
-                            <span className="shrink-0 text-[11.5px] text-[var(--app-hint)]">
-                                {item.domain}
-                            </span>
-                        </a>
-                    ))}
-                </div>
-            </div>
-        )
-    }
-
-    if (preview.kind === 'file-diff') {
-        return (
-            <div
-                className="mt-1.5 mb-2 overflow-hidden rounded-lg border border-[var(--app-border)] bg-[var(--app-subtle-bg)]/45 text-xs"
-                data-testid="turn-level2-diff"
-            >
-                <div className="flex items-center justify-between gap-2 border-b border-[var(--app-border)]/70 px-3 py-1.5 text-[11.5px]">
-                    <span className="min-w-0 flex-1 truncate font-mono text-[var(--app-fg)]" title={preview.filePath}>
-                        {preview.filePath}
-                    </span>
-                    <div className="flex shrink-0 items-center gap-1.5">
-                        <span className="font-mono tabular-nums text-[11px]">
-                            {preview.added > 0 ? <span className="text-[var(--app-badge-success-text)]">+{preview.added}</span> : null}
-                            {preview.removed > 0 ? <span className="ml-1.5 text-[var(--app-badge-error-text)]">-{preview.removed}</span> : null}
-                        </span>
-                        <CopyButton text={preview.filePath} label="Copy file path" />
-                    </div>
-                </div>
-                {preview.lines.length > 0 ? (
-                    <div className="max-h-44 overflow-y-auto py-1 font-mono text-[11.5px] leading-5">
-                        {preview.lines.map((line, index) => (
-                            <div
-                                key={index}
-                                className={cn(
-                                    'px-3 whitespace-pre-wrap',
-                                    line.type === 'add' && 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-300',
-                                    line.type === 'del' && 'bg-rose-500/10 text-rose-700 dark:text-rose-300',
-                                    line.type === 'ctx' && 'text-[var(--app-hint)]'
-                                )}
-                            >
-                                {line.type === 'add' ? `+ ${line.text}` : line.type === 'del' ? `- ${line.text}` : `  ${line.text}`}
-                            </div>
-                        ))}
-                    </div>
-                ) : null}
-            </div>
-        )
-    }
-
-    if (preview.kind === 'file-read') {
-        return (
-            <div
-                className="mt-1.5 mb-2 overflow-hidden rounded-lg border border-[var(--app-border)] bg-[var(--app-subtle-bg)]/45 text-xs"
-                data-testid="turn-level2-read"
-            >
-                <div className="flex items-center justify-between gap-2 border-b border-[var(--app-border)]/70 px-3 py-1.5 text-[11.5px] text-[var(--app-hint)]">
-                    <span className="min-w-0 flex-1 truncate font-mono text-[var(--app-fg)]" title={preview.filePath}>
-                        {preview.filePath}
-                    </span>
-                    <div className="flex shrink-0 items-center gap-1.5">
-                        {preview.lineCount > 0 ? <span className="tabular-nums">{preview.lineCount} lines</span> : null}
-                        <CopyButton text={preview.content || preview.filePath} label="Copy content" />
-                    </div>
-                </div>
-                {preview.content ? (
-                    <pre className="max-h-44 overflow-y-auto px-3 py-2 font-mono text-[11.5px] leading-5 text-[var(--app-hint)] whitespace-pre-wrap">
-                        {preview.content}
-                    </pre>
-                ) : null}
-            </div>
-        )
-    }
-    if (preview.kind === 'compaction') {
-        const metaItems = [
-            preview.strategy,
-            preview.trigger,
-            preview.archiveLabel,
-            preview.tokensBeforeLabel,
-        ].filter((item): item is string => Boolean(item))
-        return (
-            <div
-                className="mt-1.5 mb-2 overflow-hidden rounded-lg border border-[var(--app-border)] bg-[var(--app-subtle-bg)]/45 px-3 py-2 text-xs"
-                data-testid="turn-level2-compaction"
-            >
-                {metaItems.length > 0 ? (
-                    <div className="flex flex-wrap items-center gap-1.5 text-[11.5px] font-mono text-[var(--app-hint)]">
-                        {metaItems.join(' · ')}
-                    </div>
-                ) : null}
-                {preview.errorMessage ? (
-                    <div className="mt-1.5 text-[12px] leading-relaxed text-[var(--app-badge-error-text)] whitespace-pre-wrap">
-                        {preview.errorMessage}
-                    </div>
-                ) : null}
-                {preview.summary ? (
-                    <div className="mt-1.5 text-[12.5px] leading-relaxed text-[var(--app-fg)]/90 whitespace-pre-wrap">
-                        {preview.summary}
-                    </div>
-                ) : !metaItems.length && !preview.errorMessage ? (
-                    <div className="text-[12px] text-[var(--app-hint)]">
-                        {preview.isRunning ? 'Compacting conversation context...' : 'Conversation context compacted.'}
-                    </div>
-                ) : null}
-            </div>
-        )
-    }
-
-    const checklistItems = extractToolChecklistItems(preview.block)
-    if (checklistItems.length > 0) {
-        return (
-            <div className="mt-1.5 mb-2">
-                <TimelineTodoChecklistCard items={checklistItems} />
-            </div>
-        )
-    }
-
-    return (
-        <div
-            className="mt-1.5 mb-2 overflow-hidden rounded-lg border border-[var(--app-border)] bg-[var(--app-subtle-bg)]/45 text-xs"
-            data-testid="turn-level2-generic"
-        >
-            <div className="flex items-center justify-between border-b border-[var(--app-border)]/70 px-3 py-1.5 text-[11px] font-mono text-[var(--app-hint)]">
-                <span className="truncate">{preview.block.tool.name}</span>
-            </div>
-            <div className="max-h-56 overflow-y-auto p-2.5">
-                <ToolDetailDialogContent block={preview.block} metadata={ctx?.metadata ?? null} hideTiming />
-            </div>
-        </div>
-    )
+    const PreviewComponent = getToolPreviewRenderer(preview.kind) as ComponentType<ToolPreviewRenderProps<TurnStepPreview>>
+    return <PreviewComponent preview={preview} metadata={ctx?.metadata ?? null} />
 }
 
 export function RailStepCompletionMorphBadge(props: { isRunning: boolean; forceMorph?: boolean; color?: string }) {

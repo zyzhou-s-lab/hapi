@@ -12,6 +12,7 @@ import {
     type TodoCardItem,
 } from '@/components/ToolCard/checklist'
 import { classifyToolPresentation } from '@/components/AssistantChat/messages/toolPresentationManifest'
+import { findMatchingToolPreviewPlugin } from '@/components/AssistantChat/messages/toolPreviewRegistry'
 import { getToolPresentation } from '@/components/ToolCard/knownTools'
 import { isRequestUserInputToolName } from '@/components/ToolCard/requestUserInput'
 import { resolveToolViewName } from '@/components/ToolCard/toolNameAliases'
@@ -232,11 +233,6 @@ function verbFor(tool: ChatToolCall, fallbackTitle: string): string {
     if (name === 'CodexReasoning') return 'turn.verb.reasoning'
     if (tool.name === 'ContextCompaction') return 'turn.verb.compaction'
     return fallbackTitle
-}
-
-function formatCompactCount(value: number): string {
-    if (value >= 1000) return `${Math.round(value / 1000)}k`
-    return String(value)
 }
 
 function extractCompactionIntent(input: unknown): string {
@@ -737,7 +733,7 @@ export type TurnToolStepDescriptor = {
     preview: TurnStepPreview
 }
 
-function extractDomain(rawUrl: string): string {
+export function extractDomain(rawUrl: string): string {
     try {
         const parsed = new URL(rawUrl)
         return parsed.hostname.replace(/^www\./, '')
@@ -746,7 +742,7 @@ function extractDomain(rawUrl: string): string {
     }
 }
 
-function extractResultText(result: unknown): string {
+export function extractResultText(result: unknown): string {
     if (typeof result === 'string') return result
     if (!isObject(result)) return ''
     if (typeof result.stdout === 'string' && result.stdout.trim()) {
@@ -766,7 +762,7 @@ function extractResultText(result: unknown): string {
     return ''
 }
 
-function extractWebSearchResults(result: unknown): TurnWebSearchResultItem[] {
+export function extractWebSearchResults(result: unknown): TurnWebSearchResultItem[] {
     if (!isObject(result)) return []
     const rawList = Array.isArray(result.results)
         ? result.results
@@ -794,12 +790,12 @@ function extractWebSearchResults(result: unknown): TurnWebSearchResultItem[] {
     return items
 }
 
-function isWebFetchTool(rawName: string, resolvedName: string): boolean {
+export function isWebFetchTool(rawName: string, resolvedName: string): boolean {
     const lower = rawName.toLowerCase()
     return resolvedName === 'WebFetch' || lower === 'webfetch' || lower === 'web_fetch' || lower.endsWith('__web_fetch')
 }
 
-function isWebSearchTool(rawName: string, resolvedName: string): boolean {
+export function isWebSearchTool(rawName: string, resolvedName: string): boolean {
     const lower = rawName.toLowerCase()
     return resolvedName === 'WebSearch' || lower === 'websearch' || lower === 'web_search' || lower === 'web_search_fast' || lower.endsWith('__web_search')
 }
@@ -1015,88 +1011,6 @@ function translateTurnVerbKey(
             return isRunning && !verb.endsWith('...') ? `${verb}...` : verb
     }
 }
-function describeCompactionStep(
-    row: TurnToolRow,
-    zh: boolean,
-    isRunning: boolean,
-    isQueued: boolean
-): TurnToolStepDescriptor {
-    const input = row.block.tool.input
-    const record = isObject(input) ? input : {}
-    const frame = isObject(record.frame) ? record.frame : null
-    const strategy = stringField(record, ['action', 'strategy']) ?? stringField(frame, ['action', 'strategy'])
-    const reason = stringField(record, ['reason', 'trigger']) ?? stringField(frame, ['reason', 'trigger'])
-    const outcome = typeof record.outcome === 'string'
-        ? record.outcome
-        : frame?.aborted === true
-            ? 'aborted'
-            : null
-    const result = isObject(record.result) ? record.result : isObject(frame?.result) ? frame.result : null
-    const tokensBefore = typeof result?.tokensBefore === 'number'
-        ? result.tokensBefore
-        : typeof record.tokensBefore === 'number'
-            ? record.tokensBefore
-            : typeof record.preTokens === 'number'
-                ? record.preTokens
-                : null
-    const tokensSaved = typeof record.tokensSaved === 'number' ? record.tokensSaved : null
-    const shortSummary = typeof result?.shortSummary === 'string' && result.shortSummary.trim()
-        ? result.shortSummary.trim()
-        : null
-    const errorMessage = stringField(record, ['errorMessage', 'message']) ?? stringField(frame, ['errorMessage'])
-
-    const directArchive = isObject(result?.archive) ? result.archive : null
-    const preserveData = isObject(result?.preserveData) ? result.preserveData : null
-    const legacyArchive = isObject(preserveData?.snapcompact) ? preserveData.snapcompact : null
-    const arch = directArchive ?? legacyArchive
-    const totalChars = typeof arch?.totalChars === 'number' ? arch.totalChars : null
-    const frameCount = typeof arch?.frameCount === 'number'
-        ? arch.frameCount
-        : Array.isArray(arch?.frames)
-            ? arch.frames.length
-            : null
-    const archiveLabel = totalChars !== null && frameCount !== null
-        ? (zh
-            ? `已归档 ${formatCompactCount(totalChars)} 字符 · ${frameCount} 帧`
-            : `${formatCompactCount(totalChars)} chars archived · ${frameCount} ${frameCount === 1 ? 'frame' : 'frames'}`)
-        : null
-
-    const verbLabel = isRunning
-        ? (zh ? '正在压缩上下文' : 'Compacting conversation')
-        : row.error
-            ? (zh ? '上下文压缩失败' : 'Compaction failed')
-            : outcome === 'aborted'
-                ? (zh ? '已取消上下文压缩' : 'Compaction cancelled')
-                : (zh ? '已压缩上下文' : 'Compacted conversation')
-
-    const intentLabel = isRunning || isQueued
-        ? [strategy, reason?.replaceAll('-', ' ')].filter(Boolean).join(' · ')
-        : ''
-    const tokensBeforeLabel = tokensSaved !== null && tokensSaved > 0
-        ? (zh ? `节省 ${formatCompactCount(tokensSaved)} tokens` : `saved ${formatCompactCount(tokensSaved)} tokens`)
-        : tokensBefore !== null && tokensBefore > 0
-            ? `${formatCompactCount(tokensBefore)} tokens`
-            : null
-
-    return {
-        isRunning,
-        isQueued,
-        verbLabel,
-        intentLabel,
-        secondaryBadge: !isRunning && !isQueued ? tokensBeforeLabel : null,
-        preview: {
-            kind: 'compaction',
-            strategy,
-            trigger: reason ? reason.replaceAll('-', ' ') : null,
-            tokensBeforeLabel,
-            archiveLabel,
-            summary: shortSummary,
-            errorMessage: row.error ? errorMessage : null,
-            isRunning,
-        },
-    }
-}
-
 export function describeTurnToolStep(
     row: TurnToolRow,
     lang: 'en' | 'zh-CN' = 'en'
@@ -1107,119 +1021,30 @@ export function describeTurnToolStep(
     const isQueued = tool.state === 'pending' && !row.permission
     const isRunning = tool.state === 'running' || (tool.state === 'pending' && row.permission)
     const zh = lang === 'zh-CN'
-
-    if (rawName === 'ContextCompaction' || row.verb === 'turn.verb.compaction') {
-        return describeCompactionStep(row, zh, isRunning, isQueued)
-    }
-
     const activeIntent = isRunning || isQueued ? intentSentence(tool) : null
 
-    if (isWebFetchTool(rawName, name)) {
-        const url = stringField(tool.input, ['url', 'uri']) ?? ''
-        const domain = url ? extractDomain(url) : ''
-        const pageTitle = intentSentence(tool)
-            ?? (isObject(tool.result) && typeof tool.result.title === 'string' ? tool.result.title : null)
-            ?? (domain || url || 'page')
-        const text = extractResultText(tool.result)
-        const linesCount = isObject(tool.result) && typeof tool.result.lines === 'number'
-            ? tool.result.lines
-            : text
-                ? text.split(/\r?\n/).length
-                : 0
-        const bytes = isObject(tool.result) && typeof tool.result.bytes === 'number'
-            ? tool.result.bytes
-            : text.length
-        const sizeLabel = bytes >= 1024 ? `${(bytes / 1024).toFixed(1)} KB` : `${bytes} B`
-        return {
+    const matchedPlugin = findMatchingToolPreviewPlugin({
+        row,
+        tool,
+        rawName,
+        resolvedName: name,
+        isRunning,
+        isQueued,
+        zh,
+        activeIntent,
+    })
+    if (matchedPlugin) {
+        return matchedPlugin.describe({
+            row,
+            tool,
+            rawName,
+            resolvedName: name,
             isRunning,
             isQueued,
-            verbLabel: zh
-                ? (isRunning ? '正在抓取' : isQueued ? '待抓取' : '已抓取')
-                : (isRunning ? 'Fetching' : isQueued ? 'Queued fetch' : 'Fetched'),
-            intentLabel: isRunning || isQueued ? pageTitle : (domain || url || ''),
-            secondaryBadge: null,
-            preview: {
-                kind: 'web-fetch',
-                title: pageTitle,
-                url: url || '',
-                domain: domain || '',
-                excerpt: text ? truncate(text, 360) : '',
-                sizeLabel,
-                linesCount,
-            },
-        }
+            zh,
+            activeIntent,
+        })
     }
-
-    if (isWebSearchTool(rawName, name)) {
-        const query = stringField(tool.input, ['query', 'q']) ?? ''
-        const cleanQuery = query && query !== 'the web' ? query : ''
-        const results = extractWebSearchResults(tool.result)
-        const count = results.length
-        return {
-            isRunning,
-            isQueued,
-            verbLabel: zh
-                ? (isRunning ? '正在搜索网页' : isQueued ? '待搜索网页' : '已搜索网页')
-                : (isRunning ? 'Searching the web' : isQueued ? 'Queued web search' : 'Searched the web'),
-            intentLabel: isRunning || isQueued ? (activeIntent ?? (cleanQuery || row.intent)) : cleanQuery,
-            secondaryBadge: !isRunning && !isQueued && count > 0
-                ? (zh ? `${count} 条结果` : `${count} ${count === 1 ? 'result' : 'results'}`)
-                : null,
-            preview: {
-                kind: 'web-search',
-                query: cleanQuery,
-                results,
-            },
-        }
-    }
-
-    if (name === 'Bash' || name === 'CodexBash') {
-        const command = stringField(tool.input, ['command', 'cmd']) ?? ''
-        const description = intentSentence(tool)
-        const output = extractResultText(tool.result)
-        return {
-            isRunning,
-            isQueued,
-            verbLabel: zh
-                ? (isRunning ? '正在运行' : isQueued ? '待运行' : '已运行')
-                : (isRunning ? 'Running' : isQueued ? 'Queued' : 'Ran'),
-            intentLabel: isRunning || isQueued
-                ? (description ?? (command ? firstLine(command) : row.intent))
-                : (command ? firstLine(command) : ''),
-            secondaryBadge: null,
-            preview: {
-                kind: 'bash',
-                command: command || row.intent,
-                description,
-                output,
-                isError: row.error,
-            },
-        }
-    }
-
-    if (name === 'Read') {
-        const filePath = stringField(tool.input, ['file_path', 'path']) ?? ''
-        const normalized = normalizeReadFilePath(filePath)
-        const targetLabel = normalized.fileName || (filePath ? basename(filePath) : '')
-        const content = extractResultText(tool.result)
-        const lineCount = content ? content.split(/\r?\n/).length : 0
-        return {
-            isRunning,
-            isQueued,
-            verbLabel: zh
-                ? (isRunning ? '正在查看' : isQueued ? '待查看' : '已查看')
-                : (isRunning ? 'Viewing' : isQueued ? 'Queued view' : 'Viewed'),
-            intentLabel: isRunning || isQueued ? (activeIntent ?? (targetLabel || row.intent)) : targetLabel,
-            secondaryBadge: !isRunning && !isQueued && lineCount > 0 ? (zh ? `${lineCount} 行` : `${lineCount} lines`) : null,
-            preview: {
-                kind: 'file-read',
-                filePath: filePath || row.intent,
-                content,
-                lineCount,
-            },
-        }
-    }
-
     if (name === 'Write') {
         const rawTarget = stringField(tool.input, ['file_path', 'path'])
         const agentTarget = parseAgentUriTarget(rawTarget)
@@ -1273,50 +1098,6 @@ export function describeTurnToolStep(
             },
         }
     }
-
-    if (name === 'Edit' || name === 'MultiEdit' || name === 'Write') {
-        const filePath = stringField(tool.input, ['file_path', 'path']) ?? row.intent ?? ''
-        const oldStr = stringField(tool.input, ['old_string', 'oldText']) ?? ''
-        const newStr = stringField(tool.input, ['new_string', 'newText', 'content']) ?? ''
-        const oldLines = oldStr ? oldStr.split(/\r?\n/) : []
-        const newLines = newStr ? newStr.split(/\r?\n/) : []
-        const lines: TurnDiffLine[] = [
-            ...oldLines.slice(0, 8).map((text): TurnDiffLine => ({ type: 'del', text })),
-            ...newLines.slice(0, 10).map((text): TurnDiffLine => ({ type: 'add', text })),
-        ]
-        const added = newLines.length
-        const removed = oldLines.length
-        const badge = !isRunning && !isQueued && (added > 0 || removed > 0)
-            ? `+${added}${removed > 0 ? ` -${removed}` : ''}`
-            : null
-        return {
-            isRunning,
-            isQueued,
-            verbLabel: zh
-                ? (isRunning
-                    ? (name === 'Write' ? '正在创建' : '正在编辑')
-                    : isQueued
-                        ? (name === 'Write' ? '待创建' : '待编辑')
-                        : (name === 'Write' ? '已创建' : '已编辑'))
-                : (isRunning
-                    ? (name === 'Write' ? 'Creating' : 'Editing')
-                    : isQueued
-                        ? (name === 'Write' ? 'Queued create' : 'Queued edit')
-                        : (name === 'Write' ? 'Created' : 'Edited')),
-            intentLabel: isRunning || isQueued
-                ? (activeIntent ?? (filePath ? basename(filePath) : row.intent))
-                : (filePath ? basename(filePath) : ''),
-            secondaryBadge: badge,
-            preview: {
-                kind: 'file-diff',
-                filePath: filePath || row.intent,
-                added,
-                removed,
-                lines,
-            },
-        }
-    }
-
     if (name === 'Grep' || name === 'Glob') {
         const pattern = stringField(tool.input, ['pattern', 'query', 'pat']) ?? ''
         const target = stringField(tool.input, ['path', 'include'])
