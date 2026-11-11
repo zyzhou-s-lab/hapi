@@ -1768,15 +1768,12 @@ describe('reduceTimeline', () => {
 
         const activeResult = reduceTimeline(messages, {
             ...makeContext(),
-            activeTurnId: 'turn-active',
-            sessionThinking: true
+            turnStates: new Map([['turn-active', 'running']])
         })
         expect(activeResult.toolBlocksById.get('call-running-bash')?.tool.state).toBe('running')
 
         const idleResult = reduceTimeline(messages, {
-            ...makeContext(),
-            activeTurnId: null,
-            sessionThinking: false
+            ...makeContext()
         })
         expect(idleResult.toolBlocksById.get('call-running-bash')?.tool).toMatchObject({
             state: 'running', completionSource: 'unresolved', completedAt: null

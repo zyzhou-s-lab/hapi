@@ -64,8 +64,6 @@ export type ReduceChatBlocksOptions = {
     prefixGoalSummary?: ThreadGoalPrefixSummary | null
     prefixToolIds?: ReadonlySet<string>
     oldestWindowMessageTime?: number | null
-    activeTurnId?: string | null
-    sessionThinking?: boolean
     retainedTimelineSuffix?: RetainedTimelineSuffix | null
 }
 
@@ -270,9 +268,7 @@ export function reduceChatBlocks(
         consumedGroupIds,
         titleChangesByToolUseId,
         emittedTitleChangeToolUseIds,
-        turnStates,
-        activeTurnId: options.activeTurnId,
-        sessionThinking: options.sessionThinking
+        turnStates
     }
     const retained = options.retainedTimelineSuffix
     const suffixStart = retained ? root.findIndex((msg) => msg.id === retained.startMessageId) : -1

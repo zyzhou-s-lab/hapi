@@ -305,8 +305,6 @@ export function reduceTimeline(
         consumedGroupIds: Set<string>
         titleChangesByToolUseId: Map<string, string>
         emittedTitleChangeToolUseIds: Set<string>
-        activeTurnId?: string | null
-        sessionThinking?: boolean
         turnStates?: ReadonlyMap<string, TurnState>
     }
 ): { blocks: ChatBlock[]; toolBlocksById: Map<string, ToolCallBlock>; hasReadyEvent: boolean } {

@@ -906,6 +906,97 @@ describe('SessionEntityStore', () => {
         expect(snapFinal.turnsById.get(bgTaskTurnId)).toEqual(coldSnap.turnsById.get(bgTaskTurnId))
         expect(snapFinal.turnsById.get(activeTurnId)).toEqual(coldSnap.turnsById.get(activeTurnId))
     })
+
+    it('updates only the last turn header on sessionThinking/activeTurnId toggles and preserves incremental-tail cache', () => {
+        const store = createSessionEntityStore()
+        let revision = 0
+        const baseMessages: DecryptedMessage[] = [
+            makeUserMessage('u1', 'First prompt', 1),
+            makeAssistantTextMessage('a1', 'First response', 2),
+            makeUserMessage('u2', 'Second prompt', 3),
+            makeAssistantTextMessage('a2', 'Second response', 4),
+        ]
+        const initialSnap = store.reconcileInput({
+            sessionId: 'sess-thinking-fastpath',
+            messages: baseMessages,
+            agentState: null,
+            hasMoreMessages: false,
+            codexExplorationCollapsed: false,
+            activeTurnId: null,
+            sessionThinking: false,
+            windowOperation: {
+                kind: 'replace-window',
+                reason: 'initial',
+                baseRevision: revision,
+                nextRevision: ++revision,
+                generation: 1,
+                removedIds: [],
+            },
+        })
+        expect(initialSnap.reductionMode).toBe('full')
+        const assistantEntries = initialSnap.timelineIndex.filter((e) => e.role === 'assistant')
+        const firstTurnId = assistantEntries[0]!.id
+        const lastTurnId = assistantEntries[1]!.id
+        expect(store.getTurnHeader(lastTurnId)?.isRunning).toBe(false)
+
+        const firstHeaderListener = vi.fn()
+        const lastHeaderListener = vi.fn()
+        const lastTurnListener = vi.fn()
+        const lastLayoutListener = vi.fn()
+        const runtimeTopologyListener = vi.fn()
+        store.subscribeEntity(`header:${firstTurnId}`, firstHeaderListener)
+        store.subscribeEntity(`header:${lastTurnId}`, lastHeaderListener)
+        store.subscribeEntity(lastTurnId, lastTurnListener)
+        store.subscribeEntity(`layout:${lastTurnId}`, lastLayoutListener)
+        store.subscribeRuntimeTopology(runtimeTopologyListener)
+
+        const reduceSpy = vi.mocked(reduceChatBlocks)
+        reduceSpy.mockClear()
+
+        // Toggle sessionThinking -> true and activeTurnId -> 'turn-2' with identical messages
+        const thinkingSnap = store.reconcileInput({
+            sessionId: 'sess-thinking-fastpath',
+            messages: baseMessages,
+            agentState: null,
+            hasMoreMessages: false,
+            codexExplorationCollapsed: false,
+            activeTurnId: 'turn-2',
+            sessionThinking: true,
+        })
+        expect(thinkingSnap.reductionMode).toBe('noop')
+        expect(thinkingSnap.replay).toEqual({ rows: 0, reason: 'session-thinking-only' })
+        expect(reduceSpy).not.toHaveBeenCalled()
+        expect(store.getTurnHeader(lastTurnId)?.isRunning).toBe(true)
+        expect(store.getTurnHeader(firstTurnId)?.isRunning).toBe(false)
+        expect(lastHeaderListener).toHaveBeenCalledTimes(1)
+        expect(firstHeaderListener).not.toHaveBeenCalled()
+        expect(lastTurnListener).not.toHaveBeenCalled()
+        expect(lastLayoutListener).not.toHaveBeenCalled()
+        expect(runtimeTopologyListener).toHaveBeenCalledTimes(1)
+
+        // Stream a new message in the tail while also toggling sessionThinking -> false
+        const appendedMsg = makeAssistantTextMessage('a2', 'Second response updated', 4)
+        const nextMessages = [...baseMessages.slice(0, 3), appendedMsg]
+        const tailSnap = store.reconcileInput({
+            sessionId: 'sess-thinking-fastpath',
+            messages: nextMessages,
+            agentState: null,
+            hasMoreMessages: false,
+            codexExplorationCollapsed: false,
+            activeTurnId: null,
+            sessionThinking: false,
+            windowOperation: {
+                kind: 'append-tail',
+                messages: [appendedMsg],
+                baseRevision: revision,
+                nextRevision: ++revision,
+                generation: 1,
+                removedIds: [],
+            },
+        })
+        expect(tailSnap.reductionMode).toBe('incremental-tail')
+        expect(store.getTurnHeader(lastTurnId)?.isRunning).toBe(false)
+    })
 })
 
 describe('partitionTurn and projectTurn reference stabilization', () => {

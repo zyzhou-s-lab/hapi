@@ -1163,10 +1163,16 @@ export class SessionEntityStore {
             && prevInput.backgroundTaskCount === input.backgroundTaskCount
             && prevInput.hasMoreMessages === input.hasMoreMessages
             && prevInput.codexExplorationCollapsed === input.codexExplorationCollapsed
-            && prevInput.activeTurnId === input.activeTurnId
-            && prevInput.sessionThinking === input.sessionThinking
         ) {
-            return this.snapshot
+            const nextThinking = Boolean(input.sessionThinking)
+            this.lastInput = {
+                ...input,
+                windowOperation: input.windowOperation ?? prevInput.windowOperation,
+            }
+            if (Boolean(prevInput.sessionThinking) === nextThinking) {
+                return this.snapshot
+            }
+            return this.reconcileSessionThinkingOnly(nextThinking, options)
         }
         this.lastInput = input
 
@@ -1198,8 +1204,6 @@ export class SessionEntityStore {
         let replayedRows = 0
 
         if (!forceFullReplay
-            && prevInput?.activeTurnId === input.activeTurnId
-            && prevInput?.sessionThinking === input.sessionThinking
             && canSliceRawTailFromPrefixCache(input, this.reductionCache.prefix)) {
             let workingPrefixCache = this.reductionCache.prefix
             const rawTail = input.messages.slice(workingPrefixCache.rawPrefix.length)
@@ -1299,8 +1303,6 @@ export class SessionEntityStore {
                 prefixGoalSummary: prefixCache.prefixGoalSummary,
                 prefixToolIds: prefixCache.prefixToolIds,
                 oldestWindowMessageTime: prefixCache.prefixMessages[0]?.createdAt ?? null,
-                activeTurnId: input.activeTurnId,
-                sessionThinking: input.sessionThinking,
             })
             for (const id of this.prevTailById.keys()) {
                 incrementalDirtyIds.add(id)
@@ -1386,8 +1388,6 @@ export class SessionEntityStore {
                 && operation?.kind === 'prepend-history'
                 && this.reductionCache.timeline !== null
                 && prevInput?.agentState === input.agentState
-                && prevInput?.activeTurnId === input.activeTurnId
-                && prevInput?.sessionThinking === input.sessionThinking
                 && !Object.keys(input.agentState?.requests ?? {}).length
                 ? findRetainedTimelineSuffix(normalized, prevSnapshot.normalizedMessages, this.reductionCache.timeline)
                 : null
@@ -1399,8 +1399,6 @@ export class SessionEntityStore {
 
             const fullReduced = reduceChatBlocks(normalized, input.agentState, {
                 goalStateMessages: goalNormalized,
-                activeTurnId: input.activeTurnId,
-                sessionThinking: input.sessionThinking,
                 retainedTimelineSuffix,
             })
             this.reductionCache.timeline = fullReduced.timeline
@@ -1797,6 +1795,75 @@ export class SessionEntityStore {
             reductionMode,
             replay: { rows: replayedRows, reason: replayReason },
             splitIndex,
+        }
+        this.snapshot = nextSnapshot
+        if (options?.deferNotifications) {
+            if (!this.pendingNotificationBaseline) {
+                this.pendingNotificationBaseline = prevSnapshot
+            }
+        } else {
+            const baseline = this.pendingNotificationBaseline ?? prevSnapshot
+            if (this.pendingNotificationBaseline && this.dirtyEntityIds !== null) {
+                if (this.pendingDirtyEntityIds === null) {
+                    this.dirtyEntityIds = null
+                } else {
+                    this.dirtyEntityIds = new Set(this.pendingDirtyEntityIds)
+                }
+            }
+            this.pendingNotificationBaseline = null
+            this.pendingDirtyEntityIds = new Set()
+            this.notifyChangedListeners(baseline, nextSnapshot)
+        }
+        return nextSnapshot
+    }
+
+    private reconcileSessionThinkingOnly(
+        sessionThinking: boolean,
+        options?: { deferNotifications?: boolean }
+    ): SessionEntityStoreSnapshot {
+        const prevSnapshot = this.snapshot
+        const lastEntryId = prevSnapshot.timelineIndex[prevSnapshot.timelineIndex.length - 1]?.id ?? null
+        if (!lastEntryId) {
+            return prevSnapshot
+        }
+        const lastTurn = prevSnapshot.turnsById.get(lastEntryId)
+        const prevHeader = prevSnapshot.turnHeadersById.get(lastEntryId)
+        if (!lastTurn || !prevHeader) {
+            return prevSnapshot
+        }
+        const hasLiveProse = lastTurn.blocks.some(
+            (block) => (block.kind === 'agent-text' || block.kind === 'agent-reasoning') && 'live' in block && block.live === true
+        )
+        const nextIsRunning = sessionThinking || prevHeader.hasRunningTool || hasLiveProse
+        if (nextIsRunning === prevHeader.isRunning) {
+            return prevSnapshot
+        }
+        const nextHeader: TurnHeaderSnapshot = {
+            ...prevHeader,
+            isRunning: nextIsRunning,
+        }
+        let turnHeadersById: ReadonlyMap<string, TurnHeaderSnapshot>
+        if (this.reductionCache.prefix && this.prevTailTurnHeadersById.has(lastEntryId)) {
+            const nextTailHeaders = new Map(this.prevTailTurnHeadersById)
+            nextTailHeaders.set(lastEntryId, nextHeader)
+            this.prevTailTurnHeadersById = nextTailHeaders
+            turnHeadersById = new DisjointOverlayMap(this.reductionCache.prefix.prefixTurnHeadersById, nextTailHeaders)
+        } else {
+            const nextHeaders = new Map(prevSnapshot.turnHeadersById)
+            nextHeaders.set(lastEntryId, nextHeader)
+            turnHeadersById = nextHeaders
+        }
+        const headerEntityId = `header:${lastEntryId}`
+        this.dirtyEntityIds = new Set([headerEntityId])
+        if (this.pendingDirtyEntityIds !== null) {
+            this.pendingDirtyEntityIds.add(headerEntityId)
+        }
+        const nextSnapshot: SessionEntityStoreSnapshot = {
+            ...prevSnapshot,
+            turnHeadersById,
+            runtimeTopologyVersion: prevSnapshot.runtimeTopologyVersion + 1,
+            reductionMode: 'noop',
+            replay: { rows: 0, reason: 'session-thinking-only' },
         }
         this.snapshot = nextSnapshot
         if (options?.deferNotifications) {

@@ -87,7 +87,7 @@ describe('tool outcome authority', () => {
             const reduced = reduceTimeline([
                 agent('tool-call', [call('tool', { status })], { turnId: 'owner' }),
                 ...messages
-            ], context({ activeTurnId: null, sessionThinking: false }))
+            ], context())
             expect(reduced.toolBlocksById.get('tool')?.tool).toMatchObject({
                 state: status === 'pending' ? 'pending' : 'running',
                 completionSource: 'unresolved',
@@ -104,8 +104,6 @@ describe('tool outcome authority', () => {
                 agent('other', [call('other')], { turnId: 'other-owner' }),
                 agent('unattributed', [call('unattributed')])
             ], context({
-                activeTurnId: 'other-owner',
-                sessionThinking: true,
                 turnStates: new Map([['closed-owner', turnState], ['other-owner', 'running']])
             }))
             expect(reduced.toolBlocksById.get('owned')?.tool).toMatchObject({
@@ -123,8 +121,6 @@ describe('tool outcome authority', () => {
         const reduced = reduceTimeline([
             agent('tool-call', [call('tool')], { turnId: 'owner' }), ready, nextUser
         ], context({
-            activeTurnId: null,
-            sessionThinking: false,
             turnStates: turnState === undefined ? undefined : new Map([['owner', turnState]])
         }))
         expect(reduced.toolBlocksById.get('tool')?.tool).toMatchObject({
@@ -132,12 +128,10 @@ describe('tool outcome authority', () => {
         })
     })
 
-    it('does not treat a missing activeTurnId or a closed unrelated turn as tool ownership', () => {
+    it('does not treat a closed unrelated turn as tool ownership', () => {
         const reduced = reduceTimeline([
             agent('tool-call', [call('tool')]), ready
         ], context({
-            activeTurnId: null,
-            sessionThinking: true,
             turnStates: new Map([['closed-owner', 'cutoff']])
         }))
         expect(reduced.toolBlocksById.get('tool')?.tool).toMatchObject({
