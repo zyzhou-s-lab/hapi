@@ -675,6 +675,7 @@ export class SessionEntityStore {
     private prevTailTurnHeadersById: ReadonlyMap<string, TurnHeaderSnapshot> = EMPTY_TURN_HEADERS
     private prevTailBlocks: readonly ChatBlock[] = EMPTY_BLOCKS
     private prevTailVisibleBlocks: readonly VisibleChatBlock[] = EMPTY_VISIBLE_BLOCKS
+    private prevTailVisibleById: ReadonlyMap<string, VisibleChatBlock> = EMPTY_VISIBLE_BY_ID
     private prevTailOutlineItems: ConversationOutlineItem[] = []
     private dirtyEntityIds: Set<string> | null = null
     private pendingDirtyEntityIds: Set<string> | null = new Set()
@@ -845,6 +846,7 @@ export class SessionEntityStore {
         this.prevTailTurnHeadersById = EMPTY_TURN_HEADERS
         this.prevTailBlocks = EMPTY_BLOCKS
         this.prevTailVisibleBlocks = EMPTY_VISIBLE_BLOCKS
+        this.prevTailVisibleById = EMPTY_VISIBLE_BY_ID
         this.prevTailOutlineItems = []
         this.dirtyEntityIds = null
         this.pendingDirtyEntityIds = new Set()
@@ -1165,6 +1167,7 @@ export class SessionEntityStore {
             this.prevTailTurnHeadersById = EMPTY_TURN_HEADERS
             this.prevTailBlocks = EMPTY_BLOCKS
             this.prevTailVisibleBlocks = EMPTY_VISIBLE_BLOCKS
+            this.prevTailVisibleById = EMPTY_VISIBLE_BY_ID
             this.prevTailOutlineItems = []
             this.dirtyEntityIds = null
             this.pendingDirtyEntityIds = new Set()
@@ -1243,6 +1246,12 @@ export class SessionEntityStore {
                 )
             )
         )
+        const fastPathSnapshot = !sessionChanged && !forceFullReplay && prevInput
+            ? this.tryReconcileLiveStreamDelta(input, prevInput, operation, continuousOperation, options)
+            : null
+        if (fastPathSnapshot) {
+            return fastPathSnapshot
+        }
         let replayReason = forceFullReplay ? 'window-revision-or-generation-reset' : 'dependency-fallback'
         let replayedRows = 0
 
@@ -1543,6 +1552,7 @@ export class SessionEntityStore {
                     incrementalDirtyIds.add(entry.threadMessageId)
                 }
             }
+            this.prevTailVisibleById = tailVisibleById
             visibleById = canReuseBlocksWithThreadIds
                 ? prevSnapshot.visibleById
                 : new DisjointOverlayMap(prefixCache.prefixVisibleById, tailVisibleById)
@@ -1668,6 +1678,7 @@ export class SessionEntityStore {
                         reconciledById,
                         reconciledBlocks,
                         visibleBlocks,
+                        blocksWithThreadIds,
                         this.prevFullToolGroups,
                         turnsById,
                         turnLayoutsById,
@@ -1748,6 +1759,7 @@ export class SessionEntityStore {
                     reconciledById,
                     reconciledBlocks,
                     stableVisibleBlocks,
+                    blocksWithThreadIds,
                     fullVisibleGroups,
                     turnsById,
                     turnLayoutsById,
@@ -1759,6 +1771,7 @@ export class SessionEntityStore {
                 this.prevTailById = new Map()
                 this.prevTailBlocks = EMPTY_BLOCKS
                 this.prevTailVisibleBlocks = EMPTY_VISIBLE_BLOCKS
+                this.prevTailVisibleById = EMPTY_VISIBLE_BY_ID
                 this.prevTailToolGroups = []
                 this.prevTailTurnsById = EMPTY_TURNS_BY_ID
                 this.prevTailTurnLayoutsById = EMPTY_TURN_LAYOUTS
@@ -1899,6 +1912,388 @@ export class SessionEntityStore {
         return nextSnapshot
     }
 
+    private tryReconcileLiveStreamDelta(
+        input: SessionEntityStoreInput,
+        prevInput: SessionEntityStoreInput,
+        operation: WindowOperation | null | undefined,
+        continuousOperation: boolean,
+        options?: { deferNotifications?: boolean }
+    ): SessionEntityStoreSnapshot | null {
+        if (
+            prevInput.agentState !== input.agentState
+            || prevInput.metadata !== input.metadata
+            || Boolean(prevInput.sessionThinking) !== Boolean(input.sessionThinking)
+            || prevInput.backgroundTaskCount !== input.backgroundTaskCount
+            || prevInput.hasMoreMessages !== input.hasMoreMessages
+            || prevInput.codexExplorationCollapsed !== input.codexExplorationCollapsed
+            || prevInput.goalSourceMessages !== input.goalSourceMessages
+            || input.goalSourceMessages !== undefined
+        ) {
+            return null
+        }
+        if (operation && (operation.kind !== 'upsert-live-stream' || !continuousOperation)) {
+            return null
+        }
+        const prevMessages = prevInput.messages
+        const nextMessages = input.messages
+        if (prevMessages.length === 0 || prevMessages.length !== nextMessages.length) {
+            return null
+        }
+        const lastIdx = nextMessages.length - 1
+        for (let i = 0; i < lastIdx; i += 1) {
+            if (prevMessages[i] !== nextMessages[i]) {
+                return null
+            }
+        }
+        const prevRaw = prevMessages[lastIdx]!
+        const nextRaw = nextMessages[lastIdx]!
+        if (
+            prevRaw.status === 'sending'
+            || nextRaw.status === 'sending'
+            || isDisplayedInQueueBar(prevRaw)
+            || isDisplayedInQueueBar(nextRaw)
+        ) {
+            return null
+        }
+        const prevSnapshot = this.snapshot
+        if (
+            prevSnapshot.visibleMessages.length === 0
+            || prevSnapshot.visibleMessages[prevSnapshot.visibleMessages.length - 1] !== prevRaw
+            || prevSnapshot.normalizedMessages.length === 0
+            || prevSnapshot.blocks.length === 0
+            || prevSnapshot.visibleBlocks.length === 0
+            || prevSnapshot.blocksWithThreadIds.length === 0
+        ) {
+            return null
+        }
+        const prevNorm = prevSnapshot.normalizedMessages[prevSnapshot.normalizedMessages.length - 1]!
+        let nextNorm = this.normalizedCache.get(nextRaw)
+        if (nextNorm === undefined) {
+            nextNorm = normalizeDecryptedMessage(nextRaw)
+            this.normalizedCache.set(nextRaw, nextNorm)
+        }
+        if (!nextNorm || nextNorm.role !== 'agent' || prevNorm.role !== 'agent') {
+            return null
+        }
+        if (
+            nextNorm.isSidechain
+            || prevNorm.isSidechain
+            || nextNorm.parentToolUseId
+            || prevNorm.parentToolUseId
+            || nextNorm.localId !== prevNorm.localId
+            || nextNorm.usage !== undefined
+            || prevNorm.usage !== undefined
+            || nextNorm.model !== prevNorm.model
+        ) {
+            return null
+        }
+        const prevStreamId = prevNorm.streamSnapshot?.id ?? null
+        const nextStreamId = nextNorm.streamSnapshot?.id ?? null
+        const prevLive = Boolean(prevNorm.streamSnapshot?.live ?? prevNorm.live)
+        const nextLive = Boolean(nextNorm.streamSnapshot?.live ?? nextNorm.live)
+        if (!prevLive || !nextLive) {
+            return null
+        }
+        if (prevStreamId !== nextStreamId) {
+            return null
+        }
+        if (prevStreamId === null && prevRaw.id !== nextRaw.id) {
+            return null
+        }
+        if (prevNorm.content.length !== 1 || nextNorm.content.length !== 1) {
+            return null
+        }
+        const prevContent = prevNorm.content[0]!
+        const nextContent = nextNorm.content[0]!
+        if (prevContent.type !== nextContent.type) {
+            return null
+        }
+        const isText = nextContent.type === 'text' && prevContent.type === 'text'
+        const isReasoning = nextContent.type === 'reasoning' && prevContent.type === 'reasoning'
+        if (!isText && !isReasoning) {
+            return null
+        }
+        const prevPhase = prevContent.phase
+        const nextPhase = nextContent.phase
+        if (prevPhase !== nextPhase) {
+            return null
+        }
+        const nextText = nextContent.text
+        if (isText && (nextText.includes('<notify_summary>') || prevContent.text.includes('<notify_summary>'))) {
+            return null
+        }
+
+        const prevBlock = prevSnapshot.blocks[prevSnapshot.blocks.length - 1]!
+        const expectedKind = isText ? 'agent-text' : 'agent-reasoning'
+        const expectedBlockId = `${nextStreamId ?? nextRaw.id}:0`
+        const prevExpectedBlockId = `${prevStreamId ?? prevRaw.id}:0`
+        if (
+            prevBlock.kind !== expectedKind
+            || prevBlock.id !== expectedBlockId
+            || prevBlock.id !== prevExpectedBlockId
+            || prevBlock.createdAt !== prevNorm.createdAt
+        ) {
+            return null
+        }
+        if (Boolean(prevBlock.text.trim()) !== Boolean(nextText.trim())) {
+            return null
+        }
+        if (prevSnapshot.visibleBlocks[prevSnapshot.visibleBlocks.length - 1] !== prevBlock) {
+            return null
+        }
+        const lastEntryIdx = prevSnapshot.blocksWithThreadIds.length - 1
+        const prevEntry = prevSnapshot.blocksWithThreadIds[lastEntryIdx]!
+        if (prevEntry.block !== prevBlock) {
+            return null
+        }
+        let firstTurnEntryIdx = lastEntryIdx
+        while (
+            firstTurnEntryIdx > 0
+            && visibleBlockRole(prevSnapshot.blocksWithThreadIds[firstTurnEntryIdx - 1]!.block) === 'assistant'
+        ) {
+            firstTurnEntryIdx -= 1
+        }
+        const turnId = prevSnapshot.blocksWithThreadIds[firstTurnEntryIdx]!.threadMessageId
+        const prevTurn = prevSnapshot.turnsById.get(turnId)
+        if (
+            !prevTurn
+            || prevTurn.blocks.length === 0
+            || prevTurn.blocks.length !== lastEntryIdx - firstTurnEntryIdx + 1
+            || prevTurn.blocks[prevTurn.blocks.length - 1] !== prevBlock
+            || prevTurn.blocks[0] !== prevSnapshot.blocksWithThreadIds[firstTurnEntryIdx]?.block
+            || prevTurn.parts.length !== prevTurn.blocks.length
+        ) {
+            return null
+        }
+        if (
+            this.reductionCache.timeline !== null
+            && (
+                this.reductionCache.timeline.blocks.length === 0
+                || this.reductionCache.timeline.blocks[this.reductionCache.timeline.blocks.length - 1]?.id !== prevBlock.id
+            )
+        ) {
+            return null
+        }
+        const prefixCache = this.reductionCache.prefix
+        if (prefixCache) {
+            if (
+                prefixCache.prefixSeenMessageIds.has(nextRaw.id)
+                || (nextStreamId !== null && prefixCache.prefixStreamIds.has(nextStreamId))
+                || this.prevTailBlocks.length === 0
+                || this.prevTailBlocks[this.prevTailBlocks.length - 1] !== prevBlock
+                || this.prevTailVisibleBlocks.length === 0
+                || this.prevTailVisibleBlocks[this.prevTailVisibleBlocks.length - 1] !== prevBlock
+                || this.prevTailTurnsById.get(turnId) !== prevTurn
+            ) {
+                return null
+            }
+        }
+
+        const singleReduced = reduceChatBlocks([nextNorm], input.agentState)
+        if (singleReduced.blocks.length !== 1 || singleReduced.timeline.blocks.length !== 1) {
+            return null
+        }
+        const reducedBlock = singleReduced.blocks[0]!
+        if (
+            reducedBlock.id !== prevBlock.id
+            || reducedBlock.kind !== prevBlock.kind
+            || (reducedBlock.kind !== 'agent-text' && reducedBlock.kind !== 'agent-reasoning')
+        ) {
+            return null
+        }
+        const singleReconciled = reconcileChatBlocks(
+            singleReduced.blocks,
+            new Map<string, ChatBlock>([[prevBlock.id, prevBlock]])
+        )
+        const nextBlock = singleReconciled.blocks[0]!
+
+        if (this.reductionCache.timeline) {
+            const nextTimelineBlocks = this.reductionCache.timeline.blocks.slice()
+            nextTimelineBlocks[nextTimelineBlocks.length - 1] = singleReduced.timeline.blocks[0]!
+            this.reductionCache.timeline = {
+                blocks: nextTimelineBlocks,
+                hasReadyEvent: this.reductionCache.timeline.hasReadyEvent,
+            }
+        }
+
+        const nextVisibleMessages = prevRaw === nextRaw
+            ? prevSnapshot.visibleMessages
+            : (() => {
+                const copy = prevSnapshot.visibleMessages.slice()
+                copy[copy.length - 1] = nextRaw
+                return copy
+            })()
+        const nextNormalizedMessages = prevNorm === nextNorm
+            ? prevSnapshot.normalizedMessages
+            : (() => {
+                const copy = prevSnapshot.normalizedMessages.slice()
+                copy[copy.length - 1] = nextNorm
+                return copy
+            })()
+
+        if (nextBlock === prevBlock) {
+            const unchangedSnapshot: SessionEntityStoreSnapshot = {
+                ...prevSnapshot,
+                visibleMessages: nextVisibleMessages,
+                normalizedMessages: nextNormalizedMessages,
+                hasLiveStreamingMessage: true,
+                reductionMode: 'incremental-tail',
+                replay: { rows: 1, reason: 'live-stream-fast-path' },
+            }
+            this.snapshot = unchangedSnapshot
+            return unchangedSnapshot
+        }
+
+        const nextBlocks = prevSnapshot.blocks.slice()
+        nextBlocks[nextBlocks.length - 1] = nextBlock
+        const nextVisibleBlocks = prevSnapshot.visibleBlocks.slice()
+        nextVisibleBlocks[nextVisibleBlocks.length - 1] = nextBlock
+
+        const nextTurnBlocks = prevTurn.blocks.slice()
+        nextTurnBlocks[nextTurnBlocks.length - 1] = nextBlock
+        const nextTurnTimestamp = nextBlock.createdAt === prevBlock.createdAt
+            ? prevTurn.timestamp
+            : nextTurnBlocks.reduce(
+                (latest, block) => Math.max(latest, getBlockPresentationTimestamp(block)),
+                0
+            )
+        const nextPart = visibleBlockToTurnContentPart(nextBlock, this.turnPartCache)
+        const nextTurnParts = prevTurn.parts.slice()
+        nextTurnParts[nextTurnParts.length - 1] = nextPart
+        const nextTurn: TurnEntitySnapshot = {
+            ...prevTurn,
+            timestamp: nextTurnTimestamp,
+            blocks: nextTurnBlocks,
+            parts: nextTurnParts,
+        }
+
+        const nextBlocksWithThreadIds = prevSnapshot.blocksWithThreadIds.slice()
+        const nextEntry: BlockWithThreadMessageId = {
+            ...prevEntry,
+            block: nextBlock,
+            timestamp: firstTurnEntryIdx === lastEntryIdx ? nextTurnTimestamp : getBlockPresentationTimestamp(nextBlock),
+        }
+        this.threadIdWrapperCache.set(nextBlock, nextEntry)
+        nextBlocksWithThreadIds[lastEntryIdx] = nextEntry
+        if (firstTurnEntryIdx !== lastEntryIdx && nextTurnTimestamp !== prevTurn.timestamp) {
+            const firstEntry = nextBlocksWithThreadIds[firstTurnEntryIdx]!
+            const updatedFirstEntry: BlockWithThreadMessageId = {
+                ...firstEntry,
+                timestamp: nextTurnTimestamp,
+            }
+            this.threadIdWrapperCache.set(firstEntry.block, updatedFirstEntry)
+            nextBlocksWithThreadIds[firstTurnEntryIdx] = updatedFirstEntry
+        }
+
+        const prevHeader = prevSnapshot.turnHeadersById.get(turnId)
+        const headerChanged = Boolean(prevHeader && prevHeader.timestamp !== nextTurnTimestamp)
+        const nextHeader = prevHeader && headerChanged
+            ? { ...prevHeader, timestamp: nextTurnTimestamp }
+            : prevHeader
+
+        let nextById: ChatBlocksById
+        let nextVisibleById: ReadonlyMap<string, VisibleChatBlock>
+        let nextTurnsById: ReadonlyMap<string, TurnEntitySnapshot>
+        let nextTurnHeadersById = prevSnapshot.turnHeadersById
+
+        if (prefixCache) {
+            const nextTailBlocks = this.prevTailBlocks.slice()
+            nextTailBlocks[nextTailBlocks.length - 1] = nextBlock
+            this.prevTailBlocks = nextTailBlocks
+
+            const nextTailVisibleBlocks = this.prevTailVisibleBlocks.slice()
+            nextTailVisibleBlocks[nextTailVisibleBlocks.length - 1] = nextBlock
+            this.prevTailVisibleBlocks = nextTailVisibleBlocks
+
+            const nextTailById = new Map(this.prevTailById)
+            nextTailById.set(nextBlock.id, nextBlock)
+            this.prevTailById = nextTailById
+            nextById = new DisjointOverlayMap(prefixCache.prefixById, nextTailById)
+
+            const nextTailVisibleById = new Map(this.prevTailVisibleById)
+            nextTailVisibleById.set(nextBlock.id, nextBlock)
+            this.prevTailVisibleById = nextTailVisibleById
+            nextVisibleById = new DisjointOverlayMap(prefixCache.prefixVisibleById, nextTailVisibleById)
+
+            const nextTailTurnsById = new Map(this.prevTailTurnsById)
+            nextTailTurnsById.set(turnId, nextTurn)
+            this.prevTailTurnsById = nextTailTurnsById
+            nextTurnsById = new DisjointOverlayMap(prefixCache.prefixTurnsById, nextTailTurnsById)
+
+            if (headerChanged && nextHeader) {
+                const nextTailHeadersById = new Map(this.prevTailTurnHeadersById)
+                nextTailHeadersById.set(turnId, nextHeader)
+                this.prevTailTurnHeadersById = nextTailHeadersById
+                nextTurnHeadersById = new DisjointOverlayMap(prefixCache.prefixTurnHeadersById, nextTailHeadersById)
+            }
+        } else {
+            const byIdCopy = new Map(prevSnapshot.byId)
+            byIdCopy.set(nextBlock.id, nextBlock)
+            nextById = byIdCopy
+
+            const visibleByIdCopy = new Map(prevSnapshot.visibleById)
+            visibleByIdCopy.set(nextBlock.id, nextBlock)
+            nextVisibleById = visibleByIdCopy
+
+            const turnsByIdCopy = new Map(prevSnapshot.turnsById)
+            turnsByIdCopy.set(turnId, nextTurn)
+            nextTurnsById = turnsByIdCopy
+
+            if (headerChanged && nextHeader) {
+                const headersCopy = new Map(prevSnapshot.turnHeadersById)
+                headersCopy.set(turnId, nextHeader)
+                nextTurnHeadersById = headersCopy
+            }
+        }
+
+        const fastDirtyIds = new Set<string>([nextBlock.id, turnId])
+        if (headerChanged) {
+            fastDirtyIds.add(`header:${turnId}`)
+        }
+        this.dirtyEntityIds = fastDirtyIds
+        if (this.pendingDirtyEntityIds !== null) {
+            for (const id of fastDirtyIds) {
+                this.pendingDirtyEntityIds.add(id)
+            }
+        }
+
+        const nextSnapshot: SessionEntityStoreSnapshot = {
+            ...prevSnapshot,
+            visibleMessages: nextVisibleMessages,
+            normalizedMessages: nextNormalizedMessages,
+            runtimeTopologyVersion: prevSnapshot.runtimeTopologyVersion + (headerChanged ? 1 : 0),
+            blocks: nextBlocks,
+            byId: nextById,
+            visibleBlocks: nextVisibleBlocks,
+            visibleById: nextVisibleById,
+            blocksWithThreadIds: nextBlocksWithThreadIds,
+            turnsById: nextTurnsById,
+            turnHeadersById: nextTurnHeadersById,
+            hasLiveStreamingMessage: true,
+            reductionMode: 'incremental-tail',
+            replay: { rows: 1, reason: 'live-stream-fast-path' },
+        }
+        this.snapshot = nextSnapshot
+        if (options?.deferNotifications) {
+            if (!this.pendingNotificationBaseline) {
+                this.pendingNotificationBaseline = prevSnapshot
+            }
+        } else {
+            const baseline = this.pendingNotificationBaseline ?? prevSnapshot
+            if (this.pendingNotificationBaseline && this.dirtyEntityIds !== null) {
+                if (this.pendingDirtyEntityIds === null) {
+                    this.dirtyEntityIds = null
+                } else {
+                    this.dirtyEntityIds = new Set(this.pendingDirtyEntityIds)
+                }
+            }
+            this.pendingNotificationBaseline = null
+            this.pendingDirtyEntityIds = new Set()
+            this.notifyChangedListeners(baseline, nextSnapshot)
+        }
+        return nextSnapshot
+    }
+
     private reconcileSessionThinkingOnly(
         sessionThinking: boolean,
         options?: { deferNotifications?: boolean }
@@ -1982,6 +2377,7 @@ export class SessionEntityStore {
         reconciledById: ChatBlocksById,
         reconciledBlocks: readonly ChatBlock[],
         visibleBlocks: readonly VisibleChatBlock[],
+        blocksWithThreadIds: readonly BlockWithThreadMessageId[],
         allToolGroups: readonly ToolGroupBlock[],
         turnsById: ReadonlyMap<string, TurnEntitySnapshot>,
         turnLayoutsById: ReadonlyMap<string, TurnLayoutSnapshot>,
@@ -1999,6 +2395,17 @@ export class SessionEntityStore {
         this.prevTailById = nextTailById
         this.prevTailBlocks = reconciledBlocks.slice(prefixCache.prefixBlocks.length)
         this.prevTailVisibleBlocks = visibleBlocks.slice(prefixCache.prefixVisibleBlocks.length)
+        const nextTailVisibleById = new Map<string, VisibleChatBlock>()
+        for (const block of this.prevTailVisibleBlocks) {
+            nextTailVisibleById.set(block.id, block)
+        }
+        for (let i = prefixCache.prefixBlocksWithThreadIds.length; i < blocksWithThreadIds.length; i += 1) {
+            const entry = blocksWithThreadIds[i]!
+            if (visibleBlockRole(entry.block) !== 'assistant') {
+                nextTailVisibleById.set(entry.threadMessageId, entry.block)
+            }
+        }
+        this.prevTailVisibleById = nextTailVisibleById
         const prefixGroupIds = new Set(prefixCache.prefixToolGroups.map((g) => g.id))
         this.prevTailToolGroups = allToolGroups.filter((g) => !prefixGroupIds.has(g.id))
         const prefixTurnIds = new Set(prefixCache.prefixTurnsById.keys())

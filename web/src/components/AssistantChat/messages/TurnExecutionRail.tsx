@@ -19,6 +19,7 @@ import { useOptionalSessionVisibleEntity } from '@/hooks/useSessionEntityStore'
 import { cn } from '@/lib/utils'
 import { MarkdownRenderer } from '@/components/MarkdownRenderer'
 import { TurnRailSummary } from './TurnRailSummary'
+import { useLiveTurnStepRows } from './useLiveTurnRows'
 const railCaptureRendererRegistry = new WeakMap<HTMLElement, () => ReactNode>()
 
 export function renderCollapsedRailForShareCapture(railElement: HTMLElement): ReactNode {
@@ -102,13 +103,14 @@ export function TurnExecutionRail(props: {
     )
 
     const summaryRows = subturn.nonTrailingRows
-    const { stepRows, nonTrailingRows, hasSteps, collapsedPinnedRailRows, quietTextRows, lastRow } = subturn
+    const { stepRows: rawStepRows, hasSteps, collapsedPinnedRailRows, quietTextRows, lastRow } = subturn
+    const stepRows = useLiveTurnStepRows(rawStepRows)
 
     const hasRunningOrPendingTool = useMemo(
-        () => nonTrailingRows.some(
+        () => stepRows.some(
             (row) => row.kind === 'tool' && (row.block.tool.state === 'running' || row.block.tool.state === 'pending' || row.permission)
         ),
-        [nonTrailingRows]
+        [stepRows]
     )
     const endsWithTrailingText = Boolean(lastRow && lastRow.kind === 'text' && lastRow.trailing)
     const hasTrailingReasoningStep =

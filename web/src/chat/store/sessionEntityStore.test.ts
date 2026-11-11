@@ -1124,6 +1124,144 @@ describe('SessionEntityStore', () => {
         expect(snap5.blocks).toEqual(fullSnap.blocks)
         expect(snap5.timelineIndex).toEqual(fullSnap.timelineIndex)
     })
+
+    it('reconciles trailing live-stream deltas via O(1) fast path in multi-message turns without rebuilding layout or timeline', () => {
+        const store = createSessionEntityStore()
+        const u1 = makeUserMessage('u1', 'Inspect repository', 1)
+        const a1 = makeAssistantTextMessage('a1', 'Repository inspected.', 2)
+        const u2 = makeUserMessage('u2', 'Read config and summarize', 3)
+        const a2ToolCall = makeClaudeToolUseMessage('a2-call', 'a2-call-uuid', 'tool-cfg', 'Read', { file_path: 'config.json' }, 4)
+        const a2ToolResult = makeClaudeToolResultMessage('a2-res', 'a2-res-uuid', 'tool-cfg', '{"port":3000}', 5)
+        const a2Stream1 = makeAssistantTextMessage('a2-stream', 'Port is', 6, { live: true, createdAt: 6000 })
+        const a2Stream2 = makeAssistantTextMessage('a2-stream', 'Port is 3000 and ready.', 7, { live: true, createdAt: 7000 })
+
+        let revision = 1
+        const snap1 = store.reconcileInput({
+            sessionId: 'sess-fast-path',
+            messages: [u1, a1, u2, a2ToolCall, a2ToolResult, a2Stream1],
+            agentState: null,
+            hasMoreMessages: false,
+            codexExplorationCollapsed: false,
+            sessionThinking: true,
+            activeTurnId: 'turn-2',
+            windowOperation: {
+                kind: 'replace-window',
+                reason: 'initial',
+                baseRevision: 0,
+                nextRevision: revision,
+                generation: 1,
+                removedIds: [],
+            },
+        })
+
+        const snap2 = store.reconcileInput({
+            sessionId: 'sess-fast-path',
+            messages: [u1, a1, u2, a2ToolCall, a2ToolResult, a2Stream2],
+            agentState: null,
+            hasMoreMessages: false,
+            codexExplorationCollapsed: false,
+            sessionThinking: true,
+            activeTurnId: 'turn-2',
+            windowOperation: {
+                kind: 'upsert-live-stream',
+                streamId: 'a2-stream',
+                message: a2Stream2,
+                baseRevision: revision,
+                nextRevision: ++revision,
+                generation: 1,
+                removedIds: [],
+            },
+        })
+
+        expect(snap2.replay).toEqual({
+            rows: 1,
+            reason: 'live-stream-fast-path',
+        })
+        expect(snap2.turnLayoutsById).toBe(snap1.turnLayoutsById)
+        expect(snap2.timelineIndex).toBe(snap1.timelineIndex)
+        expect(snap2.outlineItems).toBe(snap1.outlineItems)
+        expect(snap2.sessionStatus).toBe(snap1.sessionStatus)
+        expect(snap2.meta).toBe(snap1.meta)
+
+        const freshStore = createSessionEntityStore()
+        const fullSnap = freshStore.reconcileInput({
+            sessionId: 'sess-fast-path-ref',
+            messages: [u1, a1, u2, a2ToolCall, a2ToolResult, a2Stream2],
+            agentState: null,
+            hasMoreMessages: false,
+            codexExplorationCollapsed: false,
+            sessionThinking: true,
+            activeTurnId: 'turn-2',
+        })
+        expect(snap2.blocks).toEqual(fullSnap.blocks)
+        expect(snap2.visibleBlocks).toEqual(fullSnap.visibleBlocks)
+    })
+
+    it('keeps TurnLayoutSnapshot reference stable across pending -> running tool state transitions when turn has no error tools', () => {
+        const store = createSessionEntityStore()
+        const u1 = makeUserMessage('u1', 'Run command', 1)
+        const a1ToolPending: DecryptedMessage = {
+            id: 'a1-call',
+            seq: 2,
+            localId: null,
+            createdAt: 2000,
+            content: {
+                role: 'agent',
+                content: {
+                    type: 'codex',
+                    data: {
+                        type: 'tool-call',
+                        callId: 'tool-bash-1',
+                        name: 'Bash',
+                        input: { command: 'ls -la' },
+                        status: 'pending',
+                    },
+                },
+            },
+        }
+        const a1ToolRunning: DecryptedMessage = {
+            ...a1ToolPending,
+            content: {
+                role: 'agent',
+                content: {
+                    type: 'codex',
+                    data: {
+                        type: 'tool-call',
+                        callId: 'tool-bash-1',
+                        name: 'Bash',
+                        input: { command: 'ls -la' },
+                        status: 'in_progress',
+                    },
+                },
+            },
+        }
+
+        const snapPending = store.reconcileInput({
+            sessionId: 'sess-layout-pending-running',
+            messages: [u1, a1ToolPending],
+            agentState: null,
+            hasMoreMessages: false,
+            codexExplorationCollapsed: false,
+            sessionThinking: true,
+        })
+        const pendingBlock = snapPending.byId.get('tool-bash-1')
+        expect(pendingBlock?.kind === 'tool-call' ? pendingBlock.tool.state : null).toBe('pending')
+
+        const snapRunning = store.reconcileInput({
+            sessionId: 'sess-layout-pending-running',
+            messages: [u1, a1ToolRunning],
+            agentState: null,
+            hasMoreMessages: false,
+            codexExplorationCollapsed: false,
+            sessionThinking: true,
+        })
+        const runningBlock = snapRunning.byId.get('tool-bash-1')
+        expect(runningBlock?.kind === 'tool-call' ? runningBlock.tool.state : null).toBe('running')
+
+        const assistantTurnId = snapPending.timelineIndex.find((entry) => entry.role === 'assistant')?.id
+        expect(assistantTurnId).toBeDefined()
+        expect(snapRunning.turnLayoutsById.get(assistantTurnId!)).toBe(snapPending.turnLayoutsById.get(assistantTurnId!))
+    })
 })
 
 describe('partitionTurn and projectTurn reference stabilization', () => {

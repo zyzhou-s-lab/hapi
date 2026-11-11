@@ -4,6 +4,7 @@ import { useOptionalHappyChatStaticContext } from '@/components/AssistantChat/co
 import {
     resolveLiveToolRow,
     summarizeTurnActivity,
+    type ProjectedStepRow,
     type TurnActionCounts,
     type TurnPartition,
     type TurnRow,
@@ -46,6 +47,48 @@ export function useLiveTurnRows(rows: readonly TurnRow[]): readonly TurnRow[] {
             return previous
         }
     }, [store, rows, metadata])
+    return useSyncExternalStore(subscribe, getSnapshot, getSnapshot)
+}
+
+export function useLiveTurnStepRows(stepRows: readonly ProjectedStepRow[]): readonly ProjectedStepRow[] {
+    const store = useOptionalSessionEntityStore()
+    const metadata = useOptionalHappyChatStaticContext()?.metadata ?? null
+    const subscribe = useCallback((listener: () => void) => {
+        if (!store) return () => {}
+        const ids = new Set<string>()
+        for (const row of stepRows) {
+            if (row.kind === 'tool') {
+                ids.add(row.block.id)
+            }
+        }
+        if (ids.size === 0) return () => {}
+        const unsubscribe = [...ids].map((id) => store.subscribeEntity(id, listener))
+        return () => {
+            for (const dispose of unsubscribe) dispose()
+        }
+    }, [store, stepRows])
+    const getSnapshot = useMemo(() => {
+        let previous = stepRows
+        return () => {
+            if (!store) return stepRows
+            let changed = false
+            const next = stepRows.map((row, index): ProjectedStepRow => {
+                const old = previous[index] ?? row
+                if (row.kind === 'tool') {
+                    const block = store.getBlockEntity(row.block.id)
+                    const live = block?.kind === 'tool-call' ? resolveLiveToolRow(row, block, metadata) : row
+                    if (old.kind === 'tool' && old.block === live.block && old.state === live.state && old.permission === live.permission) {
+                        return old
+                    }
+                    changed = true
+                    return live
+                }
+                return old
+            })
+            if (changed) previous = next
+            return previous
+        }
+    }, [store, stepRows, metadata])
     return useSyncExternalStore(subscribe, getSnapshot, getSnapshot)
 }
 

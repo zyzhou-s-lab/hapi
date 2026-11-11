@@ -826,15 +826,35 @@ function countAddedTodoRows(input: Record<string, unknown> | null, result: unkno
 }
 
 const layoutBlockCache = new WeakMap<VisibleChatBlock, TurnLayoutBlock>()
+const exactStateLayoutBlockCache = new WeakMap<VisibleChatBlock, TurnLayoutBlock>()
 
-function describeLayoutBlock(block: VisibleChatBlock): TurnLayoutBlock {
-    const cached = layoutBlockCache.get(block)
+function blockHasErrorTool(block: VisibleChatBlock): boolean {
+    if (block.kind === 'tool-call') {
+        return block.tool.state === 'error'
+    }
+    if (block.kind === 'tool-group') {
+        return block.tools.some((tool) => tool.tool.state === 'error')
+    }
+    return false
+}
+
+function turnHasErrorTool(blocks: readonly VisibleChatBlock[]): boolean {
+    return blocks.some(blockHasErrorTool)
+}
+
+function describeLayoutBlock(block: VisibleChatBlock, preservePendingRunningDistinction = false): TurnLayoutBlock {
+    const cache = preservePendingRunningDistinction ? exactStateLayoutBlockCache : layoutBlockCache
+    const cached = cache.get(block)
     if (cached) return cached
     let layoutBlock: TurnLayoutBlock
     if (block.kind === 'agent-text' || block.kind === 'agent-reasoning' || block.kind === 'cli-output') {
         layoutBlock = { id: block.id, kind: block.kind, nonEmpty: Boolean(block.text.trim()), phase: 'phase' in block ? block.phase : undefined }
     } else if (block.kind === 'tool-group') {
-        layoutBlock = { id: block.id, kind: block.kind, members: block.tools.map(describeLayoutBlock) }
+        layoutBlock = {
+            id: block.id,
+            kind: block.kind,
+            members: block.tools.map((member) => describeLayoutBlock(member, preservePendingRunningDistinction)),
+        }
     } else if (block.kind === 'tool-call') {
         const tool = block.tool
         const name = tool.name.toLowerCase().replaceAll('_', '')
@@ -843,8 +863,11 @@ function describeLayoutBlock(block: VisibleChatBlock): TurnLayoutBlock {
         const addedTodoCount = (name === 'todowrite' || name === 'todo')
             ? countAddedTodoRows(input, tool.result)
             : undefined
+        const normalizedState = !preservePendingRunningDistinction && (tool.state === 'pending' || tool.state === 'running')
+            ? 'running'
+            : tool.state
         layoutBlock = {
-            id: block.id, kind: block.kind, toolName: tool.name, state: tool.state,
+            id: block.id, kind: block.kind, toolName: tool.name, state: normalizedState,
             permissionId: tool.permission?.id, permissionStatus: tool.permission?.status,
             agentMessage: typeof path === 'string' && path.trim().startsWith('agent://'),
             tasksCount: Array.isArray(input?.tasks) ? input.tasks.length : undefined,
@@ -861,7 +884,7 @@ function describeLayoutBlock(block: VisibleChatBlock): TurnLayoutBlock {
     } else {
         layoutBlock = { id: block.id, kind: block.kind }
     }
-    layoutBlockCache.set(block, layoutBlock)
+    cache.set(block, layoutBlock)
     return layoutBlock
 }
 
@@ -883,7 +906,8 @@ export function buildTurnLayoutsById(
     const next = new Map<string, TurnLayoutSnapshot>()
     let unchanged = turns.size === previous.size
     for (const [id, turn] of turns) {
-        const blocks = turn.blocks.map(describeLayoutBlock)
+        const hasErrorTool = turnHasErrorTool(turn.blocks)
+        const blocks = turn.blocks.map((block) => describeLayoutBlock(block, hasErrorTool))
         const old = previous.get(id)
         if (
             old
