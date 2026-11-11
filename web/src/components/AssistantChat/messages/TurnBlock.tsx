@@ -9,6 +9,7 @@ import {
     hasTurnContentActivity,
     partitionTurn,
     turnDurationMs,
+    type ProjectedTurn,
     type TurnContentPart,
     type TurnPartition,
 } from '@/components/AssistantChat/messages/turnBlockModel'
@@ -51,6 +52,7 @@ function renderTurnText(text: string, isStreaming: boolean) {
 }
 export function TurnBlockView(props: {
     partition: TurnPartition
+    projectedTurn?: ProjectedTurn | null
     streaming: boolean
     durationMs: number | null
     streamingStartedAt?: number | null
@@ -72,6 +74,7 @@ const MemoizedTurnBlockView = memo(TurnBlockView)
 
 function HistoricalTurnBlockBody(props: {
     partition: TurnPartition
+    projectedTurn?: ProjectedTurn | null
     createdAt: number
     custom: Partial<HappyChatMessageMetadata> | undefined
     lang: 'en' | 'zh-CN'
@@ -89,7 +92,7 @@ function HistoricalTurnBlockBody(props: {
         }),
         [props.custom?.roundSummary, props.custom?.invokedAt, props.createdAt]
     )
-    return <MemoizedTurnBlockView activeTodoText={null} fallbackTodos={null} lang={props.lang} partition={props.partition} streaming={false} initiallyOpen={false} durationMs={durationMs} turnId={props.turnId} stepExpansionStore={props.stepExpansionStore} shareCapture={props.shareCapture} />
+    return <MemoizedTurnBlockView activeTodoText={null} fallbackTodos={null} lang={props.lang} partition={props.partition} projectedTurn={props.projectedTurn} streaming={false} initiallyOpen={false} durationMs={durationMs} turnId={props.turnId} stepExpansionStore={props.stepExpansionStore} shareCapture={props.shareCapture} />
 }
 
 function LiveTailTurnBlockBody(props: {
@@ -132,21 +135,16 @@ function LiveTailTurnBlockBody(props: {
     return <MemoizedTurnBlockView activeTodoText={activeTodoText} fallbackTodos={fallbackTodos} lang={props.lang} partition={props.partition} streaming={streaming} initiallyOpen={false} durationMs={settledDurationMs} streamingStartedAt={streamingStartedAt} turnId={props.turnId} stepExpansionStore={props.stepExpansionStore} shareCapture={props.shareCapture} />
 }
 
+const EMPTY_TURN_PARTITION: TurnPartition = partitionTurn([])
+
 function StoreTurnBlock({ messageId, shareCapture }: { messageId: string; shareCapture?: boolean }) {
-    const staticCtx = useOptionalHappyChatStaticContext()
     const { locale } = useTranslation()
-    const store = useOptionalSessionEntityStore()
     const turnLayout = useOptionalSessionTurnLayout(messageId)
     const turnHeader = useOptionalSessionTurnHeader(messageId)
     const stepExpansionStoreRef = useRef<TurnStepExpansionStore | null>(null)
     stepExpansionStoreRef.current ??= new TurnStepExpansionStore()
-    const prevPartitionRef = useRef<TurnPartition | null>(null)
-    const partition = useMemo(() => {
-        const parts = store?.getLiveTurnParts(messageId) ?? []
-        const next = partitionTurn(parts, staticCtx?.metadata ?? null, prevPartitionRef.current)
-        prevPartitionRef.current = next
-        return next
-    }, [staticCtx?.metadata, turnLayout, store, messageId])
+    const partition = turnLayout?.partition ?? EMPTY_TURN_PARTITION
+    const projectedTurn = turnLayout?.projectedSettled ?? null
     const isLastMessage = Boolean(turnHeader?.isLast)
     const auiRunning = Boolean(turnHeader?.isRunning)
     const hasRunningTool = Boolean(turnHeader?.hasRunningTool)
@@ -157,14 +155,13 @@ function StoreTurnBlock({ messageId, shareCapture }: { messageId: string; shareC
     )
     const lang = locale === 'zh-CN' ? 'zh-CN' : 'en'
     return !isLastMessage && !auiRunning && !hasRunningTool
-        ? <HistoricalTurnBlockBody partition={partition} createdAt={createdAt} custom={custom} lang={lang} turnId={messageId} stepExpansionStore={stepExpansionStoreRef.current} shareCapture={shareCapture} />
+        ? <HistoricalTurnBlockBody partition={partition} projectedTurn={projectedTurn} createdAt={createdAt} custom={custom} lang={lang} turnId={messageId} stepExpansionStore={stepExpansionStoreRef.current} shareCapture={shareCapture} />
         : <LiveTailTurnBlockBody partition={partition} auiRunning={auiRunning} hasRunningTool={hasRunningTool} isLastMessage={isLastMessage} createdAt={createdAt} custom={custom} lang={lang} turnId={messageId} stepExpansionStore={stepExpansionStoreRef.current} shareCapture={shareCapture} />
 }
 
 function RuntimeTurnBlock({ shareCapture }: { shareCapture?: boolean }) {
     const staticCtx = useOptionalHappyChatStaticContext()
     const { locale } = useTranslation()
-    const store = useOptionalSessionEntityStore()
     const messageId = useAuiState((state) => state.message.id)
     const turnLayout = useOptionalSessionTurnLayout(messageId)
     const hasStoreTurn = Boolean(turnLayout)
@@ -181,11 +178,15 @@ function RuntimeTurnBlock({ shareCapture }: { shareCapture?: boolean }) {
     stepExpansionStoreRef.current ??= new TurnStepExpansionStore()
     const prevPartitionRef = useRef<TurnPartition | null>(null)
     const partition = useMemo(() => {
-        const parts = hasStoreTurn ? (store?.getLiveTurnParts(messageId) ?? []) : contentParts(fallbackContent ?? [])
+        if (turnLayout) {
+            prevPartitionRef.current = turnLayout.partition
+            return turnLayout.partition
+        }
+        const parts = contentParts(fallbackContent ?? [])
         const next = partitionTurn(parts, staticCtx?.metadata ?? null, prevPartitionRef.current)
         prevPartitionRef.current = next
         return next
-    }, [fallbackContent, staticCtx?.metadata, turnLayout, store, messageId, hasStoreTurn])
+    }, [fallbackContent, staticCtx?.metadata, turnLayout])
     const hasRunningTool = useMemo(
         () => partition.rows.some(
             (row) => row.kind === 'tool'
@@ -195,7 +196,7 @@ function RuntimeTurnBlock({ shareCapture }: { shareCapture?: boolean }) {
     )
     const lang = locale === 'zh-CN' ? 'zh-CN' : 'en'
     return !isLastMessage && !auiRunning && !hasRunningTool
-        ? <HistoricalTurnBlockBody partition={partition} createdAt={createdAt} custom={custom} lang={lang} turnId={messageId} stepExpansionStore={stepExpansionStoreRef.current} shareCapture={shareCapture} />
+        ? <HistoricalTurnBlockBody partition={partition} projectedTurn={turnLayout?.projectedSettled ?? null} createdAt={createdAt} custom={custom} lang={lang} turnId={messageId} stepExpansionStore={stepExpansionStoreRef.current} shareCapture={shareCapture} />
         : <LiveTailTurnBlockBody partition={partition} auiRunning={auiRunning} hasRunningTool={hasRunningTool} isLastMessage={isLastMessage} createdAt={createdAt} custom={custom} lang={lang} turnId={messageId} stepExpansionStore={stepExpansionStoreRef.current} shareCapture={shareCapture} />
 }
 

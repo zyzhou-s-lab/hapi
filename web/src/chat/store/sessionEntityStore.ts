@@ -133,6 +133,7 @@ type SettledPrefixCache = {
     readonly prefixHasMoreMessages: boolean
     readonly prefixCodexExplorationCollapsed: boolean
     readonly prefixFlavor: string | null | undefined
+    readonly prefixMetadata: SessionMetadataSummary | null | undefined
     readonly prefixPermissionsSignature: string
     readonly prefixToolIds: ReadonlySet<string>
     readonly prefixUuids: ReadonlySet<string>
@@ -498,6 +499,7 @@ function canSliceRawTailFromPrefixCache(input: SessionEntityStoreInput, cache: S
     if (input.hasMoreMessages !== undefined && input.hasMoreMessages !== cache.prefixHasMoreMessages) return false
     if (Boolean(input.codexExplorationCollapsed) !== cache.prefixCodexExplorationCollapsed) return false
     if (input.metadata?.flavor !== cache.prefixFlavor) return false
+    if ((input.metadata ?? null) !== (cache.prefixMetadata ?? null)) return false
     if (computePrefixPermissionsSignature(input.agentState, cache.prefixToolIds, cache.splitCreatedAt) !== cache.prefixPermissionsSignature) return false
     const operation = input.windowOperation
     if (operation?.kind === 'prepend-history') return false
@@ -905,7 +907,8 @@ export class SessionEntityStore {
     private applyPrefixToolResultMessage(
         msg: NormalizedMessage,
         cache: SettledPrefixCache,
-        sessionThinking: boolean
+        sessionThinking: boolean,
+        metadata: SessionMetadataSummary | null | undefined
     ): { cache: SettledPrefixCache; dirtyIds: Set<string> } | null {
         if (msg.role !== 'agent') return null
         const dirtyIds = new Set<string>()
@@ -1070,7 +1073,7 @@ export class SessionEntityStore {
             const updatedTurn = rebuiltTurns.get(turnId)
             if (updatedTurn) {
                 nextPrefixTurnsById.set(turnId, updatedTurn)
-                const rebuiltLayouts = buildTurnLayoutsById(rebuiltTurns, cache.prefixTurnLayoutsById)
+                const rebuiltLayouts = buildTurnLayoutsById(rebuiltTurns, cache.prefixTurnLayoutsById, metadata ?? null)
                 const updatedLayout = rebuiltLayouts.get(turnId)
                 if (updatedLayout) {
                     nextPrefixTurnLayoutsById.set(turnId, updatedLayout)
@@ -1274,7 +1277,7 @@ export class SessionEntityStore {
                     continue
                 }
                 if (!tailHasBashOrWaitToolCall && isPurePrefixToolResultMessage(msg, workingPrefixCache)) {
-                    const patched = this.applyPrefixToolResultMessage(msg, workingPrefixCache, sessionThinking)
+                    const patched = this.applyPrefixToolResultMessage(msg, workingPrefixCache, sessionThinking, input.metadata)
                     if (!patched) {
                         canUseIncrementalTail = false
                         break
@@ -1496,6 +1499,7 @@ export class SessionEntityStore {
             && !prefixPatched
             && stableVisibleBlocks === prevSnapshot.visibleBlocks
             && flavor === prevInput?.metadata?.flavor
+            && (input.metadata ?? null) === (prevInput?.metadata ?? null)
 
         let visibleById: ReadonlyMap<string, VisibleChatBlock>
         let blocksWithThreadIds: readonly BlockWithThreadMessageId[]
@@ -1577,14 +1581,14 @@ export class SessionEntityStore {
                     incrementalDirtyIds.add(`layout:${id}`)
                     incrementalDirtyIds.add(`header:${id}`)
                 }
-                const tailTurnsUnchanged = sameSplit && !prefixPatched && tailTurnsById === this.prevTailTurnsById
+                const tailTurnsUnchanged = sameSplit && !prefixPatched && tailTurnsById === this.prevTailTurnsById && (input.metadata ?? null) === (prevInput?.metadata ?? null)
                 this.prevTailTurnsById = tailTurnsById
                 if (tailTurnsUnchanged) {
                     turnsById = prevSnapshot.turnsById
                     turnLayoutsById = prevSnapshot.turnLayoutsById
                 } else {
                     turnsById = new DisjointOverlayMap(prefixCache.prefixTurnsById, tailTurnsById)
-                    const tailLayoutsById = buildTurnLayoutsById(tailTurnsById, sameSplit ? this.prevTailTurnLayoutsById : EMPTY_TURN_LAYOUTS)
+                    const tailLayoutsById = buildTurnLayoutsById(tailTurnsById, sameSplit ? this.prevTailTurnLayoutsById : EMPTY_TURN_LAYOUTS, input.metadata ?? null)
                     const tailLayoutsUnchanged = sameSplit && !prefixPatched && tailLayoutsById === this.prevTailTurnLayoutsById
                     this.prevTailTurnLayoutsById = tailLayoutsById
                     turnLayoutsById = tailLayoutsUnchanged
@@ -1649,6 +1653,7 @@ export class SessionEntityStore {
                     hasMoreMessages,
                     codexExplorationCollapsed,
                     flavor,
+                    input.metadata,
                     this.prevFullToolGroups,
                     blocksWithThreadIds,
                     turnsById,
@@ -1694,9 +1699,9 @@ export class SessionEntityStore {
             turnsById = canReuseBlocksWithThreadIds
                 ? prevSnapshot.turnsById
                 : buildTurnEntitiesById(blocksWithThreadIds, sessionChanged ? EMPTY_TURNS_BY_ID : prevSnapshot.turnsById, this.turnPartCache)
-            turnLayoutsById = turnsById === prevSnapshot.turnsById
+            turnLayoutsById = (turnsById === prevSnapshot.turnsById && (input.metadata ?? null) === (prevInput?.metadata ?? null))
                 ? prevSnapshot.turnLayoutsById
-                : buildTurnLayoutsById(turnsById, sessionChanged ? EMPTY_TURN_LAYOUTS : prevSnapshot.turnLayoutsById)
+                : buildTurnLayoutsById(turnsById, sessionChanged ? EMPTY_TURN_LAYOUTS : prevSnapshot.turnLayoutsById, input.metadata ?? null)
             outlineItems = (!sessionChanged && stableBlocks === prevSnapshot.blocks)
                 ? prevSnapshot.outlineItems
                 : buildConversationOutline([...stableBlocks], this.prevOutlineItems)
@@ -1729,6 +1734,7 @@ export class SessionEntityStore {
                     hasMoreMessages,
                     codexExplorationCollapsed,
                     flavor,
+                    input.metadata,
                     fullVisibleGroups,
                     blocksWithThreadIds,
                     turnsById,
@@ -2028,6 +2034,7 @@ export class SessionEntityStore {
         hasMoreMessages: boolean,
         codexExplorationCollapsed: boolean,
         flavor: string | null | undefined,
+        metadata: SessionMetadataSummary | null | undefined,
         _previousGroups: readonly ToolGroupBlock[],
         fullBlocksWithThreadIds: readonly BlockWithThreadMessageId[],
         fullTurnsById: ReadonlyMap<string, TurnEntitySnapshot>,
@@ -2227,6 +2234,7 @@ export class SessionEntityStore {
             prefixHasMoreMessages: hasMoreMessages,
             prefixCodexExplorationCollapsed: codexExplorationCollapsed,
             prefixFlavor: flavor,
+            prefixMetadata: metadata,
             prefixPermissionsSignature,
             prefixToolIds,
             prefixUuids,

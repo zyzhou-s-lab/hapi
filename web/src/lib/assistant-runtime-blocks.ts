@@ -10,6 +10,13 @@ import type {
 } from '@/chat/types'
 import type { ToolGroupBlock, VisibleChatBlock, VisibleChatBlockRole } from '@/chat/toolGroups'
 import { visibleBlockRole } from '@/chat/toolGroups'
+import {
+    partitionTurn,
+    projectTurn,
+    type ProjectedTurn,
+    type TurnPartition,
+} from '@/components/AssistantChat/messages/turnBlockModel'
+import type { SessionMetadataSummary } from '@/types/api'
 export { filterVisibleBlocksForFlavor } from '@/fork-features/omp-product/eventVisibility'
 
 /**
@@ -771,6 +778,9 @@ export type TurnLayoutBlock = {
 export type TurnLayoutSnapshot = {
     readonly id: string
     readonly blocks: readonly TurnLayoutBlock[]
+    readonly partition: TurnPartition
+    readonly projectedSettled: ProjectedTurn
+    readonly metadata?: SessionMetadataSummary | null
 }
 
 export type TurnHeaderSnapshot = {
@@ -815,14 +825,17 @@ function countAddedTodoRows(input: Record<string, unknown> | null, result: unkno
     return count > 0 ? count : undefined
 }
 
+const layoutBlockCache = new WeakMap<VisibleChatBlock, TurnLayoutBlock>()
+
 function describeLayoutBlock(block: VisibleChatBlock): TurnLayoutBlock {
+    const cached = layoutBlockCache.get(block)
+    if (cached) return cached
+    let layoutBlock: TurnLayoutBlock
     if (block.kind === 'agent-text' || block.kind === 'agent-reasoning' || block.kind === 'cli-output') {
-        return { id: block.id, kind: block.kind, nonEmpty: Boolean(block.text.trim()), phase: 'phase' in block ? block.phase : undefined }
-    }
-    if (block.kind === 'tool-group') {
-        return { id: block.id, kind: block.kind, members: block.tools.map(describeLayoutBlock) }
-    }
-    if (block.kind === 'tool-call') {
+        layoutBlock = { id: block.id, kind: block.kind, nonEmpty: Boolean(block.text.trim()), phase: 'phase' in block ? block.phase : undefined }
+    } else if (block.kind === 'tool-group') {
+        layoutBlock = { id: block.id, kind: block.kind, members: block.tools.map(describeLayoutBlock) }
+    } else if (block.kind === 'tool-call') {
         const tool = block.tool
         const name = tool.name.toLowerCase().replaceAll('_', '')
         const input = tool.input && typeof tool.input === 'object' ? tool.input as Record<string, unknown> : null
@@ -830,27 +843,30 @@ function describeLayoutBlock(block: VisibleChatBlock): TurnLayoutBlock {
         const addedTodoCount = (name === 'todowrite' || name === 'todo')
             ? countAddedTodoRows(input, tool.result)
             : undefined
-        return {
+        layoutBlock = {
             id: block.id, kind: block.kind, toolName: tool.name, state: tool.state,
             permissionId: tool.permission?.id, permissionStatus: tool.permission?.status,
             agentMessage: typeof path === 'string' && path.trim().startsWith('agent://'),
             tasksCount: Array.isArray(input?.tasks) ? input.tasks.length : undefined,
             addedTodoCount,
         }
-    }
-    if (block.kind === 'agent-event' && isInlineCompactionEvent(block.event)) {
+    } else if (block.kind === 'agent-event' && isInlineCompactionEvent(block.event)) {
         const compaction = toCompactionToolCallBlock(block)
-        return {
+        layoutBlock = {
             id: block.id,
             kind: block.kind,
             toolName: 'ContextCompaction',
             state: compaction.tool.state,
         }
+    } else {
+        layoutBlock = { id: block.id, kind: block.kind }
     }
-    return { id: block.id, kind: block.kind }
+    layoutBlockCache.set(block, layoutBlock)
+    return layoutBlock
 }
 
 function sameLayoutBlock(a: TurnLayoutBlock, b: TurnLayoutBlock): boolean {
+    if (a === b) return true
     return a.id === b.id && a.kind === b.kind && a.nonEmpty === b.nonEmpty && a.phase === b.phase
         && a.toolName === b.toolName && a.state === b.state
         && a.permissionId === b.permissionId && a.permissionStatus === b.permissionStatus
@@ -861,18 +877,30 @@ function sameLayoutBlock(a: TurnLayoutBlock, b: TurnLayoutBlock): boolean {
 
 export function buildTurnLayoutsById(
     turns: ReadonlyMap<string, TurnEntitySnapshot>,
-    previous: ReadonlyMap<string, TurnLayoutSnapshot>
+    previous: ReadonlyMap<string, TurnLayoutSnapshot>,
+    metadata: SessionMetadataSummary | null = null
 ): ReadonlyMap<string, TurnLayoutSnapshot> {
     const next = new Map<string, TurnLayoutSnapshot>()
     let unchanged = turns.size === previous.size
     for (const [id, turn] of turns) {
         const blocks = turn.blocks.map(describeLayoutBlock)
         const old = previous.get(id)
-        if (old && old.blocks.length === blocks.length && blocks.every((block, i) => sameLayoutBlock(block, old.blocks[i]!))) {
+        if (
+            old
+            && (old.metadata ?? null) === (metadata ?? null)
+            && old.blocks.length === blocks.length
+            && blocks.every((block, i) => sameLayoutBlock(block, old.blocks[i]!))
+        ) {
             next.set(id, old)
         } else {
             unchanged = false
-            next.set(id, { id, blocks })
+            const partition = partitionTurn(turn.parts, metadata ?? null, old?.partition ?? null)
+            const projectedSettled = projectTurn(
+                partition,
+                { viewMode: 'normal', streaming: false, fallbackTodos: null },
+                old?.projectedSettled ?? null
+            )
+            next.set(id, { id, blocks, partition, projectedSettled, metadata: metadata ?? null })
         }
     }
     return unchanged ? previous : next

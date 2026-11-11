@@ -664,13 +664,18 @@ describe('TurnBlockView', () => {
             turn1SelectorCalls += 1
         })
         const turn1InitialRef = store.getTurnEntity(turn1Id)
+        const turn1InitialLayout = store.getTurnLayout(turn1Id)
+        expect(turn1InitialLayout?.partition.rows.length).toBeGreaterThan(0)
+        expect(turn1InitialLayout?.projectedSettled.subturns[0]?.answerRows.length).toBe(1)
+        const getLiveTurnPartsSpy = vi.spyOn(store, 'getLiveTurnParts')
 
         renderBlock(
             <SessionEntityStoreProvider store={store}>
-                <TurnBlock />
+                <TurnBlock messageId={turn1Id} />
+                <TurnBlock messageId={turn2Id} />
             </SessionEntityStoreProvider>
         )
-
+        expect(getLiveTurnPartsSpy).not.toHaveBeenCalled()
         expect(screen.getByText('Stream chunk 1')).toBeInTheDocument()
 
         const deltaMessages = baseMessages.slice(0, -1).concat({
@@ -702,6 +707,9 @@ describe('TurnBlockView', () => {
         // Turn 1 entity reference is strictly preserved (Object.is equal -> 0 Turn 1 re-renders)
         expect(store.getTurnEntity(turn1Id)).toBe(turn1InitialRef)
         expect(turn1SelectorCalls).toBe(1)
+        expect(store.getTurnLayout(turn1Id)).toBe(turn1InitialLayout)
+        expect(getLiveTurnPartsSpy).not.toHaveBeenCalled()
+        getLiveTurnPartsSpy.mockRestore()
         unsubTurn1()
     })
 
