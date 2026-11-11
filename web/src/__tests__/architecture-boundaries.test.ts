@@ -176,4 +176,29 @@ describe('architecture & CSS cascade boundaries', () => {
         expect(happyThreadSpecifiers).toContain('@/components/AssistantChat/useThreadScrollAndHistoryController')
         expect(happyThreadSpecifiers).toContain('@/components/AssistantChat/useShareTurnCapture')
     })
+
+    it('enforces pluggable toolPreviewRegistry and standaloneBlockRendererRegistry dispatch boundaries', () => {
+        const countLines = (relPath: string) =>
+            readFileSync(path.join(WEB_SRC_DIR, relPath), 'utf8').split('\n').length
+
+        expect(countLines('components/AssistantChat/messages/TimelineStepRows.tsx')).toBeLessThanOrEqual(800)
+        expect(countLines('components/AssistantChat/messages/turnBlockModel.ts')).toBeLessThanOrEqual(1800)
+
+        const stepRowsPath = path.join(WEB_SRC_DIR, 'components/AssistantChat/messages/TimelineStepRows.tsx')
+        const stepRowsSpecifiers = parseModuleSpecifiers(stepRowsPath)
+        expect(stepRowsSpecifiers).toContain('@/components/AssistantChat/messages/toolPreviewRegistry')
+        const stepRowsSrc = readFileSync(stepRowsPath, 'utf8')
+        expect(stepRowsSrc).not.toMatch(/\bswitch\s*\(\s*preview\.kind\s*\)/)
+        const turnBlockModelPath = path.join(WEB_SRC_DIR, 'components/AssistantChat/messages/turnBlockModel.ts')
+        const turnBlockModelSpecifiers = parseModuleSpecifiers(turnBlockModelPath)
+        expect(turnBlockModelSpecifiers).toContain('@/components/AssistantChat/messages/toolPreviewRegistry')
+        const turnBlockModelSrc = readFileSync(turnBlockModelPath, 'utf8')
+        expect(turnBlockModelSrc).not.toMatch(/\bfunction\s+extract(?:Bash|FileRead|FileDiff|WebFetch|WebSearch|Compaction)Preview\b/)
+
+        const assistantMessagePath = path.join(WEB_SRC_DIR, 'components/AssistantChat/messages/AssistantMessage.tsx')
+        const assistantMessageSpecifiers = parseModuleSpecifiers(assistantMessagePath)
+        expect(assistantMessageSpecifiers).toContain('@/components/AssistantChat/messages/standaloneBlockRendererRegistry')
+        const assistantMessageSrc = readFileSync(assistantMessagePath, 'utf8')
+        expect(assistantMessageSrc).not.toMatch(/['"](?:cli-output|codex-review)['"]/)
+    })
 })
