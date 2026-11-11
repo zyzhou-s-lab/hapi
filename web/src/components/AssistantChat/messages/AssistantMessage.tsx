@@ -1,13 +1,12 @@
 import { useCallback, useMemo } from 'react'
-import { MessagePrimitive, useAuiState, type TextMessagePart } from '@assistant-ui/react'
+import { MessagePrimitive, useAuiState } from '@assistant-ui/react'
 import { Reasoning, ReasoningGroup } from '@/components/assistant-ui/reasoning'
 import { HappyToolMessage } from '@/components/AssistantChat/messages/ToolMessage'
 import { messageHasTurnActivity, TurnBlock } from '@/components/AssistantChat/messages/TurnBlock'
-import { CliOutputBlock } from '@/components/CliOutputBlock'
+import { getStandaloneBlockRegistration } from '@/components/AssistantChat/messages/standaloneBlockRendererRegistry'
 import type { HappyChatMessageMetadata } from '@/lib/assistant-runtime'
 import { getAssistantCopyText } from '@/components/AssistantChat/messages/assistantCopyText'
 import { getConversationMessageAnchorId } from '@/chat/outline'
-import { CodexReviewCard } from '@/components/AssistantChat/messages/CodexReviewCard'
 import { MessageActions } from '@/components/AssistantChat/messages/MessageActions'
 import {
     useHappyChatHistoryContext,
@@ -18,7 +17,6 @@ import {
     useOptionalSessionEntityStore,
     useOptionalSessionTurnHeader,
     useOptionalSessionTurnLayout,
-    useOptionalSessionVisibleEntity,
 } from '@/hooks/useSessionEntityStore'
 import { NotifySummaryText } from '@/components/AssistantChat/messages/NotifySummaryText'
 import { useSessionSummaryInChat } from '@/hooks/useSessionSummaryInChat'
@@ -29,16 +27,6 @@ const MESSAGE_PART_COMPONENTS = {
     ReasoningGroup,
     tools: { Fallback: HappyToolMessage },
 } as const
-
-function StoreCliOutput({ blockId }: { blockId: string }) {
-    const entity = useOptionalSessionVisibleEntity(blockId)
-    return entity?.kind === 'cli-output' ? <CliOutputBlock text={entity.text} /> : null
-}
-
-function StoreReview({ blockId }: { blockId: string }) {
-    const entity = useOptionalSessionVisibleEntity(blockId)
-    return entity?.kind === 'codex-review' ? <CodexReviewCard review={entity.review} /> : null
-}
 
 /** Copy/share/speech read the current turn at click time; metadata subscribes only to header:<id>. */
 function StoreAssistantActions({ messageId, elementId }: { messageId: string; elementId: string }) {
@@ -114,6 +102,8 @@ function StoreAssistantMessage({ messageId }: { messageId: string }) {
     const elementId = getConversationMessageAnchorId(messageId)
     const first = layout?.blocks[0]
     const standalone = layout?.blocks.length === 1
+    const standaloneEntry = standalone ? getStandaloneBlockRegistration(first?.kind) : undefined
+    const StandaloneStoreRenderer = standaloneEntry?.StoreRenderer
     return <div
         id={elementId}
         data-message-id={messageId}
@@ -121,11 +111,9 @@ function StoreAssistantMessage({ messageId }: { messageId: string }) {
         data-hapi-message-role="assistant"
         className="aui-message-root happy-message px-1 min-w-0 max-w-full overflow-x-clip scroll-mt-4"
     >
-        {standalone && first?.kind === 'cli-output'
-            ? <StoreCliOutput blockId={first.id} />
-            : standalone && first?.kind === 'codex-review'
-                ? <StoreReview blockId={first.id} />
-                : <TurnBlock messageId={messageId} />}
+        {StandaloneStoreRenderer && first
+            ? <StandaloneStoreRenderer blockId={first.id} />
+            : <TurnBlock messageId={messageId} />}
         <StoreAssistantActions messageId={messageId} elementId={elementId} />
     </div>
 }
@@ -137,15 +125,19 @@ function RuntimeAssistantMessage({ messageId }: { messageId: string }) {
     const content = useAuiState((s) => s.message.content)
     const running = useAuiState((s) => s.message.status?.type === 'running')
     const elementId = getConversationMessageAnchorId(messageId)
-    const cliText = custom?.kind === 'cli-output' ? content.find((part): part is TextMessagePart => part.type === 'text')?.text ?? '' : ''
-    const review = custom?.kind === 'codex-review' ? custom.review : undefined
+    const standaloneEntry = getStandaloneBlockRegistration(custom?.kind)
+    const StandaloneRuntimeRenderer = standaloneEntry?.RuntimeRenderer
     const activity = messageHasTurnActivity(content) || (running && !content.some((part) => part.type === 'text' && part.text.trim()))
     const copyText = getAssistantCopyText(content, { stripNotifySummary: !showSummary })
     return <MessagePrimitive.Root id={elementId} data-hapi-message-role="assistant" className="happy-message px-1 min-w-0 max-w-full overflow-x-clip scroll-mt-4">
-        {custom?.kind === 'cli-output' ? <CliOutputBlock text={cliText} /> : review ? <CodexReviewCard review={review} /> : activity ? <TurnBlock /> : <MessagePrimitive.Content components={MESSAGE_PART_COMPONENTS} />}
+        {StandaloneRuntimeRenderer
+            ? <StandaloneRuntimeRenderer custom={custom} content={content} />
+            : activity
+                ? <TurnBlock />
+                : <MessagePrimitive.Content components={MESSAGE_PART_COMPONENTS} />}
         <AssistantActions messageId={messageId} elementId={elementId} copyText={copyText}
             metadata={{ durationMs: custom?.durationMs, usage: custom?.usage, model: custom?.model ?? null, turnCount: custom?.turnCount, roundSummary: custom?.roundSummary }}
-            canSpeak={custom?.kind !== 'cli-output' && !review} />
+            canSpeak={standaloneEntry ? standaloneEntry.canSpeak : true} />
     </MessagePrimitive.Root>
 }
 

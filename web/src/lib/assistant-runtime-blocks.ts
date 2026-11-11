@@ -919,33 +919,97 @@ function isRunningToolVisibleBlock(block: VisibleChatBlock): boolean {
     return false
 }
 
+export type StandaloneBlockKind = 'cli-output' | 'codex-review'
+
+export type StandaloneBlockSpec<K extends StandaloneBlockKind = StandaloneBlockKind> = {
+    readonly kind: K
+    readonly canSpeak: boolean
+    hasCopyableText(block: Extract<VisibleChatBlock, { kind: K }>, options?: { stripNotifySummary?: boolean }): boolean
+    formatCopyText(block: Extract<VisibleChatBlock, { kind: K }>): string
+}
+
+export const STANDALONE_BLOCK_SPECS: {
+    readonly [K in StandaloneBlockKind]: StandaloneBlockSpec<K>
+} = {
+    'cli-output': {
+        kind: 'cli-output',
+        canSpeak: false,
+        hasCopyableText(block, options) {
+            const trimmed = block.text.trim()
+            if (trimmed.length === 0) return false
+            if (options?.stripNotifySummary && trimmed.includes('<notify_summary>')) {
+                return stripNotifySummaryFooter(trimmed).length > 0
+            }
+            return true
+        },
+        formatCopyText(block) {
+            return block.text
+        },
+    },
+    'codex-review': {
+        kind: 'codex-review',
+        canSpeak: false,
+        hasCopyableText() {
+            return true
+        },
+        formatCopyText(block) {
+            return formatCodexReviewText(block.review)
+        },
+    },
+}
+
+export function isStandaloneBlockKind(kind: string | undefined): kind is StandaloneBlockKind {
+    return typeof kind === 'string' && Object.prototype.hasOwnProperty.call(STANDALONE_BLOCK_SPECS, kind)
+}
+
+export function getStandaloneBlockSpec<K extends StandaloneBlockKind>(
+    kind: K
+): StandaloneBlockSpec<K>
+export function getStandaloneBlockSpec(
+    kind: string | undefined
+): StandaloneBlockSpec<StandaloneBlockKind> | undefined
+export function getStandaloneBlockSpec(
+    kind: string | undefined
+): StandaloneBlockSpec<StandaloneBlockKind> | undefined {
+    return isStandaloneBlockKind(kind) ? STANDALONE_BLOCK_SPECS[kind] as StandaloneBlockSpec<StandaloneBlockKind> : undefined
+}
+
 function hasCopyableTextInBlock(block: VisibleChatBlock): boolean {
-    if (block.kind === 'agent-text' || block.kind === 'cli-output') {
+    if (block.kind === 'agent-text') {
         return block.text.trim().length > 0
     }
-    return block.kind === 'codex-review'
+    if (isStandaloneBlockKind(block.kind)) {
+        const spec = STANDALONE_BLOCK_SPECS[block.kind] as StandaloneBlockSpec<any>
+        return spec.hasCopyableText(block)
+    }
+    return false
 }
 
 function hasStrippedCopyableTextInBlock(block: VisibleChatBlock): boolean {
-    if (block.kind === 'agent-text' || block.kind === 'cli-output') {
+    if (block.kind === 'agent-text') {
         const trimmed = block.text.trim()
         if (trimmed.length === 0) return false
         return trimmed.includes('<notify_summary>')
             ? stripNotifySummaryFooter(trimmed).length > 0
             : true
     }
-    return block.kind === 'codex-review'
+    if (isStandaloneBlockKind(block.kind)) {
+        const spec = STANDALONE_BLOCK_SPECS[block.kind] as StandaloneBlockSpec<any>
+        return spec.hasCopyableText(block, { stripNotifySummary: true })
+    }
+    return false
 }
 
 export function getTurnCopyableText(turn: TurnEntitySnapshot): string {
     const segments: string[] = []
     for (const block of turn.blocks) {
-        if (block.kind === 'agent-text' || block.kind === 'cli-output') {
+        if (block.kind === 'agent-text') {
             if (block.text.length > 0) {
                 segments.push(block.text)
             }
-        } else if (block.kind === 'codex-review') {
-            const formatted = formatCodexReviewText(block.review)
+        } else if (isStandaloneBlockKind(block.kind)) {
+            const spec = STANDALONE_BLOCK_SPECS[block.kind] as StandaloneBlockSpec<any>
+            const formatted = spec.formatCopyText(block)
             if (formatted.length > 0) {
                 segments.push(formatted)
             }
@@ -995,7 +1059,8 @@ export function buildTurnHeadersById(
         const hasCopyableText = turn.blocks.some(hasCopyableTextInBlock)
         const hasStrippedCopyableText = hasCopyableText && turn.blocks.some(hasStrippedCopyableTextInBlock)
         const first = turn.blocks[0]
-        const canSpeak = first?.kind !== 'cli-output' && first?.kind !== 'codex-review'
+        const standaloneSpec = getStandaloneBlockSpec(first?.kind)
+        const canSpeak = standaloneSpec ? standaloneSpec.canSpeak : true
         const candidate: TurnHeaderSnapshot = {
             id,
             isLast,
