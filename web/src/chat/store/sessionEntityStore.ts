@@ -9,7 +9,14 @@ import {
     type SessionStatusPrefixSummary,
     type SessionStatusData,
 } from '@/chat/sessionStatus'
-import { buildThreadGoalPrefixSummary, findLatestUsageInMessages, reduceChatBlocks, type LatestUsage, type ThreadGoalPrefixSummary } from '@/chat/reducer'
+import {
+    buildThreadGoalPrefixSummary,
+    findLatestUsageInMessages,
+    getLatestThreadGoal,
+    reduceChatBlocks,
+    type LatestUsage,
+    type ThreadGoalPrefixSummary,
+} from '@/chat/reducer'
 import {
     isLegacyCompactionEndEvent,
     isLegacyCompactionStartEvent,
@@ -47,7 +54,7 @@ import {
 } from '@/lib/assistant-runtime-blocks'
 import { isDisplayedInQueueBar } from '@/lib/messages'
 import type { MessageWindowOperation } from '@/lib/message-window-store'
-import { findRetainedTimelineSuffix } from '@/chat/replayBoundary'
+import { findRetainedTimelineSuffix, type RetainedTimelineSuffix } from '@/chat/replayBoundary'
 import type { TimelineCheckpoint } from '@/chat/reducer'
 import type { AgentState, DecryptedMessage, SessionMetadataSummary, ThreadGoal } from '@/types/api'
 
@@ -545,7 +552,29 @@ function isSameThreadGoal(a: ThreadGoal | null, b: ThreadGoal | null): boolean {
         && a.tokenBudget === b.tokenBudget
         && a.tokensUsed === b.tokensUsed
         && a.timeUsedSeconds === b.timeUsedSeconds
+        && a.createdAt === b.createdAt
         && a.updatedAt === b.updatedAt
+}
+
+interface PrependHistorySpliceResult {
+    readonly replayedRows: number
+    readonly prefixNorm: readonly NormalizedMessage[]
+    readonly reconciledBlocks: readonly ChatBlock[]
+    readonly reconciledById: ChatBlocksById
+    readonly visibleBlocks: readonly VisibleChatBlock[]
+    readonly fullVisibleGroups: readonly ToolGroupBlock[]
+    readonly visibleById: ReadonlyMap<string, VisibleChatBlock>
+    readonly blocksWithThreadIds: readonly BlockWithThreadMessageId[]
+    readonly turnsById: ReadonlyMap<string, TurnEntitySnapshot>
+    readonly turnLayoutsById: ReadonlyMap<string, TurnLayoutSnapshot>
+    readonly turnHeadersById: ReadonlyMap<string, TurnHeaderSnapshot>
+    readonly timelineIndex: readonly TimelineEntryRef[]
+    readonly outlineItems: readonly ConversationOutlineItem[]
+    readonly latestUsage: LatestUsage | null
+    readonly latestGoal: ThreadGoal | null
+    readonly hasReadyEvent: boolean
+    readonly splitIndex: number
+    readonly dirtyEntityIds: Set<string>
 }
 
 function isSameArrayElements<T>(a: readonly T[], b: readonly T[]): boolean {
@@ -1324,7 +1353,8 @@ export class SessionEntityStore {
         let latestUsage: LatestUsage | null
         let latestGoal: ThreadGoal | null
         let hasReadyEvent: boolean
-        let reductionMode: 'incremental-tail' | 'incremental-prepend' | 'full'
+        let reductionMode: 'full' | 'incremental-tail' | 'incremental-prepend'
+        let prependSpliced: PrependHistorySpliceResult | null = null
         let splitIndex: number
         let tailReconciledBlocks: readonly ChatBlock[] | null = null
         let tailVisibleBlocks: readonly VisibleChatBlock[] | null = null
@@ -1439,7 +1469,15 @@ export class SessionEntityStore {
                     visibleMessages.push(msg)
                 }
             }
-            normalized = this.normalizeMessageList(visibleMessages)
+            const prependedVisibleCount = visibleMessages.length - prevSnapshot.visibleMessages.length
+            const canReuseNormalizedSuffix = !sessionChanged
+                && continuousOperation
+                && operation?.kind === 'prepend-history'
+                && prependedVisibleCount >= 0
+                && isSameArrayElements(visibleMessages.slice(prependedVisibleCount), prevSnapshot.visibleMessages)
+            normalized = canReuseNormalizedSuffix
+                ? [...this.normalizeMessageList(visibleMessages.slice(0, prependedVisibleCount)), ...prevSnapshot.normalizedMessages]
+                : this.normalizeMessageList(visibleMessages)
             const goalSource = input.goalSourceMessages ?? buildGoalStateMessages(input.messages)
             const goalNormalized = (
                 goalSource.length === visibleMessages.length
@@ -1458,32 +1496,57 @@ export class SessionEntityStore {
             if (retainedTimelineSuffix) {
                 reductionMode = 'incremental-prepend'
                 replayReason = 'prepend-dependency-closed-prefix'
+                prependSpliced = this.trySplicePrependHistory(
+                    input,
+                    prevInput,
+                    prevSnapshot,
+                    normalized,
+                    goalNormalized,
+                    retainedTimelineSuffix,
+                    sendingOrQueuedMessageIds,
+                    hasMoreMessages,
+                    codexExplorationCollapsed,
+                    flavor,
+                    sessionThinking
+                )
             }
 
-            const fullReduced = reduceChatBlocks(normalized, input.agentState, {
-                goalStateMessages: goalNormalized,
-                retainedTimelineSuffix,
-            })
-            this.reductionCache.timeline = fullReduced.timeline
-            const fullReconciled = reconcileChatBlocks(fullReduced.blocks, prevSnapshot.byId)
-            reconciledBlocks = fullReconciled.blocks
-            reconciledById = fullReconciled.byId
+            if (prependSpliced) {
+                replayedRows = prependSpliced.replayedRows
+                reconciledBlocks = prependSpliced.reconciledBlocks
+                reconciledById = prependSpliced.reconciledById
+                visibleBlocks = prependSpliced.visibleBlocks
+                fullVisibleGroups = prependSpliced.fullVisibleGroups
+                latestUsage = prependSpliced.latestUsage
+                latestGoal = prependSpliced.latestGoal
+                hasReadyEvent = prependSpliced.hasReadyEvent
+                splitIndex = prependSpliced.splitIndex
+            } else {
+                const fullReduced = reduceChatBlocks(normalized, input.agentState, {
+                    goalStateMessages: goalNormalized,
+                    retainedTimelineSuffix,
+                })
+                this.reductionCache.timeline = fullReduced.timeline
+                const fullReconciled = reconcileChatBlocks(fullReduced.blocks, prevSnapshot.byId)
+                reconciledBlocks = fullReconciled.blocks
+                reconciledById = fullReconciled.byId
 
-            const fullVisible = buildVisibleChatBlocks(reconciledBlocks, {
-                hasMoreMessages,
-                previousGroups: this.prevFullToolGroups,
-                codexExplorationCollapsed,
-            })
-            const allGroups = fullVisible.filter(isToolGroupBlock)
-            this.prevFullToolGroups = allGroups
-            fullVisibleGroups = allGroups
-            visibleBlocks = fullVisible
+                const fullVisible = buildVisibleChatBlocks(reconciledBlocks, {
+                    hasMoreMessages,
+                    previousGroups: this.prevFullToolGroups,
+                    codexExplorationCollapsed,
+                })
+                const allGroups = fullVisible.filter(isToolGroupBlock)
+                this.prevFullToolGroups = allGroups
+                fullVisibleGroups = allGroups
+                visibleBlocks = fullVisible
 
-            latestUsage = fullReduced.latestUsage
-            latestGoal = fullReduced.latestGoal
-            hasReadyEvent = fullReduced.hasReadyEvent
+                latestUsage = fullReduced.latestUsage
+                latestGoal = fullReduced.latestGoal
+                hasReadyEvent = fullReduced.hasReadyEvent
 
-            splitIndex = findLatestUserTurnSplitIndex(normalized, sendingOrQueuedMessageIds)
+                splitIndex = findLatestUserTurnSplitIndex(normalized, sendingOrQueuedMessageIds)
+            }
         }
 
         const stableVisibleMessages = isSameArrayElements(visibleMessages, prevSnapshot.visibleMessages)
@@ -1501,7 +1564,9 @@ export class SessionEntityStore {
 
         const hasLiveStreamingMessage = reductionMode === 'incremental-tail' && this.reductionCache.prefix
             ? hasUnsettledPrefixMessages(tailNormalized)
-            : hasUnsettledPrefixMessages(stableNormalizedMessages)
+            : prependSpliced
+                ? prevSnapshot.hasLiveStreamingMessage || hasUnsettledPrefixMessages(prependSpliced.prefixNorm)
+                : hasUnsettledPrefixMessages(stableNormalizedMessages)
         const canReuseBlocksWithThreadIds = !sessionChanged
             && !prefixPatched
             && stableVisibleBlocks === prevSnapshot.visibleBlocks
@@ -1686,6 +1751,20 @@ export class SessionEntityStore {
                         timelineIndex,
                         outlineItems
                     )
+                }
+            }
+        } else if (prependSpliced) {
+            visibleById = prependSpliced.visibleById
+            blocksWithThreadIds = prependSpliced.blocksWithThreadIds
+            turnsById = prependSpliced.turnsById
+            turnLayoutsById = prependSpliced.turnLayoutsById
+            turnHeadersById = prependSpliced.turnHeadersById
+            timelineIndex = prependSpliced.timelineIndex
+            outlineItems = prependSpliced.outlineItems
+            this.dirtyEntityIds = prependSpliced.dirtyEntityIds
+            if (this.pendingDirtyEntityIds !== null) {
+                for (const id of prependSpliced.dirtyEntityIds) {
+                    this.pendingDirtyEntityIds.add(id)
                 }
             }
         } else {
@@ -1915,7 +1994,7 @@ export class SessionEntityStore {
     private tryReconcileLiveStreamDelta(
         input: SessionEntityStoreInput,
         prevInput: SessionEntityStoreInput,
-        operation: WindowOperation | null | undefined,
+        operation: MessageWindowOperation | null | undefined,
         continuousOperation: boolean,
         options?: { deferNotifications?: boolean }
     ): SessionEntityStoreSnapshot | null {
@@ -2361,6 +2440,567 @@ export class SessionEntityStore {
             this.notifyChangedListeners(baseline, nextSnapshot)
         }
         return nextSnapshot
+    }
+    private trySplicePrependHistory(
+        input: SessionEntityStoreInput,
+        prevInput: SessionEntityStoreInput | null,
+        prevSnapshot: SessionEntityStoreSnapshot,
+        normalized: readonly NormalizedMessage[],
+        goalNormalized: readonly NormalizedMessage[],
+        retainedTimelineSuffix: RetainedTimelineSuffix,
+        sendingOrQueuedMessageIds: ReadonlySet<string>,
+        hasMoreMessages: boolean,
+        codexExplorationCollapsed: boolean,
+        flavor: string | null | undefined,
+        sessionThinking: boolean
+    ): PrependHistorySpliceResult | null {
+        if (!prevInput) return null
+        if (flavor !== prevInput.metadata?.flavor) return null
+        if ((input.metadata ?? null) !== (prevInput.metadata ?? null)) return null
+        if (Boolean(prevInput.sessionThinking) !== sessionThinking) return null
+        if (Boolean(prevInput.codexExplorationCollapsed) !== codexExplorationCollapsed) return null
+
+        const retainedUserIdx = retainedTimelineSuffix.blocks.findIndex((b) => b.kind === 'user-text')
+        if (retainedUserIdx < 0) return null
+        const u2 = retainedTimelineSuffix.blocks[retainedUserIdx]!
+
+        let u2NormIdx = -1
+        for (let i = retainedTimelineSuffix.replayedMessages; i < normalized.length; i += 1) {
+            if (normalized[i]!.id === u2.id) {
+                u2NormIdx = i
+                break
+            }
+        }
+        if (u2NormIdx < retainedTimelineSuffix.replayedMessages) return null
+
+        const prevBlocksCutIdx = prevSnapshot.blocks.findIndex((b) => b.kind === 'user-text' && b.id === u2.id)
+        const prevVisibleCutIdx = prevSnapshot.visibleBlocks.findIndex((b) => b.kind === 'user-text' && b.id === u2.id)
+        const prevEntriesCutIdx = prevSnapshot.blocksWithThreadIds.findIndex(
+            (e) => e.block.kind === 'user-text' && e.block.id === u2.id
+        )
+        if (prevBlocksCutIdx < 0 || prevVisibleCutIdx < 0 || prevEntriesCutIdx < 0) return null
+        const u2ThreadMessageId = prevSnapshot.blocksWithThreadIds[prevEntriesCutIdx]!.threadMessageId
+        const prevTimelineCutIdx = prevSnapshot.timelineIndex.findIndex((e) => e.id === u2ThreadMessageId)
+        const prevOutlineCutIdx = prevSnapshot.outlineItems.findIndex((item) => item.targetMessageId === u2ThreadMessageId)
+        if (prevTimelineCutIdx < 0 || prevOutlineCutIdx < 0) return null
+
+        const prefixNorm = normalized.slice(0, u2NormIdx)
+        const prefixReduced = reduceChatBlocks(prefixNorm, input.agentState, {
+            goalStateMessages: [],
+            retainedTimelineSuffix: retainedUserIdx > 0
+                ? {
+                    blocks: retainedTimelineSuffix.blocks.slice(0, retainedUserIdx),
+                    hasReadyEvent: false,
+                    startMessageId: retainedTimelineSuffix.startMessageId,
+                    replayedMessages: retainedTimelineSuffix.replayedMessages,
+                }
+                : null,
+        })
+        if (hasOpenCompactionInBlocks(prefixReduced.timeline.blocks)) {
+            return null
+        }
+
+        const removedPreUserBlockIds = new Set<string>()
+        for (let i = 0; i < prevBlocksCutIdx; i += 1) {
+            removedPreUserBlockIds.add(prevSnapshot.blocks[i]!.id)
+        }
+        const prefixReconciled = reconcileChatBlocks(prefixReduced.blocks, prevSnapshot.byId)
+        for (const block of prefixReconciled.blocks) {
+            if (prevSnapshot.byId.has(block.id) && !removedPreUserBlockIds.has(block.id)) {
+                return null
+            }
+        }
+
+        const removedPreUserVisibleIds = new Set<string>()
+        for (let i = 0; i < prevVisibleCutIdx; i += 1) {
+            removedPreUserVisibleIds.add(prevSnapshot.visibleBlocks[i]!.id)
+        }
+        const removedPreUserTurnIds = new Set<string>()
+        for (let i = 0; i < prevEntriesCutIdx; i += 1) {
+            const entry = prevSnapshot.blocksWithThreadIds[i]!
+            if (visibleBlockRole(entry.block) === 'assistant') {
+                removedPreUserTurnIds.add(entry.threadMessageId)
+            } else {
+                removedPreUserVisibleIds.add(entry.threadMessageId)
+            }
+        }
+
+        const prefixVisible = buildVisibleChatBlocks(prefixReconciled.blocks, {
+            hasMoreMessages,
+            previousGroups: this.prevFullToolGroups,
+            codexExplorationCollapsed,
+        })
+        for (const block of prefixVisible) {
+            if (prevSnapshot.visibleById.has(block.id) && !removedPreUserVisibleIds.has(block.id)) {
+                return null
+            }
+        }
+
+        const prefixFiltered = hoistMidTurnTitleEvents(filterVisibleBlocksForFlavor(prefixVisible, flavor))
+        const retainedEntries = prevSnapshot.blocksWithThreadIds.slice(prevEntriesCutIdx)
+        const retainedBaseIds = new Set<string>()
+        const retainedUsedGroupIds = new Set<string>()
+        for (const entry of retainedEntries) {
+            const b = entry.block
+            const id = b.kind === 'user-text' ? b.localId || b.id : b.id
+            retainedBaseIds.add(`${b.kind}:${id}`)
+            retainedUsedGroupIds.add(entry.threadMessageId)
+        }
+        for (const block of prefixFiltered) {
+            const id = block.kind === 'user-text' ? block.localId || block.id : block.id
+            if (retainedBaseIds.has(`${block.kind}:${id}`)) {
+                return null
+            }
+        }
+
+        const prefixEntries = assignThreadMessageIdsWithStableWrappers(
+            prefixFiltered,
+            this.threadIdWrapperCache,
+            {
+                initialUsedGroupIds: retainedUsedGroupIds,
+                mergePreviousGroupLookup: true,
+            }
+        )
+        for (const entry of prefixEntries) {
+            if (retainedUsedGroupIds.has(entry.threadMessageId)) {
+                return null
+            }
+            if (
+                visibleBlockRole(entry.block) !== 'assistant'
+                && prevSnapshot.visibleById.has(entry.threadMessageId)
+                && !removedPreUserVisibleIds.has(entry.threadMessageId)
+            ) {
+                return null
+            }
+            if (
+                visibleBlockRole(entry.block) === 'assistant'
+                && prevSnapshot.turnsById.has(entry.threadMessageId)
+                && !removedPreUserTurnIds.has(entry.threadMessageId)
+            ) {
+                return null
+            }
+        }
+
+        const reconciledBlocks = prevBlocksCutIdx === 0
+            ? [...prefixReconciled.blocks, ...prevSnapshot.blocks]
+            : [...prefixReconciled.blocks, ...prevSnapshot.blocks.slice(prevBlocksCutIdx)]
+        let reconciledById: ChatBlocksById
+        if (prevBlocksCutIdx === 0) {
+            reconciledById = new DisjointOverlayMap(prefixReconciled.byId, prevSnapshot.byId)
+        } else {
+            const nextById = new Map<string, ChatBlock>( prefixReconciled.byId )
+            for (const [id, block] of prevSnapshot.byId.entries()) {
+                if (!removedPreUserBlockIds.has(id)) {
+                    nextById.set(id, block)
+                }
+            }
+            reconciledById = nextById
+        }
+
+        const retainedVisibleSlice = prevVisibleCutIdx === 0
+            ? prevSnapshot.visibleBlocks
+            : prevSnapshot.visibleBlocks.slice(prevVisibleCutIdx)
+        const visibleBlocks = [...prefixVisible, ...retainedVisibleSlice]
+        const prefixGroups = prefixVisible.filter(isToolGroupBlock)
+        const retainedGroups = prevVisibleCutIdx === 0
+            ? this.prevFullToolGroups
+            : retainedVisibleSlice.filter(isToolGroupBlock)
+        const fullVisibleGroups = [...prefixGroups, ...retainedGroups]
+        this.prevFullToolGroups = fullVisibleGroups
+
+        const prefixVisibleById = new Map<string, VisibleChatBlock>()
+        for (const block of prefixVisible) {
+            prefixVisibleById.set(block.id, block)
+        }
+        for (const entry of prefixEntries) {
+            if (visibleBlockRole(entry.block) !== 'assistant') {
+                prefixVisibleById.set(entry.threadMessageId, entry.block)
+            }
+        }
+        let visibleById: ReadonlyMap<string, VisibleChatBlock>
+        if (prevVisibleCutIdx === 0 && prevEntriesCutIdx === 0) {
+            visibleById = new DisjointOverlayMap(prefixVisibleById, prevSnapshot.visibleById)
+        } else {
+            const nextVisibleById = new Map<string, VisibleChatBlock>(prefixVisibleById)
+            for (const [id, block] of prevSnapshot.visibleById.entries()) {
+                if (!removedPreUserVisibleIds.has(id)) {
+                    nextVisibleById.set(id, block)
+                }
+            }
+            visibleById = nextVisibleById
+        }
+
+        const blocksWithThreadIds = [...prefixEntries, ...retainedEntries]
+        const prefixTurnsById = buildTurnEntitiesById(prefixEntries, prevSnapshot.turnsById, this.turnPartCache)
+        const prefixLayoutsById = buildTurnLayoutsById(prefixTurnsById, prevSnapshot.turnLayoutsById, input.metadata ?? null)
+        const prefixTimelineIndex = buildThreadTopology(prefixEntries, EMPTY_TIMELINE_INDEX)
+        const retainedTimelineSlice = prevTimelineCutIdx === 0
+            ? prevSnapshot.timelineIndex
+            : prevSnapshot.timelineIndex.slice(prevTimelineCutIdx)
+        const timelineIndex = Object.freeze([...prefixTimelineIndex, ...retainedTimelineSlice])
+        const prefixHeadersById = buildTurnHeadersById(
+            prefixTurnsById,
+            timelineIndex,
+            sessionThinking,
+            prevSnapshot.turnHeadersById
+        )
+
+        let turnsById: ReadonlyMap<string, TurnEntitySnapshot>
+        let turnLayoutsById: ReadonlyMap<string, TurnLayoutSnapshot>
+        let turnHeadersById: ReadonlyMap<string, TurnHeaderSnapshot>
+        if (removedPreUserTurnIds.size === 0) {
+            turnsById = new DisjointOverlayMap(prefixTurnsById, prevSnapshot.turnsById)
+            turnLayoutsById = new DisjointOverlayMap(prefixLayoutsById, prevSnapshot.turnLayoutsById)
+            turnHeadersById = new DisjointOverlayMap(prefixHeadersById, prevSnapshot.turnHeadersById)
+        } else {
+            const nextTurns = new Map<string, TurnEntitySnapshot>(prefixTurnsById)
+            for (const [id, turn] of prevSnapshot.turnsById.entries()) {
+                if (!removedPreUserTurnIds.has(id)) nextTurns.set(id, turn)
+            }
+            const nextLayouts = new Map<string, TurnLayoutSnapshot>(prefixLayoutsById)
+            for (const [id, layout] of prevSnapshot.turnLayoutsById.entries()) {
+                if (!removedPreUserTurnIds.has(id)) nextLayouts.set(id, layout)
+            }
+            const nextHeaders = new Map<string, TurnHeaderSnapshot>(prefixHeadersById)
+            for (const [id, header] of prevSnapshot.turnHeadersById.entries()) {
+                if (!removedPreUserTurnIds.has(id)) nextHeaders.set(id, header)
+            }
+            turnsById = nextTurns
+            turnLayoutsById = nextLayouts
+            turnHeadersById = nextHeaders
+        }
+
+        const prefixOutlineItems = buildConversationOutline(prefixReconciled.blocks, this.prevOutlineItems)
+        const retainedOutlineSlice = prevOutlineCutIdx === 0
+            ? prevSnapshot.outlineItems
+            : prevSnapshot.outlineItems.slice(prevOutlineCutIdx)
+        const outlineItems = [...prefixOutlineItems, ...retainedOutlineSlice]
+        this.prevOutlineItems = [...outlineItems]
+
+        const nextTimelineState: TimelineCheckpoint = {
+            blocks: [
+                ...prefixReduced.timeline.blocks,
+                ...(retainedUserIdx === 0
+                    ? retainedTimelineSuffix.blocks
+                    : retainedTimelineSuffix.blocks.slice(retainedUserIdx)),
+            ],
+            hasReadyEvent: prefixReduced.hasReadyEvent || retainedTimelineSuffix.hasReadyEvent,
+        }
+        this.reductionCache.timeline = nextTimelineState
+
+        const latestUsage = (
+            prevSnapshot.latestUsage !== null
+            && prevSnapshot.latestUsage.timestamp >= u2.createdAt
+        )
+            ? prevSnapshot.latestUsage
+            : (findLatestUsageInMessages(normalized.slice(u2NormIdx)) ?? prefixReduced.latestUsage)
+        const latestGoal = getLatestThreadGoal(goalNormalized)
+        const hasReadyEvent = nextTimelineState.hasReadyEvent
+        const splitIndex = (
+            prevSnapshot.splitIndex >= 0
+            && u2NormIdx === retainedTimelineSuffix.replayedMessages
+        )
+            ? prevSnapshot.splitIndex + retainedTimelineSuffix.replayedMessages
+            : findLatestUserTurnSplitIndex(normalized, sendingOrQueuedMessageIds)
+
+        const dirtyIds = new Set<string>()
+        for (const id of removedPreUserBlockIds) dirtyIds.add(id)
+        for (const id of removedPreUserVisibleIds) dirtyIds.add(id)
+        for (const id of removedPreUserTurnIds) {
+            dirtyIds.add(id)
+            dirtyIds.add(`layout:${id}`)
+            dirtyIds.add(`header:${id}`)
+        }
+        for (const id of prefixReconciled.byId.keys()) dirtyIds.add(id)
+        for (const id of prefixVisibleById.keys()) dirtyIds.add(id)
+        for (const id of prefixTurnsById.keys()) {
+            dirtyIds.add(id)
+            dirtyIds.add(`layout:${id}`)
+            dirtyIds.add(`header:${id}`)
+        }
+
+        const prependedPrefixCache = (
+            this.reductionCache.prefix !== null
+            && u2NormIdx === retainedTimelineSuffix.replayedMessages
+            && prevBlocksCutIdx === 0
+            && prevVisibleCutIdx === 0
+            && prevEntriesCutIdx === 0
+            && prevTimelineCutIdx === 0
+            && prevOutlineCutIdx === 0
+        )
+            ? this.tryPrependSettledPrefixCache(
+                this.reductionCache.prefix,
+                input,
+                normalized,
+                prefixNorm,
+                prefixReduced.timeline,
+                prefixReconciled,
+                prefixVisible,
+                prefixGroups,
+                prefixVisibleById,
+                prefixEntries,
+                prefixTurnsById,
+                prefixLayoutsById,
+                prefixHeadersById,
+                prefixTimelineIndex,
+                prefixOutlineItems,
+                prefixReduced.latestUsage,
+                prefixReduced.hasReadyEvent,
+                hasMoreMessages,
+                codexExplorationCollapsed,
+                flavor
+            )
+            : null
+
+        if (prependedPrefixCache) {
+            this.reductionCache.prefix = prependedPrefixCache
+        } else {
+            this.reductionCache.prefix = this.tryBuildSettledPrefixCache(
+                input.messages,
+                normalized,
+                splitIndex,
+                reconciledBlocks,
+                visibleBlocks,
+                nextTimelineState,
+                input.agentState,
+                hasMoreMessages,
+                codexExplorationCollapsed,
+                flavor,
+                input.metadata,
+                fullVisibleGroups,
+                blocksWithThreadIds,
+                turnsById,
+                turnLayoutsById,
+                turnHeadersById,
+                timelineIndex,
+                outlineItems
+            )
+            if (this.reductionCache.prefix) {
+                this.syncPrevTailStateFromPrefix(
+                    this.reductionCache.prefix,
+                    reconciledById,
+                    reconciledBlocks,
+                    visibleBlocks,
+                    blocksWithThreadIds,
+                    fullVisibleGroups,
+                    turnsById,
+                    turnLayoutsById,
+                    turnHeadersById,
+                    timelineIndex,
+                    outlineItems
+                )
+            } else {
+                this.prevTailById = new Map()
+                this.prevTailBlocks = EMPTY_BLOCKS
+                this.prevTailVisibleBlocks = EMPTY_VISIBLE_BLOCKS
+                this.prevTailVisibleById = EMPTY_VISIBLE_BY_ID
+                this.prevTailToolGroups = []
+                this.prevTailTurnsById = EMPTY_TURNS_BY_ID
+                this.prevTailTurnLayoutsById = EMPTY_TURN_LAYOUTS
+                this.prevTailTurnHeadersById = EMPTY_TURN_HEADERS
+                this.prevTailTimelineIndex = EMPTY_TIMELINE_INDEX
+                this.prevTailOutlineItems = []
+            }
+        }
+
+        return {
+            replayedRows: retainedTimelineSuffix.replayedMessages,
+            prefixNorm,
+            reconciledBlocks,
+            reconciledById,
+            visibleBlocks,
+            fullVisibleGroups,
+            visibleById,
+            blocksWithThreadIds,
+            turnsById,
+            turnLayoutsById,
+            turnHeadersById,
+            timelineIndex,
+            outlineItems,
+            latestUsage,
+            latestGoal,
+            hasReadyEvent,
+            splitIndex,
+            dirtyEntityIds: dirtyIds,
+        }
+    }
+
+    private tryPrependSettledPrefixCache(
+        oldCache: SettledPrefixCache,
+        input: SessionEntityStoreInput,
+        normalized: readonly NormalizedMessage[],
+        prefixNorm: readonly NormalizedMessage[],
+        prefixTimeline: TimelineCheckpoint,
+        prefixReconciled: { readonly blocks: readonly ChatBlock[]; readonly byId: ChatBlocksById },
+        prefixVisible: readonly VisibleChatBlock[],
+        prefixGroups: readonly ToolGroupBlock[],
+        prefixVisibleById: ReadonlyMap<string, VisibleChatBlock>,
+        prefixEntries: readonly BlockWithThreadMessageId[],
+        prefixTurnsById: ReadonlyMap<string, TurnEntitySnapshot>,
+        prefixLayoutsById: ReadonlyMap<string, TurnLayoutSnapshot>,
+        prefixHeadersById: ReadonlyMap<string, TurnHeaderSnapshot>,
+        prefixTimelineIndex: readonly TimelineEntryRef[],
+        prefixOutlineItems: readonly ConversationOutlineItem[],
+        prefixLatestUsage: LatestUsage | null,
+        prefixHasReadyEvent: boolean,
+        hasMoreMessages: boolean,
+        codexExplorationCollapsed: boolean,
+        flavor: string | null | undefined
+    ): SettledPrefixCache | null {
+        if (hasUnsettledPrefixMessages(prefixNorm) || hasUnsettledPrefixBlocks(prefixReconciled.blocks)) {
+            return null
+        }
+        let rawBoundaryIndex = -1
+        for (let i = input.messages.length - 1; i >= 0; i -= 1) {
+            if (input.messages[i]!.id === oldCache.boundaryMessageId) {
+                rawBoundaryIndex = i
+                break
+            }
+        }
+        if (rawBoundaryIndex < 0) return null
+        const rawPrefix = input.messages.slice(0, rawBoundaryIndex + 1)
+        const prependedRawCount = rawPrefix.length - oldCache.rawPrefix.length
+        if (prependedRawCount < 0) return null
+
+        const prefixSeenMessageIds = new Set<string>(oldCache.prefixSeenMessageIds)
+        const prependedVisibleMessages: DecryptedMessage[] = []
+        for (let i = 0; i < prependedRawCount; i += 1) {
+            const msg = rawPrefix[i]!
+            if (msg.status === 'sending' || isDisplayedInQueueBar(msg)) {
+                return null
+            }
+            prefixSeenMessageIds.add(msg.id)
+            prependedVisibleMessages.push(msg)
+        }
+        const prefixVisibleMessages = [...prependedVisibleMessages, ...oldCache.prefixVisibleMessages]
+
+        const newSplitIndex = oldCache.splitIndex + prefixNorm.length
+        const prefixMessages = [...prefixNorm, ...oldCache.prefixMessages]
+        if (prefixMessages.length !== newSplitIndex + 1) return null
+
+        const prefixBlocks = [...prefixReconciled.blocks, ...oldCache.prefixBlocks]
+        const prefixVisibleBlocks = [...prefixVisible, ...oldCache.prefixVisibleBlocks]
+        const prefixToolGroups = [...prefixGroups, ...oldCache.prefixToolGroups]
+
+        const prefixRunningToolIds = new Set<string>(oldCache.prefixRunningToolIds)
+        for (const block of prefixReconciled.blocks) {
+            if (block.kind === 'tool-call' && (block.tool.state === 'running' || block.tool.state === 'pending')) {
+                prefixRunningToolIds.add(block.id)
+                if (block.tool.id) prefixRunningToolIds.add(block.tool.id)
+            }
+        }
+
+        const prependedLookupSets = collectPrefixLookupSets(prefixNorm, prefixReconciled.blocks)
+        const prefixToolIds = new Set<string>(oldCache.prefixToolIds)
+        for (const id of prependedLookupSets.prefixToolIds) prefixToolIds.add(id)
+        const prefixUuids = new Set<string>(oldCache.prefixUuids)
+        for (const id of prependedLookupSets.prefixUuids) prefixUuids.add(id)
+        const prefixPrompts = new Set<string>(oldCache.prefixPrompts)
+        for (const p of prependedLookupSets.prefixPrompts) prefixPrompts.add(p)
+        const prefixStreamIds = new Set<string>(oldCache.prefixStreamIds)
+        for (const id of prependedLookupSets.prefixStreamIds) prefixStreamIds.add(id)
+        const prefixTitleChanges = new Set<string>(oldCache.prefixTitleChanges)
+        for (const tc of prependedLookupSets.prefixTitleChanges) prefixTitleChanges.add(tc)
+        const prefixWorkCardIds = new Set<string>(oldCache.prefixWorkCardIds)
+        for (const id of prependedLookupSets.prefixWorkCardIds) prefixWorkCardIds.add(id)
+
+        const prefixPermissionsSignature = computePrefixPermissionsSignature(
+            input.agentState,
+            prefixToolIds,
+            oldCache.splitCreatedAt
+        )
+
+        const prefixRawIdSeen = new Map<string, number>(oldCache.prefixRawIdSeen)
+        const prefixUsedGroupIds = new Set<string>(oldCache.prefixUsedGroupIds)
+        const prefixGroupByRawId = new Map<string, string>(oldCache.prefixGroupByRawId)
+        let currentAssistantGroupId: string | null = null
+        for (const entry of prefixEntries) {
+            const block = entry.block
+            const id = block.kind === 'user-text' ? block.localId || block.id : block.id
+            const base = `${block.kind}:${id}`
+            const occ = prefixRawIdSeen.get(base) ?? 0
+            prefixRawIdSeen.set(base, occ + 1)
+            const rawId = occ === 0 ? base : `${base}~${occ}`
+            if (visibleBlockRole(block) !== 'assistant') {
+                currentAssistantGroupId = null
+                prefixUsedGroupIds.add(entry.threadMessageId)
+                prefixUsedGroupIds.add(rawId)
+            } else {
+                if (currentAssistantGroupId === null) {
+                    currentAssistantGroupId = entry.threadMessageId
+                    prefixUsedGroupIds.add(currentAssistantGroupId)
+                }
+                prefixGroupByRawId.set(rawId, currentAssistantGroupId)
+                prefixGroupByRawId.set(`block:${block.id}`, currentAssistantGroupId)
+                if (block.kind === 'tool-group') {
+                    for (const tool of block.tools) {
+                        prefixGroupByRawId.set(`tool-call:${tool.id}`, currentAssistantGroupId)
+                        prefixGroupByRawId.set(`block:${tool.id}`, currentAssistantGroupId)
+                    }
+                }
+            }
+        }
+
+        const absorbedTailMessages = new Set<string>(oldCache.absorbedTailMessages)
+        const candidateCache: SettledPrefixCache = {
+            rawPrefix,
+            prefixVisibleMessages,
+            prefixSeenMessageIds,
+            prefixMessages,
+            splitIndex: newSplitIndex,
+            splitCreatedAt: oldCache.splitCreatedAt,
+            boundaryMessageId: oldCache.boundaryMessageId,
+            prefixBlocks,
+            prefixTimeline: {
+                blocks: [...prefixTimeline.blocks, ...oldCache.prefixTimeline.blocks],
+                hasReadyEvent: prefixHasReadyEvent || oldCache.prefixTimeline.hasReadyEvent,
+            },
+            prefixById: new DisjointOverlayMap(prefixReconciled.byId, oldCache.prefixById),
+            prefixVisibleBlocks,
+            prefixToolGroups,
+            prefixHasMoreMessages: hasMoreMessages,
+            prefixCodexExplorationCollapsed: codexExplorationCollapsed,
+            prefixFlavor: flavor,
+            prefixMetadata: input.metadata,
+            prefixPermissionsSignature,
+            prefixToolIds,
+            prefixUuids,
+            prefixPrompts,
+            prefixStreamIds,
+            prefixTitleChanges,
+            prefixWorkCardIds,
+            prefixLatestUsage: oldCache.prefixLatestUsage ?? prefixLatestUsage,
+            prefixHasReadyEvent: oldCache.prefixHasReadyEvent || prefixHasReadyEvent,
+            prefixGoalSummary: buildThreadGoalPrefixSummary(prefixMessages),
+            prefixLatestRefusalEvent: oldCache.prefixLatestRefusalEvent ?? findLatestRefusalEvent(prefixNorm),
+            prefixStatusSummary: buildSessionStatusPrefixSummary(prefixBlocks, prefixMessages),
+            absorbedTailMessages,
+            prefixRunningToolIds,
+            prefixRawIdSeen,
+            prefixUsedGroupIds,
+            prefixGroupByRawId,
+            prefixBlocksWithThreadIds: [...prefixEntries, ...oldCache.prefixBlocksWithThreadIds],
+            prefixVisibleById: new DisjointOverlayMap(prefixVisibleById, oldCache.prefixVisibleById),
+            prefixTurnsById: new DisjointOverlayMap(prefixTurnsById, oldCache.prefixTurnsById),
+            prefixTurnLayoutsById: new DisjointOverlayMap(prefixLayoutsById, oldCache.prefixTurnLayoutsById),
+            prefixTurnHeadersById: new DisjointOverlayMap(prefixHeadersById, oldCache.prefixTurnHeadersById),
+            prefixTimelineIndex: Object.freeze([...prefixTimelineIndex, ...oldCache.prefixTimelineIndex]),
+            prefixOutlineItems: [...prefixOutlineItems, ...oldCache.prefixOutlineItems],
+        }
+
+        for (let i = newSplitIndex + 1; i < normalized.length; i += 1) {
+            const tailMsg = normalized[i]!
+            if (absorbedTailMessages.has(tailMsg.id)) continue
+            if (isPureAlreadyAppliedPrefixToolResultMessage(tailMsg, candidateCache)) {
+                absorbedTailMessages.add(tailMsg.id)
+                continue
+            }
+            if (tailMessageReferencesPrefix(tailMsg, candidateCache)) {
+                return null
+            }
+        }
+
+        return candidateCache
     }
 
     flushNotifications(): void {

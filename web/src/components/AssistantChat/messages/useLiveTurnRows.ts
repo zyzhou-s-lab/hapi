@@ -4,7 +4,7 @@ import { useOptionalHappyChatStaticContext } from '@/components/AssistantChat/co
 import {
     resolveLiveToolRow,
     summarizeTurnActivity,
-    type ProjectedStepRow,
+    type TurnDisplayStepRow,
     type TurnActionCounts,
     type TurnPartition,
     type TurnRow,
@@ -50,7 +50,7 @@ export function useLiveTurnRows(rows: readonly TurnRow[]): readonly TurnRow[] {
     return useSyncExternalStore(subscribe, getSnapshot, getSnapshot)
 }
 
-export function useLiveTurnStepRows(stepRows: readonly ProjectedStepRow[]): readonly ProjectedStepRow[] {
+export function useLiveTurnStepRows(stepRows: readonly TurnDisplayStepRow[]): readonly TurnDisplayStepRow[] {
     const store = useOptionalSessionEntityStore()
     const metadata = useOptionalHappyChatStaticContext()?.metadata ?? null
     const subscribe = useCallback((listener: () => void) => {
@@ -72,12 +72,12 @@ export function useLiveTurnStepRows(stepRows: readonly ProjectedStepRow[]): read
         return () => {
             if (!store) return stepRows
             let changed = false
-            const next = stepRows.map((row, index): ProjectedStepRow => {
+            const next = stepRows.map((row, index): TurnDisplayStepRow => {
                 const old = previous[index] ?? row
                 if (row.kind === 'tool') {
                     const block = store.getBlockEntity(row.block.id)
                     const live = block?.kind === 'tool-call' ? resolveLiveToolRow(row, block, metadata) : row
-                    if (old.kind === 'tool' && old.block === live.block && old.state === live.state && old.permission === live.permission) {
+                    if (old.kind === 'tool' && old.block === live.block && old.error === live.error && old.permission === live.permission) {
                         return old
                     }
                     changed = true

@@ -2,7 +2,9 @@ import { describe, expect, it, vi } from 'vitest'
 import { createSessionEntityStore } from './sessionEntityStore'
 import * as normalizeModule from '../normalize'
 import * as reducerModule from '../reducer'
-import { buildVisibleChatBlocks } from '../toolGroups'
+import * as reconcileMod from '../reconcile'
+import * as toolGroupsMod from '../toolGroups'
+const { buildVisibleChatBlocks } = toolGroupsMod
 
 type NormalizeModule = typeof normalizeModule
 type ReducerModule = typeof reducerModule
@@ -1261,6 +1263,105 @@ describe('SessionEntityStore', () => {
         const assistantTurnId = snapPending.timelineIndex.find((entry) => entry.role === 'assistant')?.id
         expect(assistantTurnId).toBeDefined()
         expect(snapRunning.turnLayoutsById.get(assistantTurnId!)).toBe(snapPending.turnLayoutsById.get(assistantTurnId!))
+    })
+
+    it('splices prepend-history at the first retained user boundary without re-reconciling suffix turns or invalidating incremental-tail cache', () => {
+        const store = createSessionEntityStore()
+
+        const u1 = makeUserMessage('u1', 'Turn 1 user', 1, 1000)
+        const a1 = makeAssistantTextMessage('a1', 'Turn 1 answer', 2, { createdAt: 1010 })
+        const u2 = makeUserMessage('u2', 'Turn 2 user', 3, 2000)
+        const a2 = makeAssistantTextMessage('a2', 'Turn 2 answer', 4, { createdAt: 2010 })
+        const u3 = makeUserMessage('u3', 'Turn 3 user', 5, 3000)
+        const a3 = makeAssistantTextMessage('a3', 'Turn 3 answer', 6, { createdAt: 3010 })
+
+        const snapInitial = store.reconcileInput({
+            sessionId: 'sess-prepend-splice',
+            messages: [u2, a2, u3, a3],
+            agentState: null,
+            hasMoreMessages: true,
+            codexExplorationCollapsed: false,
+            sessionThinking: false,
+            windowOperation: {
+                kind: 'replace-window',
+                reason: 'initial',
+                baseRevision: 0,
+                nextRevision: 1,
+                generation: 1,
+                removedIds: [],
+            },
+        })
+
+        const u2TimelineEntry = snapInitial.timelineIndex.find((entry) => entry.id === 'user-text:u2')
+        const a2TimelineEntry = snapInitial.timelineIndex.find((entry) => entry.role === 'assistant' && entry.id.includes('a2'))
+        const a3TimelineEntry = snapInitial.timelineIndex.find((entry) => entry.role === 'assistant' && entry.id.includes('a3'))
+        expect(u2TimelineEntry).toBeDefined()
+        expect(a2TimelineEntry).toBeDefined()
+        expect(a3TimelineEntry).toBeDefined()
+
+        const retainedEntityEvents: string[] = []
+        store.subscribeEntity('user-text:u2', () => retainedEntityEvents.push('u2'))
+        store.subscribeEntity(a2TimelineEntry!.id, () => retainedEntityEvents.push('a2-turn'))
+        store.subscribeEntity(`layout:${a2TimelineEntry!.id}`, () => retainedEntityEvents.push('a2-layout'))
+        store.subscribeEntity(`header:${a2TimelineEntry!.id}`, () => retainedEntityEvents.push('a2-header'))
+        store.subscribeEntity(a3TimelineEntry!.id, () => retainedEntityEvents.push('a3-turn'))
+
+        const reconcileSpy = vi.spyOn(reconcileMod, 'reconcileChatBlocks')
+        const visibleSpy = vi.spyOn(toolGroupsMod, 'buildVisibleChatBlocks')
+        try {
+            const snapPrepended = store.reconcileInput({
+                sessionId: 'sess-prepend-splice',
+                messages: [u1, a1, u2, a2, u3, a3],
+                agentState: null,
+                hasMoreMessages: false,
+                codexExplorationCollapsed: false,
+                sessionThinking: false,
+                windowOperation: {
+                    kind: 'prepend-history',
+                    messages: [u1, a1],
+                    historyVersion: 1,
+                    baseRevision: 1,
+                    nextRevision: 2,
+                    generation: 1,
+                    removedIds: [],
+                },
+            })
+
+            expect(snapPrepended.reductionMode).toBe('incremental-prepend')
+            expect(reconcileSpy).toHaveBeenCalledTimes(1)
+            expect(reconcileSpy.mock.calls[0]?.[0]?.map((b) => b.id)).toEqual(['u1', 'a1:0'])
+            expect(visibleSpy).toHaveBeenCalledTimes(1)
+            expect(visibleSpy.mock.calls[0]?.[0]?.map((b) => b.id)).toEqual(['u1', 'a1:0'])
+            expect(retainedEntityEvents).toEqual([])
+
+            expect(snapPrepended.turnsById.get(a2TimelineEntry!.id)).toBe(snapInitial.turnsById.get(a2TimelineEntry!.id))
+            expect(snapPrepended.turnLayoutsById.get(a2TimelineEntry!.id)).toBe(snapInitial.turnLayoutsById.get(a2TimelineEntry!.id))
+            expect(snapPrepended.turnHeadersById.get(a2TimelineEntry!.id)).toBe(snapInitial.turnHeadersById.get(a2TimelineEntry!.id))
+            expect(snapPrepended.turnsById.get(a3TimelineEntry!.id)).toBe(snapInitial.turnsById.get(a3TimelineEntry!.id))
+            expect(snapPrepended.timelineIndex.slice(2)).toEqual(snapInitial.timelineIndex)
+
+            const a3Followup = makeAssistantTextMessage('a3-2', 'Turn 3 extra tail block', 7, { createdAt: 3020 })
+            const snapTailAppended = store.reconcileInput({
+                sessionId: 'sess-prepend-splice',
+                messages: [u1, a1, u2, a2, u3, a3, a3Followup],
+                agentState: null,
+                hasMoreMessages: false,
+                codexExplorationCollapsed: false,
+                sessionThinking: false,
+                windowOperation: {
+                    kind: 'append-tail',
+                    messages: [a3Followup],
+                    baseRevision: 2,
+                    nextRevision: 3,
+                    generation: 1,
+                    removedIds: [],
+                },
+            })
+            expect(snapTailAppended.reductionMode).toBe('incremental-tail')
+        } finally {
+            reconcileSpy.mockRestore()
+            visibleSpy.mockRestore()
+        }
     })
 })
 

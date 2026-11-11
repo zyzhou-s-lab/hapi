@@ -92,7 +92,7 @@ export function buildThreadGoalPrefixSummary(
     return { rawGoal: null, sawNewerNonGoalUserMessage }
 }
 
-function getLatestThreadGoal(
+export function getLatestThreadGoal(
     normalized: readonly NormalizedMessage[],
     prefixGoalSummary?: ThreadGoalPrefixSummary | null
 ): ThreadGoal | null {

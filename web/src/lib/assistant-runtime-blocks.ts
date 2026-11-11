@@ -473,6 +473,7 @@ export type ThreadMessageIdAssignmentOptions = {
     initialSeen?: ReadonlyMap<string, number>
     initialUsedGroupIds?: ReadonlySet<string>
     preserveGroupByRawId?: ReadonlyMap<string, string>
+    mergePreviousGroupLookup?: boolean
 }
 
 export function assignThreadMessageIdsWithStableWrappers(
@@ -574,8 +575,15 @@ export function assignThreadMessageIdsWithStableWrappers(
             }
         }
     }
+    if (options?.mergePreviousGroupLookup && previousGroupByRawId) {
+        for (const [key, value] of previousGroupByRawId.local) {
+            if (!nextGroupByRawId.has(key)) {
+                nextGroupByRawId.set(key, value)
+            }
+        }
+    }
     assistantGroupIdCache.set(wrapperCache, {
-        preserved: preserveGroupByRawId,
+        preserved: preserveGroupByRawId ?? (options?.mergePreviousGroupLookup ? previousGroupByRawId?.preserved : undefined),
         local: nextGroupByRawId,
     })
     const responseGroupTimestamps = getResponseGroupTimestamps(blocks)
