@@ -997,6 +997,132 @@ describe('SessionEntityStore', () => {
         expect(tailSnap.reductionMode).toBe('incremental-tail')
         expect(store.getTurnHeader(lastTurnId)?.isRunning).toBe(false)
     })
+
+    it('advances settled prefix incrementally across new user turns and preserves timeline checkpoint for prepend-history', () => {
+        const store = createSessionEntityStore()
+        const u1 = makeUserMessage('u1', 'Turn 1 prompt', 1)
+        const a1 = makeAssistantTextMessage('a1', 'Turn 1 answer', 2)
+        const u2 = makeUserMessage('u2', 'Turn 2 prompt', 3)
+        const a2 = makeAssistantTextMessage('a2', 'Turn 2 answer', 4)
+
+        let revision = 1
+        const snap1 = store.reconcileInput({
+            sessionId: 'sess-cross-boundary',
+            messages: [u1, a1, u2, a2],
+            agentState: null,
+            hasMoreMessages: true,
+            codexExplorationCollapsed: false,
+            windowOperation: {
+                kind: 'replace-window',
+                reason: 'initial',
+                baseRevision: 0,
+                nextRevision: revision,
+                generation: 1,
+                removedIds: [],
+            },
+        })
+        expect(snap1.reductionMode).toBe('full')
+        expect(snap1.splitIndex).toBe(2)
+
+        // Optimistic user turn u3 (status: 'sending') stays in incremental-tail without advancing splitIndex yet
+        const u3Sending: DecryptedMessage = {
+            ...makeUserMessage('u3', 'Turn 3 prompt', 5),
+            localId: 'loc-u3',
+            status: 'sending',
+        }
+        const snap2 = store.reconcileInput({
+            sessionId: 'sess-cross-boundary',
+            messages: [u1, a1, u2, a2, u3Sending],
+            agentState: null,
+            hasMoreMessages: true,
+            codexExplorationCollapsed: false,
+            windowOperation: {
+                kind: 'append-tail',
+                messages: [u3Sending],
+                baseRevision: revision,
+                nextRevision: ++revision,
+                generation: 1,
+                removedIds: [],
+            },
+        })
+        expect(snap2.reductionMode).toBe('incremental-tail')
+        expect(snap2.splitIndex).toBe(2)
+
+        // u3 transitions from sending -> sent: stays in incremental-tail and seals u3 into SettledPrefixCache (splitIndex = 4)
+        const u3Sent: DecryptedMessage = {
+            ...u3Sending,
+            status: 'sent',
+        }
+        const snap3 = store.reconcileInput({
+            sessionId: 'sess-cross-boundary',
+            messages: [u1, a1, u2, a2, u3Sent],
+            agentState: null,
+            hasMoreMessages: true,
+            codexExplorationCollapsed: false,
+            windowOperation: {
+                kind: 'append-tail',
+                messages: [u3Sent],
+                baseRevision: revision,
+                nextRevision: ++revision,
+                generation: 1,
+                removedIds: [],
+            },
+        })
+        expect(snap3.reductionMode).toBe('incremental-tail')
+        expect(snap3.splitIndex).toBe(4)
+
+        // Assistant response a3 streams after u3: only a3 is replayed in the tail (replayedRows === 1)
+        const a3 = makeAssistantTextMessage('a3', 'Turn 3 streaming response', 6)
+        const snap4 = store.reconcileInput({
+            sessionId: 'sess-cross-boundary',
+            messages: [u1, a1, u2, a2, u3Sent, a3],
+            agentState: null,
+            hasMoreMessages: true,
+            codexExplorationCollapsed: false,
+            windowOperation: {
+                kind: 'upsert-live-stream',
+                message: a3,
+                baseRevision: revision,
+                nextRevision: ++revision,
+                generation: 1,
+                removedIds: [],
+            },
+        })
+        expect(snap4.reductionMode).toBe('incremental-tail')
+        expect(snap4.replay.rows).toBe(1)
+
+        // Prepending older history after incremental-tail uses incremental-prepend instead of falling back to full
+        const u0 = makeUserMessage('u0', 'Turn 0 prompt', 0)
+        const a0 = makeAssistantTextMessage('a0', 'Turn 0 answer', 0)
+        const snap5 = store.reconcileInput({
+            sessionId: 'sess-cross-boundary',
+            messages: [u0, a0, u1, a1, u2, a2, u3Sent, a3],
+            agentState: null,
+            hasMoreMessages: false,
+            codexExplorationCollapsed: false,
+            windowOperation: {
+                kind: 'prepend-history',
+                messages: [u0, a0],
+                baseRevision: revision,
+                nextRevision: ++revision,
+                generation: 1,
+                removedIds: [],
+            },
+        })
+        expect(snap5.reductionMode).toBe('incremental-prepend')
+        expect(snap5.replay.rows).toBe(2)
+
+        const freshStore = createSessionEntityStore()
+        const fullSnap = freshStore.reconcileInput({
+            sessionId: 'sess-cross-boundary-ref',
+            messages: [u0, a0, u1, a1, u2, a2, u3Sent, a3],
+            agentState: null,
+            hasMoreMessages: false,
+            codexExplorationCollapsed: false,
+        })
+        expect(snap5.blocks).toEqual(fullSnap.blocks)
+        expect(snap5.timelineIndex).toEqual(fullSnap.timelineIndex)
+    })
 })
 
 describe('partitionTurn and projectTurn reference stabilization', () => {

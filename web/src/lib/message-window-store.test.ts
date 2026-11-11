@@ -2575,4 +2575,53 @@ describe('message window operation transport', () => {
             vi.useRealTimers()
         }
     })
+
+    it('emits append-tail on overlapping activation latest response and status mutations when prefix is unchanged', async () => {
+        vi.useFakeTimers()
+        try {
+            const id = sessionId('op-append-tail-overlap')
+            const m1 = makeUserMessage({ id: 'u1', seq: 1, createdAt: 1_000 })
+            const m2 = makeAgentMessage({ id: 'a1', seq: 2, at: 2_000 })
+            const m3Server = makeUserMessage({ id: 'u2', localId: 'loc-u2', seq: 3, createdAt: 3_000 })
+            const m4Server = makeAgentMessage({ id: 'a2', seq: 4, at: 4_000 })
+
+            const getMessages = vi.fn()
+                .mockResolvedValueOnce(latestResponse([m1, m2]))
+                .mockResolvedValueOnce(latestResponse([m1, m2, m3Server, m4Server]))
+            const api = createApi(getMessages)
+
+            await syncTailMessages(api, id)
+            vi.runAllTimers()
+
+            const operations = observeOperations(id)
+            appendOptimisticMessage(id, {
+                ...m3Server,
+                id: 'opt-u2',
+                seq: null,
+                status: 'sending',
+            })
+            vi.runAllTimers()
+            expect(operations.at(-1)).toMatchObject({
+                kind: 'append-tail',
+                removedIds: [],
+            })
+
+            updateMessageStatus(id, 'loc-u2', 'sent')
+            vi.runAllTimers()
+            expect(operations.at(-1)).toMatchObject({
+                kind: 'append-tail',
+                removedIds: [],
+            })
+
+            activateMessageWindow(id)
+            await syncTailMessages(api, id)
+            vi.runAllTimers()
+            expect(operations.at(-1)).toMatchObject({
+                kind: 'append-tail',
+                removedIds: ['opt-u2'],
+            })
+        } finally {
+            vi.useRealTimers()
+        }
+    })
 })

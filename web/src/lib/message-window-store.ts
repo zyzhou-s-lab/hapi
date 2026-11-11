@@ -938,6 +938,66 @@ function pagePosition(at: number | null, seq: number | null): MessagePosition | 
     return at !== null && seq !== null ? { at, seq } : null
 }
 
+function canUseAppendTailIntent(
+    previousMessages: DecryptedMessage[],
+    nextMessages: DecryptedMessage[]
+): boolean {
+    if (previousMessages.length === 0 || nextMessages.length < previousMessages.length) {
+        return false
+    }
+    let commonPrefixLen = 0
+    while (
+        commonPrefixLen < previousMessages.length
+        && previousMessages[commonPrefixLen] === nextMessages[commonPrefixLen]
+    ) {
+        commonPrefixLen += 1
+    }
+    if (commonPrefixLen === 0) {
+        return false
+    }
+    const prefixIds = new Set<string>()
+    const prefixLocalIds = new Set<string>()
+    const prefixStreamIds = new Set<string>()
+    for (let i = 0; i < commonPrefixLen; i += 1) {
+        const msg = previousMessages[i]!
+        prefixIds.add(msg.id)
+        if (msg.localId) prefixLocalIds.add(msg.localId)
+        const streamId = getMessageStreamId(msg.content)
+        if (streamId) prefixStreamIds.add(streamId)
+    }
+    const nextTailIds = new Set<string>()
+    const nextTailLocalIds = new Set<string>()
+    const nextTailStreamIds = new Set<string>()
+    let hasChangedOrAdded = false
+    for (let i = commonPrefixLen; i < nextMessages.length; i += 1) {
+        const msg = nextMessages[i]!
+        if (prefixIds.has(msg.id)) return false
+        if (msg.localId && prefixLocalIds.has(msg.localId)) return false
+        const streamId = getMessageStreamId(msg.content)
+        if (streamId && prefixStreamIds.has(streamId)) return false
+        nextTailIds.add(msg.id)
+        if (msg.localId) nextTailLocalIds.add(msg.localId)
+        if (streamId) nextTailStreamIds.add(streamId)
+        if (previousMessages[i] !== msg) {
+            hasChangedOrAdded = true
+        }
+    }
+    if (!hasChangedOrAdded) {
+        return false
+    }
+    for (let i = commonPrefixLen; i < previousMessages.length; i += 1) {
+        const prevMsg = previousMessages[i]!
+        const streamId = getMessageStreamId(prevMsg.content)
+        const represented = nextTailIds.has(prevMsg.id)
+            || Boolean(prevMsg.localId && nextTailLocalIds.has(prevMsg.localId))
+            || Boolean(streamId && nextTailStreamIds.has(streamId))
+        if (!represented) {
+            return false
+        }
+    }
+    return true
+}
+
 function applyLatestResponse(
     previous: InternalState,
     response: MessagesResponse,
@@ -1012,9 +1072,11 @@ function applyLatestResponse(
         : options.replaceServerRows
             ? responseOldest
             : responseOldest ?? previousOldest
-    const operationIntent: MessageWindowOperationIntent = options.replaceServerRows || dropped.length > 0
+    const operationIntent: MessageWindowOperationIntent = response.page.reset || dropped.length > 0
         ? { kind: 'replace-window', reason: response.page.reset ? 'epoch-reset' : 'initial' }
-        : { kind: 'append-tail' }
+        : !options.replaceServerRows || canUseAppendTailIntent(previous.messages, kept)
+            ? { kind: 'append-tail' }
+            : { kind: 'replace-window', reason: 'initial' }
     return buildState(previous, {
         messages: kept,
         operationIntent,
@@ -1649,7 +1711,9 @@ export function updateMessageStatus(sessionId: string, localId: string, status: 
         return changed
             ? buildState(previous, {
                 messages,
-                operationIntent: { kind: 'replace-window', reason: 'status-change' }
+                operationIntent: canUseAppendTailIntent(previous.messages, messages)
+                    ? { kind: 'append-tail' }
+                    : { kind: 'replace-window', reason: 'status-change' }
             })
             : previous
     }, true)
@@ -1685,7 +1749,9 @@ export function markMessagesIndeterminate(sessionId: string, localIds: string[])
         return changed
             ? buildState(previous, {
                 messages,
-                operationIntent: { kind: 'replace-window', reason: 'status-change' }
+                operationIntent: canUseAppendTailIntent(previous.messages, messages)
+                    ? { kind: 'append-tail' }
+                    : { kind: 'replace-window', reason: 'status-change' }
             })
             : previous
     }, true)
@@ -1707,7 +1773,9 @@ export function markMessagesRequeued(sessionId: string, localIds: string[]): voi
         return changed
             ? buildState(previous, {
                 messages,
-                operationIntent: { kind: 'replace-window', reason: 'status-change' }
+                operationIntent: canUseAppendTailIntent(previous.messages, messages)
+                    ? { kind: 'append-tail' }
+                    : { kind: 'replace-window', reason: 'status-change' }
             })
             : previous
     }, true)
@@ -1745,10 +1813,13 @@ export function markMessagesConsumed(
             }
         })
         if (!changed) return previous
+        const merged = mergeMessages([], updated)
         return buildState(previous, {
-            messages: mergeMessages([], updated),
+            messages: merged,
             tailRevision: previous.tailRevision + 1,
-            operationIntent: { kind: 'replace-window', reason: 'status-change' }
+            operationIntent: canUseAppendTailIntent(previous.messages, merged)
+                ? { kind: 'append-tail' }
+                : { kind: 'replace-window', reason: 'status-change' }
         })
     }, true)
 }
