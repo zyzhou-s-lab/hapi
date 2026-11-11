@@ -1100,7 +1100,6 @@ export class SessionEntityStore {
         const nextPrefixTimeline: TimelineCheckpoint = {
             ...cache.prefixTimeline,
             blocks: cache.prefixTimeline.blocks.map((block) => updatedToolsByBlockId.get(block.id) ?? block),
-            latestUsage: nextPrefixLatestUsage,
         }
 
         return {
@@ -1413,7 +1412,6 @@ export class SessionEntityStore {
                         ? prefixCache.prefixTimeline.blocks
                         : [...prefixCache.prefixTimeline.blocks, ...tailReduced.timeline.blocks],
                 hasReadyEvent,
-                latestUsage,
             }
         } else {
             reductionMode = 'full'
@@ -2215,7 +2213,6 @@ export class SessionEntityStore {
         const prefixTimeline: TimelineCheckpoint = {
             blocks: fullTimeline.blocks.slice(0, timelineUserBlockIndex + 1),
             hasReadyEvent: prefixHasReadyEvent,
-            latestUsage: prefixLatestUsage,
         }
 
         const candidateCache: SettledPrefixCache = {

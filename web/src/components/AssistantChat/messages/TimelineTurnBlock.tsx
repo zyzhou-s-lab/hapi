@@ -125,25 +125,14 @@ export function TimelineTurnBlockView(props: {
     }, [stepExpansionStore])
     const prevProjectedRef = useRef<ProjectedTurn | null>(null)
     const projected = useMemo(() => {
-        if (
-            props.projectedTurn
-            && !props.streaming
-            && viewMode === 'normal'
-            && (!props.fallbackTodos || props.fallbackTodos.length === 0)
-        ) {
-            prevProjectedRef.current = props.projectedTurn
-            return props.projectedTurn
-        }
-        const next = projectTurn(props.partition, { viewMode, streaming: props.streaming, fallbackTodos: props.fallbackTodos }, prevProjectedRef.current)
+        const next = (props.projectedTurn && !props.streaming && viewMode === 'normal' && !props.fallbackTodos?.length)
+            ? props.projectedTurn
+            : projectTurn(props.partition, { viewMode, streaming: props.streaming, fallbackTodos: props.fallbackTodos }, prevProjectedRef.current)
         prevProjectedRef.current = next
         return next
     }, [props.projectedTurn, props.partition, viewMode, props.streaming, props.fallbackTodos])
     const subturn = projected.subturns[0]!
-    const isInitialStreamingWait =
-        props.streaming
-        && subturn.stepRows.length === 0
-        && subturn.mediaRows.length === 0
-        && subturn.answerRows.length === 0
+    const isInitialStreamingWait = props.streaming && subturn.stepRows.length === 0 && subturn.mediaRows.length === 0 && subturn.answerRows.length === 0
 
     if (!props.partition.hasActivity && !isInitialStreamingWait) {
         if (subturn.answerRows.length === 0) return null

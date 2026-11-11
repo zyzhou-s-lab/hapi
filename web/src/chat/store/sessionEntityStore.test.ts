@@ -1081,6 +1081,7 @@ describe('SessionEntityStore', () => {
             codexExplorationCollapsed: false,
             windowOperation: {
                 kind: 'upsert-live-stream',
+                streamId: 'a3-uuid',
                 message: a3,
                 baseRevision: revision,
                 nextRevision: ++revision,
@@ -1089,8 +1090,7 @@ describe('SessionEntityStore', () => {
             },
         })
         expect(snap4.reductionMode).toBe('incremental-tail')
-        expect(snap4.replay.rows).toBe(1)
-
+        expect(snap4.replay?.rows).toBe(1)
         // Prepending older history after incremental-tail uses incremental-prepend instead of falling back to full
         const u0 = makeUserMessage('u0', 'Turn 0 prompt', 0)
         const a0 = makeAssistantTextMessage('a0', 'Turn 0 answer', 0)
@@ -1103,6 +1103,7 @@ describe('SessionEntityStore', () => {
             windowOperation: {
                 kind: 'prepend-history',
                 messages: [u0, a0],
+                historyVersion: 2,
                 baseRevision: revision,
                 nextRevision: ++revision,
                 generation: 1,
@@ -1110,7 +1111,7 @@ describe('SessionEntityStore', () => {
             },
         })
         expect(snap5.reductionMode).toBe('incremental-prepend')
-        expect(snap5.replay.rows).toBe(2)
+        expect(snap5.replay?.rows).toBe(2)
 
         const freshStore = createSessionEntityStore()
         const fullSnap = freshStore.reconcileInput({

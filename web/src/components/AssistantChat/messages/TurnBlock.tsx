@@ -135,7 +135,7 @@ function LiveTailTurnBlockBody(props: {
     return <MemoizedTurnBlockView activeTodoText={activeTodoText} fallbackTodos={fallbackTodos} lang={props.lang} partition={props.partition} streaming={streaming} initiallyOpen={false} durationMs={settledDurationMs} streamingStartedAt={streamingStartedAt} turnId={props.turnId} stepExpansionStore={props.stepExpansionStore} shareCapture={props.shareCapture} />
 }
 
-const EMPTY_TURN_PARTITION: TurnPartition = partitionTurn([])
+const EMPTY_TURN_PARTITION: TurnPartition = partitionTurn([], null)
 
 function StoreTurnBlock({ messageId, shareCapture }: { messageId: string; shareCapture?: boolean }) {
     const { locale } = useTranslation()
