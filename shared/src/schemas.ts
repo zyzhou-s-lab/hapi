@@ -400,6 +400,22 @@ export const SessionLifecycleStateSchema = z.enum([
 ])
 export type SessionLifecycleState = z.infer<typeof SessionLifecycleStateSchema>
 
+export const ToolCallLifecycleStateSchema = z.enum([
+    'pending',
+    'running',
+    'completed',
+    'error',
+    'aborted'
+])
+export type ToolCallLifecycleState = z.infer<typeof ToolCallLifecycleStateSchema>
+
+export const ToolCallStateSummarySchema = z.object({
+    state: ToolCallLifecycleStateSchema,
+    startedAt: z.number().nullable().optional(),
+    completedAt: z.number().nullable().optional()
+})
+export type ToolCallStateSummary = z.infer<typeof ToolCallStateSummarySchema>
+
 export const DecryptedMessageSchema = z.object({
     id: z.string(),
     seq: z.number().nullable(),
@@ -417,7 +433,8 @@ export const DecryptedMessageSchema = z.object({
     turnId: z.string().nullable().optional(),
     phase: TurnPhaseSchema.nullable().optional(),
     lifecycleState: MessageLifecycleStateSchema.optional(),
-    turnState: TurnStateSchema.nullable().optional()
+    turnState: TurnStateSchema.nullable().optional(),
+    toolStates: z.record(z.string(), ToolCallStateSummarySchema).optional()
 })
 
 export type DecryptedMessage = z.infer<typeof DecryptedMessageSchema>

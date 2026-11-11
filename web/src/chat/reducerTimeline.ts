@@ -5,7 +5,7 @@ import { parseMessageAsEvent } from '@/chat/reducerEvents'
 import { collectTitleChanges, ensureToolBlock, titleFromChangeTitleCall, type PermissionEntry } from '@/chat/reducerTools'
 import { normalizeToolUseStatus } from '@/chat/normalizeAgent'
 import { isSubagentToolName } from '@/chat/subagentTool'
-import { asString, isObject, type TurnState } from '@hapi/protocol'
+import { asString, isObject, type ToolCallStateSummary, type TurnState } from '@hapi/protocol'
 
 function getEventString(event: Record<string, unknown>, key: string): string | null {
     return asString(event[key])
@@ -306,6 +306,7 @@ export function reduceTimeline(
         titleChangesByToolUseId: Map<string, string>
         emittedTitleChangeToolUseIds: Set<string>
         turnStates?: ReadonlyMap<string, TurnState>
+        toolStates?: ReadonlyMap<string, ToolCallStateSummary>
     }
 ): { blocks: ChatBlock[]; toolBlocksById: Map<string, ToolCallBlock>; hasReadyEvent: boolean } {
     const blocks: ChatBlock[] = []
@@ -371,7 +372,8 @@ export function reduceTimeline(
             groups: new Map(),
             consumedGroupIds: new Set<string>(),
             titleChangesByToolUseId: collectTitleChanges(traceMessages),
-            emittedTitleChangeToolUseIds: new Set<string>()
+            emittedTitleChangeToolUseIds: new Set<string>(),
+            toolStates: context.toolStates
         })
         block.children = child.blocks
     }
@@ -1126,18 +1128,38 @@ export function reduceTimeline(
     }
 
     for (const [toolId, block] of toolBlocksById) {
+        const authoritative = context.toolStates?.get(toolId)
+        if (authoritative?.startedAt != null) {
+            setEarliestStartedAt(block, authoritative.startedAt)
+        }
         if (block.tool.state === 'completed' || block.tool.state === 'error') {
             if (block.tool.completionSource === 'unresolved') {
                 block.tool = { ...block.tool, completionSource: undefined }
             }
             continue
         }
+        if (authoritative && (authoritative.state === 'completed' || authoritative.state === 'error')) {
+            block.tool = {
+                ...block.tool,
+                state: authoritative.state,
+                completedAt: block.tool.completedAt ?? authoritative.completedAt ?? block.tool.createdAt,
+                completionSource: undefined
+            }
+            continue
+        }
         const turnState = block.turnId !== undefined ? context.turnStates?.get(block.turnId) : undefined
+        const hasAuthoritativeAbort = authoritative?.state === 'aborted'
         const hasOwnedCutoff = !toolsWithUncertainOwnership.has(toolId)
             && !agentRunBlocksByCardId.has(toolId)
             && block.tool.name !== 'CodexAgent'
             && !isSubagentToolName(block.tool.name)
-            && (turnState === 'completed' || turnState === 'failed' || turnState === 'aborted' || turnState === 'cutoff')
+            && (
+                hasAuthoritativeAbort
+                || turnState === 'completed'
+                || turnState === 'failed'
+                || turnState === 'aborted'
+                || turnState === 'cutoff'
+            )
         // Progress may populate result without being terminal. Only canonical
         // closure of the exact owner can settle a missing tool outcome.
         block.tool = {

@@ -28,6 +28,8 @@ export type {
     ThreadGoal,
     ThreadGoalStatus,
     TodoItem,
+    ToolCallLifecycleState,
+    ToolCallStateSummary,
     TurnPhase,
     TurnState,
     WorktreeMetadata

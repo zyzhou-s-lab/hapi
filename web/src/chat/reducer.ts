@@ -6,7 +6,7 @@ import { dedupeAgentEvents, foldApiErrorEvents, foldCompactionEvents } from '@/c
 import { collectTitleChanges, ensureToolBlock, getPermissions } from '@/chat/reducerTools'
 import { reduceTimeline } from '@/chat/reducerTimeline'
 import { isRedundantGoalStatusMessageText } from '@hapi/protocol/messages'
-import type { TurnState } from '@hapi/protocol'
+import type { ToolCallStateSummary, TurnState } from '@hapi/protocol'
 import type { RetainedTimelineSuffix } from '@/chat/replayBoundary'
 
 // Calculate context size from usage data
@@ -227,6 +227,9 @@ export function reduceChatBlocks(
     // Retain lifecycle authority even when a newer content snapshot replaces its message.
     const lifecycleMessages: readonly TracedMessage[] = normalized
     const turnStates = new Map<string, TurnState>()
+    const toolStates = new Map<string, ToolCallStateSummary>()
+    const toolStateRank = (state: ToolCallStateSummary['state']): number =>
+        state === 'error' ? 4 : state === 'completed' ? 3 : state === 'aborted' ? 2 : state === 'running' ? 1 : 0
     for (const msg of lifecycleMessages) {
         if (
             !msg.isSidechain
@@ -239,6 +242,26 @@ export function reduceChatBlocks(
         ) {
             // A replayed running snapshot cannot reopen a canonically closed turn.
             turnStates.set(msg.turnId, msg.turnState)
+        }
+        if (msg.toolStates) {
+            for (const [toolUseId, summary] of Object.entries(msg.toolStates)) {
+                const existing = toolStates.get(toolUseId)
+                if (!existing) {
+                    toolStates.set(toolUseId, summary)
+                    continue
+                }
+                if (toolStateRank(summary.state) >= toolStateRank(existing.state)) {
+                    toolStates.set(toolUseId, {
+                        state: toolStateRank(summary.state) > toolStateRank(existing.state)
+                            ? summary.state
+                            : existing.state,
+                        startedAt: existing.startedAt != null && summary.startedAt != null
+                            ? Math.min(existing.startedAt, summary.startedAt)
+                            : (summary.startedAt ?? existing.startedAt ?? null),
+                        completedAt: summary.completedAt ?? existing.completedAt ?? null
+                    })
+                }
+            }
         }
     }
 
@@ -268,7 +291,8 @@ export function reduceChatBlocks(
         consumedGroupIds,
         titleChangesByToolUseId,
         emittedTitleChangeToolUseIds,
-        turnStates
+        turnStates,
+        toolStates
     }
     const retained = options.retainedTimelineSuffix
     const suffixStart = retained ? root.findIndex((msg) => msg.id === retained.startMessageId) : -1

@@ -1279,4 +1279,76 @@ describe('lifecycle edge contracts', () => {
         expect(store.sessions.getSession(session.id)?.activeTurnId ?? null).toBeNull()
         expect(store.sessions.getSession(session.id)?.lifecycleState).toBe('idle')
     }))
+
+    it('persists session_tool_calls lifecycle and hydrates authoritative toolStates across call, result, and turn cutoff', () => withSession('tool-calls-authority', (store, session) => {
+        store.messages.bindSessionSource(session.id, source.sourceInstanceId, 1000, 'default')
+        lifecycle(store, session.id, 'turn-1', 'started', {}, 1000)
+
+        const callMsg = store.messages.addMessage(session.id, {
+            role: 'agent',
+            meta: { ...source, scope: 'main' as const, turnId: 'turn-1' },
+            content: {
+                type: AGENT_MESSAGE_PAYLOAD_TYPE,
+                data: { type: 'tool-call', callId: 'tool-1', name: 'bash', input: { command: 'ls' } }
+            }
+        }, 'call-1', undefined, 1010)
+        expect(callMsg.toolStates).toEqual({
+            'tool-1': { state: 'running', startedAt: 1010, completedAt: null }
+        })
+
+        const openCallMsg = store.messages.addMessage(session.id, {
+            role: 'agent',
+            meta: { ...source, scope: 'main' as const, turnId: 'turn-1' },
+            content: {
+                type: AGENT_MESSAGE_PAYLOAD_TYPE,
+                data: { type: 'tool-call', callId: 'tool-open', name: 'bash', input: { command: 'sleep 10' } }
+            }
+        }, 'call-open', undefined, 1020)
+        const subagentCallMsg = store.messages.addMessage(session.id, {
+            role: 'agent',
+            meta: { ...source, scope: 'main' as const, turnId: 'turn-1' },
+            content: {
+                type: AGENT_MESSAGE_PAYLOAD_TYPE,
+                data: { type: 'tool-call', callId: 'tool-subagent', name: 'Task', input: { prompt: 'work' } }
+            }
+        }, 'call-subagent', undefined, 1025)
+
+        const resultMsg = store.messages.addMessage(session.id, {
+            role: 'agent',
+            meta: { ...source, scope: 'main' as const, turnId: 'turn-1' },
+            content: {
+                type: AGENT_MESSAGE_PAYLOAD_TYPE,
+                data: { type: 'tool-call-result', callId: 'tool-1', output: 'ok', is_error: false }
+            }
+        }, 'result-1', undefined, 1030)
+        expect(resultMsg.toolStates).toEqual({
+            'tool-1': { state: 'completed', startedAt: 1010, completedAt: 1030 }
+        })
+        expect(store.messages.getMessageByLocalId(session.id, 'call-1')?.toolStates).toEqual({
+            'tool-1': { state: 'completed', startedAt: 1010, completedAt: 1030 }
+        })
+
+        const finished = lifecycle(store, session.id, 'turn-1', 'finished', { outcome: 'aborted' }, 1040)
+        expect(finished.transition.finalizedMessages.map((m) => m.id)).toContain(openCallMsg.id)
+        expect(finished.transition.finalizedMessages.map((m) => m.id)).not.toContain(subagentCallMsg.id)
+        expect(store.messages.getMessageByLocalId(session.id, 'call-open')?.toolStates).toEqual({
+            'tool-open': { state: 'aborted', startedAt: 1020, completedAt: null }
+        })
+        expect(store.messages.getMessageByLocalId(session.id, 'call-subagent')?.toolStates).toEqual({
+            'tool-subagent': { state: 'running', startedAt: 1025, completedAt: null }
+        })
+
+        // Late explicit tool-result supersedes earlier turn-cutoff abort in SQLite
+        store.messages.addMessage(session.id, {
+            role: 'agent',
+            meta: { ...source, scope: 'main' as const, turnId: 'turn-1' },
+            content: {
+                type: AGENT_MESSAGE_PAYLOAD_TYPE,
+                data: { type: 'tool-call-result', callId: 'tool-open', output: 'late ok', is_error: false }
+            }
+        }, 'result-open-late', undefined, 1050)
+        expect(store.messages.getMessageByLocalId(session.id, 'call-open')?.toolStates).toEqual({
+            'tool-open': { state: 'completed', startedAt: 1020, completedAt: 1050 }
+        })
+    }))
 })

@@ -23,11 +23,13 @@ function normalizeDecryptedMessageUncached(message: DecryptedMessage): Normalize
         || (record && isObject(record.meta) && typeof record.meta.turnId === 'string' ? record.meta.turnId.trim() : undefined)
         || undefined
     const turnState = message.turnState ?? undefined
+    const toolStates = message.toolStates ?? undefined
     if (!record) {
         return {
             id: message.id,
             turnId,
             turnState,
+            ...(toolStates ? { toolStates } : {}),
             localId: message.localId,
             createdAt: message.createdAt,
             role: 'agent',
@@ -45,6 +47,7 @@ function normalizeDecryptedMessageUncached(message: DecryptedMessage): Normalize
                 ...normalized,
                 turnId,
                 turnState,
+                ...(toolStates ? { toolStates } : {}),
                 status: message.status,
                 originalText: message.originalText,
                 invokedAt: message.invokedAt,
@@ -54,6 +57,7 @@ function normalizeDecryptedMessageUncached(message: DecryptedMessage): Normalize
                 id: message.id,
                 turnId,
                 turnState,
+                ...(toolStates ? { toolStates } : {}),
                 localId: message.localId,
                 createdAt: message.createdAt,
                 role: 'user',
@@ -79,6 +83,7 @@ function normalizeDecryptedMessageUncached(message: DecryptedMessage): Normalize
                 id: message.id,
                 turnId,
                 turnState,
+                ...(toolStates ? { toolStates } : {}),
                 localId: message.localId,
                 createdAt: message.createdAt,
                 role: 'agent',
@@ -104,6 +109,7 @@ function normalizeDecryptedMessageUncached(message: DecryptedMessage): Normalize
             ...normalized,
             turnId,
             turnState,
+            ...(toolStates ? { toolStates } : {}),
             ...settledOverride,
             status: message.status,
             originalText: message.originalText,
@@ -115,6 +121,7 @@ function normalizeDecryptedMessageUncached(message: DecryptedMessage): Normalize
         id: message.id,
         turnId,
         turnState,
+        ...(toolStates ? { toolStates } : {}),
         localId: message.localId,
         createdAt: message.createdAt,
         role: 'agent',

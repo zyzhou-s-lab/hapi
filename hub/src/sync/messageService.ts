@@ -48,6 +48,7 @@ function toDecryptedMessage(message: StoredMessageForDelivery): DecryptedMessage
         scheduledAt: message.scheduledAt,
         ...(message.turnId ? { turnId: message.turnId } : {}),
         ...(message.turnState ? { turnState: message.turnState } : {}),
+        ...(message.toolStates ? { toolStates: message.toolStates } : {}),
         ...(message.phase ? { phase: message.phase } : {}),
         ...(message.lifecycleState ? { lifecycleState: message.lifecycleState } : {}),
         ...(message.deliveryState ? { deliveryState: message.deliveryState } : {})

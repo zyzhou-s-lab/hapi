@@ -1,3 +1,11 @@
+import type {
+    MessageLifecycleState,
+    SessionLifecycleState,
+    ToolCallStateSummary,
+    TurnPhase,
+    TurnState
+} from '@hapi/protocol'
+
 export type StoredSession = {
     id: string
     tag: string | null
@@ -23,7 +31,7 @@ export type StoredSession = {
     active: boolean
     activeAt: number | null
     activeTurnId?: string | null
-    lifecycleState?: import('@hapi/protocol').SessionLifecycleState
+    lifecycleState?: SessionLifecycleState
     seq: number
 }
 
@@ -55,10 +63,11 @@ export type StoredMessage = {
     /** Omitted for ordinary queued/delivered rows; set when steer outcome is unknown. */
     deliveryState?: MessageDeliveryState
     turnId?: string | null
-    turnPhase?: import('@hapi/protocol').TurnPhase | null
-    phase?: import('@hapi/protocol').TurnPhase | null
-    lifecycleState?: import('@hapi/protocol').MessageLifecycleState
-    turnState?: import('@hapi/protocol').TurnState | null
+    turnPhase?: TurnPhase | null
+    phase?: TurnPhase | null
+    lifecycleState?: MessageLifecycleState
+    turnState?: TurnState | null
+    toolStates?: Record<string, ToolCallStateSummary>
 }
 
 export type StoredUser = {

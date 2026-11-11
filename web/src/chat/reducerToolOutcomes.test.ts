@@ -295,4 +295,48 @@ describe('reduceChatBlocks canonical tool ownership', () => {
             state: 'running', completionSource: 'unresolved'
         })
     })
+
+    it('resolves tool outcomes from Hub-hydrated toolStates when tool-result is outside the paginated window', () => {
+        const completedReduced = reduceChatBlocks([
+            agent('completed-call', [call('tool-ok')], {
+                turnId: 'owner',
+                turnState: 'running',
+                toolStates: { 'tool-ok': { state: 'completed', startedAt: 900, completedAt: 1_500 } }
+            }),
+            agent('error-call', [call('tool-err')], {
+                turnId: 'owner',
+                turnState: 'running',
+                toolStates: { 'tool-err': { state: 'error', startedAt: 950, completedAt: 1_600 } }
+            }),
+            agent('aborted-call', [call('tool-aborted')], {
+                turnId: 'owner',
+                turnState: 'running',
+                toolStates: { 'tool-aborted': { state: 'aborted', startedAt: 980, completedAt: null } }
+            })
+        ], null)
+
+        const byId = new Map(
+            completedReduced.blocks
+                .filter((b): b is ToolCallBlock => b.kind === 'tool-call')
+                .map((b) => [b.id, b.tool])
+        )
+        expect(byId.get('tool-ok')).toMatchObject({
+            state: 'completed',
+            startedAt: 900,
+            completedAt: 1_500,
+            completionSource: undefined
+        })
+        expect(byId.get('tool-err')).toMatchObject({
+            state: 'error',
+            startedAt: 950,
+            completedAt: 1_600,
+            completionSource: undefined
+        })
+        expect(byId.get('tool-aborted')).toMatchObject({
+            state: 'error',
+            startedAt: 980,
+            completedAt: null,
+            completionSource: 'invocation-cutoff'
+        })
+    })
 })

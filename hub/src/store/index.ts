@@ -513,6 +513,29 @@ export class Store {
                 ON session_turns(session_id, start_order DESC);
             CREATE INDEX IF NOT EXISTS idx_session_turns_status
                 ON session_turns(session_id, status, scope, start_order DESC);
+            CREATE TABLE IF NOT EXISTS session_tool_calls (
+                session_id TEXT NOT NULL,
+                tool_use_id TEXT NOT NULL,
+                turn_id TEXT,
+                parent_tool_use_id TEXT,
+                tool_name TEXT NOT NULL,
+                is_subagent INTEGER NOT NULL DEFAULT 0,
+                is_sidechain INTEGER NOT NULL DEFAULT 0,
+                state TEXT NOT NULL,
+                source_message_id TEXT NOT NULL,
+                result_message_id TEXT,
+                started_at INTEGER NOT NULL,
+                completed_at INTEGER,
+                updated_at INTEGER NOT NULL,
+                PRIMARY KEY (session_id, tool_use_id),
+                FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
+            );
+            CREATE INDEX IF NOT EXISTS idx_session_tool_calls_session_state
+                ON session_tool_calls(session_id, state);
+            CREATE INDEX IF NOT EXISTS idx_session_tool_calls_turn
+                ON session_tool_calls(session_id, turn_id);
+            CREATE INDEX IF NOT EXISTS idx_session_tool_calls_source_msg
+                ON session_tool_calls(session_id, source_message_id);
             CREATE TABLE IF NOT EXISTS session_sources (
                 session_id TEXT NOT NULL,
                 source_instance_id TEXT NOT NULL,
@@ -1185,6 +1208,29 @@ export class Store {
             );
             CREATE INDEX IF NOT EXISTS idx_session_turns_order
                 ON session_turns(session_id, start_order DESC);
+            CREATE TABLE IF NOT EXISTS session_tool_calls (
+                session_id TEXT NOT NULL,
+                tool_use_id TEXT NOT NULL,
+                turn_id TEXT,
+                parent_tool_use_id TEXT,
+                tool_name TEXT NOT NULL,
+                is_subagent INTEGER NOT NULL DEFAULT 0,
+                is_sidechain INTEGER NOT NULL DEFAULT 0,
+                state TEXT NOT NULL,
+                source_message_id TEXT NOT NULL,
+                result_message_id TEXT,
+                started_at INTEGER NOT NULL,
+                completed_at INTEGER,
+                updated_at INTEGER NOT NULL,
+                PRIMARY KEY (session_id, tool_use_id),
+                FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
+            );
+            CREATE INDEX IF NOT EXISTS idx_session_tool_calls_session_state
+                ON session_tool_calls(session_id, state);
+            CREATE INDEX IF NOT EXISTS idx_session_tool_calls_turn
+                ON session_tool_calls(session_id, turn_id);
+            CREATE INDEX IF NOT EXISTS idx_session_tool_calls_source_msg
+                ON session_tool_calls(session_id, source_message_id);
             CREATE TABLE IF NOT EXISTS session_sources (
                 session_id TEXT NOT NULL,
                 source_instance_id TEXT NOT NULL,

@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto'
 import { isDeepStrictEqual } from 'node:util'
 
 import {
+    extractMessageToolLifecycleEvents,
     getLegacyMessageTurnId,
     getLiveMessageStreamId,
     getMessageScope,
@@ -14,7 +15,12 @@ import {
     unwrapRoleWrappedRecordEnvelope,
     type TurnLifecycleEventPayload
 } from '@hapi/protocol/messages'
-import type { SessionLifecycleState, TurnState } from '@hapi/protocol'
+import type {
+    SessionLifecycleState,
+    ToolCallLifecycleState,
+    ToolCallStateSummary,
+    TurnState
+} from '@hapi/protocol'
 import type { StoredMessage } from './types'
 import { decodeMessageContent, encodeMessageContent, truncateOversizedMessageContent } from './contentCodec'
 
@@ -50,6 +56,22 @@ type DbSessionTurnRow = {
     start_event_id: string | null
     end_event_id: string | null
     created_at: number
+    updated_at: number
+}
+
+type DbSessionToolCallRow = {
+    session_id: string
+    tool_use_id: string
+    turn_id: string | null
+    parent_tool_use_id: string | null
+    tool_name: string
+    is_subagent: number
+    is_sidechain: number
+    state: ToolCallLifecycleState
+    source_message_id: string
+    result_message_id: string | null
+    started_at: number
+    completed_at: number | null
     updated_at: number
 }
 
@@ -199,6 +221,145 @@ function isClosedTurnStatus(status: TurnState | null): boolean {
     return status !== null && status !== 'running'
 }
 
+function isCanonicalClosedTurnStatusForToolCutoff(status: TurnState | null): boolean {
+    return status === 'completed'
+        || status === 'failed'
+        || status === 'aborted'
+        || status === 'cutoff'
+}
+
+function indexMessageToolCalls(
+    db: Database,
+    sessionId: string,
+    messageId: string,
+    content: unknown,
+    options: {
+        turnId: string | null
+        turnStatus: TurnState | null
+        now: number
+    }
+): void {
+    const events = extractMessageToolLifecycleEvents(content)
+    if (events.length === 0) return
+
+    const { turnId, turnStatus, now } = options
+    for (const event of events) {
+        if (event.kind === 'call') {
+            const canOwnTurnCutoff = !event.isSubagent
+                && !event.isSidechain
+                && event.parentToolUseId === null
+                && turnId !== null
+            const turnClosed = canOwnTurnCutoff && isCanonicalClosedTurnStatusForToolCutoff(turnStatus)
+            const effectiveState: ToolCallLifecycleState = (
+                event.state === 'completed' || event.state === 'error' || event.state === 'aborted'
+            )
+                ? event.state
+                : turnClosed
+                    ? 'aborted'
+                    : event.state
+            const completedAt = (effectiveState === 'completed' || effectiveState === 'error') ? now : null
+
+            db.prepare(`
+                INSERT INTO session_tool_calls (
+                    session_id, tool_use_id, turn_id, parent_tool_use_id, tool_name,
+                    is_subagent, is_sidechain, state, source_message_id, result_message_id,
+                    started_at, completed_at, updated_at
+                ) VALUES (
+                    @session_id, @tool_use_id, @turn_id, @parent_tool_use_id, @tool_name,
+                    @is_subagent, @is_sidechain, @state, @source_message_id, NULL,
+                    @started_at, @completed_at, @updated_at
+                )
+                ON CONFLICT(session_id, tool_use_id) DO UPDATE SET
+                    turn_id = CASE
+                        WHEN session_tool_calls.turn_id IS NOT NULL
+                             AND excluded.turn_id IS NOT NULL
+                             AND session_tool_calls.turn_id <> excluded.turn_id
+                        THEN NULL
+                        ELSE COALESCE(session_tool_calls.turn_id, excluded.turn_id)
+                    END,
+                    parent_tool_use_id = COALESCE(session_tool_calls.parent_tool_use_id, excluded.parent_tool_use_id),
+                    tool_name = CASE
+                        WHEN session_tool_calls.tool_name = 'unknown' THEN excluded.tool_name
+                        ELSE session_tool_calls.tool_name
+                    END,
+                    is_subagent = MAX(session_tool_calls.is_subagent, excluded.is_subagent),
+                    is_sidechain = CASE
+                        WHEN session_tool_calls.turn_id IS NOT NULL
+                             AND excluded.turn_id IS NOT NULL
+                             AND session_tool_calls.turn_id <> excluded.turn_id
+                        THEN 1
+                        ELSE MAX(session_tool_calls.is_sidechain, excluded.is_sidechain)
+                    END,
+                    state = CASE
+                        WHEN session_tool_calls.state = 'error' THEN 'error'
+                        WHEN session_tool_calls.state = 'completed' THEN
+                            CASE WHEN excluded.state = 'error' THEN 'error' ELSE 'completed' END
+                        WHEN session_tool_calls.state = 'aborted' THEN
+                            CASE
+                                WHEN excluded.state IN ('completed', 'error') THEN excluded.state
+                                WHEN session_tool_calls.turn_id IS NOT NULL
+                                     AND excluded.turn_id IS NOT NULL
+                                     AND session_tool_calls.turn_id <> excluded.turn_id
+                                THEN 'running'
+                                ELSE 'aborted'
+                            END
+                        WHEN excluded.state = 'aborted'
+                             AND session_tool_calls.turn_id IS NOT NULL
+                             AND excluded.turn_id IS NOT NULL
+                             AND session_tool_calls.turn_id <> excluded.turn_id
+                        THEN session_tool_calls.state
+                        ELSE excluded.state
+                    END,
+                    source_message_id = excluded.source_message_id,
+                    started_at = MIN(session_tool_calls.started_at, excluded.started_at),
+                    completed_at = COALESCE(session_tool_calls.completed_at, excluded.completed_at),
+                    updated_at = excluded.updated_at
+            `).run({
+                session_id: sessionId,
+                tool_use_id: event.toolUseId,
+                turn_id: turnId,
+                parent_tool_use_id: event.parentToolUseId,
+                tool_name: event.toolName,
+                is_subagent: event.isSubagent ? 1 : 0,
+                is_sidechain: event.isSidechain ? 1 : 0,
+                state: effectiveState,
+                source_message_id: messageId,
+                started_at: now,
+                completed_at: completedAt,
+                updated_at: now
+            })
+        } else {
+            db.prepare(`
+                INSERT INTO session_tool_calls (
+                    session_id, tool_use_id, turn_id, parent_tool_use_id, tool_name,
+                    is_subagent, is_sidechain, state, source_message_id, result_message_id,
+                    started_at, completed_at, updated_at
+                ) VALUES (
+                    @session_id, @tool_use_id, @turn_id, NULL, 'unknown',
+                    0, 0, @state, @result_message_id, @result_message_id,
+                    @now, @now, @now
+                )
+                ON CONFLICT(session_id, tool_use_id) DO UPDATE SET
+                    turn_id = COALESCE(session_tool_calls.turn_id, excluded.turn_id),
+                    state = CASE
+                        WHEN session_tool_calls.state = 'error' AND excluded.state = 'completed' THEN 'error'
+                        ELSE excluded.state
+                    END,
+                    result_message_id = excluded.result_message_id,
+                    completed_at = COALESCE(session_tool_calls.completed_at, excluded.completed_at),
+                    updated_at = excluded.updated_at
+            `).run({
+                session_id: sessionId,
+                tool_use_id: event.toolUseId,
+                turn_id: turnId,
+                state: event.state,
+                result_message_id: messageId,
+                now
+            })
+        }
+    }
+}
+
 function indexMessageStream(
     db: Database,
     sessionId: string,
@@ -228,20 +389,30 @@ function indexMessageStream(
             db.prepare('UPDATE messages SET turn_id = ?, turn_phase = ? WHERE id = ?')
                 .run(turnId, turnPhase, id)
         }
+        indexMessageToolCalls(db, sessionId, id, content, { turnId, turnStatus, now })
         return id
     }
     db.prepare('UPDATE messages SET stream_id = ?, stream_live = ?, stream_provisional = ?, turn_id = COALESCE(?, turn_id), turn_phase = COALESCE(?, turn_phase) WHERE id = ?')
         .run(streamId, live ? 1 : 0, rawLive ? 1 : 0, turnId, turnPhase, id)
     const winner = db.prepare(`
-        SELECT id FROM messages WHERE session_id = ? AND stream_id = ?
+        SELECT id, turn_id FROM messages WHERE session_id = ? AND stream_id = ?
         ORDER BY stream_provisional ASC, seq DESC LIMIT 1
-    `).get(sessionId, streamId) as { id: string }
+    `).get(sessionId, streamId) as { id: string; turn_id: string | null }
     const replacesFinal = !rawLive && db.prepare(`
         SELECT 1 FROM messages
         WHERE session_id = ? AND stream_id = ? AND stream_provisional = 0 AND id <> ? LIMIT 1
     `).get(sessionId, streamId, id)
     db.prepare('DELETE FROM messages WHERE session_id = ? AND stream_id = ? AND id <> ?')
         .run(sessionId, streamId, winner.id)
+    const effectiveTurnId = winner.turn_id ?? turnId
+    const effectiveTurnStatus = effectiveTurnId === turnId
+        ? turnStatus
+        : getSessionTurnStatus(db, sessionId, effectiveTurnId)
+    indexMessageToolCalls(db, sessionId, winner.id, content, {
+        turnId: effectiveTurnId,
+        turnStatus: effectiveTurnStatus,
+        now
+    })
     // Only prior finals can contribute usage. Normal provisional replacement
     // must not repeatedly invalidate the whole session's usage scan.
     if (replacesFinal) bumpMessageEpoch(db, sessionId)
@@ -357,7 +528,11 @@ export function addImportedMessage(
     })()
 }
 
-function toStoredMessage(row: DbMessageRow, turnState?: TurnState | null): StoredMessage {
+function toStoredMessage(
+    row: DbMessageRow,
+    turnState?: TurnState | null,
+    toolStates?: Record<string, ToolCallStateSummary>
+): StoredMessage {
     return {
         id: row.id,
         sessionId: row.session_id,
@@ -370,6 +545,7 @@ function toStoredMessage(row: DbMessageRow, turnState?: TurnState | null): Store
         ...(row.delivery_state && row.delivery_state !== 'queued' ? { deliveryState: 'indeterminate' as const } : {}),
         ...(row.turn_id ? { turnId: row.turn_id } : {}),
         ...(turnState ? { turnState } : {}),
+        ...(toolStates && Object.keys(toolStates).length > 0 ? { toolStates } : {}),
         ...(row.turn_phase === 'execution' || row.turn_phase === 'final_answer' ? { phase: row.turn_phase } : {}),
         ...(row.stream_live === 1
             ? { lifecycleState: 'streaming' as const }
@@ -380,14 +556,21 @@ function toStoredMessage(row: DbMessageRow, turnState?: TurnState | null): Store
 }
 
 function hydrateStoredMessage(db: Database, row: DbMessageRow): StoredMessage {
-    const turnState = row.turn_id ? getSessionTurnStatus(db, row.session_id, row.turn_id) : null
-    return toStoredMessage(row, turnState)
+    return hydrateStoredMessages(db, [row])[0]!
 }
 
 function hydrateStoredMessages(db: Database, rows: DbMessageRow[]): StoredMessage[] {
     if (rows.length === 0) return []
     const turnIdsBySession = new Map<string, Set<string>>()
+    const messageIdsBySession = new Map<string, Set<string>>()
     for (const row of rows) {
+        let msgSet = messageIdsBySession.get(row.session_id)
+        if (!msgSet) {
+            msgSet = new Set<string>()
+            messageIdsBySession.set(row.session_id, msgSet)
+        }
+        msgSet.add(row.id)
+
         if (!row.turn_id) continue
         let set = turnIdsBySession.get(row.session_id)
         if (!set) {
@@ -395,9 +578,6 @@ function hydrateStoredMessages(db: Database, rows: DbMessageRow[]): StoredMessag
             turnIdsBySession.set(row.session_id, set)
         }
         set.add(row.turn_id)
-    }
-    if (turnIdsBySession.size === 0) {
-        return rows.map((row) => toStoredMessage(row))
     }
     const statusMap = new Map<string, TurnState>()
     for (const [sessionId, turnIdSet] of turnIdsBySession.entries()) {
@@ -412,9 +592,57 @@ function hydrateStoredMessages(db: Database, rows: DbMessageRow[]): StoredMessag
             statusMap.set(`${sessionId}::${turnRow.turn_id}`, turnRow.status)
         }
     }
+
+    const toolStatesByMessage = new Map<string, Record<string, ToolCallStateSummary>>()
+    const attachToolState = (sessionId: string, msgId: string, toolUseId: string, summary: ToolCallStateSummary): void => {
+        const key = `${sessionId}::${msgId}`
+        let record = toolStatesByMessage.get(key)
+        if (!record) {
+            record = {}
+            toolStatesByMessage.set(key, record)
+        }
+        record[toolUseId] = summary
+    }
+    for (const [sessionId, msgIdSet] of messageIdsBySession.entries()) {
+        const msgIds = Array.from(msgIdSet)
+        let toolRows: Array<Pick<DbSessionToolCallRow, 'tool_use_id' | 'state' | 'source_message_id' | 'result_message_id' | 'started_at' | 'completed_at'>>
+        if (msgIds.length <= 200) {
+            const placeholders = msgIds.map(() => '?').join(', ')
+            toolRows = db.prepare(`
+                SELECT tool_use_id, state, source_message_id, result_message_id, started_at, completed_at
+                FROM session_tool_calls
+                WHERE session_id = ?
+                  AND (
+                      source_message_id IN (${placeholders})
+                      OR result_message_id IN (${placeholders})
+                  )
+            `).all(sessionId, ...msgIds, ...msgIds) as Array<Pick<DbSessionToolCallRow, 'tool_use_id' | 'state' | 'source_message_id' | 'result_message_id' | 'started_at' | 'completed_at'>>
+        } else {
+            toolRows = db.prepare(`
+                SELECT tool_use_id, state, source_message_id, result_message_id, started_at, completed_at
+                FROM session_tool_calls
+                WHERE session_id = ?
+            `).all(sessionId) as Array<Pick<DbSessionToolCallRow, 'tool_use_id' | 'state' | 'source_message_id' | 'result_message_id' | 'started_at' | 'completed_at'>>
+        }
+        for (const toolRow of toolRows) {
+            const summary: ToolCallStateSummary = {
+                state: toolRow.state,
+                startedAt: toolRow.started_at,
+                completedAt: toolRow.completed_at
+            }
+            if (msgIdSet.has(toolRow.source_message_id)) {
+                attachToolState(sessionId, toolRow.source_message_id, toolRow.tool_use_id, summary)
+            }
+            if (toolRow.result_message_id && msgIdSet.has(toolRow.result_message_id)) {
+                attachToolState(sessionId, toolRow.result_message_id, toolRow.tool_use_id, summary)
+            }
+        }
+    }
+
     return rows.map((row) => {
         const turnState = row.turn_id ? (statusMap.get(`${row.session_id}::${row.turn_id}`) ?? null) : null
-        return toStoredMessage(row, turnState)
+        const toolStates = toolStatesByMessage.get(`${row.session_id}::${row.id}`)
+        return toStoredMessage(row, turnState, toolStates)
     })
 }
 
@@ -994,6 +1222,57 @@ export function finalizeOpenLiveStreamsForSession(
         bumpMessageEpoch(db, sessionId)
         return finalized
     })()
+}
+
+function settleOpenToolCallsForSessionTurn(
+    db: Database,
+    sessionId: string,
+    turnId: string,
+    now: number
+): StoredMessage[] {
+    const openRows = db.prepare(`
+        SELECT DISTINCT source_message_id
+        FROM session_tool_calls
+        WHERE session_id = ?
+          AND turn_id = ?
+          AND state IN ('pending', 'running')
+          AND is_subagent = 0
+          AND is_sidechain = 0
+          AND parent_tool_use_id IS NULL
+    `).all(sessionId, turnId) as Array<{ source_message_id: string }>
+    if (openRows.length === 0) return []
+
+    db.prepare(`
+        UPDATE session_tool_calls
+        SET state = 'aborted',
+            updated_at = ?
+        WHERE session_id = ?
+          AND turn_id = ?
+          AND state IN ('pending', 'running')
+          AND is_subagent = 0
+          AND is_sidechain = 0
+          AND parent_tool_use_id IS NULL
+    `).run(now, sessionId, turnId)
+
+    bumpMessageEpoch(db, sessionId)
+    const sourceIds = openRows.map((row) => row.source_message_id)
+    const placeholders = sourceIds.map(() => '?').join(', ')
+    const msgRows = db.prepare(`
+        SELECT * FROM messages
+        WHERE session_id = ? AND id IN (${placeholders})
+        ORDER BY seq ASC
+    `).all(sessionId, ...sourceIds) as DbMessageRow[]
+    return hydrateStoredMessages(db, msgRows)
+}
+
+function mergeFinalizedStoredMessages(...groups: StoredMessage[][]): StoredMessage[] {
+    const byId = new Map<string, StoredMessage>()
+    for (const group of groups) {
+        for (const msg of group) {
+            byId.set(msg.id, msg)
+        }
+    }
+    return Array.from(byId.values()).sort((a, b) => a.seq - b.seq)
 }
 
 /** Paginate messages by COALESCE(invoked_at, created_at) DESC, seq DESC.
@@ -1731,6 +2010,24 @@ export function mergeSessionMessages(
             from_session_id: fromSessionId
         })
         compactMessageStreams(db, toSessionId)
+        db.prepare(`
+            INSERT INTO session_tool_calls (
+                session_id, tool_use_id, turn_id, parent_tool_use_id, tool_name,
+                is_subagent, is_sidechain, state, source_message_id, result_message_id,
+                started_at, completed_at, updated_at
+            )
+            SELECT
+                @to_session_id, tool_use_id, turn_id, parent_tool_use_id, tool_name,
+                is_subagent, is_sidechain, state, source_message_id, result_message_id,
+                started_at, completed_at, updated_at
+            FROM session_tool_calls
+            WHERE session_id = @from_session_id
+            ON CONFLICT(session_id, tool_use_id) DO NOTHING
+        `).run({
+            to_session_id: toSessionId,
+            from_session_id: fromSessionId
+        })
+        db.prepare('DELETE FROM session_tool_calls WHERE session_id = ?').run(fromSessionId)
         db.prepare('UPDATE messages SET stream_live = 0 WHERE session_id = ? AND stream_live = 1').run(toSessionId)
 
         if (result.changes > 0) {
@@ -1793,6 +2090,38 @@ export function truncateMessagesFromLocalId(
               )
         `).run(sessionId, target.position_at, target.position_at, target.seq)
 
+        const truncateToolNow = Date.now()
+        db.prepare(`
+            DELETE FROM session_tool_calls
+            WHERE session_id = ?
+              AND source_message_id IN (
+                  SELECT id FROM messages
+                  WHERE session_id = ?
+                    AND (
+                        COALESCE(invoked_at, created_at) > ?
+                        OR (COALESCE(invoked_at, created_at) = ? AND seq >= ?)
+                    )
+              )
+        `).run(sessionId, sessionId, target.position_at, target.position_at, target.seq)
+        db.prepare(`
+            UPDATE session_tool_calls
+            SET result_message_id = NULL,
+                completed_at = NULL,
+                state = CASE
+                    WHEN is_subagent = 0 AND is_sidechain = 0 AND parent_tool_use_id IS NULL AND turn_id IS NOT NULL THEN 'aborted'
+                    ELSE 'running'
+                END,
+                updated_at = ?
+            WHERE session_id = ?
+              AND result_message_id IN (
+                  SELECT id FROM messages
+                  WHERE session_id = ?
+                    AND (
+                        COALESCE(invoked_at, created_at) > ?
+                        OR (COALESCE(invoked_at, created_at) = ? AND seq >= ?)
+                    )
+              )
+        `).run(truncateToolNow, sessionId, sessionId, target.position_at, target.position_at, target.seq)
         const deleted = db.prepare(`
             DELETE FROM messages
             WHERE session_id = ?
@@ -1932,13 +2261,16 @@ export function bindSessionSource(
             bumpMessageEpoch(db, sessionId)
         }
 
-        const finalizedMessages: StoredMessage[] = []
+        const finalizedStreamMessages: StoredMessage[] = []
+        const settledToolMessages: StoredMessage[] = []
         for (const replacedTurnId of closedTurnIds) {
-            finalizedMessages.push(...finalizeOpenLiveStreamsForSession(db, sessionId, replacedTurnId))
+            settledToolMessages.push(...settleOpenToolCallsForSessionTurn(db, sessionId, replacedTurnId, now))
+            finalizedStreamMessages.push(...finalizeOpenLiveStreamsForSession(db, sessionId, replacedTurnId))
         }
         if (!existing && (otherActive.length > 0 || closedTurnIds.length === 0)) {
-            finalizedMessages.push(...finalizeOpenLiveStreamsForSession(db, sessionId))
+            finalizedStreamMessages.push(...finalizeOpenLiveStreamsForSession(db, sessionId))
         }
+        const finalizedMessages = mergeFinalizedStoredMessages(finalizedStreamMessages, settledToolMessages)
         const recomputed = recomputeSessionActiveTurnInTransaction(db, sessionId, resolvedNamespace)
 
         const generation = existing ? existing.generation : 1
@@ -2093,7 +2425,11 @@ export function recordTurnLifecycleEvent(
                 outcome: event.outcome ?? null,
                 streamId: null
             }, now, receiptPosition)
-            const finalizedMessages = finalizeOpenLiveStreamsForSession(db, sessionId, event.turnId)
+            const settledToolMessages = settleOpenToolCallsForSessionTurn(db, sessionId, event.turnId, now)
+            const finalizedMessages = mergeFinalizedStoredMessages(
+                finalizeOpenLiveStreamsForSession(db, sessionId, event.turnId),
+                settledToolMessages
+            )
             const recomputed = recomputeSessionActiveTurnInTransaction(db, sessionId, namespace)
             return {
                 ...recomputed,
@@ -2116,7 +2452,11 @@ export function recordTurnLifecycleEvent(
                     outcome: null,
                     streamId: null
                 }, now, receiptPosition)
-                const finalizedMessages = finalizeOpenLiveStreamsForSession(db, sessionId, event.turnId)
+                const settledToolMessages = settleOpenToolCallsForSessionTurn(db, sessionId, event.turnId, now)
+                const finalizedMessages = mergeFinalizedStoredMessages(
+                    finalizeOpenLiveStreamsForSession(db, sessionId, event.turnId),
+                    settledToolMessages
+                )
                 const recomputed = recomputeSessionActiveTurnInTransaction(db, sessionId, namespace)
                 return {
                     ...recomputed,
@@ -2199,7 +2539,11 @@ export function recordTurnLifecycleEvent(
             outcome: event.outcome ?? 'completed',
             streamId: null
         }, now, receiptPosition)
-        const finalizedMessages = finalizeOpenLiveStreamsForSession(db, sessionId, event.turnId)
+        const settledToolMessages = settleOpenToolCallsForSessionTurn(db, sessionId, event.turnId, now)
+        const finalizedMessages = mergeFinalizedStoredMessages(
+            finalizeOpenLiveStreamsForSession(db, sessionId, event.turnId),
+            settledToolMessages
+        )
         const preferredClosedLifecycleState = terminalStatus === 'completed' ? 'completed' : 'idle'
         const recomputed = recomputeSessionActiveTurnInTransaction(db, sessionId, namespace, preferredClosedLifecycleState)
         return {
@@ -2333,14 +2677,19 @@ export function closeRunningTurnsForSession(
             }
         }
 
-        const finalizedMessages: StoredMessage[] = []
+        const finalizedStreamMessages: StoredMessage[] = []
+        const settledToolMessages: StoredMessage[] = []
+        for (const targetTurnId of closedTurnIds) {
+            settledToolMessages.push(...settleOpenToolCallsForSessionTurn(db, sessionId, targetTurnId, now))
+        }
         if (requestedTurnIds) {
             for (const targetTurnId of closedTurnIds) {
-                finalizedMessages.push(...finalizeOpenLiveStreamsForSession(db, sessionId, targetTurnId))
+                finalizedStreamMessages.push(...finalizeOpenLiveStreamsForSession(db, sessionId, targetTurnId))
             }
         } else {
-            finalizedMessages.push(...finalizeOpenLiveStreamsForSession(db, sessionId))
+            finalizedStreamMessages.push(...finalizeOpenLiveStreamsForSession(db, sessionId))
         }
+        const finalizedMessages = mergeFinalizedStoredMessages(finalizedStreamMessages, settledToolMessages)
         const recomputed = recomputeSessionActiveTurnInTransaction(db, sessionId, namespace)
         return {
             ...recomputed,

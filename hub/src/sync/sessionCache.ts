@@ -758,6 +758,7 @@ export class SessionCache {
                     invokedAt: msg.invokedAt,
                     ...(msg.turnId ? { turnId: msg.turnId } : {}),
                     ...(msg.turnState ? { turnState: msg.turnState } : {}),
+                    ...(msg.toolStates ? { toolStates: msg.toolStates } : {}),
                     ...((msg.turnPhase ?? msg.phase) ? { phase: msg.turnPhase ?? msg.phase } : {}),
                     ...(msg.lifecycleState ? { lifecycleState: msg.lifecycleState } : {})
                 }

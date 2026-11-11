@@ -1,4 +1,5 @@
 import { AGENT_MESSAGE_PAYLOAD_TYPE } from './modes'
+import type { ToolCallLifecycleState } from './schemas'
 import { isObject } from './utils'
 
 type RoleWrappedRecord = {
@@ -509,6 +510,143 @@ export function splitNotifySummary(text: unknown): NotifySummaryDisplay | null {
 export function stripNotifySummaryFooter(text: string): string {
     if (typeof text !== 'string' || text.length === 0) return text
     return splitNotifySummary(text)?.visibleText ?? text
+}
+
+export type ExtractedToolCallEvent =
+    | {
+        kind: 'call'
+        toolUseId: string
+        toolName: string
+        parentToolUseId: string | null
+        isSidechain: boolean
+        isSubagent: boolean
+        state: ToolCallLifecycleState
+    }
+    | {
+        kind: 'result'
+        toolUseId: string
+        state: 'completed' | 'error'
+    }
+
+function isSubagentToolCallName(name: string): boolean {
+    return name === 'Task'
+        || name === 'Agent'
+        || name === 'CodexAgent'
+        || name.startsWith('Agent:')
+        || name.startsWith('Task:')
+}
+
+function asTrimmedNonEmptyString(value: unknown): string | null {
+    return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null
+}
+
+function mapRawToolStatusToLifecycleState(status: unknown): ToolCallLifecycleState {
+    if (typeof status !== 'string') return 'running'
+    const normalized = status.trim().toLowerCase()
+    if (normalized === 'completed' || normalized === 'complete' || normalized === 'success' || normalized === 'succeeded' || normalized === 'done') {
+        return 'completed'
+    }
+    if (normalized === 'failed' || normalized === 'fail' || normalized === 'error' || normalized === 'errored' || normalized === 'cancelled' || normalized === 'canceled') {
+        return 'error'
+    }
+    if (normalized === 'aborted') {
+        return 'aborted'
+    }
+    if (normalized === 'pending' || normalized === 'queued') {
+        return 'pending'
+    }
+    return 'running'
+}
+
+export function extractMessageToolLifecycleEvents(content: unknown): ExtractedToolCallEvent[] {
+    const record = unwrapRoleWrappedRecordEnvelope(content)
+    if (!record || record.role !== 'agent' || !isObject(record.content)) {
+        return []
+    }
+
+    const events: ExtractedToolCallEvent[] = []
+    const meta = isObject(record.meta) ? record.meta : null
+    const hasChildScope = meta?.scope === 'child'
+    const envelope = record.content
+
+    if (envelope.type === 'output' && isObject(envelope.data)) {
+        const data = envelope.data
+        const isSidechain = Boolean(data.isSidechain) || Boolean(data.is_sidechain) || hasChildScope
+        const parentToolUseId = asTrimmedNonEmptyString(data.parentToolUseId)
+            ?? asTrimmedNonEmptyString(data.parent_tool_use_id)
+
+        if (data.type === 'assistant' && isObject(data.message) && Array.isArray(data.message.content)) {
+            for (const item of data.message.content) {
+                if (!isObject(item) || item.type !== 'tool_use') continue
+                const toolUseId = asTrimmedNonEmptyString(item.id)
+                if (!toolUseId) continue
+                const toolName = asTrimmedNonEmptyString(item.name) ?? 'Tool'
+                events.push({
+                    kind: 'call',
+                    toolUseId,
+                    toolName,
+                    parentToolUseId,
+                    isSidechain,
+                    isSubagent: isSubagentToolCallName(toolName),
+                    state: mapRawToolStatusToLifecycleState(item.status)
+                })
+            }
+        } else if (data.type === 'user' && isObject(data.message) && Array.isArray(data.message.content)) {
+            for (const item of data.message.content) {
+                if (!isObject(item) || item.type !== 'tool_result') continue
+                const toolUseId = asTrimmedNonEmptyString(item.tool_use_id)
+                if (!toolUseId) continue
+                events.push({
+                    kind: 'result',
+                    toolUseId,
+                    state: Boolean(item.is_error) ? 'error' : 'completed'
+                })
+            }
+        }
+        return events
+    }
+
+    if ((envelope.type === AGENT_MESSAGE_PAYLOAD_TYPE || envelope.type === 'acp') && isObject(envelope.data)) {
+        const data = envelope.data
+        const isSidechain = Boolean(data.isSidechain)
+            || Boolean(data.is_sidechain)
+            || Boolean(data.subagent)
+            || hasChildScope
+        const parentToolUseId = asTrimmedNonEmptyString(data.parentToolUseId)
+            ?? asTrimmedNonEmptyString(data.parent_tool_use_id)
+            ?? asTrimmedNonEmptyString(data.subagent)
+
+        if (data.type === 'tool-call') {
+            const toolUseId = asTrimmedNonEmptyString(data.callId)
+                ?? asTrimmedNonEmptyString(data.toolUseId)
+                ?? asTrimmedNonEmptyString(data.id)
+            if (toolUseId) {
+                const toolName = asTrimmedNonEmptyString(data.name) ?? 'unknown'
+                events.push({
+                    kind: 'call',
+                    toolUseId,
+                    toolName,
+                    parentToolUseId,
+                    isSidechain,
+                    isSubagent: isSubagentToolCallName(toolName),
+                    state: mapRawToolStatusToLifecycleState(data.status)
+                })
+            }
+        } else if (data.type === 'tool-call-result') {
+            const toolUseId = asTrimmedNonEmptyString(data.callId)
+                ?? asTrimmedNonEmptyString(data.toolUseId)
+                ?? asTrimmedNonEmptyString(data.id)
+            if (toolUseId) {
+                events.push({
+                    kind: 'result',
+                    toolUseId,
+                    state: Boolean(data.is_error) || Boolean(data.isError) ? 'error' : 'completed'
+                })
+            }
+        }
+    }
+
+    return events
 }
 
 export type { RoleWrappedRecord }

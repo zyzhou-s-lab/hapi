@@ -1,7 +1,7 @@
 import type { AttachmentMetadata, MessageStatus } from '@/types/api'
 import type { ThreadGoal } from '@/types/api'
 import type { InlineMediaSource } from '@/chat/inlineMediaSource'
-import type { TurnState } from '@hapi/protocol'
+import type { ToolCallStateSummary, TurnState } from '@hapi/protocol'
 
 export type UsageData = {
     input_tokens: number
@@ -220,6 +220,8 @@ export type NormalizedMessage = ({
     turnId?: string
     /** Canonical lifecycle state delivered by the Hub for this invocation. */
     turnState?: TurnState
+    /** Authoritative tool call lifecycle states hydrated by the Hub from SQLite. */
+    toolStates?: Record<string, ToolCallStateSummary>
 }
 
 export type ToolPermission = {
