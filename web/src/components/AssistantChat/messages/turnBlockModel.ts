@@ -464,6 +464,20 @@ function isSameRefArray<T>(a: readonly T[], b: readonly T[]): boolean {
     return true
 }
 
+export function deriveTurnRowsTitle(rows: readonly TurnRow[]): string {
+    const tools = rows.filter((row): row is TurnToolRow => row.kind === 'tool')
+    const running = tools.find((row) => row.block.tool.state === 'pending')
+        ?? tools.findLast((row) => row.block.tool.state === 'running')
+    const reasoning = rows.findLast((row): row is TurnReasoningRow => row.kind === 'reasoning')
+    const lastIntent = tools.findLast((row) => shownTitle(row.intent) !== null)
+    return shownTitle(running?.intent)
+        ?? shownTitle(lastIntent?.intent)
+        ?? shownTitle(reasoning ? truncate(stripMarkdownLine(firstLine(reasoning.text)), TITLE_LIMIT) : null)
+        ?? shownTitle(running?.verb)
+        ?? shownTitle(tools[tools.length - 1]?.verb)
+        ?? ''
+}
+
 export function partitionTurn(
     parts: readonly TurnContentPart[],
     metadata: SessionMetadataSummary | null,
@@ -582,20 +596,9 @@ export function partitionTurn(
         if (row.kind === 'image' || row.kind === 'file') return false
         return true
     })
-    const tools = rows.filter((row): row is TurnToolRow => row.kind === 'tool')
-    const running = tools.find((row) => row.block.tool.state === 'pending')
-        ?? tools.findLast((row) => row.block.tool.state === 'running')
-    const reasoning = rows.findLast((row): row is TurnReasoningRow => row.kind === 'reasoning')
-    const lastIntent = tools.findLast((row) => shownTitle(row.intent) !== null)
     // Reasoning prose is a fallback: an opening thought ("I'm thinking through…") says
     // less than the tool intent, and a long paragraph would overflow the header.
-    const title = shownTitle(titles[0])
-        ?? shownTitle(running?.intent)
-        ?? shownTitle(lastIntent?.intent)
-        ?? shownTitle(reasoning ? truncate(stripMarkdownLine(firstLine(reasoning.text)), TITLE_LIMIT) : null)
-        ?? shownTitle(running?.verb)
-        ?? shownTitle(tools[tools.length - 1]?.verb)
-        ?? ''
+    const title = shownTitle(titles[0]) ?? deriveTurnRowsTitle(rows)
 
     let stabilizedRows = rows
     if (previousPartition) {

@@ -2,6 +2,7 @@ import { useCallback, useMemo, useSyncExternalStore } from 'react'
 import { useOptionalSessionEntityStore } from '@/hooks/useSessionEntityStore'
 import { useOptionalHappyChatStaticContext } from '@/components/AssistantChat/context'
 import {
+    deriveTurnRowsTitle,
     resolveLiveToolRow,
     summarizeTurnActivity,
     type TurnDisplayStepRow,
@@ -10,7 +11,6 @@ import {
     type TurnRow,
 } from './turnBlockModel'
 
-/** Row/summary consumers overlay live payloads on their layout's row identities. */
 export function useLiveTurnRows(rows: readonly TurnRow[]): readonly TurnRow[] {
     const store = useOptionalSessionEntityStore()
     const metadata = useOptionalHappyChatStaticContext()?.metadata ?? null
@@ -146,8 +146,14 @@ export function useLiveTurnSummary(
                     }
                     return row
                 })
+            const hasExplicitPartitionTitle = Boolean(
+                partition.title && partition.title !== deriveTurnRowsTitle(rows)
+            )
+            const liveTitle = hasExplicitPartitionTitle
+                ? partition.title
+                : deriveTurnRowsTitle(liveRows)
             const next = summarizeTurnActivity(
-                { ...partition, rows: [...liveRows] },
+                { ...partition, rows: [...liveRows], title: liveTitle },
                 { activeTodoText, lang }
             )
             if (
