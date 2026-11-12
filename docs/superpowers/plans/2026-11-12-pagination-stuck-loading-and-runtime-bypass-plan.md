@@ -47,14 +47,14 @@
 
 ### Remediation Tasks
 
-- [ ] **Task 1.1: Lower Default `TURN_PAGE_SIZE` to `8` & Export `TURN_PAGE_BYTE_BUDGET`**
+- [x] **Task 1.1: Lower Default `TURN_PAGE_SIZE` to `8` & Export `TURN_PAGE_BYTE_BUDGET`**
   - **Files:**
     - `shared/src/turnBoundary.ts`
   - **Changes:**
     - Update `TURN_PAGE_SIZE = 8` (matching `bobmcmxciv/hapi`'s `DEFAULT_MESSAGE_TURNS = 8`).
     - Export `export const TURN_PAGE_BYTE_BUDGET = 1024 * 1024` (1 MiB).
 
-- [ ] **Task 1.2: Implement `compactAgentRunUpdateMessages` in `@hapi/protocol`**
+- [x] **Task 1.2: Implement `compactAgentRunUpdateMessages` in `@hapi/protocol`**
   - **Files:**
     - `shared/src/messages.ts`
     - `shared/src/index.ts` (if re-exported)
@@ -68,7 +68,7 @@
       - All superseded intermediate `running` updates for the same `callId` are dropped.
       - Fast path: if no superseded intermediate `agent-run-update` exists, return `messages as T[]` without allocation.
 
-- [ ] **Task 1.3: Enforce `TURN_PAGE_BYTE_BUDGET` & Stream Compaction in `hub/src/sync/messageService.ts`**
+- [x] **Task 1.3: Enforce `TURN_PAGE_BYTE_BUDGET` & Stream Compaction in `hub/src/sync/messageService.ts`**
   - **Files:**
     - `hub/src/sync/messageService.ts`
   - **Changes:**
@@ -79,7 +79,7 @@
         - If at least 1 human turn boundary (`lastBoundaryIndex >= 0`) has been reached, slice at `lastBoundaryIndex` (`collected.slice(lastBoundaryIndex)`) and return `hasMore: true`.
         - If 0 human turn boundaries have been reached yet (a single giant turn exceeding 1 MB), stop scanning further batches and return the compacted slice with `hasMore: true`.
 
-- [ ] **Task 1.4: Unit Tests for Phase 1**
+- [x] **Task 1.4: Unit Tests for Phase 1**
   - **Files:**
     - `shared/src/messages.test.ts` (or `shared/src/turnBoundary.test.ts`)
     - `hub/src/sync/messageService.test.ts` (or `hub/src/store/messages.test.ts`)
@@ -110,7 +110,7 @@
 
 ### Remediation Tasks
 
-- [ ] **Task 2.1: Compact `agent-run-update` & Preserve Turn Boundaries in `web/src/lib/message-window-store.ts`**
+- [x] **Task 2.1: Compact `agent-run-update` & Preserve Turn Boundaries in `web/src/lib/message-window-store.ts`**
   - **Files:**
     - `web/src/lib/message-window-store.ts`
   - **Changes:**
@@ -123,7 +123,7 @@
         - Only apply a safety ceiling at `MAX_TURN_WINDOW_ROWS` (`8000`), and if `regularKept.length > MAX_TURN_WINDOW_ROWS`, snap the cut index to the nearest `isHumanTurnStart` boundary (if one exists after index 0) so trimming never creates an avoidable headless turn.
       - When an explicit `options.limit` *is* passed (e.g., unit tests explicitly testing row-count trimming with `{ limit: 5 }`), honor `options.limit`.
 
-- [ ] **Task 2.2: Bypass `@assistant-ui` `ThreadMessage[]` Reconciliation in `useHappyRuntime` When `entityStore` Is Active**
+- [x] **Task 2.2: Bypass `@assistant-ui` `ThreadMessage[]` Reconciliation in `useHappyRuntime` When `entityStore` Is Active**
   - **Files:**
     - `web/src/lib/assistant-runtime.ts`
   - **Changes:**
@@ -135,7 +135,7 @@
         - Pass `messages: COMPOSER_ONLY_THREAD_MESSAGES` to `useExternalStoreRuntime(adapter)`.
       - Preserve the existing `HappyThreadMessageCache.reconcile` path when `props.entityStore == null` (standalone/legacy runtime tests).
 
-- [ ] **Task 2.3: Unit Tests for Phase 2**
+- [x] **Task 2.3: Unit Tests for Phase 2**
   - **Files:**
     - `web/src/lib/message-window-store.test.ts`
     - `web/src/lib/assistant-runtime.test.ts` (or `web/src/components/SessionChat/SessionChatIsolation.test.tsx`)
@@ -174,7 +174,7 @@
 
 ### Remediation Tasks
 
-- [ ] **Task 3.1: Stop `loadUntilVisibleBoundaryChanges` as Soon as Visible Content Changes**
+- [x] **Task 3.1: Stop `loadUntilVisibleBoundaryChanges` as Soon as Visible Content Changes**
   - **Files:**
     - `web/src/components/AssistantChat/threadScrollHelpers.ts`
   - **Changes:**
@@ -183,7 +183,7 @@
       - As soon as `nextCount > initialCount || (nextTopAnchorId !== null && nextTopAnchorId !== initialTopAnchorId)` is true, return `outcome` immediately (1 page per user scroll gesture when the page contains visible blocks).
       - Only continue looping (up to `Math.min(maxPages, MAX_CONSECUTIVE_EMPTY_OLDER_LOADS)`) when a fetched page produced **zero** new visible elements (`nextCount === initialCount && nextTopAnchorId === initialTopAnchorId`), e.g. a page consisting solely of hidden metadata/receipts.
 
-- [ ] **Task 3.2: Unpin `INITIAL_PINNING` When Nested Scrollable `<pre>` Cannot Scroll Up Further**
+- [x] **Task 3.2: Unpin `INITIAL_PINNING` When Nested Scrollable `<pre>` Cannot Scroll Up Further**
   - **Files:**
     - `web/src/components/AssistantChat/useThreadScrollAndHistoryController.ts`
   - **Changes:**
@@ -193,7 +193,7 @@
     - In `handleUpwardWheelDuringInitialPin`:
       - Only early-return when `canNestedElementScrollUp(target, viewport)` is `true`. When the nested `<pre>` is at `scrollTop <= 0` (or is not vertically scrollable), `event.deltaY < 0` immediately transitions `scrollPhaseRef` from `'INITIAL_PINNING'` to `'UNPINNED'` and clears `initialPinningUntilRef`.
 
-- [ ] **Task 3.3: Height-Cached Offscreen Turn Windowing in `StoreThreadMessagesById`**
+- [x] **Task 3.3: Height-Cached Offscreen Turn Windowing in `StoreThreadMessagesById`**
   - **Files:**
     - `web/src/components/AssistantChat/HappyThread.tsx`
   - **Changes:**
@@ -213,7 +213,7 @@
       ```
     - Keeping `id={getConversationMessageAnchorId(entry.id)}` and `className="aui-message-root happy-message"` on placeholders ensures `captureThreadScrollState`, `restoreThreadScrollState`, `getTopMessageAnchorId`, and outline `document.getElementById(anchorId)?.scrollIntoView()` work seamlessly without layout jumps.
 
-- [ ] **Task 3.4: Unit Tests for Phase 3**
+- [x] **Task 3.4: Unit Tests for Phase 3**
   - **Files:**
     - `web/src/components/AssistantChat/useThreadScrollAndHistoryController.test.tsx`
     - `web/src/components/AssistantChat/HappyThread.pagination.test.tsx`
@@ -227,14 +227,14 @@
 
 ## Phase 4: Golden Fixtures, Cross-Package Tests & Live Runtime Verification
 
-- [ ] **Task 4.1: Regenerate Golden Fixtures & Run Full Test Suite**
+- [x] **Task 4.1: Regenerate Golden Fixtures & Run Full Test Suite**
   - **Commands:**
     - `bun run gen:fixtures`
     - `bun typecheck`
     - `bun run test`
   - **Gate:** Zero TypeScript errors, all `shared`, `hub`, `cli`, `web`, and `fork-features` tests green, and `shared/fixtures/**` up to date.
 
-- [ ] **Task 4.2: Live Verification on `http://10.202.2.224:5174/`**
+- [x] **Task 4.2: Live Verification on `http://10.202.2.224:5174/`**
   - Verify against session `80600201-a0f3-42b3-9ba0-af9b887f2a94` (`新训练 ScaleGPP-Step2`) and `90bfb47e` (`2026未见细胞系基因扰动高性模型调研`):
     - Initial window preserves all downloaded turns without slicing at 400 raw messages;
     - `agent-run-update` compaction collapses redundant subagent progress snapshots;

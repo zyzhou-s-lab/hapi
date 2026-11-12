@@ -30,7 +30,7 @@
         {
             "expectedRequests": [
                 {
-                    "turns": 20
+                    "turns": 8
                 }
             ],
             "op": "sync-tail",
@@ -80,10 +80,10 @@
                 {
                     "beforeAt": 10000,
                     "beforeSeq": 10,
-                    "turns": 20
+                    "turns": 8
                 },
                 {
-                    "turns": 20
+                    "turns": 8
                 }
             ],
             "op": "fetch-older",

@@ -3621,7 +3621,7 @@
         {
             "expectedRequests": [
                 {
-                    "turns": 20
+                    "turns": 8
                 }
             ],
             "op": "sync-tail",
