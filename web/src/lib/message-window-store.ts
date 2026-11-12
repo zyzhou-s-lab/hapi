@@ -1,4 +1,4 @@
-import { getLiveMessageStreamId, getMessageStreamId } from '@hapi/protocol/messages'
+import { compactAgentRunUpdateMessages, getLiveMessageStreamId, getMessageStreamId } from '@hapi/protocol/messages'
 import { TURN_PAGE_ROW_MAX, TURN_PAGE_SIZE, isHumanTurnStart } from '@hapi/protocol/turnBoundary'
 import type { ApiClient } from '@/api/client'
 import { normalizeDecryptedMessage } from '@/chat/normalize'
@@ -62,6 +62,7 @@ export type MessageWindowState = {
 
 export const VISIBLE_WINDOW_SIZE = 400
 export const HISTORY_WINDOW_SIZE = 600
+export const MAX_TURN_WINDOW_ROWS = TURN_PAGE_ROW_MAX * 4
 const AGENT_RUN_WINDOW_SIZE = 800
 const OLDER_LOAD_WINDOW_SIZE = TURN_PAGE_ROW_MAX
 const PAGE_SIZE = 200
@@ -723,8 +724,9 @@ function dropSupersededStreamSnapshots(
     }
     const survivors = new Set<string>()
     for (const message of newestByStream.values()) survivors.add(message.id)
-    return messages.filter((message) =>
+    const streamCompacted = messages.filter((message) =>
         getMessageStreamId(message.content) === null || survivors.has(message.id))
+    return compactAgentRunUpdateMessages(streamCompacted)
 }
 
 function trimPreservingQueued(
@@ -810,7 +812,26 @@ function trimConversation(
         ...droppedTurns.flat()
     ]
     const queuedBudget = options.reserveQueuedBudget === false ? 0 : queued.length
-    const limited = sliceForTrim(regularKept, Math.max(0, regularLimit - queuedBudget), mode)
+    const baseLimit = mode === 'append' && keptTurns.length > 1
+        ? Math.max(regularLimit, MAX_TURN_WINDOW_ROWS)
+        : regularLimit
+    const turnRowBudget = Math.max(0, baseLimit - queuedBudget)
+    if (regularKept.length <= turnRowBudget) {
+        return {
+            kept: mergeMessages(regularKept, queued),
+            dropped: turnDropped
+        }
+    }
+    let limited = sliceForTrim(regularKept, turnRowBudget, mode)
+    if (mode === 'append' && limited.kept.length > 0 && !isHumanTurnStart(limited.kept[0]!)) {
+        const nextTurnIndex = limited.kept.findIndex(isHumanTurnStart)
+        if (nextTurnIndex > 0) {
+            limited = {
+                kept: limited.kept.slice(nextTurnIndex),
+                dropped: [...limited.dropped, ...limited.kept.slice(0, nextTurnIndex)]
+            }
+        }
+    }
     return {
         kept: mergeMessages(limited.kept, queued),
         dropped: [...turnDropped, ...limited.dropped]

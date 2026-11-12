@@ -15,7 +15,7 @@ import { HappyUserMessage } from '@/components/AssistantChat/messages/UserMessag
 import { SessionEntityStoreProvider, useSessionTimelineIndex } from '@/hooks/useSessionEntityStore'
 import { I18nProvider } from '@/lib/i18n-context'
 import type { DecryptedMessage, Session } from '@/types/api'
-import { useHappyRuntime } from './assistant-runtime'
+import { COMPOSER_ONLY_THREAD_MESSAGES, HappyThreadMessageCache, useHappyRuntime } from './assistant-runtime'
 
 const session: Session = {
     id: 's', namespace: 'default', seq: 0, createdAt: 0, updatedAt: 0, active: true, activeAt: 0,
@@ -34,7 +34,8 @@ function assistant(id: string, seq: number, content: unknown[], live = false): D
 }
 
 describe('real assistant-ui entity runtime', () => {
-    it('keeps full joined content current, preserves settled messages and empties safely on rewind/session switch', () => {
+    it('bypasses @assistant-ui ThreadMessage reconciliation in entityStore mode while keeping canonical store state current', () => {
+        const reconcileSpy = vi.spyOn(HappyThreadMessageCache.prototype, 'reconcile')
         const store = createSessionEntityStore()
         const history = [user('u1', 1), assistant('a1', 2, [{ type: 'text', text: 'Historical answer' }]), user('u2', 3)]
         const update = (content: unknown[], result?: string) => store.reconcileInput({ sessionId: 's', messages: [
@@ -47,35 +48,22 @@ describe('real assistant-ui entity runtime', () => {
             entityStore: store, session: currentSession, isSending: false, historyVersion: 0,
             onSendMessage: () => undefined, onAbort: async () => undefined,
         }), { initialProps: { currentSession: { ...session, thinking: true, activeTurnStartedAt: 3 } as Session } })
-        const initial = view.result.current.thread.getState().messages
-        expect(initial.map((message) => message.id)).toEqual(store.getTimelineIndex().map((entry) => entry.id))
-        expect(initial).toHaveLength(4)
-        act(() => { update([
-            { type: 'thinking', thinking: 'Inspect the current implementation' },
-            { type: 'tool_use', id: 'call', name: 'Read', input: { file_path: 'src/a.ts', i: 'Reading current source' } },
-            { type: 'text', text: 'Full final answer' },
-        ], 'Complete tool output') })
-        const current = view.result.current.thread.getState().messages
-        expect(current[1]).toBe(initial[1])
-        const activeTurnId = current.at(-1)!.id
-        const activeCreatedAt = current.at(-1)?.createdAt
-        const activeMessageBeforeSameHeaderDelta = current.at(-1)
+        expect(reconcileSpy).not.toHaveBeenCalled()
+        expect(view.result.current.thread.getState().messages.every((m) => m.metadata.isOptimistic)).toBe(true)
+        expect(store.getTimelineIndex()).toHaveLength(4)
+        const activeTurnId = store.getTimelineIndex().at(-1)!.id
         act(() => { update([
             { type: 'thinking', thinking: 'Inspect the current implementation (more thought)' },
             { type: 'tool_use', id: 'call', name: 'Read', input: { file_path: 'src/a.ts', i: 'Reading current source' } },
             { type: 'text', text: 'Full final answer updated' },
         ], 'Complete tool output') })
-        expect(view.result.current.thread.getState().messages.at(-1)?.createdAt).toBe(activeCreatedAt)
-        expect(view.result.current.thread.getState().messages.at(-1)).toBe(activeMessageBeforeSameHeaderDelta)
-        expect(current.at(-1)?.content).toEqual([])
+        expect(reconcileSpy).not.toHaveBeenCalled()
+        expect(view.result.current.thread.getState().messages.every((m) => m.metadata.isOptimistic)).toBe(true)
         expect(store.getLiveTurnParts(activeTurnId)).toMatchObject([
             { type: 'reasoning', text: 'Inspect the current implementation (more thought)' },
             { type: 'tool-call', toolCallId: 'call', artifact: { tool: { input: { file_path: 'src/a.ts' } } }, result: 'Complete tool output' },
             { type: 'text', text: 'Full final answer updated' },
         ])
-        const settledTurn1 = current[1]
-        const settledUser2 = current[2]
-        // Pagination prepend preserves settled ThreadMessage references
         act(() => {
             store.reconcileInput({
                 sessionId: 's',
@@ -87,35 +75,14 @@ describe('real assistant-ui entity runtime', () => {
                 ],
             })
         })
-        const afterPrepend = view.result.current.thread.getState().messages
-        expect(afterPrepend).toHaveLength(6)
-        expect(afterPrepend[3]).toBe(settledTurn1)
-        expect(afterPrepend[4]).toBe(settledUser2)
-        // Trim preserves remaining settled ThreadMessage references
-        act(() => {
-            store.reconcileInput({
-                sessionId: 's',
-                messages: [
-                    ...history,
-                    assistant('active', 4, [{ type: 'text', text: 'Full final answer' }], false),
-                ],
-            })
-        })
-        const afterTrim = view.result.current.thread.getState().messages
-        expect(afterTrim).toHaveLength(4)
-        expect(afterTrim[1]).toBe(settledTurn1)
-        expect(afterTrim[2]).toBe(settledUser2)
-        act(() => { store.reconcileInput({ sessionId: 's', messages: [] }) })
+        expect(store.getTimelineIndex()).toHaveLength(6)
+        expect(reconcileSpy).not.toHaveBeenCalled()
         view.rerender({ currentSession: { ...session, thinking: false } })
         expect(view.result.current.thread.getState().messages).toEqual([])
-        act(() => { store.reconcileInput({ sessionId: 'other', messages: [user('other-u', 1), assistant('other-a', 2, [{ type: 'text', text: 'Other session' }])] }) })
-        const otherTurnId = store.getTimelineIndex().at(-1)!.id
-        expect(view.result.current.thread.getState().messages.map((message) => message.id)).toEqual(store.getTimelineIndex().map((entry) => entry.id))
-        expect(view.result.current.thread.getState().messages.at(-1)?.content).toEqual([])
-        expect(store.getCopyableText(otherTurnId)).toBe('Other session')
+        reconcileSpy.mockRestore()
     })
 
-    it('keeps historical answers complete while a new run waits for its first output', () => {
+    it('keeps runtime isRunning state synchronized without duplicating ThreadMessage objects in entityStore mode', () => {
         const store = createSessionEntityStore()
         store.reconcileInput({ sessionId: 's', messages: [user('u', 1), assistant('a', 2, [{ type: 'text', text: 'Settled answer' }])] })
         const view = renderHook(({ currentSession }) => useHappyRuntime({ entityStore: store, session: currentSession, isSending: false, historyVersion: 0,
@@ -125,7 +92,7 @@ describe('real assistant-ui entity runtime', () => {
         const state = view.result.current.thread.getState()
         const settledId = store.getTimelineIndex()[1]!.id
         expect(state.isRunning).toBe(true)
-        expect(state.messages.find((m) => m.id === settledId)).toMatchObject({ status: { type: 'complete' }, content: [] })
+        expect(state.messages.some((m) => m.id === settledId)).toBe(false)
         expect(store.getCopyableText(settledId)).toBe('Settled answer')
     })
 

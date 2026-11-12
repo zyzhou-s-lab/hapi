@@ -567,6 +567,7 @@ export class HappyThreadMessageCache {
         return this.messages
     }
 }
+export const COMPOSER_ONLY_THREAD_MESSAGES: readonly ThreadMessage[] = []
 
 export function useHappyRuntime(props: {
     session: Session
@@ -600,10 +601,11 @@ export function useHappyRuntime(props: {
 }) {
     const isRunning = props.isRunning ?? props.session.thinking
     const flavor = props.session.metadata?.flavor
+    const hasEntityStore = props.entityStore != null
     const runtimeTopologyVersion = useSyncExternalStore(
-        props.entityStore?.subscribeRuntimeTopology ?? NO_STORE_SUBSCRIBE,
-        props.entityStore?.getRuntimeTopologyVersion ?? NO_STORE_VERSION,
-        props.entityStore?.getRuntimeTopologyVersion ?? NO_STORE_VERSION
+        NO_STORE_SUBSCRIBE,
+        NO_STORE_VERSION,
+        NO_STORE_VERSION
     )
     const entitySnapshot = runtimeTopologyVersion >= 0 && props.entityStore
         ? props.entityStore.getSnapshot()
@@ -617,13 +619,13 @@ export function useHappyRuntime(props: {
         new WeakMap<VisibleChatBlock, BlockWithThreadMessageId>()
     )
     const standaloneEntries = useMemo(
-        () => props.entityStore ? null : props.blocksWithThreadIds ?? assignThreadMessageIdsWithStableWrappers(
+        () => hasEntityStore ? null : props.blocksWithThreadIds ?? assignThreadMessageIdsWithStableWrappers(
             hoistMidTurnTitleEvents(filterVisibleBlocksForFlavor(props.blocks ?? [], flavor)),
             threadIdWrapperCacheRef.current
         ),
-        [props.entityStore, props.blocksWithThreadIds, props.blocks, flavor]
+        [hasEntityStore, props.blocksWithThreadIds, props.blocks, flavor]
     )
-    const blocksWithThreadIds = entitySnapshot?.blocksWithThreadIds ?? standaloneEntries ?? []
+    const blocksWithThreadIds = standaloneEntries ?? []
     const standaloneTurnsRef = useRef(new Map<string, TurnEntitySnapshot>())
     const partCacheRef = useRef(new WeakMap<VisibleChatBlock, TurnEntityContentPart>())
     const standaloneTurns = useMemo(() => {
@@ -632,11 +634,11 @@ export function useHappyRuntime(props: {
         standaloneTurnsRef.current = next
         return next
     }, [standaloneEntries])
-    const turns = entitySnapshot?.turnsById ?? standaloneTurns ?? standaloneTurnsRef.current
+    const turns = standaloneTurns ?? standaloneTurnsRef.current
 
     const tailAssistantBlock = useMemo(
-        () => findTailAssistantBlock(blocksWithThreadIds),
-        [blocksWithThreadIds]
+        () => hasEntityStore ? null : findTailAssistantBlock(blocksWithThreadIds),
+        [hasEntityStore, blocksWithThreadIds]
     )
     const tailAssistantMarker = useMemo(
         () => getTailAssistantMarker(tailAssistantBlock),
@@ -669,15 +671,16 @@ export function useHappyRuntime(props: {
         settledTailRef.current.settledMarker = null
     }
 
-    const isRunningForMessages = isRunning && isTailAssistantBlockActivelyRunning(
+    const isRunningForMessages = !hasEntityStore && isRunning && isTailAssistantBlockActivelyRunning(
         tailAssistantBlock,
         props.session,
         settledTailRef.current.settledMarker
     )
 
     const messageCacheRef = useRef(new HappyThreadMessageCache())
-    const convertedMessages = messageCacheRef.current.reconcile(blocksWithThreadIds, turns, isRunningForMessages, entitySnapshot)
-
+    const convertedMessages = hasEntityStore
+        ? COMPOSER_ONLY_THREAD_MESSAGES
+        : messageCacheRef.current.reconcile(blocksWithThreadIds, turns, isRunningForMessages, entitySnapshot)
     const onNew = useCallback(async (message: AppendMessage) => {
         const intent = consumeComposerSendIntent(props.pendingSendIntentRef)
         // Reset before any early return so an empty submission, extraction

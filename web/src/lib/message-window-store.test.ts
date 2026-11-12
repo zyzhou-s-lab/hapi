@@ -21,7 +21,7 @@ import {
     syncTailMessages,
     updateMessageStatus,
 } from '@/lib/message-window-store'
-import { TURN_PAGE_ROW_MAX } from '@hapi/protocol/turnBoundary'
+import { TURN_PAGE_ROW_MAX, TURN_PAGE_SIZE } from '@hapi/protocol/turnBoundary'
 
 const touchedSessions = new Set<string>()
 const unsubscribers: Array<() => void> = []
@@ -134,7 +134,7 @@ function makeCanonicalSnapshot(id: string, uuid: string, seq: number, live: bool
     } as DecryptedMessage
 }
 
-function makeAgentRunMessage(id: string, seq: number, at: number): DecryptedMessage {
+function makeAgentRunMessage(id: string, seq: number, at: number, agentId: string = id): DecryptedMessage {
     return {
         id,
         seq,
@@ -146,7 +146,7 @@ function makeAgentRunMessage(id: string, seq: number, at: number): DecryptedMess
                 data: {
                     type: 'agent-run-update',
                     cardId: 'card-1',
-                    agentId: 'agent-1',
+                    agentId,
                     status: 'running',
                     activity: id
                 }
@@ -303,7 +303,7 @@ describe('message tail synchronization', () => {
         }))
         await syncTailMessages(createApi(getMessages), id)
 
-        expect(getMessages).toHaveBeenCalledWith(id, { turns: 20 })
+        expect(getMessages).toHaveBeenCalledWith(id, { turns: TURN_PAGE_SIZE })
         expect(getMessageWindowState(id).messages.map((message) => message.id)).toEqual(['latest'])
         expect(getMessageWindowState(id).hasMore).toBe(true)
         expect('pending' in getMessageWindowState(id)).toBe(false)
@@ -334,7 +334,7 @@ describe('message tail synchronization', () => {
         const getMessages = vi.fn(async () => latestResponse([latest], { epoch: 3 }))
         await syncTailMessages(createApi(getMessages), id)
 
-        expect(getMessages).toHaveBeenCalledWith(id, { turns: 20 })
+        expect(getMessages).toHaveBeenCalledWith(id, { turns: TURN_PAGE_SIZE })
         expect(getMessageWindowState(id).messages.map((message) => message.id)).toEqual([
             'local-1',
             'latest'
@@ -472,7 +472,7 @@ describe('message tail synchronization', () => {
         expect(getMessages.mock.calls[1]?.[1]).toEqual({
             beforeAt: 251,
             beforeSeq: 251,
-            turns: 20
+            turns: TURN_PAGE_SIZE
         })
     })
 
@@ -599,7 +599,7 @@ describe('message tail synchronization', () => {
         activateMessageWindow(id)
         const reentrySync = syncTailMessages(api, id)
         await vi.waitFor(() => expect(getMessages).toHaveBeenCalledTimes(2))
-        expect(getMessages.mock.calls[1]?.[1]).toEqual({ turns: 20 })
+        expect(getMessages.mock.calls[1]?.[1]).toEqual({ turns: TURN_PAGE_SIZE })
         staleResponse.resolve(afterResponse([
             makeAgentMessage({ id: 'stale-page', seq: 41, at: 41_000 })
         ], {
@@ -912,7 +912,7 @@ describe('history view and older pagination', () => {
         expect(getMessages).toHaveBeenCalledWith(id, {
             beforeAt: 3,
             beforeSeq: 3,
-            turns: 20
+            turns: TURN_PAGE_SIZE
         })
         expect(getMessageWindowState(id).messages).toHaveLength(VISIBLE_WINDOW_SIZE + 2)
     })
@@ -948,7 +948,7 @@ describe('history view and older pagination', () => {
         // Returning to tail mode performs the deferred latest reset.
         setMessageViewMode(id, 'tail')
         await syncTailMessages(api, id)
-        expect(getMessages.mock.calls[1]?.[1]).toEqual({ turns: 20 })
+        expect(getMessages.mock.calls[1]?.[1]).toEqual({ turns: TURN_PAGE_SIZE })
         expect(getMessageWindowState(id).messages.map((message) => message.id)).toContain('latest')
     })
 
@@ -972,7 +972,7 @@ describe('history view and older pagination', () => {
         setMessageViewMode(id, 'tail')
         await syncTailMessages(api, id)
 
-        expect(getMessages.mock.calls[1]?.[1]).toEqual({ turns: 20 })
+        expect(getMessages.mock.calls[1]?.[1]).toEqual({ turns: TURN_PAGE_SIZE })
         expect(getMessageWindowState(id).messages.map((message) => message.id)).toContain('latest')
     })
 
@@ -1360,7 +1360,7 @@ describe('history view and older pagination', () => {
         expect(getMessages.mock.calls[1]?.[1]).toEqual({
             beforeAt: 10_000,
             beforeSeq: 10,
-            turns: 20
+            turns: TURN_PAGE_SIZE
         })
         expect(getMessageWindowState(id).messages.map((message) => message.id)).toEqual(['older', 'latest'])
     })
@@ -1799,7 +1799,7 @@ describe('history view and older pagination', () => {
         expect(getMessages.mock.calls[1]?.[1]).toEqual({
             beforeAt: 10_000,
             beforeSeq: 10,
-            turns: 20,
+            turns: TURN_PAGE_SIZE,
         })
 
         const loaded = await fetchOlderMessages(api, id)
@@ -1808,7 +1808,7 @@ describe('history view and older pagination', () => {
         expect(getMessages.mock.calls[2]?.[1]).toEqual({
             beforeAt: 9_000,
             beforeSeq: 9,
-            turns: 20,
+            turns: TURN_PAGE_SIZE,
         })
         expect(getMessageWindowState(id).messages.map((message) => message.id)).toEqual(['earlier', 'final'])
         expect(await fetchOlderMessages(api, id)).toEqual({ kind: 'stopped', reason: 'exhausted' })
@@ -2041,13 +2041,60 @@ describe('reasoning snapshot compaction', () => {
         ingestIncomingMessages(id, [...flood, ...conversation])
 
         const kept = getMessageWindowState(id).messages
-        const newestTurns = conversation.slice(-20)
+        const newestTurns = conversation.slice(-TURN_PAGE_SIZE)
         for (const message of newestTurns) {
             expect(kept.some((candidate) => candidate.id === message.id)).toBe(true)
         }
-        expect(kept.filter((message) => message.id.startsWith('talk-'))).toHaveLength(20)
+        expect(kept.filter((message) => message.id.startsWith('talk-'))).toHaveLength(TURN_PAGE_SIZE)
         expect(kept.filter((message) => message.id.startsWith('flood-'))).toHaveLength(0)
         expect(getMessageWindowState(id).hasMore).toBe(true)
+    })
+
+    it('compacts intermediate agent-run-update snapshots for the same subagent run', () => {
+        const id = sessionId('agent-run-update-compaction')
+        const root = makeUserMessage({ id: 'root', seq: 1, invokedAt: 1, createdAt: 1 })
+        const updates = Array.from({ length: 500 }, (_, index) =>
+            makeAgentRunMessage(`run-${index}`, index + 2, index + 2, 'same-agent')
+        )
+        ingestIncomingMessages(id, [root, ...updates])
+
+        const kept = getMessageWindowState(id).messages.map((message) => message.id)
+        expect(kept).toEqual(['root', 'run-0', 'run-499'])
+    })
+
+    it('retains all turns and does not slice mid-turn at 400 rows when a turn page has multiple turns totaling > 400 rows', async () => {
+        const id = sessionId('multi-turn-above-400-preserved')
+        const rows: DecryptedMessage[] = []
+        let seq = 1
+        for (let turn = 1; turn <= 5; turn += 1) {
+            rows.push(makeUserMessage({
+                id: `user-${turn}`,
+                seq,
+                invokedAt: seq * 1000,
+                createdAt: seq * 1000
+            }))
+            seq += 1
+            for (let step = 1; step <= 120; step += 1) {
+                rows.push(makeAgentMessage({
+                    id: `agent-${turn}-${step}`,
+                    seq,
+                    at: seq * 1000
+                }))
+                seq += 1
+            }
+        }
+        const getMessages = vi.fn().mockResolvedValueOnce(latestResponse(rows, {
+            epoch: 1,
+            hasMore: true,
+            nextBeforeAt: rows[0]!.invokedAt,
+            nextBeforeSeq: rows[0]!.seq
+        }))
+        await syncTailMessages(createApi(getMessages), id)
+
+        const state = getMessageWindowState(id)
+        expect(state.messages).toHaveLength(rows.length)
+        expect(state.messages[0]?.id).toBe('user-1')
+        expect(state.oldestPositionSeq).toBe(rows[0]!.seq)
     })
 
     // The seq bounds are a view over what the window currently holds; the
