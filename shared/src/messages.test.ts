@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import { AGENT_MESSAGE_PAYLOAD_TYPE } from './modes'
 import {
+    compactAgentRunUpdateMessages,
     extractAssistantPlainText,
     extractNotifySummary,
     getLiveMessageStreamId,
@@ -415,5 +416,88 @@ describe('isClaudeChatVisibleMessage', () => {
             type: 'system',
             subtype: 'model_refusal_fallback'
         })).toBe(true)
+    })
+})
+
+describe('compactAgentRunUpdateMessages', () => {
+    function agentRunUpdate(id: string, data: Record<string, unknown>) {
+        return {
+            id,
+            content: {
+                role: 'agent',
+                content: {
+                    type: AGENT_MESSAGE_PAYLOAD_TYPE,
+                    data: {
+                        type: 'agent-run-update',
+                        ...data
+                    }
+                }
+            }
+        }
+    }
+
+    test('collapses intermediate running snapshots per cardId/agentId while keeping first, latest running, and terminal updates', () => {
+        const rows = [
+            { id: 'user-1', content: { role: 'user', content: { type: 'text', text: 'run subagents' } } },
+            ...Array.from({ length: 50 }, (_, index) => agentRunUpdate(`upd-${index}`, {
+                cardId: 'omp-subagent:alpha',
+                agentId: 'alpha',
+                startedAt: 1000,
+                status: 'running',
+                statusText: `Using tool ${index}`,
+                activity: `Using tool ${index}`,
+                summary: 'Explore alpha',
+                parentToolCallId: 'task-1',
+                progress: { step: index, bytes: index * 1024 }
+            })),
+            agentRunUpdate('upd-terminal', {
+                cardId: 'omp-subagent:alpha',
+                agentId: 'alpha',
+                startedAt: 1000,
+                completedAt: 2000,
+                status: 'completed',
+                statusText: 'Completed',
+                activity: 'Completed',
+                summary: 'Explore alpha',
+                parentToolCallId: 'task-1',
+                result: 'alpha final output'
+            })
+        ]
+
+        const compacted = compactAgentRunUpdateMessages(rows)
+        expect(compacted.map((row) => row.id)).toEqual([
+            'user-1',
+            'upd-0',
+            'upd-49',
+            'upd-terminal'
+        ])
+    })
+
+    test('preserves intermediate updates that carry summary or result when later updates omit them', () => {
+        const rows = [
+            agentRunUpdate('u1', {
+                agentId: 'child-1',
+                status: 'running',
+                activity: 'Starting'
+            }),
+            agentRunUpdate('u2', {
+                agentId: 'child-1',
+                status: 'running',
+                summary: 'Child Title'
+            }),
+            agentRunUpdate('u3', {
+                agentId: 'child-1',
+                status: 'running',
+                activity: 'Still running'
+            }),
+            agentRunUpdate('u4', {
+                agentId: 'child-1',
+                status: 'completed',
+                result: 'done'
+            })
+        ]
+
+        const compacted = compactAgentRunUpdateMessages(rows)
+        expect(compacted.map((row) => row.id)).toEqual(['u1', 'u2', 'u3', 'u4'])
     })
 })

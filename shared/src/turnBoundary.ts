@@ -14,9 +14,10 @@ const SYSTEM_INJECTION_PREFIXES = [
     '<post-compact-ctx>',
 ]
 
-export const TURN_PAGE_SIZE = 20
+export const TURN_PAGE_SIZE = 8
 export const TURN_PAGE_MAX = 50
 export const TURN_PAGE_ROW_MAX = 2000
+export const TURN_PAGE_BYTE_BUDGET = 1024 * 1024
 
 function textFromContent(content: unknown): string | null {
     if (typeof content === 'string') return content

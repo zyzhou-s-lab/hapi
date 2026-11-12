@@ -105,6 +105,148 @@ export function getLiveMessageStreamId(value: unknown): string | null {
     return readMessageStreamId(value, true)
 }
 
+type AgentRunUpdateMeta = {
+    key: string
+    isTerminal: boolean
+    hasPayload: boolean
+    hasProgress: boolean
+    hasSummary: boolean
+    hasParentToolCallId: boolean
+}
+
+function isTerminalAgentRunStatusValue(status: string): boolean {
+    return status === 'completed'
+        || status === 'failed'
+        || status === 'error'
+        || status === 'errored'
+        || status === 'canceled'
+        || status === 'cancelled'
+        || status === 'aborted'
+        || status === 'stopped'
+        || status === 'interrupted'
+        || status === 'notFound'
+        || status === 'not_found'
+}
+
+function readAgentRunUpdateMeta(value: unknown): AgentRunUpdateMeta | null {
+    const record = unwrapRoleWrappedRecordEnvelope(value)
+    if (record?.role !== 'agent') return null
+
+    const content = record.content
+    if (!isObject(content) || content.type !== AGENT_MESSAGE_PAYLOAD_TYPE) return null
+    const data = isObject(content.data) ? content.data : null
+    if (!data || data.type !== 'agent-run-update') return null
+
+    const cardId = readNonEmptyTurnId(data.cardId) ?? readNonEmptyTurnId(data.card_id)
+    const agentId = readNonEmptyTurnId(data.agentId) ?? readNonEmptyTurnId(data.agent_id)
+    if (!cardId && !agentId) return null
+
+    const turnScope = isObject(record.meta) ? readNonEmptyTurnId(record.meta.turnId) : null
+    const status = readNonEmptyTurnId(data.status) ?? 'running'
+    const isTerminal = isTerminalAgentRunStatusValue(status)
+    const hasPayload = data.input !== undefined
+        || data.result !== undefined
+        || data.error !== undefined
+        || data.spawnResult !== undefined
+    return {
+        key: `${turnScope ?? ''}:${cardId ?? ''}:${agentId ?? ''}`,
+        isTerminal,
+        hasPayload,
+        hasProgress: data.progress !== undefined,
+        hasSummary: readNonEmptyTurnId(data.summary) !== null,
+        hasParentToolCallId: readNonEmptyTurnId(data.parentToolCallId) !== null
+    }
+}
+
+/**
+ * Collapse superseded intermediate `codex:agent-run-update` snapshots for the
+ * same subagent card while preserving 100% of fields consumed by `reduceTimeline`:
+ * - the first update (initializes earliest `createdAt` / `startedAt` and seed metadata),
+ * - the latest non-terminal update and latest `progress` / `summary` / `parentToolCallId` carrier,
+ * - any terminal update or update carrying `input` / `result` / `error` / `spawnResult`.
+ */
+export function compactAgentRunUpdateMessages<T extends { content: unknown }>(
+    messages: readonly T[]
+): T[] {
+    if (messages.length <= 2) return messages as T[]
+
+    type GroupBounds = {
+        count: number
+        firstIndex: number
+        lastNonTerminalIndex: number
+        lastProgressIndex: number
+        lastSummaryIndex: number
+        lastParentToolCallIdIndex: number
+    }
+
+    const metas = new Array<AgentRunUpdateMeta | null>(messages.length)
+    const groups = new Map<string, GroupBounds>()
+    let hasCandidateGroup = false
+
+    for (let index = 0; index < messages.length; index += 1) {
+        const meta = readAgentRunUpdateMeta(messages[index]!.content)
+        metas[index] = meta
+        if (!meta) continue
+
+        let group = groups.get(meta.key)
+        if (!group) {
+            group = {
+                count: 1,
+                firstIndex: index,
+                lastNonTerminalIndex: meta.isTerminal ? -1 : index,
+                lastProgressIndex: meta.hasProgress ? index : -1,
+                lastSummaryIndex: meta.hasSummary ? index : -1,
+                lastParentToolCallIdIndex: meta.hasParentToolCallId ? index : -1
+            }
+            groups.set(meta.key, group)
+            continue
+        }
+
+        group.count += 1
+        if (group.count > 2) {
+            hasCandidateGroup = true
+        }
+        if (!meta.isTerminal) {
+            group.lastNonTerminalIndex = index
+        }
+        if (meta.hasProgress) {
+            group.lastProgressIndex = index
+        }
+        if (meta.hasSummary) {
+            group.lastSummaryIndex = index
+        }
+        if (meta.hasParentToolCallId) {
+            group.lastParentToolCallIdIndex = index
+        }
+    }
+
+    if (!hasCandidateGroup) return messages as T[]
+
+    const compacted: T[] = []
+    for (let index = 0; index < messages.length; index += 1) {
+        const message = messages[index]!
+        const meta = metas[index]
+        if (!meta) {
+            compacted.push(message)
+            continue
+        }
+        const group = groups.get(meta.key)!
+        if (
+            meta.isTerminal
+            || meta.hasPayload
+            || index === group.firstIndex
+            || index === group.lastNonTerminalIndex
+            || index === group.lastProgressIndex
+            || index === group.lastSummaryIndex
+            || index === group.lastParentToolCallIdIndex
+        ) {
+            compacted.push(message)
+        }
+    }
+
+    return compacted.length === messages.length ? (messages as T[]) : compacted
+}
+
 function readNonEmptyTurnId(value: unknown): string | null {
     if (typeof value !== 'string') return null
     const trimmed = value.trim()

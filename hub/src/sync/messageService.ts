@@ -7,11 +7,12 @@ import {
 } from '@hapi/protocol/sessionExport'
 import type { AttachmentMetadata, DecryptedMessage, OmpInputMode, Session } from '@hapi/protocol/types'
 import {
+    compactAgentRunUpdateMessages,
     isClaudeChatVisibleMessage,
     isRedundantGoalStatusEventContent,
     unwrapRoleWrappedRecordEnvelope
 } from '@hapi/protocol/messages'
-import { TURN_PAGE_ROW_MAX, isHumanTurnStart } from '@hapi/protocol/turnBoundary'
+import { TURN_PAGE_BYTE_BUDGET, TURN_PAGE_ROW_MAX, isHumanTurnStart } from '@hapi/protocol/turnBoundary'
 import { isObject } from '@hapi/protocol'
 import type { MessageDeliveryMode, MessagesResponse, QueuedStateResponse } from '@hapi/protocol/apiTypes'
 import type { Server } from 'socket.io'
@@ -56,7 +57,8 @@ function toDecryptedMessage(message: StoredMessageForDelivery): DecryptedMessage
 }
 
 function toVisibleDecryptedMessages(messages: StoredMessageForDelivery[]): DecryptedMessage[] {
-    return messages.filter(isWebVisibleStoredMessage).map(toDecryptedMessage)
+    const visible = compactAgentRunUpdateMessages(messages.filter(isWebVisibleStoredMessage))
+    return visible.map(toDecryptedMessage)
 }
 
 function jsonByteLength(value: unknown): number {
@@ -316,6 +318,30 @@ export class MessageService {
         )
     }
 
+    private enforceTurnPageByteBudget(rows: StoredMessageForDelivery[]): StoredMessageForDelivery[] {
+        if (rows.length <= 1) return rows
+        const visibleCompacted = compactAgentRunUpdateMessages(rows.filter(isWebVisibleStoredMessage))
+        const survivingIds = new Set(visibleCompacted.map((row) => row.id))
+        let accumulatedBytes = 0
+        let lastTurnStartIndex: number | null = null
+        for (let index = rows.length - 1; index >= 0; index -= 1) {
+            const row = rows[index]!
+            if (survivingIds.has(row.id)) {
+                accumulatedBytes += jsonByteLength(row.content)
+            }
+            if (accumulatedBytes > TURN_PAGE_BYTE_BUDGET && index < rows.length - 1) {
+                if (lastTurnStartIndex !== null && lastTurnStartIndex > index) {
+                    return rows.slice(lastTurnStartIndex)
+                }
+                return rows.slice(index + 1)
+            }
+            if (isHumanTurnStart(row)) {
+                lastTurnStartIndex = index
+            }
+        }
+        return rows
+    }
+
     private collectTurnRows(
         sessionId: string,
         turns: number,
@@ -372,6 +398,7 @@ export class MessageService {
         } else {
             pageRows = scanned
         }
+        pageRows = this.enforceTurnPageByteBudget(pageRows)
         const oldest = pageRows[0] ?? null
         const hasMore = oldest !== null && this.store.messages.getMessagesByPosition(
             sessionId,
