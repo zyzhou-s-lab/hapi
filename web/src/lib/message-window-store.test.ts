@@ -2094,7 +2094,7 @@ describe('reasoning snapshot compaction', () => {
         const state = getMessageWindowState(id)
         expect(state.messages).toHaveLength(rows.length)
         expect(state.messages[0]?.id).toBe('user-1')
-        expect(state.oldestPositionSeq).toBe(rows[0]!.seq)
+        expect(state.oldestSeq).toBe(rows[0]!.seq)
     })
 
     // The seq bounds are a view over what the window currently holds; the
