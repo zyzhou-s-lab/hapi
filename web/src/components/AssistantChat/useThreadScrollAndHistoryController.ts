@@ -405,16 +405,26 @@ export function useThreadScrollAndHistoryController(props: {
                 scrollToBottomInstant()
             }
         }
+        const canNestedElementScrollUp = (target: EventTarget | null): boolean => {
+            let current = target instanceof Element ? target : null
+            while (current && current !== viewport) {
+                if (
+                    current instanceof HTMLElement
+                    && current.matches('[data-hapi-nested-scroll="true"], pre')
+                    && current.scrollHeight > current.clientHeight
+                    && current.scrollTop > 0
+                ) {
+                    return true
+                }
+                current = current.parentElement
+            }
+            return false
+        }
         const handleUpwardWheelDuringInitialPin = (event: WheelEvent) => {
             if (event.deltaY >= 0 || !isInitialScrollSettling()) {
                 return
             }
-            const target = event.target
-            if (
-                target instanceof Element
-                && target !== viewport
-                && target.closest('[data-hapi-nested-scroll="true"], pre')
-            ) {
+            if (canNestedElementScrollUp(event.target)) {
                 return
             }
             clearInitialScrollTimers()
@@ -706,13 +716,11 @@ export function useThreadScrollAndHistoryController(props: {
         }
         return loadUntilVisibleBoundaryChanges({
             getVisibleBoundary: () => getVisibleTurnBoundaryId(viewport),
-            isTopTurnIncomplete: () => isTopTurnHeadlessAssistant(viewport),
             hasMoreMessages: () => (
                 hasMoreMessagesRef.current
                 && needsViewportCoverageRef.current()
             ),
             loadOlder: async () => await requestOlder('user') === 'loaded',
-            maxPages: 8
         })
     }, [requestOlder])
 

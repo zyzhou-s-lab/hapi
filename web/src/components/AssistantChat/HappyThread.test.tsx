@@ -36,6 +36,8 @@ import { prependMissingUserSnapshot } from '@/components/AssistantChat/useShareT
 import { AssistantRuntimeProvider, useExternalStoreRuntime } from '@assistant-ui/react'
 import type { ThreadMessageLike } from '@assistant-ui/react'
 import type { ConversationOutlineItem } from '@/chat/outline'
+import { createSessionEntityStore } from '@/chat/store/sessionEntityStore'
+import { SessionEntityStoreProvider } from '@/hooks/useSessionEntityStore'
 
 const outlineItems: ConversationOutlineItem[] = [
     {
@@ -935,7 +937,7 @@ describe('visible older-history loading', () => {
         expect(getVisibleTurnBoundaryId(viewport)).toBe('hapi-message-assistant-0')
     })
 
-    it('continues chaining when a newly prepended older turn is still a headless split assistant turn', async () => {
+    it('stops after 1 page as soon as a newly prepended older turn changes the visible boundary even if that older turn is headless', async () => {
         const viewport = document.createElement('div')
         const container = document.createElement('div')
         container.className = 'happy-thread-messages'
@@ -973,8 +975,8 @@ describe('visible older-history loading', () => {
             hasMoreMessages: () => true,
             loadOlder
         })).resolves.toBe(true)
-        expect(loadOlder).toHaveBeenCalledTimes(3)
-        expect(isTopTurnHeadlessAssistant(viewport)).toBe(false)
+        expect(loadOlder).toHaveBeenCalledTimes(1)
+        expect(getVisibleTurnBoundaryId(viewport)).toBe('hapi-message-assistant-0')
     })
 
     it('skips multiple leading hoisted system messages when capturing scroll anchor for a split assistant turn', () => {
@@ -1152,5 +1154,89 @@ describe('3-state scroll mode and structure version helpers', () => {
             nextRawMessagesCount: 3,
         })
         expect(appended).toBe(5)
+    })
+})
+
+describe('StoreThreadMessagesById offscreen turn windowing', () => {
+    it('replaces measured offscreen middle turns with height-cached placeholders when > 24 entries exist and remounts them on scroll', () => {
+        const store = createSessionEntityStore()
+        const rawMessages = Array.from({ length: 30 }, (_, index) => ({
+            id: `m-${index + 1}`,
+            seq: index + 1,
+            localId: null,
+            createdAt: 1_000 + index * 10,
+            content: index % 2 === 0
+                ? { role: 'user', content: { type: 'text', text: `User ${index + 1}` } }
+                : { role: 'agent', content: { type: 'output', data: { type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: `Assistant ${index + 1}` }] } } } },
+        }))
+        store.reconcileMessages('s1', rawMessages)
+        const entries = store.getTimelineIndex()
+        expect(entries.length).toBe(30)
+
+        const MockMessage = ({ messageId }: { messageId?: string }) => (
+            <div
+                id={`hapi-message-${messageId}`}
+                data-message-id={messageId}
+                data-thread-entry-id={messageId}
+                data-testid={`mounted-${messageId}`}
+                ref={(node) => {
+                    if (node) {
+                        Object.defineProperty(node, 'offsetHeight', { configurable: true, value: 300 })
+                    }
+                }}
+            >
+                {messageId}
+            </div>
+        )
+        const components = {
+            UserMessage: MockMessage,
+            AssistantMessage: MockMessage,
+            SystemMessage: MockMessage,
+        } as unknown as ComponentProps<typeof ThreadMessagesById>['components']
+
+        const { container } = render(
+            <SessionEntityStoreProvider store={store}>
+                <div
+                    className="app-scroll-y"
+                    ref={(node) => {
+                        if (node) {
+                            Object.defineProperty(node, 'clientHeight', { configurable: true, value: 600 })
+                            Object.defineProperty(node, 'scrollHeight', { configurable: true, value: 9_360 })
+                        }
+                    }}
+                >
+                    <div className="happy-thread-messages">
+                        <ThreadMessagesById components={components} />
+                    </div>
+                </div>
+            </SessionEntityStoreProvider>
+        )
+
+        const viewport = container.querySelector<HTMLElement>('.app-scroll-y')!
+        viewport.scrollTop = 8_760
+        act(() => {
+            fireEvent.scroll(viewport)
+        })
+
+        // Head 2 entries (indices 0, 1) and tail 6 entries (indices 24..29) remain mounted;
+        // early middle entries far above scrollTop = 8760 (e.g. index 3) become placeholders.
+        expect(screen.queryByTestId(`mounted-${entries[0]!.id}`)).not.toBeNull()
+        expect(screen.queryByTestId(`mounted-${entries[1]!.id}`)).not.toBeNull()
+        expect(screen.queryByTestId(`mounted-${entries[29]!.id}`)).not.toBeNull()
+        expect(screen.queryByTestId(`mounted-${entries[3]!.id}`)).toBeNull()
+
+        const placeholder = container.querySelector<HTMLElement>(
+            `[data-thread-entry-id="${entries[3]!.id}"][data-hapi-offscreen-placeholder="true"]`
+        )
+        expect(placeholder).not.toBeNull()
+        expect(placeholder?.style.minHeight).toBe('300px')
+
+        // Scrolling back to top remounts index 3 and collapses distant lower-middle entries (e.g. index 20).
+        viewport.scrollTop = 0
+        act(() => {
+            fireEvent.scroll(viewport)
+        })
+        expect(screen.queryByTestId(`mounted-${entries[3]!.id}`)).not.toBeNull()
+        expect(screen.queryByTestId(`mounted-${entries[20]!.id}`)).toBeNull()
     })
 })

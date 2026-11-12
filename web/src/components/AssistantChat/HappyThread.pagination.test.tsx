@@ -714,4 +714,31 @@ describe('HappyThread older-history pagination lifecycle', () => {
         await waitFor(() => expect(pageOut.textContent).toBe('4'))
         expect(onRequest).toHaveBeenCalledTimes(3)
     })
+
+    it('unpins initial scroll settling when wheeling upward over a <pre> code block that is already at scrollTop 0', async () => {
+        const onRequest = vi.fn()
+        render(<PaginationHarness onRequest={onRequest} />)
+
+        const viewport = document.querySelector<HTMLElement>('.app-scroll-y')!
+        const anchor = screen.getByTestId('stable-visible-message')
+        Object.defineProperty(viewport, 'clientHeight', { configurable: true, value: 600 })
+        Object.defineProperty(viewport, 'scrollHeight', { configurable: true, value: 2_400 })
+        viewport.scrollTop = 1_800
+
+        const codeBlock = document.createElement('pre')
+        codeBlock.textContent = 'const unscrollableOrAtTop = true'
+        Object.defineProperties(codeBlock, {
+            clientHeight: { configurable: true, value: 120 },
+            scrollHeight: { configurable: true, value: 120 },
+            scrollTop: { configurable: true, writable: true, value: 0 },
+        })
+        anchor.append(codeBlock)
+
+        // Upward wheel over <pre> with scrollTop=0 during the initial 1400ms settling window must unpin
+        // so the subsequent viewport scroll to 1200 is not snapped back to 1800.
+        fireEvent.wheel(codeBlock, { deltaY: -240 })
+        viewport.scrollTop = 1_200
+        fireEvent.scroll(viewport)
+        expect(viewport.scrollTop).toBe(1_200)
+    })
 })

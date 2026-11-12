@@ -703,10 +703,7 @@ export async function loadUntilVisibleBoundaryChanges(options: {
     while (
         pagesLoaded < maxPages
         && options.hasMoreMessages()
-        && (
-            options.getVisibleBoundary() === initialBoundary
-            || (loadedAny && options.isTopTurnIncomplete?.() === true)
-        )
+        && options.getVisibleBoundary() === initialBoundary
     ) {
         const loaded = await options.loadOlder()
         if (!loaded) {

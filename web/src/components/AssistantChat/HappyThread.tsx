@@ -1,11 +1,11 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { ThreadPrimitive, unstable_useThreadMessageIds, useAuiState } from '@assistant-ui/react'
 import type { ComponentProps } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import type { ApiClient } from '@/api/client'
 import type { HappyRuntimeExtras } from '@/lib/assistant-runtime'
 import type { Session, SessionMetadataSummary } from '@/types/api'
-import type { ConversationOutlineItem } from '@/chat/outline'
+import { getConversationMessageAnchorId, type ConversationOutlineItem } from '@/chat/outline'
 import { formatMessageTimestampTitle, formatOutlineTimestamp } from '@/chat/presentation'
 import type {
     SessionEntityMetaSnapshot,
@@ -99,6 +99,24 @@ const THREAD_MESSAGE_COMPONENTS = {
 
 type ThreadMessageComponents = ComponentProps<typeof ThreadPrimitive.Unstable_MessageById>['components']
 
+export const VIRTUALIZATION_ENTRY_THRESHOLD = 24
+export const VIRTUALIZATION_HEAD_PIN_COUNT = 2
+export const VIRTUALIZATION_TAIL_PIN_COUNT = 6
+export const VIRTUALIZATION_OVERSCAN_PX = 1200
+const THREAD_MESSAGE_GAP_PX = 12
+
+function sameStringSet(left: ReadonlySet<string>, right: ReadonlySet<string>): boolean {
+    if (left.size !== right.size) {
+        return false
+    }
+    for (const item of left) {
+        if (!right.has(item)) {
+            return false
+        }
+    }
+    return true
+}
+
 /**
  * Render messages by stable id instead of their current array index.
  *
@@ -110,14 +128,131 @@ type ThreadMessageComponents = ComponentProps<typeof ThreadPrimitive.Unstable_Me
 function StoreThreadMessagesById(props: {
     store: SessionEntityStore
     components: ThreadMessageComponents
+    viewportRef?: React.RefObject<HTMLDivElement | null>
 }) {
     const timelineEntries = useSessionTimelineIndex(props.store)
+    const heightCacheRef = useRef<Map<string, number>>(new Map())
+    const offscreenIdsRef = useRef<ReadonlySet<string>>(new Set())
+    const [offscreenIds, setOffscreenIds] = useState<ReadonlySet<string>>(() => new Set())
+
+    useEffect(() => {
+        heightCacheRef.current.clear()
+        if (offscreenIdsRef.current.size > 0) {
+            const empty = new Set<string>()
+            offscreenIdsRef.current = empty
+            setOffscreenIds(empty)
+        }
+    }, [props.store])
+
+    const recomputeOffscreenWindow = useCallback(() => {
+        if (timelineEntries.length <= VIRTUALIZATION_ENTRY_THRESHOLD) {
+            if (offscreenIdsRef.current.size > 0) {
+                const empty = new Set<string>()
+                offscreenIdsRef.current = empty
+                setOffscreenIds(empty)
+            }
+            return
+        }
+        const viewport = props.viewportRef?.current ?? document.querySelector<HTMLElement>('.app-scroll-y')
+        if (!viewport || viewport.clientHeight <= 0) {
+            return
+        }
+        const viewportRect = viewport.getBoundingClientRect()
+        const entryElements = new Map<string, HTMLElement>()
+        for (const element of viewport.querySelectorAll<HTMLElement>('[data-thread-entry-id]')) {
+            const entryId = element.getAttribute('data-thread-entry-id')
+            if (!entryId) {
+                continue
+            }
+            entryElements.set(entryId, element)
+            if (!element.hasAttribute('data-hapi-offscreen-placeholder')) {
+                const measuredHeight = element.getBoundingClientRect().height || element.offsetHeight
+                if (measuredHeight > 0) {
+                    heightCacheRef.current.set(entryId, measuredHeight)
+                }
+            }
+        }
+
+        const windowTop = viewport.scrollTop - VIRTUALIZATION_OVERSCAN_PX
+        const windowBottom = viewport.scrollTop + viewport.clientHeight + VIRTUALIZATION_OVERSCAN_PX
+        const tailStartIndex = Math.max(0, timelineEntries.length - VIRTUALIZATION_TAIL_PIN_COUNT)
+        const nextOffscreen = new Set<string>()
+        let runningTop = 0
+
+        for (let index = 0; index < timelineEntries.length; index += 1) {
+            const entry = timelineEntries[index]!
+            const cachedHeight = heightCacheRef.current.get(entry.id)
+            const element = entryElements.get(entry.id)
+            const rect = element?.getBoundingClientRect()
+            const hasExplicitPosition = Boolean(rect && (rect.top !== 0 || rect.bottom !== rect.height))
+            const height = cachedHeight ?? (rect && rect.height > 0 ? rect.height : 0)
+            const entryTop = hasExplicitPosition && rect
+                ? (rect.top - viewportRect.top) + viewport.scrollTop
+                : runningTop
+            const entryBottom = entryTop + height
+            runningTop = entryBottom + THREAD_MESSAGE_GAP_PX
+
+            if (
+                index < VIRTUALIZATION_HEAD_PIN_COUNT
+                || index >= tailStartIndex
+                || cachedHeight === undefined
+                || cachedHeight <= 0
+            ) {
+                continue
+            }
+            if (entryBottom < windowTop || entryTop > windowBottom) {
+                nextOffscreen.add(entry.id)
+            }
+        }
+
+        if (!sameStringSet(offscreenIdsRef.current, nextOffscreen)) {
+            offscreenIdsRef.current = nextOffscreen
+            setOffscreenIds(nextOffscreen)
+        }
+    }, [props.viewportRef, timelineEntries])
+
+    useLayoutEffect(() => {
+        recomputeOffscreenWindow()
+    }, [recomputeOffscreenWindow])
+
+    useEffect(() => {
+        if (timelineEntries.length <= VIRTUALIZATION_ENTRY_THRESHOLD) {
+            return
+        }
+        const viewport = props.viewportRef?.current ?? document.querySelector<HTMLElement>('.app-scroll-y')
+        if (!viewport) {
+            return
+        }
+        viewport.addEventListener('scroll', recomputeOffscreenWindow, { passive: true })
+        window.addEventListener('resize', recomputeOffscreenWindow)
+        return () => {
+            viewport.removeEventListener('scroll', recomputeOffscreenWindow)
+            window.removeEventListener('resize', recomputeOffscreenWindow)
+        }
+    }, [props.viewportRef, recomputeOffscreenWindow, timelineEntries.length])
+
     const UserComponent = (props.components?.UserMessage ?? HappyUserMessage) as React.ComponentType<{ messageId?: string }>
     const AssistantComponent = (props.components?.AssistantMessage ?? HappyAssistantMessage) as React.ComponentType<{ messageId?: string }>
     const SystemComponent = (props.components?.SystemMessage ?? HappySystemMessage) as React.ComponentType<{ messageId?: string }>
     return (
         <>
             {timelineEntries.map((entry) => {
+                const cachedHeight = heightCacheRef.current.get(entry.id)
+                if (cachedHeight !== undefined && offscreenIds.has(entry.id)) {
+                    const elementId = getConversationMessageAnchorId(entry.id)
+                    return (
+                        <div
+                            key={entry.id}
+                            id={elementId}
+                            data-message-id={entry.id}
+                            data-thread-entry-id={entry.id}
+                            data-hapi-message-role={entry.role}
+                            data-hapi-offscreen-placeholder="true"
+                            className="aui-message-root happy-message scroll-mt-4"
+                            style={{ minHeight: `${cachedHeight}px`, height: `${cachedHeight}px` }}
+                        />
+                    )
+                }
                 if (entry.role === 'user') {
                     return <UserComponent key={entry.id} messageId={entry.id} />
                 }
@@ -145,12 +280,15 @@ function RuntimeThreadMessagesById(props: { components: ThreadMessageComponents 
     )
 }
 
-export function ThreadMessagesById({ components }: { components: ThreadMessageComponents }) {
+export function ThreadMessagesById(props: {
+    components: ThreadMessageComponents
+    viewportRef?: React.RefObject<HTMLDivElement | null>
+}) {
     const store = useOptionalSessionEntityStore()
     if (store) {
-        return <StoreThreadMessagesById store={store} components={components} />
+        return <StoreThreadMessagesById store={store} components={props.components} viewportRef={props.viewportRef} />
     }
-    return <RuntimeThreadMessagesById components={components} />
+    return <RuntimeThreadMessagesById components={props.components} />
 }
 
 const selectOutlineItems = (meta: SessionEntityMetaSnapshot): readonly ConversationOutlineItem[] => meta.outlineItems
@@ -652,7 +790,7 @@ export function HappyThread(props: {
                                 </>
                             )}
                             <div className="happy-thread-messages flex flex-col gap-3">
-                                <ThreadMessagesById components={THREAD_MESSAGE_COMPONENTS} />
+                                <ThreadMessagesById components={THREAD_MESSAGE_COMPONENTS} viewportRef={viewportRef} />
                             </div>
                         </div>
                     </div>
