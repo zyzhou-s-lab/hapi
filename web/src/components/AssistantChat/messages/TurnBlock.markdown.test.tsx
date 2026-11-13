@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { render, screen } from '@testing-library/react'
+import { fireEvent, render, screen, within } from '@testing-library/react'
 import type { ReactNode } from 'react'
 import { I18nProvider } from '@/lib/i18n-context'
 import { HappyChatProvider, type HappyChatContextValue } from '@/components/AssistantChat/context'
@@ -84,5 +84,62 @@ describe('TurnBlockView markdown', () => {
         expect(screen.getByRole('table')).toHaveClass('aui-md-table')
         expect(screen.getByRole('columnheader', { name: '指标' })).toHaveClass('aui-md-th')
         expect(screen.getByRole('cell', { name: '12ms' })).toHaveClass('aui-md-td')
+    })
+
+    it('supports cycling asc, desc, and original order on multi-row markdown tables including byte units and inline code', () => {
+        const multiRowTable = partitionTurn([
+            {
+                type: 'text',
+                text: [
+                    '| 文件 / 目录 | 大小 | 说明 |',
+                    '| --- | --- | --- |',
+                    '| `reactome_gmt/ReactomePathways.gmt.zip` | 66.1 MB | Reactome 基因集 |',
+                    '| `msigdb_v2026.1.Hs.json` | 291.5 KB | MSigDB 集合 |',
+                    '| `gencode.v43.annotation.gtf` | 1.2 GB | GENCODE 注释 |',
+                ].join('\n'),
+            },
+        ], null)
+
+        renderBlock(<TurnBlockView partition={multiRowTable} streaming={false} durationMs={null} initiallyOpen={false} />)
+        const table = screen.getByRole('table')
+        const sizeHeader = within(table).getByRole('columnheader', { name: '大小' })
+        expect(sizeHeader).toHaveAttribute('aria-sort', 'none')
+
+        const getRowFileNames = () =>
+            within(table)
+                .getAllByRole('row')
+                .slice(1)
+                .map((row) => within(row).getAllByRole('cell')[0]?.textContent)
+
+        expect(getRowFileNames()).toEqual([
+            'reactome_gmt/ReactomePathways.gmt.zip',
+            'msigdb_v2026.1.Hs.json',
+            'gencode.v43.annotation.gtf',
+        ])
+
+        const sortBtn = within(sizeHeader).getByRole('button', { name: '大小' })
+        fireEvent.click(sortBtn)
+        expect(sizeHeader).toHaveAttribute('aria-sort', 'ascending')
+        expect(getRowFileNames()).toEqual([
+            'msigdb_v2026.1.Hs.json',
+            'reactome_gmt/ReactomePathways.gmt.zip',
+            'gencode.v43.annotation.gtf',
+        ])
+
+        fireEvent.click(sortBtn)
+        expect(sizeHeader).toHaveAttribute('aria-sort', 'descending')
+        expect(getRowFileNames()).toEqual([
+            'gencode.v43.annotation.gtf',
+            'reactome_gmt/ReactomePathways.gmt.zip',
+            'msigdb_v2026.1.Hs.json',
+        ])
+
+        fireEvent.click(sortBtn)
+        expect(sizeHeader).toHaveAttribute('aria-sort', 'none')
+        expect(getRowFileNames()).toEqual([
+            'reactome_gmt/ReactomePathways.gmt.zip',
+            'msigdb_v2026.1.Hs.json',
+            'gencode.v43.annotation.gtf',
+        ])
     })
 })

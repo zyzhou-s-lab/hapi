@@ -399,6 +399,20 @@ body {
     font-size: var(--app-font-size-code-inline);
     line-height: var(--app-line-code-inline);
     font-weight: var(--app-font-weight-prose);
+    overflow-wrap: anywhere;
+    box-decoration-break: clone;
+    -webkit-box-decoration-break: clone;
+}
+
+.aui-md-table th,
+.aui-md-table td {
+    overflow-wrap: break-word;
+    word-break: break-word;
+}
+
+.aui-md-table .aui-md-code {
+    overflow-wrap: anywhere;
+    word-break: break-all;
 }
 
 #root {

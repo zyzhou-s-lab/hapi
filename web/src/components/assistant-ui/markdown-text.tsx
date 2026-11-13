@@ -1,7 +1,7 @@
 import '@assistant-ui/react-markdown/styles/dot.css'
 
-import type { ComponentPropsWithoutRef, ComponentType, MouseEvent, ReactNode } from 'react'
-import { useState, useCallback, useEffect, useMemo, createContext, useContext } from 'react'
+import type { ComponentPropsWithoutRef, ComponentType, MouseEvent, ReactElement, ReactNode } from 'react'
+import { Children, createContext, isValidElement, useCallback, useContext, useEffect, useMemo, useState } from 'react'
 import {
     MarkdownTextPrimitive,
     unstable_memoizeMarkdownComponents as memoizeMarkdownComponents,
@@ -494,6 +494,9 @@ function extractCodeText(children: ReactNode): string {
     if (typeof children === 'string') return children
     if (typeof children === 'number') return String(children)
     if (Array.isArray(children)) return children.map(extractCodeText).join('')
+    if (isValidElement<{ children?: ReactNode }>(children)) {
+        return extractCodeText(children.props.children)
+    }
     return ''
 }
 
@@ -532,7 +535,7 @@ function Code(props: ComponentPropsWithoutRef<'code'>) {
         <code
             {...props}
             className={cn(
-                'aui-md-code break-words rounded-md border border-[var(--app-inline-code-border)] bg-[var(--app-inline-code-bg)] px-[0.38em] py-[0.14em] font-mono text-[var(--app-inline-code-fg)]',
+                'aui-md-code break-words [overflow-wrap:anywhere] [box-decoration-break:clone] [-webkit-box-decoration-break:clone] rounded-md border border-[var(--app-inline-code-border)] bg-[var(--app-inline-code-bg)] px-[0.38em] py-[0.14em] font-mono text-[var(--app-inline-code-fg)]',
                 props.className
             )}
         >
@@ -813,42 +816,282 @@ function Hr(props: ComponentPropsWithoutRef<'hr'>) {
     return <hr {...props} className={cn('aui-md-hr my-4 border-[var(--app-divider)]', props.className)} />
 }
 
-function Table(props: ComponentPropsWithoutRef<'table'>) {
-    const { className, ...rest } = props
+type TableSortDirection = 'asc' | 'desc'
+
+type TableSortState = {
+    colIndex: number
+    dir: TableSortDirection
+} | null
+
+type MarkdownTableSortContextValue = {
+    sortState: TableSortState
+    canSort: boolean
+    onToggleSort: (colIndex: number) => void
+}
+
+const MarkdownTableSortContext = createContext<MarkdownTableSortContextValue | null>(null)
+const MarkdownTableSectionContext = createContext<'thead' | 'tbody' | null>(null)
+const MarkdownTableColIndexContext = createContext<number | null>(null)
+
+const TABLE_COLLATOR = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' })
+const SORTABLE_NUMERIC_VALUE_RE = /^[+-]?\$?\s*(\d{1,3}(?:,\d{3})+|\d+)(?:\.(\d+))?\s*(B|KB|MB|GB|TB|PB|K|M|G|T|%|ms|s)?$/i
+
+const BYTE_UNIT_MULTIPLIERS: Record<string, number> = {
+    b: 1,
+    kb: 1024,
+    mb: 1024 ** 2,
+    gb: 1024 ** 3,
+    tb: 1024 ** 4,
+    pb: 1024 ** 5,
+}
+
+const MAGNITUDE_UNIT_MULTIPLIERS: Record<string, number> = {
+    k: 1e3,
+    m: 1e6,
+    g: 1e9,
+    t: 1e12,
+}
+
+function parseSortableCellNumber(rawText: string): { kind: 'bytes' | 'duration' | 'number'; value: number } | null {
+    const match = SORTABLE_NUMERIC_VALUE_RE.exec(rawText)
+    if (!match) return null
+    const normalizedNum = rawText
+        .replace(/\$/g, '')
+        .replace(/,/g, '')
+        .replace(/(B|KB|MB|GB|TB|PB|K|M|G|T|%|ms|s)\s*$/i, '')
+        .trim()
+    const num = Number(normalizedNum)
+    if (!Number.isFinite(num)) return null
+    const unit = (match[3] ?? '').toLowerCase()
+    if (unit in BYTE_UNIT_MULTIPLIERS) {
+        return { kind: 'bytes', value: num * BYTE_UNIT_MULTIPLIERS[unit]! }
+    }
+    if (unit === 'ms' || unit === 's') {
+        return { kind: 'duration', value: unit === 's' ? num * 1000 : num }
+    }
+    if (unit in MAGNITUDE_UNIT_MULTIPLIERS) {
+        return { kind: 'number', value: num * MAGNITUDE_UNIT_MULTIPLIERS[unit]! }
+    }
+    return { kind: 'number', value: num }
+}
+
+function compareTableCells(aRaw: string, bRaw: string, dir: TableSortDirection, aIndex: number, bIndex: number): number {
+    const a = aRaw.trim()
+    const b = bRaw.trim()
+    if (!a && !b) return aIndex - bIndex
+    if (!a) return 1
+    if (!b) return -1
+
+    const aNum = parseSortableCellNumber(a)
+    const bNum = parseSortableCellNumber(b)
+    const sign = dir === 'asc' ? 1 : -1
+    if (aNum && bNum && aNum.kind === bNum.kind) {
+        const diff = aNum.value - bNum.value
+        if (diff !== 0) return diff * sign
+        return aIndex - bIndex
+    }
+
+    const cmp = TABLE_COLLATOR.compare(a, b)
+    if (cmp !== 0) return cmp * sign
+    return aIndex - bIndex
+}
+
+export function Table(props: ComponentPropsWithoutRef<'table'>) {
+    const { className, children, ...rest } = props
+    const [sortState, setSortState] = useState<TableSortState>(null)
+
+    const canSort = useMemo(() => {
+        const sections = Children.toArray(children).filter(isValidElement<{ children?: ReactNode }>)
+        if (sections.length < 2) return false
+        const tbodySection = sections[1]
+        if (!tbodySection) return false
+        const bodyRows = Children.toArray(tbodySection.props.children).filter(isValidElement)
+        return bodyRows.length >= 2
+    }, [children])
+
+    const onToggleSort = useCallback((colIndex: number) => {
+        setSortState((prev) => {
+            if (!prev || prev.colIndex !== colIndex) {
+                return { colIndex, dir: 'asc' }
+            }
+            if (prev.dir === 'asc') {
+                return { colIndex, dir: 'desc' }
+            }
+            return null
+        })
+    }, [])
+
+    const contextValue = useMemo<MarkdownTableSortContextValue>(
+        () => ({
+            sortState: canSort ? sortState : null,
+            canSort,
+            onToggleSort,
+        }),
+        [canSort, onToggleSort, sortState]
+    )
 
     return (
-        <div className="aui-md-table-wrapper my-3 max-w-full overflow-x-auto rounded-xl bg-[var(--app-md-table-bg)]">
-            <table {...rest} className={cn('aui-md-table w-full border-collapse text-sm', className)} />
-        </div>
+        <MarkdownTableSortContext.Provider value={contextValue}>
+            <div className="aui-md-table-wrapper my-3 w-full max-w-full">
+                <table {...rest} className={cn('aui-md-table w-full max-w-full table-auto border-collapse text-sm', className)}>
+                    {children}
+                </table>
+            </div>
+        </MarkdownTableSortContext.Provider>
     )
 }
 
-function Thead(props: ComponentPropsWithoutRef<'thead'>) {
-    return <thead {...props} className={cn('aui-md-thead bg-[var(--app-md-table-head-bg)]', props.className)} />
+export function Thead(props: ComponentPropsWithoutRef<'thead'>) {
+    return (
+        <MarkdownTableSectionContext.Provider value="thead">
+            <thead
+                {...props}
+                className={cn('aui-md-thead border-b border-[var(--app-divider)] bg-transparent', props.className)}
+            />
+        </MarkdownTableSectionContext.Provider>
+    )
 }
 
-function Tbody(props: ComponentPropsWithoutRef<'tbody'>) {
-    return <tbody {...props} className={cn('aui-md-tbody', props.className)} />
+export function Tbody(props: ComponentPropsWithoutRef<'tbody'>) {
+    const { children, className, ...rest } = props
+    const sortCtx = useContext(MarkdownTableSortContext)
+    const activeSort = sortCtx?.sortState ?? null
+
+    const sortedChildren = useMemo(() => {
+        if (!activeSort) return children
+        const childArray = Children.toArray(children)
+        const rows: { element: ReactElement<{ children?: ReactNode }>; originalIndex: number; cellText: string }[] = []
+        for (const child of childArray) {
+            if (!isValidElement<{ children?: ReactNode }>(child)) continue
+            const cells = Children.toArray(child.props.children).filter(isValidElement<{ children?: ReactNode }>)
+            const targetCell = cells[activeSort.colIndex]
+            const cellText = targetCell ? extractCodeText(targetCell.props.children) : ''
+            rows.push({
+                element: child,
+                originalIndex: rows.length,
+                cellText,
+            })
+        }
+        if (rows.length < 2) return children
+        rows.sort((a, b) => compareTableCells(a.cellText, b.cellText, activeSort.dir, a.originalIndex, b.originalIndex))
+        return rows.map((row) => row.element)
+    }, [activeSort, children])
+
+    return (
+        <MarkdownTableSectionContext.Provider value="tbody">
+            <tbody {...rest} className={cn('aui-md-tbody', className)}>
+                {sortedChildren}
+            </tbody>
+        </MarkdownTableSectionContext.Provider>
+    )
 }
 
-function Tr(props: ComponentPropsWithoutRef<'tr'>) {
-    return <tr {...props} className={cn('aui-md-tr border-t border-[var(--app-divider)] first:border-t-0', props.className)} />
+export function Tr(props: ComponentPropsWithoutRef<'tr'>) {
+    const { children, className, ...rest } = props
+    const section = useContext(MarkdownTableSectionContext)
+
+    const wrappedChildren = useMemo(() => {
+        if (section !== 'thead') return children
+        let colIndex = 0
+        return Children.map(children, (child) => {
+            if (!isValidElement(child)) return child
+            const currentColIndex = colIndex
+            colIndex += 1
+            return (
+                <MarkdownTableColIndexContext.Provider value={currentColIndex}>
+                    {child}
+                </MarkdownTableColIndexContext.Provider>
+            )
+        })
+    }, [children, section])
+
+    return (
+        <tr
+            {...rest}
+            className={cn(
+                'aui-md-tr border-b border-[var(--app-divider)]',
+                section === 'tbody' && 'transition-colors hover:bg-[var(--app-subtle-bg)]/40',
+                className
+            )}
+        >
+            {wrappedChildren}
+        </tr>
+    )
 }
 
-function Th(props: ComponentPropsWithoutRef<'th'>) {
+export function Th(props: ComponentPropsWithoutRef<'th'>) {
+    const { children, className, ...rest } = props
+    const sortCtx = useContext(MarkdownTableSortContext)
+    const colIndex = useContext(MarkdownTableColIndexContext)
+    const canSort = Boolean(sortCtx?.canSort && colIndex !== null)
+    const activeDir = canSort && sortCtx?.sortState?.colIndex === colIndex ? sortCtx.sortState.dir : null
+
     return (
         <th
+            {...rest}
+            aria-sort={
+                canSort
+                    ? activeDir === 'asc'
+                        ? 'ascending'
+                        : activeDir === 'desc'
+                            ? 'descending'
+                            : 'none'
+                    : undefined
+            }
+            className={cn(
+                'aui-md-th px-3 py-2.5 first:pl-0 last:pr-0 text-left align-bottom font-semibold text-[var(--app-fg)] [[align=center]]:text-center [[align=right]]:text-right',
+                className
+            )}
+        >
+            {canSort && colIndex !== null ? (
+                <button
+                    type="button"
+                    onClick={() => sortCtx?.onToggleSort(colIndex)}
+                    className="aui-md-th-sort-btn group/th inline-flex max-w-full items-center gap-1 text-left font-semibold text-[var(--app-fg)] focus-visible:outline-none"
+                >
+                    <span>{children}</span>
+                    <span
+                        aria-hidden="true"
+                        className={cn(
+                            'inline-flex shrink-0 items-center text-[var(--app-hint)] transition-opacity',
+                            activeDir ? 'opacity-100 text-[var(--app-fg)]' : 'opacity-0 group-hover/th:opacity-65 group-focus-visible/th:opacity-65'
+                        )}
+                    >
+                        {activeDir === 'asc' ? (
+                            <svg viewBox="0 0 16 16" className="size-3.5" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
+                                <path d="M8 12.5V3.5" />
+                                <path d="M4.5 7L8 3.5L11.5 7" />
+                            </svg>
+                        ) : activeDir === 'desc' ? (
+                            <svg viewBox="0 0 16 16" className="size-3.5" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
+                                <path d="M8 3.5V12.5" />
+                                <path d="M4.5 9L8 12.5L11.5 9" />
+                            </svg>
+                        ) : (
+                            <svg viewBox="0 0 16 16" className="size-3.5" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+                                <path d="M5.5 6L8 3.5L10.5 6" />
+                                <path d="M5.5 10L8 12.5L10.5 10" />
+                            </svg>
+                        )}
+                    </span>
+                </button>
+            ) : (
+                children
+            )}
+        </th>
+    )
+}
+
+export function Td(props: ComponentPropsWithoutRef<'td'>) {
+    return (
+        <td
             {...props}
             className={cn(
-                'aui-md-th px-3 py-2 text-left font-semibold text-[var(--app-fg)] [[align=center]]:text-center [[align=right]]:text-right',
+                'aui-md-td px-3 py-2.5 first:pl-0 last:pr-0 align-top text-[var(--app-fg)] [[align=center]]:text-center [[align=right]]:text-right',
                 props.className
             )}
         />
     )
-}
-
-function Td(props: ComponentPropsWithoutRef<'td'>) {
-    return <td {...props} className={cn('aui-md-td px-3 py-2 align-top text-[var(--app-fg)] [[align=center]]:text-center [[align=right]]:text-right', props.className)} />
 }
 
 function H1(props: ComponentPropsWithoutRef<'h1'>) {

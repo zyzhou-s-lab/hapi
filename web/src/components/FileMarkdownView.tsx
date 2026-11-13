@@ -6,7 +6,7 @@ import remarkLatexBracketMath from '@/lib/remark-latex-bracket-math'
 import rehypeKatex from 'rehype-katex'
 import { MermaidDiagram } from '@/components/assistant-ui/mermaid-diagram'
 import { SyntaxHighlighter } from '@/components/assistant-ui/shiki-highlighter'
-import { denyOnlyTransform, extractInlineCodeColor } from '@/components/assistant-ui/markdown-text'
+import { denyOnlyTransform, extractInlineCodeColor, Table, Thead, Tbody, Tr, Th, Td } from '@/components/assistant-ui/markdown-text'
 import { cn } from '@/lib/utils'
 
 // Standalone markdown renderer for the file viewer (issue #3).
@@ -62,7 +62,7 @@ function CodeBlock(props: ComponentPropsWithoutRef<'code'>) {
     const swatchColor = extractInlineCodeColor(text)
 
     return (
-        <code className="aui-md-code break-words rounded-md border border-[var(--app-inline-code-border)] bg-[var(--app-inline-code-bg)] px-[0.38em] py-[0.14em] font-mono text-[var(--app-inline-code-fg)]">
+        <code className="aui-md-code break-words [overflow-wrap:anywhere] [box-decoration-break:clone] [-webkit-box-decoration-break:clone] rounded-md border border-[var(--app-inline-code-border)] bg-[var(--app-inline-code-bg)] px-[0.38em] py-[0.14em] font-mono text-[var(--app-inline-code-fg)]">
             {children}
             {swatchColor ? (
                 <span
@@ -115,16 +115,12 @@ const components: Components = {
     ol: ({ className, ...rest }) => <ol {...rest} className={cn('aui-md-ol my-2.5 list-decimal pl-6 marker:text-[var(--app-hint)] [&>li]:mt-1.5', className)} />,
     li: ({ className, ...rest }) => <li {...rest} className={cn('aui-md-li', className)} />,
     hr: ({ className, ...rest }) => <hr {...rest} className={cn('aui-md-hr my-4 border-[var(--app-divider)]', className)} />,
-    table: ({ className, ...rest }) => (
-        <div className="aui-md-table-wrapper my-3 max-w-full overflow-x-auto rounded-xl bg-[var(--app-md-table-bg)]">
-            <table {...rest} className={cn('aui-md-table w-full border-collapse text-sm', className)} />
-        </div>
-    ),
-    thead: ({ className, ...rest }) => <thead {...rest} className={cn('aui-md-thead bg-[var(--app-md-table-head-bg)]', className)} />,
-    tbody: ({ className, ...rest }) => <tbody {...rest} className={cn('aui-md-tbody', className)} />,
-    tr: ({ className, ...rest }) => <tr {...rest} className={cn('aui-md-tr border-t border-[var(--app-divider)] first:border-t-0', className)} />,
-    th: ({ className, ...rest }) => <th {...rest} className={cn('aui-md-th px-3 py-2 text-left font-semibold text-[var(--app-fg)]', className)} />,
-    td: ({ className, ...rest }) => <td {...rest} className={cn('aui-md-td px-3 py-2 align-top text-[var(--app-fg)]', className)} />,
+    table: Table,
+    thead: Thead,
+    tbody: Tbody,
+    tr: Tr,
+    th: Th,
+    td: Td,
 }
 
 export function FileMarkdownView(props: { content: string; className?: string }) {
