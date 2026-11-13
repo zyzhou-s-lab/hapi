@@ -929,6 +929,7 @@ export function MarkdownText({ smooth = false }: { smooth?: boolean } = {}) {
         <UriConfirmProvider>
             <MarkdownTextPrimitive
                 smooth={smooth}
+                remarkPlugins={MARKDOWN_PLUGINS}
                 rehypePlugins={MARKDOWN_REHYPE_PLUGINS}
                 components={defaultComponents}
                 componentsByLanguage={MARKDOWN_COMPONENTS_BY_LANGUAGE}

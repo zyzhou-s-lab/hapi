@@ -68,5 +68,21 @@ describe('TurnBlockView markdown', () => {
         ], null)
         renderBlock(<TurnBlockView partition={note} streaming={false} durationMs={null} initiallyOpen />)
         expect(screen.getByText('斜体').closest('em')).not.toBeNull()
+
+        const withTable = partitionTurn([
+            {
+                type: 'tool-call',
+                toolName: 'Read',
+                artifact: tool('read-3', 'Read'),
+            },
+            {
+                type: 'text',
+                text: '| 指标 | 数值 |\n| --- | --- |\n| 延迟 | 12ms |',
+            },
+        ], null)
+        renderBlock(<TurnBlockView partition={withTable} streaming={false} durationMs={null} initiallyOpen={false} />)
+        expect(screen.getByRole('table')).toHaveClass('aui-md-table')
+        expect(screen.getByRole('columnheader', { name: '指标' })).toHaveClass('aui-md-th')
+        expect(screen.getByRole('cell', { name: '12ms' })).toHaveClass('aui-md-td')
     })
 })
