@@ -1158,7 +1158,7 @@ describe('3-state scroll mode and structure version helpers', () => {
 })
 
 describe('StoreThreadMessagesById offscreen turn windowing', () => {
-    it('replaces measured offscreen middle turns with height-cached placeholders when > 24 entries exist and remounts them on scroll', () => {
+    it('replaces measured offscreen turns with height-cached placeholders when > 3 entries exist and remounts them on scroll', () => {
         const store = createSessionEntityStore()
         const rawMessages = Array.from({ length: 30 }, (_, index) => ({
             id: `m-${index + 1}`,
@@ -1218,11 +1218,12 @@ describe('StoreThreadMessagesById offscreen turn windowing', () => {
             fireEvent.scroll(viewport)
         })
 
-        // Head 2 entries (indices 0, 1) and tail 6 entries (indices 24..29) remain mounted;
-        // early middle entries far above scrollTop = 8760 (e.g. index 3) become placeholders.
-        expect(screen.queryByTestId(`mounted-${entries[0]!.id}`)).not.toBeNull()
-        expect(screen.queryByTestId(`mounted-${entries[1]!.id}`)).not.toBeNull()
+        // At scrollTop = 8760 (window [8160, 9960]), tail entries in the viewport (e.g. indices 28, 29) remain mounted,
+        // while offscreen entries far above the viewport (e.g. indices 0, 1, 3) become height-cached placeholders.
+        expect(screen.queryByTestId(`mounted-${entries[28]!.id}`)).not.toBeNull()
         expect(screen.queryByTestId(`mounted-${entries[29]!.id}`)).not.toBeNull()
+        expect(screen.queryByTestId(`mounted-${entries[0]!.id}`)).toBeNull()
+        expect(screen.queryByTestId(`mounted-${entries[1]!.id}`)).toBeNull()
         expect(screen.queryByTestId(`mounted-${entries[3]!.id}`)).toBeNull()
 
         const placeholder = container.querySelector<HTMLElement>(
@@ -1231,12 +1232,14 @@ describe('StoreThreadMessagesById offscreen turn windowing', () => {
         expect(placeholder).not.toBeNull()
         expect(placeholder?.style.minHeight).toBe('300px')
 
-        // Scrolling back to top remounts index 3 and collapses distant lower-middle entries (e.g. index 20).
+        // Scrolling back to top remounts top entries (0, 3) and collapses distant lower entries (20, 29).
         viewport.scrollTop = 0
         act(() => {
             fireEvent.scroll(viewport)
         })
+        expect(screen.queryByTestId(`mounted-${entries[0]!.id}`)).not.toBeNull()
         expect(screen.queryByTestId(`mounted-${entries[3]!.id}`)).not.toBeNull()
         expect(screen.queryByTestId(`mounted-${entries[20]!.id}`)).toBeNull()
+        expect(screen.queryByTestId(`mounted-${entries[29]!.id}`)).toBeNull()
     })
 })

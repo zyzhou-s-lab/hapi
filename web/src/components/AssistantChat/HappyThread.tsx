@@ -99,10 +99,10 @@ const THREAD_MESSAGE_COMPONENTS = {
 
 type ThreadMessageComponents = ComponentProps<typeof ThreadPrimitive.Unstable_MessageById>['components']
 
-export const VIRTUALIZATION_ENTRY_THRESHOLD = 24
-export const VIRTUALIZATION_HEAD_PIN_COUNT = 2
-export const VIRTUALIZATION_TAIL_PIN_COUNT = 6
-export const VIRTUALIZATION_OVERSCAN_PX = 1200
+export const VIRTUALIZATION_ENTRY_THRESHOLD = 3
+export const VIRTUALIZATION_HEAD_PIN_COUNT = 0
+export const VIRTUALIZATION_TAIL_PIN_COUNT = 0
+export const VIRTUALIZATION_OVERSCAN_PX = 600
 const THREAD_MESSAGE_GAP_PX = 12
 
 function sameStringSet(left: ReadonlySet<string>, right: ReadonlySet<string>): boolean {
@@ -144,20 +144,7 @@ function StoreThreadMessagesById(props: {
         }
     }, [props.store])
 
-    const recomputeOffscreenWindow = useCallback(() => {
-        if (timelineEntries.length <= VIRTUALIZATION_ENTRY_THRESHOLD) {
-            if (offscreenIdsRef.current.size > 0) {
-                const empty = new Set<string>()
-                offscreenIdsRef.current = empty
-                setOffscreenIds(empty)
-            }
-            return
-        }
-        const viewport = props.viewportRef?.current ?? document.querySelector<HTMLElement>('.app-scroll-y')
-        if (!viewport || viewport.clientHeight <= 0) {
-            return
-        }
-        const viewportRect = viewport.getBoundingClientRect()
+    const measureMountedEntryHeights = useCallback((viewport: HTMLElement): Map<string, HTMLElement> => {
         const entryElements = new Map<string, HTMLElement>()
         for (const element of viewport.querySelectorAll<HTMLElement>('[data-thread-entry-id]')) {
             const entryId = element.getAttribute('data-thread-entry-id')
@@ -172,6 +159,24 @@ function StoreThreadMessagesById(props: {
                 }
             }
         }
+        return entryElements
+    }, [])
+
+    const recomputeOffscreenWindow = useCallback(() => {
+        if (timelineEntries.length <= VIRTUALIZATION_ENTRY_THRESHOLD) {
+            if (offscreenIdsRef.current.size > 0) {
+                const empty = new Set<string>()
+                offscreenIdsRef.current = empty
+                setOffscreenIds(empty)
+            }
+            return
+        }
+        const viewport = props.viewportRef?.current ?? document.querySelector<HTMLElement>('.chat-scroll-y, .app-scroll-y')
+        if (!viewport || viewport.clientHeight <= 0) {
+            return
+        }
+        const viewportRect = viewport.getBoundingClientRect()
+        const entryElements = measureMountedEntryHeights(viewport)
 
         const windowTop = viewport.scrollTop - VIRTUALIZATION_OVERSCAN_PX
         const windowBottom = viewport.scrollTop + viewport.clientHeight + VIRTUALIZATION_OVERSCAN_PX
@@ -184,7 +189,7 @@ function StoreThreadMessagesById(props: {
             const cachedHeight = heightCacheRef.current.get(entry.id)
             const element = entryElements.get(entry.id)
             const rect = element?.getBoundingClientRect()
-            const hasExplicitPosition = Boolean(rect && (rect.top !== 0 || rect.bottom !== rect.height))
+            const hasExplicitPosition = Boolean(rect && (rect.height > 0 || rect.top !== 0 || rect.bottom !== 0))
             const height = cachedHeight ?? (rect && rect.height > 0 ? rect.height : 0)
             const entryTop = hasExplicitPosition && rect
                 ? (rect.top - viewportRect.top) + viewport.scrollTop
@@ -205,21 +210,33 @@ function StoreThreadMessagesById(props: {
             }
         }
 
+        if (nextOffscreen.size >= timelineEntries.length && timelineEntries.length > 0) {
+            nextOffscreen.delete(timelineEntries[timelineEntries.length - 1]!.id)
+        }
+
         if (!sameStringSet(offscreenIdsRef.current, nextOffscreen)) {
             offscreenIdsRef.current = nextOffscreen
             setOffscreenIds(nextOffscreen)
         }
-    }, [props.viewportRef, timelineEntries])
+    }, [measureMountedEntryHeights, props.viewportRef, timelineEntries])
 
     useLayoutEffect(() => {
-        recomputeOffscreenWindow()
-    }, [recomputeOffscreenWindow])
-
-    useEffect(() => {
         if (timelineEntries.length <= VIRTUALIZATION_ENTRY_THRESHOLD) {
             return
         }
-        const viewport = props.viewportRef?.current ?? document.querySelector<HTMLElement>('.app-scroll-y')
+        const viewport = props.viewportRef?.current ?? document.querySelector<HTMLElement>('.chat-scroll-y, .app-scroll-y')
+        if (!viewport || viewport.clientHeight <= 0) {
+            return
+        }
+        measureMountedEntryHeights(viewport)
+    }, [measureMountedEntryHeights, props.viewportRef, timelineEntries])
+
+    useEffect(() => {
+        recomputeOffscreenWindow()
+        if (timelineEntries.length <= VIRTUALIZATION_ENTRY_THRESHOLD) {
+            return
+        }
+        const viewport = props.viewportRef?.current ?? document.querySelector<HTMLElement>('.chat-scroll-y, .app-scroll-y')
         if (!viewport) {
             return
         }
