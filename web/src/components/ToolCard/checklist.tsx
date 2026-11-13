@@ -1,4 +1,5 @@
 import {
+    applyOmpTodoDocument,
     collectOmpTodoTurnContext,
     extractTodoChecklist,
     extractUpdatePlanChecklist,
@@ -7,21 +8,22 @@ import {
     type CanonicalTodoItem,
     type CanonicalTodoSnapshot,
     type CanonicalTodoStatus,
+    type OmpTodoTurnCall,
     type OmpTodoTurnContext,
 } from '@/chat/projections/todoProjection'
 import { cn } from '@/lib/utils'
 
 export type ChecklistStatus = CanonicalTodoStatus
 export type ChecklistItem = CanonicalTodoItem
-export type { OmpTodoTurnContext, CanonicalTodoSnapshot }
+export type { OmpTodoTurnCall, OmpTodoTurnContext, CanonicalTodoSnapshot }
 export {
+    applyOmpTodoDocument,
     collectOmpTodoTurnContext,
     extractTodoChecklist,
     extractUpdatePlanChecklist,
     projectSessionTodoSnapshot,
     projectToolTodoSnapshot,
 }
-
 export type TodoCardItem = CanonicalTodoItem
 
 export function TodoStatusBadge(props: {

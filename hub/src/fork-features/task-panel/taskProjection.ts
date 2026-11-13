@@ -2,7 +2,10 @@ import { isObject } from '@hapi/protocol'
 import { unwrapRoleWrappedRecordEnvelope } from '@hapi/protocol/messages'
 import { TodosSchema } from '@hapi/protocol/schemas'
 import type { TodoItem } from '@hapi/protocol/types'
-import { extractTodoWriteTodosFromMessageContent } from '../../sync/todos'
+import {
+    extractTodoWriteTodosFromMessageContent,
+    isOmpTodoDoneAutoClearFromMessageContent
+} from '../../sync/todos'
 
 const TASK_CREATED_RESULT_PATTERN = /^Task #(\d+) created successfully: (.+)$/s
 
@@ -112,5 +115,18 @@ export function applyTaskTodoEvents(existing: TodoItem[] | null | undefined, eve
 export function applyTodoMessageContent(existing: TodoItem[] | null, messageContent: unknown): TodoItem[] | null {
     const snapshot = extractTodoWriteTodosFromMessageContent(messageContent)
     if (snapshot) return snapshot
+    if (existing && existing.length > 0 && isOmpTodoDoneAutoClearFromMessageContent(messageContent)) {
+        let changed = false
+        const completed = existing.map((item) => {
+            if (item.status !== 'completed' || item.blocked) {
+                changed = true
+                const next: TodoItem = { ...item, status: 'completed' }
+                delete next.blocked
+                return next
+            }
+            return item
+        })
+        if (changed) return TodosSchema.parse(completed)
+    }
     return applyTaskTodoEvents(existing, extractTaskTodoEventsFromMessageContent(messageContent))
 }

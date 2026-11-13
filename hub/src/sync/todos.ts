@@ -201,6 +201,22 @@ function extractOmpTodoSnapshot(value: unknown, namedTodo: boolean): TodoItem[] 
     return null
 }
 
+function isOmpTodoDoneAutoClearValue(value: unknown): boolean {
+    if (!isObject(value)) return false
+    const details = ompTodoDetails(value)
+        ?? (isObject(value.details) ? ompTodoDetails(value.details) : null)
+    if (!details || details.phases.length > 0) return false
+    if (details.op === 'done') return true
+    if (
+        details.op === 'batch'
+        && Array.isArray(details.raw.operations)
+        && details.raw.operations.some((op) => op === 'done')
+    ) {
+        return true
+    }
+    return false
+}
+
 function extractTodosFromClaudeOutput(content: Record<string, unknown>): TodoItem[] | null {
     if (content.type !== 'output') return null
 
@@ -322,4 +338,41 @@ export function extractTodoWriteTodosFromMessageContent(messageContent: unknown)
         ?? extractTodosFromOmpOutput(record.content)
         ?? extractTodosFromCodexMessage(record.content)
         ?? extractTodosFromAcpMessage(record.content)
+}
+
+export function isOmpTodoDoneAutoClearFromMessageContent(messageContent: unknown): boolean {
+    const record = unwrapRoleWrappedRecordEnvelope(messageContent)
+    if (!record || (record.role !== 'agent' && record.role !== 'assistant')) return false
+    if (!isObject(record.content) || typeof record.content.type !== 'string') return false
+    const content = record.content
+
+    if (content.type === 'output') {
+        const data = isObject(content.data) ? content.data : null
+        const message = data && isObject(data.message) ? data.message : null
+        if (!data || !message || !Array.isArray(message.content)) return false
+        const blocks = message.content.filter((block) => isObject(block) && block.type === 'tool_result')
+        for (const block of blocks) {
+            const resultName = typeof block.name === 'string' ? block.name : typeof block.toolName === 'string' ? block.toolName : null
+            if (resultName !== null && !isOmpTodoToolName(resultName)) continue
+            if (block.is_error === true || block.isError === true) continue
+            if (isOmpTodoDoneAutoClearValue('content' in block ? (block as Record<string, unknown>).content : null)) {
+                return true
+            }
+            if (blocks.length === 1 && isOmpTodoDoneAutoClearValue(data.toolUseResult)) {
+                return true
+            }
+        }
+        return false
+    }
+
+    if (content.type === 'codex') {
+        const data = isObject(content.data) ? content.data : null
+        if (!data || data.type !== 'tool-call-result') return false
+        if (data.is_error === true || data.isError === true) return false
+        const name = typeof data.name === 'string' ? data.name : null
+        if (name !== null && !isOmpTodoToolName(name)) return false
+        return isOmpTodoDoneAutoClearValue('output' in data ? data.output : null)
+    }
+
+    return false
 }

@@ -237,6 +237,64 @@ describe('extractTodoChecklist', () => {
             { id: 'Phase 2:1', text: 'Implement PR 1 CSS layer cleanup', status: 'in_progress' }
         ])
     })
+
+    it('replays incremental OMP todo calls across a turn and marks all tasks completed on DONE ALL when phases are cleared or text-only', () => {
+        const addAndStartInput = {
+            input: [
+                '*** Begin Todo',
+                'PHASE "Phase 2: Unified Projection & Docked Widgets"',
+                'ADD "2.1: Create web/src/chat/projections/todoProjection.ts + unit tests" "Create module" 10',
+                'ADD "2.2: Migrate Checklist, TimelineTurnBlock, TurnTimelineDemo, and ToolMessage to todoProjection" "Migrate consumers" 15',
+                'ADD "2.3 & 2.4: Extract TurnDockedWidgets.tsx & delete classic TurnBlockView" "Extract widgets" 15',
+                'ADD "2.5: Run vitest + typecheck and commit PR 2" "Verify and commit" 10',
+                'START "2.1: Create web/src/chat/projections/todoProjection.ts + unit tests"',
+                '*** End Todo',
+            ].join('\n'),
+        }
+        const rejectedDoneStartInput = {
+            input: [
+                '*** Begin Todo',
+                'DONE "2.1: Create web/src/chat/projections/todoProjection.ts + unit tests"',
+                'START "2.2: Migrate Checklist, TimelineTurnBlock, TurnTimelineDemo, and ToolMessage to todoProjection"',
+                '*** End Todo',
+            ].join('\n'),
+        }
+        const startThirdInput = {
+            input: [
+                '*** Begin Todo',
+                'START "2.3 & 2.4: Extract TurnDockedWidgets.tsx & delete classic TurnBlockView"',
+                '*** End Todo',
+            ].join('\n'),
+        }
+        const doneAllInput = {
+            input: [
+                '*** Begin Todo',
+                'DONE ALL "refactor(web): unify todoProjection, extract TurnDockedWidgets, and remove classic TurnBlockView (PR 2)"',
+                '*** End Todo',
+            ].join('\n'),
+        }
+
+        const turnContext = collectOmpTodoTurnContext([
+            { input: addAndStartInput, result: [{ type: 'text', text: 'Initialized phase 2' }] },
+            { input: rejectedDoneStartInput, result: { isError: true, content: 'Uncommitted changes require commit message' } },
+            { input: startThirdInput, result: [{ type: 'text', text: 'Started 2.3 & 2.4' }] },
+            { input: doneAllInput, result: { details: { op: 'done', operations: ['done'], phases: [] } } },
+        ])
+
+        expect(extractTodoChecklist(startThirdInput, [{ type: 'text', text: 'Started 2.3 & 2.4' }], turnContext)).toEqual([
+            { text: '2.1: Create web/src/chat/projections/todoProjection.ts + unit tests', status: 'pending' },
+            { text: '2.2: Migrate Checklist, TimelineTurnBlock, TurnTimelineDemo, and ToolMessage to todoProjection', status: 'pending' },
+            { text: '2.3 & 2.4: Extract TurnDockedWidgets.tsx & delete classic TurnBlockView', status: 'in_progress' },
+            { text: '2.5: Run vitest + typecheck and commit PR 2', status: 'pending' },
+        ])
+
+        expect(extractTodoChecklist(doneAllInput, { details: { op: 'done', operations: ['done'], phases: [] } }, turnContext)).toEqual([
+            { text: '2.1: Create web/src/chat/projections/todoProjection.ts + unit tests', status: 'completed' },
+            { text: '2.2: Migrate Checklist, TimelineTurnBlock, TurnTimelineDemo, and ToolMessage to todoProjection', status: 'completed' },
+            { text: '2.3 & 2.4: Extract TurnDockedWidgets.tsx & delete classic TurnBlockView', status: 'completed' },
+            { text: '2.5: Run vitest + typecheck and commit PR 2', status: 'completed' },
+        ])
+    })
 })
 
 describe('update_plan tool presentation', () => {
