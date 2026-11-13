@@ -794,7 +794,7 @@ describe('TurnBlockView', () => {
         expect(screen.getByTestId('turn-level2-bash')).toBeInTheDocument()
     })
 
-    it('keeps active running tools visible and operable when the execution rail is collapsed while streaming', () => {
+    it('keeps unpinned running tools collapsed in the level-0 header while exposing pinned running subagents when collapsed while streaming', () => {
         const partition = partitionTurn([
             {
                 type: 'tool-call',
@@ -802,6 +802,14 @@ describe('TurnBlockView', () => {
                 artifact: tool('bash-live', 'Bash', {
                     state: 'running',
                     input: { command: 'bun run build', i: 'Building production bundle' },
+                }),
+            },
+            {
+                type: 'tool-call',
+                toolName: 'Task',
+                artifact: tool('task-live', 'Task', {
+                    state: 'running',
+                    input: { description: 'Audit rail exposure', subagent_type: 'Explore' },
                 }),
             },
         ], null)
@@ -818,9 +826,10 @@ describe('TurnBlockView', () => {
 
         expect(screen.getByTestId('turn-level0-header')).toHaveAttribute('aria-expanded', 'false')
         const collapsedRail = screen.getByTestId('turn-collapsed-pinned-rail')
-        expect(collapsedRail).toHaveAttribute('data-block-id', 'bash-live')
+        expect(collapsedRail).toHaveAttribute('data-block-id', 'task-live')
         expect(collapsedRail).toHaveTextContent('Running')
-        expect(collapsedRail).toHaveTextContent('Building production bundle')
+        expect(collapsedRail).toHaveTextContent('Audit rail exposure')
+        expect(collapsedRail).not.toHaveTextContent('Building production bundle')
         expect(collapsedRail.querySelector('[data-testid="rail-step-spinner"]')).not.toBeNull()
     })
 

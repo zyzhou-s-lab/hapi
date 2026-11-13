@@ -150,13 +150,17 @@ export function TurnExecutionRail(props: {
     const railRef = useRef<HTMLDivElement | null>(null)
     const rowElsRef = useRef<Array<HTMLDivElement | null>>([])
     const seenToolStatesRef = useRef<Map<string, boolean> | null>(null)
-    const fastMorphRowKeysRef = useRef<Set<string>>(new Set())
     const prevLiveCountRef = useRef<number>(activeRunningRowIndices.length)
     const railCompletedPulseRef = useRef<boolean>(false)
     const latestActiveRowIndexRef = useRef<number>(activeRunningRowIndex)
     latestActiveRowIndexRef.current = activeRunningRowIndex
+    const holdingForPrevMorphRef = useRef<boolean>(false)
+    const handoffTimerRef = useRef<number | undefined>(undefined)
+    const fastMorphTimerRef = useRef<number | undefined>(undefined)
+    const [fastMorphRowKey, setFastMorphRowKey] = useState<string | null>(null)
     const [spinnerOffsetY, setSpinnerOffsetY] = useState<number>(14)
     const [targetOffsetY, setTargetOffsetY] = useState<number>(14)
+    const [holdingForPrevMorph, setHoldingForPrevMorph] = useState<boolean>(false)
 
     const liveCount = activeRunningRowIndices.length
     if (liveCount > 0) {
@@ -166,49 +170,6 @@ export function TurnExecutionRail(props: {
     }
     prevLiveCountRef.current = liveCount
 
-    const currentTools = new Map<string, { isRunning: boolean; isCompleted: boolean; rowKey: string }>()
-    for (let i = 0; i < stepRows.length; i += 1) {
-        const row = stepRows[i]!
-        if (row.kind === 'coalesced') {
-            for (const memberKey of row.memberKeys) {
-                currentTools.set(memberKey, {
-                    isRunning: false,
-                    isCompleted: true,
-                    rowKey: row.key,
-                })
-            }
-            continue
-        }
-        if (row.kind !== 'tool') continue
-        const isRunning = row.block.tool.state === 'running' || (row.block.tool.state === 'pending' && Boolean(row.permission))
-        const isQueued = row.block.tool.state === 'pending' && !row.permission
-        currentTools.set(row.key, {
-            isRunning,
-            isCompleted: !isRunning && !isQueued,
-            rowKey: row.key,
-        })
-    }
-
-    if (seenToolStatesRef.current === null) {
-        const initialMap = new Map<string, boolean>()
-        for (const [key, info] of currentTools.entries()) {
-            initialMap.set(key, info.isRunning)
-        }
-        seenToolStatesRef.current = initialMap
-    } else {
-        for (const [key, info] of currentTools.entries()) {
-            if (info.isRunning) {
-                fastMorphRowKeysRef.current.delete(info.rowKey)
-            } else if (streaming && !seenToolStatesRef.current.has(key) && info.isCompleted) {
-                fastMorphRowKeysRef.current.add(info.rowKey)
-            }
-        }
-        const nextMap = new Map<string, boolean>()
-        for (const [key, info] of currentTools.entries()) {
-            nextMap.set(key, info.isRunning)
-        }
-        seenToolStatesRef.current = nextMap
-    }
     const measureRowY = (rowIndex: number) => {
         const el = rowElsRef.current[rowIndex]
         const measuredTop = el ? el.offsetTop : 0
@@ -217,21 +178,133 @@ export function TurnExecutionRail(props: {
             : rowIndex * 30 + 14
     }
 
+    useEffect(() => {
+        return () => {
+            if (handoffTimerRef.current !== undefined) window.clearTimeout(handoffTimerRef.current)
+            if (fastMorphTimerRef.current !== undefined) window.clearTimeout(fastMorphTimerRef.current)
+        }
+    }, [])
+
     useLayoutEffect(() => {
+        const currentTools = new Map<string, { isRunning: boolean; isCompleted: boolean; rowIndex: number; rowKey: string }>()
+        for (let i = 0; i < stepRows.length; i += 1) {
+            const row = stepRows[i]!
+            if (row.kind === 'coalesced') {
+                for (const memberKey of row.memberKeys) {
+                    currentTools.set(memberKey, {
+                        isRunning: false,
+                        isCompleted: true,
+                        rowIndex: i,
+                        rowKey: row.key,
+                    })
+                }
+                continue
+            }
+            if (row.kind !== 'tool') continue
+            const isRunning = row.block.tool.state === 'running' || (row.block.tool.state === 'pending' && Boolean(row.permission))
+            const isQueued = row.block.tool.state === 'pending' && !row.permission
+            currentTools.set(row.key, {
+                isRunning,
+                isCompleted: !isRunning && !isQueued,
+                rowIndex: i,
+                rowKey: row.key,
+            })
+        }
+
+        let transitionedMorphRowIndex = -1
+        let fastArrivedKey: string | null = null
+        let fastArrivedRowIndex = -1
+        const activeRowKey = activeRunningRowIndex >= 0 && activeRunningRowIndex < stepRows.length
+            ? stepRows[activeRunningRowIndex]?.key ?? null
+            : null
+        const targetWasAlreadyRunning = activeRowKey !== null
+            && seenToolStatesRef.current?.get(activeRowKey) === true
+
+        if (seenToolStatesRef.current === null) {
+            const initialMap = new Map<string, boolean>()
+            for (const [key, info] of currentTools.entries()) {
+                initialMap.set(key, info.isRunning)
+            }
+            seenToolStatesRef.current = initialMap
+        } else {
+            for (const [key, info] of currentTools.entries()) {
+                const wasRunning = seenToolStatesRef.current.get(key) === true
+                if (wasRunning && !info.isRunning) {
+                    transitionedMorphRowIndex = info.rowIndex
+                }
+            }
+            if (transitionedMorphRowIndex < 0 && streaming) {
+                for (const [key, info] of currentTools.entries()) {
+                    if (!seenToolStatesRef.current.has(key) && info.isCompleted) {
+                        fastArrivedKey = info.rowKey
+                        fastArrivedRowIndex = info.rowIndex
+                    }
+                }
+            }
+            const nextMap = new Map<string, boolean>()
+            for (const [key, info] of currentTools.entries()) {
+                nextMap.set(key, info.isRunning)
+            }
+            seenToolStatesRef.current = nextMap
+        }
+
+        if (fastArrivedKey !== null) {
+            if (fastMorphTimerRef.current !== undefined) window.clearTimeout(fastMorphTimerRef.current)
+            setFastMorphRowKey(fastArrivedKey)
+            fastMorphTimerRef.current = window.setTimeout(() => {
+                setFastMorphRowKey(null)
+                fastMorphTimerRef.current = undefined
+            }, 980)
+        }
+
         if (activeRunningRowIndex < 0) {
+            if (handoffTimerRef.current !== undefined) {
+                window.clearTimeout(handoffTimerRef.current)
+                handoffTimerRef.current = undefined
+            }
+            holdingForPrevMorphRef.current = false
+            setHoldingForPrevMorph(false)
             return
         }
+
         const nextTargetY = measureRowY(activeRunningRowIndex)
         setTargetOffsetY(nextTargetY)
-        setSpinnerOffsetY(nextTargetY)
-    }, [stepRows, activeRunningRowIndex])
+
+        const morphSourceIndex = transitionedMorphRowIndex >= 0
+            ? transitionedMorphRowIndex
+            : fastArrivedRowIndex
+
+        if (morphSourceIndex >= 0 && morphSourceIndex !== activeRunningRowIndex && !targetWasAlreadyRunning) {
+            if (handoffTimerRef.current !== undefined) {
+                window.clearTimeout(handoffTimerRef.current)
+            }
+            const startY = measureRowY(morphSourceIndex)
+            holdingForPrevMorphRef.current = true
+            setSpinnerOffsetY(startY)
+            setHoldingForPrevMorph(true)
+            handoffTimerRef.current = window.setTimeout(() => {
+                handoffTimerRef.current = undefined
+                const currentIdx = latestActiveRowIndexRef.current
+                const latestTargetY = currentIdx >= 0 ? measureRowY(currentIdx) : nextTargetY
+                holdingForPrevMorphRef.current = false
+                setTargetOffsetY(latestTargetY)
+                setHoldingForPrevMorph(false)
+                setSpinnerOffsetY(latestTargetY)
+            }, 820)
+        } else if (!holdingForPrevMorphRef.current) {
+            setHoldingForPrevMorph(false)
+            setSpinnerOffsetY(nextTargetY)
+        }
+    }, [stepRows, activeRunningRowIndex, streaming])
 
     useLayoutEffect(() => {
         const currentIdx = latestActiveRowIndexRef.current
         if (currentIdx >= 0) {
             const updatedY = measureRowY(currentIdx)
             setTargetOffsetY(updatedY)
-            setSpinnerOffsetY(updatedY)
+            if (!holdingForPrevMorphRef.current) {
+                setSpinnerOffsetY(updatedY)
+            }
         }
         const railEl = railRef.current
         if (!railEl || typeof ResizeObserver === 'undefined') {
@@ -242,7 +315,9 @@ export function TurnExecutionRail(props: {
             if (idx < 0) return
             const updatedY = measureRowY(idx)
             setTargetOffsetY(updatedY)
-            setSpinnerOffsetY(updatedY)
+            if (!holdingForPrevMorphRef.current) {
+                setSpinnerOffsetY(updatedY)
+            }
         })
         observer.observe(railEl)
         return () => observer.disconnect()
@@ -267,16 +342,13 @@ export function TurnExecutionRail(props: {
     }, [subturn.rows])
 
     const collapsedRows = useMemo(() => {
-        const pinnedSet = new Set(collapsedPinnedRailRows)
+        const pinnedKeySet = new Set(collapsedPinnedRailRows.map((row) => row.key))
         return stepRows.filter((row): row is TurnToolRow | (typeof collapsedPinnedRailRows)[number] => {
             if (row.kind === 'coalesced') {
-                return pinnedSet.has(row)
+                return pinnedKeySet.has(row.key)
             }
             if (row.kind === 'tool') {
-                return pinnedSet.has(row)
-                    || row.permission
-                    || row.block.tool.state === 'running'
-                    || row.block.tool.state === 'pending'
+                return pinnedKeySet.has(row.key) || row.permission
             }
             return false
         })
@@ -348,6 +420,7 @@ export function TurnExecutionRail(props: {
                                         activeRowIndex={activeRunningRowIndex}
                                         offsetY={spinnerOffsetY}
                                         targetOffsetY={targetOffsetY}
+                                        holdingForPrevMorph={holdingForPrevMorph}
                                         color={accentColor}
                                     />
                                 ) : null}
@@ -367,7 +440,7 @@ export function TurnExecutionRail(props: {
                                                 <TimelineThoughtRow
                                                     row={row}
                                                     isActiveStreaming={streaming && isLastStep && activeRunningRowIndex === idx}
-                                                    suppressRunningShimmer={false}
+                                                    suppressRunningShimmer={holdingForPrevMorph && activeRunningRowIndex === idx}
                                                     defaultExpanded={viewMode === 'thinking' || viewMode === 'verbose'}
                                                     lang={lang}
                                                     accentColor={accentColor}
@@ -389,7 +462,7 @@ export function TurnExecutionRail(props: {
                                                     row={row}
                                                     lang={lang}
                                                     accentColor={accentColor}
-                                                    forceMorph={fastMorphRowKeysRef.current.has(row.key)}
+                                                    forceMorph={row.key === fastMorphRowKey}
                                                 />
                                             </div>
                                         )
@@ -410,9 +483,9 @@ export function TurnExecutionRail(props: {
                                                     defaultExpanded={viewMode === 'verbose'}
                                                     lang={lang}
                                                     accentColor={accentColor}
-                                                    forceMorph={fastMorphRowKeysRef.current.has(row.key)}
+                                                    forceMorph={row.key === fastMorphRowKey}
                                                     showInlineRailSpinner={idx !== activeRunningRowIndex}
-                                                    suppressRunningShimmer={false}
+                                                    suppressRunningShimmer={holdingForPrevMorph && activeRunningRowIndex === idx}
                                                 />
                                             </div>
                                         )
@@ -451,7 +524,12 @@ export function TurnExecutionRail(props: {
                                         <div data-hapi-share-exclude="true" className="relative py-0.5">
                                             <div className="flex w-full items-center gap-1.5 rounded-md px-1.5 py-1 text-left text-[13.5px] leading-5 text-[var(--app-hint)]">
                                                 <span
-                                                    className="turn-text-shimmer font-medium transition-opacity duration-200"
+                                                    className={cn(
+                                                        'transition-opacity duration-200',
+                                                        holdingForPrevMorph && activeRunningRowIndex === stepRows.length
+                                                            ? 'text-[var(--app-hint)] opacity-45'
+                                                            : 'turn-text-shimmer font-medium'
+                                                    )}
                                                 >
                                                     {lang === 'zh-CN' ? '正在思考...' : 'Thinking...'}
                                                 </span>
@@ -467,17 +545,13 @@ export function TurnExecutionRail(props: {
 
             {!effectiveOpen ? (
                 <>
-                    {viewMode === 'thinking' || hasTrailingReasoningStep ? (
+                    {viewMode === 'thinking' ? (
                         <div
                             className="ml-2 mt-1 border-l border-[var(--app-border)] pl-3.5 space-y-1"
                             data-block-id={railRootBlockId ? `${railRootBlockId}:thinking` : undefined}
                         >
                             {stepRows
-                                .filter(
-                                    (row): row is TurnReasoningRow =>
-                                        row.kind === 'reasoning'
-                                        && (viewMode === 'thinking' || row === stepRows[stepRows.length - 1])
-                                )
+                                .filter((row): row is TurnReasoningRow => row.kind === 'reasoning')
                                 .map((row) => {
                                     const isActiveTrailing = hasTrailingReasoningStep && row === stepRows[stepRows.length - 1]
                                     return (
@@ -485,7 +559,7 @@ export function TurnExecutionRail(props: {
                                             key={row.key}
                                             row={row}
                                             isActiveStreaming={isActiveTrailing}
-                                            defaultExpanded={viewMode === 'thinking'}
+                                            defaultExpanded={true}
                                             lang={lang}
                                             accentColor={accentColor}
                                         />
@@ -519,26 +593,6 @@ export function TurnExecutionRail(props: {
                                     />
                                 )
                             )}
-                        </div>
-                    ) : null}
-                    {showFrontierSlot ? (
-                        <div
-                            data-testid="rail-frontier-row"
-                            data-block-id={railRootBlockId ? `${railRootBlockId}:frontier` : undefined}
-                            className="relative ml-2.5 mt-1 border-l border-[var(--app-border)] pl-3.5 py-0.5"
-                            data-hapi-share-exclude="true"
-                        >
-                            <RailSlidingActiveSpinner
-                                activeRowIndex={stepRows.length}
-                                offsetY={14}
-                                targetOffsetY={14}
-                                color={accentColor}
-                            />
-                            <div className="flex w-full items-center gap-1.5 rounded-md px-1.5 py-1 text-left text-[13.5px] leading-5 text-[var(--app-hint)]">
-                                <span className="turn-text-shimmer font-medium transition-opacity duration-200">
-                                    {lang === 'zh-CN' ? '正在思考...' : 'Thinking...'}
-                                </span>
-                            </div>
                         </div>
                     ) : null}
                 </>

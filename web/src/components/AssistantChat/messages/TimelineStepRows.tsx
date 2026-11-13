@@ -108,21 +108,29 @@ export function RailStepCompletionMorphBadge(props: { isRunning: boolean; forceM
     const color = props.color ?? '#da7756'
     const prevStatusRef = useRef<'running' | 'completed'>(props.isRunning ? 'running' : 'completed')
     const didForceMorphRef = useRef(false)
-    const justCompletedRef = useRef(false)
+    const [showMorph, setShowMorph] = useState(false)
 
-    if (props.isRunning) {
-        prevStatusRef.current = 'running'
-        justCompletedRef.current = false
-    } else if (prevStatusRef.current === 'running' || (props.forceMorph && !didForceMorphRef.current)) {
-        prevStatusRef.current = 'completed'
-        if (props.forceMorph) {
-            didForceMorphRef.current = true
+    useEffect(() => {
+        if (props.isRunning) {
+            prevStatusRef.current = 'running'
+            setShowMorph(false)
+            return
         }
-        justCompletedRef.current = true
-    }
+        if (prevStatusRef.current === 'running' || (props.forceMorph && !didForceMorphRef.current)) {
+            prevStatusRef.current = 'completed'
+            if (props.forceMorph) {
+                didForceMorphRef.current = true
+            }
+            setShowMorph(true)
+            const timer = setTimeout(() => {
+                setShowMorph(false)
+            }, 980)
+            return () => clearTimeout(timer)
+        }
+        return undefined
+    }, [props.isRunning, props.forceMorph])
 
-    if (props.isRunning || (!justCompletedRef.current && !props.forceMorph)) return null
-
+    if (props.isRunning || !showMorph) return null
     return (
         <span
             className="turn-step-morph-container pointer-events-none absolute -left-[22.5px] top-[14px] z-20 -translate-y-1/2 flex h-4 w-4 items-center justify-center rounded-full bg-[var(--app-bg)] ring-2 ring-[var(--app-bg)]"

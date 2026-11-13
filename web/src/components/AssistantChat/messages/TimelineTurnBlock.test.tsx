@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { I18nProvider } from '@/lib/i18n-context'
 import type { ToolCallBlock } from '@/chat/types'
 import { HappyChatProvider, type HappyChatContextValue } from '@/components/AssistantChat/context'
@@ -272,9 +272,20 @@ describe('TimelineTurnBlock & summarizeTurnActivity', () => {
             const movedSpinner = screen.getByTestId('rail-step-spinner')
             expect(movedSpinner).toHaveAttribute('data-active-row-index', '1')
             expect(movedSpinner).toHaveAttribute('data-target-offset-y', '44')
-            expect(movedSpinner).toHaveAttribute('data-handoff-phase', 'sliding')
+            expect(movedSpinner).toHaveAttribute('data-handoff-phase', 'completing-prev')
             expect(movedSpinner).toHaveAttribute('data-indicator-color', '#da7756')
-            expect(movedSpinner.getAttribute('style')).toContain('translate3d(0, 44px, 0)')
+
+            act(() => {
+                vi.advanceTimersByTime(850)
+            })
+            expect(screen.getByTestId('rail-step-spinner')).toHaveAttribute('data-handoff-phase', 'sliding')
+            expect(screen.getByTestId('rail-step-spinner').getAttribute('style')).toContain('translate3d(0, 44px, 0)')
+
+            act(() => {
+                vi.advanceTimersByTime(200)
+            })
+            expect(screen.queryByTestId('rail-step-checkmark')).toBeNull()
+            expect(screen.getByTestId('rail-step-spinner')).toBeInTheDocument()
         } finally {
             vi.useRealTimers()
         }
@@ -347,7 +358,14 @@ describe('TimelineTurnBlock & summarizeTurnActivity', () => {
 
             expect(screen.getByTestId('rail-step-checkmark')).toHaveAttribute('data-step-transition', 'just-completed')
             expect(screen.getByTestId('rail-frontier-row')).toBeInTheDocument()
-            // Spinner slides directly to the frontier row (index 1) during the post-Ran LLM wait without timer-driven state
+            expect(screen.getByTestId('rail-step-spinner')).toHaveAttribute('data-active-row-index', '1')
+            expect(screen.getByTestId('rail-step-spinner')).toHaveAttribute('data-handoff-phase', 'completing-prev')
+
+            act(() => {
+                vi.advanceTimersByTime(1000)
+            })
+            expect(screen.queryByTestId('rail-step-checkmark')).toBeNull()
+            // Spinner remains mounted and spinning on the frontier row (index 1) during the post-Ran LLM wait
             expect(screen.getByTestId('rail-step-spinner')).toHaveAttribute('data-active-row-index', '1')
             expect(screen.getByTestId('rail-step-spinner')).toHaveAttribute('data-handoff-phase', 'sliding')
 
@@ -377,7 +395,12 @@ describe('TimelineTurnBlock & summarizeTurnActivity', () => {
             // TodoWrite translates cleanly (never raw 'turn.verb.todo') and plays fast-arrival completion morph
             expect(screen.queryByText('turn.verb.todo')).toBeNull()
             expect(screen.getByText('Updated todos')).toBeInTheDocument()
-            expect(screen.getAllByTestId('rail-step-checkmark')).toHaveLength(2)
+            expect(screen.getByTestId('rail-step-checkmark')).toBeInTheDocument()
+            expect(screen.getByTestId('rail-step-spinner')).toHaveAttribute('data-active-row-index', '3')
+
+            act(() => {
+                vi.advanceTimersByTime(1000)
+            })
             expect(screen.getByTestId('rail-step-spinner')).toHaveAttribute('data-active-row-index', '3')
             expect(screen.getByTestId('rail-step-spinner')).toHaveAttribute('data-handoff-phase', 'sliding')
 
@@ -536,7 +559,7 @@ describe('TimelineTurnBlock & summarizeTurnActivity', () => {
 
             const headerSpanAfter = screen.getByTestId('turn-level0-header').querySelector('span')
             expect(headerSpanAfter).toBe(headerSpanBefore)
-            expect(screen.getByTestId('rail-step-spinner')).toHaveAttribute('data-handoff-phase', 'sliding')
+            expect(screen.getByTestId('rail-step-spinner')).toHaveAttribute('data-handoff-phase', 'completing-prev')
             expect(screen.queryByText('Queued')).toBeNull()
             expect(screen.getByText('Running')).toBeInTheDocument()
 
