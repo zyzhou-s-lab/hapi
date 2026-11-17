@@ -234,8 +234,10 @@ You can host `web/dist` on a static host (GitHub Pages, Cloudflare Pages) and po
 1. Build the web app. If your static host uses a subpath, set the Vite base:
 
 ```bash
-bun run build:web -- --base /<repo>/
+VITE_BASE_URL=/<repo>/ bun run build:web
 ```
+
+Browser routes and generated links use the same base as the built assets, including session deep links served through `404.html`. Telegram memory-history routes remain rooted at `/` regardless of the static host's base.
 
 2. Deploy `web/dist` to your static host.
 3. Set hub CORS to allow the static origin (`HAPI_PUBLIC_URL` or `CORS_ORIGINS`).

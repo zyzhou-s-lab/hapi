@@ -1489,6 +1489,7 @@ export function createAppRouter(history?: RouterHistory) {
     return createRouter({
         routeTree,
         history,
+        basepath: history ? '/' : import.meta.env.BASE_URL,
         scrollRestoration: true,
         getScrollRestorationKey,
     })
