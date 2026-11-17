@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from '@tanstack/react-router'
+import { getAgyModelLabel } from '@hapi/protocol'
 import type { ApiClient } from '@/api/client'
 import type { CodexCollaborationMode, CopilotAgentMode, PermissionMode, PiModelSummary, Session } from '@/types/api'
 import { usePlatform } from '@/hooks/usePlatform'
 import { useSessionActions } from '@/hooks/mutations/useSessionActions'
 import { useCcSwitchProvider } from '@/hooks/mutations/useCcSwitchProvider'
+import { useAgyModels } from '@/hooks/queries/useAgyModels'
 import { useCodexModels } from '@/hooks/queries/useCodexModels'
 import { useCcSwitchProviders } from '@/hooks/queries/useCcSwitchProviders'
 import { useCursorModels } from '@/hooks/queries/useCursorModels'
@@ -209,6 +211,32 @@ export function useSessionFlavorModelController(rawProps: {
         enabled: agentFlavor === 'cursor' && props.session.active
     })
     const sessionMachineId = props.session.metadata?.machineId ?? null
+    const agyModelsState = useAgyModels({
+        api: props.api,
+        machineId: sessionMachineId,
+        enabled: agentFlavor === 'agy' && props.session.active && Boolean(sessionMachineId)
+    })
+    const agyModelOptions = useMemo(() => {
+        if (agentFlavor !== 'agy' || !props.session.active || !sessionMachineId) {
+            return undefined
+        }
+        if (agyModelsState.availableModels.length > 0) {
+            return agyModelsState.availableModels.map((model) => ({
+                value: model.modelId,
+                label: model.name ?? getAgyModelLabel(model.modelId) ?? model.modelId
+            }))
+        }
+        if (agyModelsState.isLoading) {
+            return []
+        }
+        return undefined
+    }, [
+        agentFlavor,
+        props.session.active,
+        sessionMachineId,
+        agyModelsState.availableModels,
+        agyModelsState.isLoading,
+    ])
     const ccSwitchProvidersState = useCcSwitchProviders({
         api: props.api,
         machineId: sessionMachineId,
@@ -603,33 +631,36 @@ export function useSessionFlavorModelController(rawProps: {
         props.onRefresh()
     }, [switchSession, props.onRefresh])
     const availableModelOptions = useMemo(() => (
-        agentFlavor === 'codex'
-            ? codexModelOptions
-            : agentFlavor === 'cursor'
-                ? (
-                    cursorCatalogPending
-                    || !cursorPicker
-                    || cursorPicker.modelOptions.length === 0
-                        ? undefined
-                        : cursorPicker.modelOptions
-                )
-                : agentFlavor === 'opencode'
-                    ? opencodeModelOptions
-                    : agentFlavor === 'omp'
-                        ? ompModelOptions
-                        : agentFlavor === 'grok'
-                            ? grokModelOptions
-                            : agentFlavor === 'copilot'
-                                ? copilotModelOptions
-                                // Pi gets its provider-qualified model list from the piModels prop;
-                                // feeding piModelOptions here would make the generic Ctrl/Cmd+M
-                                // cycler (getNextModelForFlavor) post a bare modelId string,
-                                // which loses the provider and can pick the wrong cached
-                                // match or throw in runPi. undefined makes the shortcut a no-op
-                                // so Pi model changes go through the settings sheet only.
-                                : undefined
+        agentFlavor === 'agy'
+            ? agyModelOptions
+            : agentFlavor === 'codex'
+                ? codexModelOptions
+                : agentFlavor === 'cursor'
+                    ? (
+                        cursorCatalogPending
+                        || !cursorPicker
+                        || cursorPicker.modelOptions.length === 0
+                            ? undefined
+                            : cursorPicker.modelOptions
+                    )
+                    : agentFlavor === 'opencode'
+                        ? opencodeModelOptions
+                        : agentFlavor === 'omp'
+                            ? ompModelOptions
+                            : agentFlavor === 'grok'
+                                ? grokModelOptions
+                                : agentFlavor === 'copilot'
+                                    ? copilotModelOptions
+                                    // Pi gets its provider-qualified model list from the piModels prop;
+                                    // feeding piModelOptions here would make the generic Ctrl/Cmd+M
+                                    // cycler (getNextModelForFlavor) post a bare modelId string,
+                                    // which loses the provider and can pick the wrong cached
+                                    // match or throw in runPi. undefined makes the shortcut a no-op
+                                    // so Pi model changes go through the settings sheet only.
+                                    : undefined
     ), [
         agentFlavor,
+        agyModelOptions,
         codexModelOptions,
         copilotModelOptions,
         cursorCatalogPending,
@@ -664,8 +695,10 @@ export function useSessionFlavorModelController(rawProps: {
     }, [handleCursorBaseModelChange])
 
     const onModelChange = (
-        agentFlavor === 'codex'
-            ? (props.session.active && !controlledByUser && !codexModelsState.error ? handleModelChange : undefined)
+        agentFlavor === 'agy'
+            ? (props.session.active ? handleModelChange : undefined)
+            : agentFlavor === 'codex'
+                ? (props.session.active && !controlledByUser && !codexModelsState.error ? handleModelChange : undefined)
             : agentFlavor === 'cursor'
                 ? (props.session.active
                     && !controlledByUser

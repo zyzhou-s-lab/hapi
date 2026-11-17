@@ -31,12 +31,16 @@ function getModelLabel(model: string): string | null {
     return getAgyModelLabel(model) ?? getClaudeModelLabel(model)
 }
 
-export function getSessionModelLabel(session: SessionModelSource): SessionModelLabel | null {
+export function getSessionModelLabel(
+    session: SessionModelSource,
+    availableModels?: ReadonlyArray<{ modelId: string; name?: string }>
+): SessionModelLabel | null {
     const explicitModel = typeof session.model === 'string' ? session.model.trim() : ''
     if (explicitModel) {
+        const dynamicLabel = availableModels?.find((model) => model.modelId === explicitModel)?.name
         return {
             key: 'session.item.model',
-            value: getModelLabel(explicitModel) ?? explicitModel
+            value: dynamicLabel ?? getModelLabel(explicitModel) ?? explicitModel
         }
     }
 

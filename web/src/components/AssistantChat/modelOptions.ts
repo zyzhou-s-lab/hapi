@@ -1,3 +1,4 @@
+import { getAgyModelLabel } from '@hapi/protocol'
 import { MODEL_OPTIONS } from '@/components/NewSession/types'
 import { CURSOR_AUTO_MODEL_LABEL } from '@/lib/cursorModelOptions'
 import { getClaudeComposerModelOptions, getNextClaudeComposerModel } from './claudeModelOptions'
@@ -28,7 +29,11 @@ function cursorCatalogCoversCurrentModel(options: ModelOption[], currentModel: s
     return options.some((option) => option.value === baseId)
 }
 
-function withCurrentModelOption(options: ModelOption[], currentModel?: string | null): ModelOption[] {
+function withCurrentModelOption(
+    options: ModelOption[],
+    currentModel?: string | null,
+    resolveLabel?: (model: string) => string | null
+): ModelOption[] {
     const normalizedCurrentModel = normalizeCurrentModel(currentModel)
     if (!normalizedCurrentModel || options.some((option) => option.value === normalizedCurrentModel)) {
         return options
@@ -38,7 +43,7 @@ function withCurrentModelOption(options: ModelOption[], currentModel?: string | 
     const autoIndex = nextOptions.findIndex((option) => option.value === null)
     nextOptions.splice(autoIndex >= 0 ? autoIndex + 1 : 0, 0, {
         value: normalizedCurrentModel,
-        label: normalizedCurrentModel
+        label: resolveLabel?.(normalizedCurrentModel) ?? normalizedCurrentModel
     })
     return nextOptions
 }
@@ -76,12 +81,23 @@ function getClaudeModelOptions(currentModel?: string | null, customOptions?: Mod
     return nextOptions
 }
 
-function getAgyModelOptions(currentModel?: string | null): ModelOption[] {
+function getAgyModelOptions(currentModel?: string | null, customOptions?: ModelOption[]): ModelOption[] {
+    if (customOptions !== undefined) {
+        const concreteOptions = customOptions.filter(
+            (option): option is { value: string; label: string } =>
+                typeof option.value === 'string' && option.value !== 'auto'
+        )
+        if (concreteOptions.length === 0) {
+            return []
+        }
+        return withCurrentModelOption(concreteOptions, currentModel, getAgyModelLabel)
+    }
+
     const options = MODEL_OPTIONS.agy.filter((m) => m.value !== 'auto').map((m) => ({
         value: m.value,
         label: m.label
     }))
-    return withCurrentModelOption(options, currentModel)
+    return withCurrentModelOption(options, currentModel, getAgyModelLabel)
 }
 
 function getGeminiModelOptions(currentModel?: string | null): ModelOption[] {
@@ -107,7 +123,7 @@ export function getModelOptionsForFlavor(
     customOptions?: ModelOption[]
 ): ModelOption[] {
     if (flavor === 'agy') {
-        return getAgyModelOptions(currentModel)
+        return getAgyModelOptions(currentModel, customOptions)
     }
     if (flavor === 'claude') {
         return getClaudeModelOptions(currentModel, customOptions)
@@ -168,7 +184,10 @@ export function getNextModelForFlavor(
     customOptions?: ModelOption[]
 ): string | null {
     if (flavor === 'agy') {
-        const options = getAgyModelOptions(currentModel)
+        const options = getAgyModelOptions(currentModel, customOptions)
+        if (options.length === 0) {
+            return normalizeCurrentModel(currentModel)
+        }
         const currentIndex = options.findIndex((option) => option.value === (normalizeCurrentModel(currentModel) ?? null))
         if (currentIndex === -1) {
             return options.find((option) => option.value !== null)?.value ?? null

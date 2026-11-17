@@ -4,6 +4,7 @@ import type { Session } from '@/types/api'
 import type { ApiClient } from '@/api/client'
 import { isTelegramApp } from '@/hooks/useTelegram'
 import { sessionModelMutationKey, useSessionActions } from '@/hooks/mutations/useSessionActions'
+import { useAgyModels } from '@/hooks/queries/useAgyModels'
 import { useFlavorCapabilities, getFlavorForkCapability } from '@/hooks/queries/useFlavorCapabilities'
 import { useMachines } from '@/hooks/queries/useMachines'
 import { SessionActionMenu } from '@/components/SessionActionMenu'
@@ -182,12 +183,21 @@ onSessionReopened?: (newSessionId: string) => void | Promise<void>
     const title = useMemo(() => getSessionTitle(session), [session])
     const worktreeBranch = session.metadata?.worktree?.branch?.trim() || null
     const { preferences: headerMetadata } = useSessionHeaderMetadata()
-    const modelLabel = getSessionModelLabel(session)
+    const agentFlavor = session.metadata?.flavor ?? null
+    const sessionMachineId = session.metadata?.machineId ?? null
+    const agyModelsState = useAgyModels({
+        api,
+        machineId: sessionMachineId,
+        enabled: agentFlavor === 'agy' && session.active && Boolean(sessionMachineId) && typeof api?.getMachineAgyModels === 'function',
+    })
+    const modelLabel = getSessionModelLabel(
+        session,
+        agentFlavor === 'agy' ? agyModelsState.availableModels : undefined
+    )
     const isModelChanging = useIsMutating({
         mutationKey: sessionModelMutationKey(session.id),
         exact: true,
     }) > 0
-    const agentFlavor = session.metadata?.flavor ?? null
     const agentLabel = agentFlavor?.trim() || null
     const reasoningEffort = getReasoningEffortForFlavor(
         agentFlavor,
@@ -213,7 +223,6 @@ onSessionReopened?: (newSessionId: string) => void | Promise<void>
         () => resolveSessionHeaderMachineLabel(session, machineLabelsById),
         [session, machineLabelsById]
     )
-    const sessionMachineId = session.metadata?.machineId ?? null
     const machineUsage = machines.find((machine) => machine.id === sessionMachineId)?.metadata?.usage
     const usageSnapshot = ['openusage', 'cc-switch']
         .flatMap((providerId) => machineUsage?.snapshots.find((snapshot) => snapshot.providerId === providerId) ?? [])

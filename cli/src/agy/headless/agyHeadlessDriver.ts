@@ -15,7 +15,7 @@ import { createNativeSessionTitleMetadataSync } from '@/agent/nativeSessionTitle
 import { readAgyConversationTitle } from '../utils/agySessionTitle';
 import { resolveAgyTurnModels } from '../utils/agyConversationModel';
 import { killProcessByChildProcess } from '@/utils/process';
-import { AGY_MODEL_LABELS } from '@hapi/protocol';
+import { getCachedAgyModelLabel } from '@/modules/common/agyModels';
 import { getAgentLaunchCommand } from '@/agent/agentLaunchCommand';
 
 const AGY_PRINT_TIMEOUT = '30m';
@@ -392,7 +392,7 @@ export class AgyHeadlessDriver extends RemoteLauncherBase {
         // Snapshot the model at turn start: a mid-response switch must not change
         // attribution within one turn.
         const turnModel = typeof sessionModel === 'string' && sessionModel
-            ? AGY_MODEL_LABELS[sessionModel as keyof typeof AGY_MODEL_LABELS] ?? sessionModel
+            ? getCachedAgyModelLabel(sessionModel) ?? sessionModel
             : undefined;
         const args = buildAgyHeadlessArgs({
             prompt,

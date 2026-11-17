@@ -25,6 +25,32 @@ describe('getModelOptionsForFlavor', () => {
         expect(options.some((option) => option.value === null)).toBe(false)
     })
 
+    it('uses live customOptions for AGY without duplicating currentModel or offering null', () => {
+        const liveOptions = [
+            { value: 'gemini-pro-orchestrator', label: 'Orchestrator (Carbon)' },
+            { value: 'gemini-4-carbon-medium', label: 'Gemini 4 Carbon (Medium)' },
+        ]
+        const options = getModelOptionsForFlavor('agy', 'gemini-pro-orchestrator', liveOptions)
+        expect(options).toEqual(liveOptions)
+        expect(options.some((option) => option.value === null)).toBe(false)
+    })
+
+    it('returns an empty list for AGY while live customOptions are loading', () => {
+        expect(getModelOptionsForFlavor('agy', 'gemini-pro-orchestrator', [])).toEqual([])
+    })
+
+    it('prepends a retired AGY model with its human-readable label when missing from live customOptions', () => {
+        const liveOptions = [
+            { value: 'gemini-pro-orchestrator', label: 'Orchestrator (Carbon)' },
+            { value: 'gemini-4-carbon-medium', label: 'Gemini 4 Carbon (Medium)' },
+        ]
+        const options = getModelOptionsForFlavor('agy', 'gemini-3.5-flash-low', liveOptions)
+        expect(options).toEqual([
+            { value: 'gemini-3.5-flash-low', label: 'Gemini 3.5 Flash (Low)' },
+            ...liveOptions,
+        ])
+    })
+
     it('returns Gemini model options for gemini flavor', () => {
         const options = getModelOptionsForFlavor('gemini')
         expect(options[0]).toEqual({ value: null, label: 'Default' })
@@ -231,6 +257,14 @@ describe('getNextModelForFlavor', () => {
         expect(getNextModelForFlavor('agy', null)).toBe(firstConcrete)
         expect(getNextModelForFlavor('agy', 'auto')).toBe(firstConcrete)
         expect(getNextModelForFlavor('agy', 'agy-custom-model')).toBe(firstConcrete)
+    })
+
+    it('keeps the current AGY model when live customOptions are loading and cycles live options when loaded', () => {
+        expect(getNextModelForFlavor('agy', 'gemini-pro-orchestrator', [])).toBe('gemini-pro-orchestrator')
+        expect(getNextModelForFlavor('agy', 'gemini-pro-orchestrator', [
+            { value: 'gemini-pro-orchestrator', label: 'Orchestrator (Carbon)' },
+            { value: 'gemini-4-carbon-medium', label: 'Gemini 4 Carbon (Medium)' },
+        ])).toBe('gemini-4-carbon-medium')
     })
 
     it('cycles Gemini models', () => {

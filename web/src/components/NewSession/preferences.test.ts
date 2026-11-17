@@ -151,6 +151,18 @@ describe('NewSession preferences', () => {
             modelReasoningEffort: 'xhigh',
             permissionMode: 'read-only'
         })
+
+        expect(resolvePreferredLaunchSettings('agy', {
+            model: 'gemini-5-future',
+            cursorSelectedBase: 'auto',
+            effort: 'auto',
+            modelReasoningEffort: 'default'
+        })).toEqual({
+            model: 'gemini-5-future',
+            cursorSelectedBase: 'auto',
+            effort: 'auto',
+            modelReasoningEffort: 'default'
+        })
     })
 
     it('falls back when a remembered permission mode is invalid for the agent', () => {

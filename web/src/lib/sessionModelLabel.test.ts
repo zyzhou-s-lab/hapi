@@ -20,6 +20,24 @@ describe('getSessionModelLabel', () => {
         })
     })
 
+    it('renders friendly labels for current and legacy AGY models and supports dynamic availableModels overrides', () => {
+        expect(getSessionModelLabel({ model: 'gemini-pro-orchestrator' })).toEqual({
+            key: 'session.item.model',
+            value: 'Orchestrator (Carbon)'
+        })
+        expect(getSessionModelLabel({ model: 'gemini-3.5-flash-medium' })).toEqual({
+            key: 'session.item.model',
+            value: 'Gemini 3.5 Flash (Medium)'
+        })
+        expect(getSessionModelLabel(
+            { model: 'gemini-pro-orchestrator' },
+            [{ modelId: 'gemini-pro-orchestrator', name: 'Orchestrator (Live Override)' }]
+        )).toEqual({
+            key: 'session.item.model',
+            value: 'Orchestrator (Live Override)'
+        })
+    })
+
     it('returns null when no model is available', () => {
         expect(getSessionModelLabel({})).toBeNull()
     })

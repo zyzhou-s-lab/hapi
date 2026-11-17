@@ -20,6 +20,13 @@ const mocks = vi.hoisted(() => ({
     refreshOmpModels: vi.fn(async () => {}),
     refetchOmpModels: vi.fn(async () => {}),
     refetchOmpThinking: vi.fn(async () => {}),
+    agyModelsState: {
+        availableModels: [] as Array<{ modelId: string; name?: string }>,
+        currentModelId: null as string | null,
+        isLoading: false,
+        error: null as string | null,
+        refetch: vi.fn(),
+    },
     codexModelsState: {
         collaborationModeSupported: false,
         models: [] as Array<{
@@ -121,6 +128,10 @@ vi.mock('@/hooks/mutations/useCcSwitchProvider', () => ({
     }),
 }))
 
+vi.mock('@/hooks/queries/useAgyModels', () => ({
+    useAgyModels: () => mocks.agyModelsState,
+}))
+
 vi.mock('@/hooks/queries/useCodexModels', () => ({
     useCodexModels: () => mocks.codexModelsState,
 }))
@@ -208,6 +219,13 @@ describe('useSessionFlavorModelController', () => {
 
     beforeEach(() => {
         vi.clearAllMocks()
+        mocks.agyModelsState = {
+            availableModels: [],
+            currentModelId: null,
+            isLoading: false,
+            error: null,
+            refetch: vi.fn(),
+        }
         mocks.codexModelsState = { collaborationModeSupported: false, models: [], error: null }
         mocks.cursorModelsState = {
             availableModels: [],
@@ -390,5 +408,67 @@ describe('useSessionFlavorModelController', () => {
 
         expect(mocks.setModelReasoningEffort).toHaveBeenCalledWith(null)
         expect(mocks.setModel).toHaveBeenCalledWith('gpt-5.4')
+    })
+
+    it('exposes live AGY model options and enables onModelChange for active AGY sessions', () => {
+        mocks.agyModelsState = {
+            availableModels: [
+                { modelId: 'gemini-pro-orchestrator', name: 'Orchestrator (Carbon)' },
+                { modelId: 'gemini-4-carbon-medium', name: 'Gemini 4 Carbon (Medium)' },
+            ],
+            currentModelId: null,
+            isLoading: false,
+            error: null,
+            refetch: vi.fn(),
+        }
+        const session = createBaseSession({
+            model: 'gemini-pro-orchestrator',
+            metadata: { path: '/workspace', host: 'c1', machineId: 'machine-1', flavor: 'agy' },
+        })
+
+        const { result } = renderHook(() =>
+            useSessionFlavorModelController({ api, session, onRefresh })
+        )
+
+        expect(result.current.availableModelOptions).toEqual([
+            { value: 'gemini-pro-orchestrator', label: 'Orchestrator (Carbon)' },
+            { value: 'gemini-4-carbon-medium', label: 'Gemini 4 Carbon (Medium)' },
+        ])
+        expect(result.current.onModelChange).toBeTypeOf('function')
+    })
+
+    it('returns an empty AGY model list while live AGY models are loading', () => {
+        mocks.agyModelsState = {
+            availableModels: [],
+            currentModelId: null,
+            isLoading: true,
+            error: null,
+            refetch: vi.fn(),
+        }
+        const session = createBaseSession({
+            model: 'gemini-pro-orchestrator',
+            metadata: { path: '/workspace', host: 'c1', machineId: 'machine-1', flavor: 'agy' },
+        })
+
+        const { result } = renderHook(() =>
+            useSessionFlavorModelController({ api, session, onRefresh })
+        )
+
+        expect(result.current.availableModelOptions).toEqual([])
+        expect(result.current.onModelChange).toBeTypeOf('function')
+    })
+
+    it('disables onModelChange for inactive AGY sessions', () => {
+        const session = createBaseSession({
+            active: false,
+            model: 'gemini-pro-orchestrator',
+            metadata: { path: '/workspace', host: 'c1', machineId: 'machine-1', flavor: 'agy' },
+        })
+
+        const { result } = renderHook(() =>
+            useSessionFlavorModelController({ api, session, onRefresh })
+        )
+
+        expect(result.current.onModelChange).toBeUndefined()
     })
 })

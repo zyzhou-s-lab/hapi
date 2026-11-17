@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process'
 import { getAgentLaunchCommand } from '@/agent/agentLaunchCommand'
-import { AGY_MODEL_LABELS, AGY_MODEL_PRESETS } from '@hapi/protocol'
+import { AGY_MODEL_LABELS, AGY_MODEL_PRESETS, LEGACY_AGY_MODEL_LABELS, getAgyModelLabel } from '@hapi/protocol'
 import type { AgyModelsResponse } from '@hapi/protocol/apiTypes'
 
 export type ListAgyModelsResponse = AgyModelsResponse
@@ -38,7 +38,7 @@ function buildModelList(): AgyModelsResponse['availableModels'] {
 // `--model` wants ids ("gemini-3.5-flash-medium"). Known names map exactly via
 // the hardcoded mirror; unknown (newly added) models fall back to deriveAgyId.
 const NAME_TO_ID: Map<string, string> = new Map(
-    (Object.entries(AGY_MODEL_LABELS) as Array<[string, string]>).map(([id, name]) => [name, id])
+    (Object.entries({ ...LEGACY_AGY_MODEL_LABELS, ...AGY_MODEL_LABELS }) as Array<[string, string]>).map(([id, name]) => [name, id])
 )
 
 // Best-effort id from a display name, following agy's `<model>-<effort>`
@@ -114,7 +114,7 @@ function parseAgyModelsOutput(output: string): AgyModelsResponse['availableModel
         if (/^[a-z0-9][a-z0-9._/-]*$/i.test(line) && line.includes('-')) {
             if (seen.has(line)) continue
             seen.add(line)
-            const label = AGY_MODEL_LABELS[line as keyof typeof AGY_MODEL_LABELS]
+            const label = getAgyModelLabel(line)
             models.push(label ? { modelId: line, name: label } : { modelId: line })
             continue
         }
@@ -270,6 +270,13 @@ export async function listAgyModels(): Promise<ListAgyModelsResponse> {
     })()
 
     return inflight
+}
+
+export function getCachedAgyModelLabel(modelId: string): string | null {
+    const trimmed = modelId.trim()
+    if (!trimmed) return null
+    return cache.response.availableModels?.find((m) => m.modelId === trimmed)?.name
+        ?? getAgyModelLabel(trimmed)
 }
 
 export function _resetAgyModelsCacheForTests(): void {
