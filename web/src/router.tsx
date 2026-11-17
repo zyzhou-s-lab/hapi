@@ -59,6 +59,7 @@ import { transferComposerDraftThenNavigate } from '@/lib/composer-draft-transfer
 import { getDraftAttachments } from '@/lib/composer-attachment-drafts'
 import { refreshSessionDetailPreservingActive } from '@/lib/session-detail-optimistic'
 import { inactiveSessionCanResume, resolveCursorReopenGate } from '@/lib/sessionResume'
+import { formatReopenError } from '@/lib/reopenError'
 import { initializeSessionLastSeen, markSessionSeen } from '@/lib/sessionLastSeen'
 import { useSessionBrowserTitle } from '@/hooks/useSessionBrowserTitle'
 import { clearCodexImportedSession } from '@/lib/codexImportedSessions'
@@ -367,12 +368,6 @@ function SessionsIndexPage() {
  * Classify a thrown send error into a {message, code} pair the composer can
  * render.  `code` lets the consumer attach a recovery affordance (Reopen on
  * `session_inactive`) without re-inspecting the raw error.
- *
- * `request<T>` in the api client throws `ApiError` for !res.ok with `status`
- * and `code` parsed from the JSON body.  Older / non-JSON failures arrive as
- * plain `Error`; we surface those by their message verbatim, falling back to
- * a localized default when nothing usable is present (e.g. an aborted fetch
- * that resolved with no message).
  */
 function classifySendError(
     error: unknown,
@@ -380,6 +375,9 @@ function classifySendError(
 ): { message: string; code: string | null } {
     if (error instanceof ApiError && error.status === 409 && error.code === 'session_inactive') {
         return { message: t('chat.sendError.sessionInactive'), code: 'session_inactive' }
+    }
+    if (error instanceof ApiError) {
+        return { message: formatReopenError(error), code: error.code ?? null }
     }
     if (error instanceof Error && error.message) {
         return { message: error.message, code: null }
@@ -510,7 +508,7 @@ function SessionPage() {
                     )
                 }
             } catch (err) {
-                const message = err instanceof Error ? err.message : t('dialog.error.default')
+                const message = err instanceof Error ? formatReopenError(err) : t('dialog.error.default')
                 addToast({
                     title: t('resume.failed.title'),
                     body: message,
@@ -589,20 +587,9 @@ function SessionPage() {
             if (resolvedSessionRef.current?.source === currentSessionId) {
                 resolvedSessionRef.current = null
             }
-            const message = error instanceof Error ? error.message : t('dialog.error.default')
-            addToast({
-                title: t('resume.failed.title'),
-                body: message,
-                sessionId: currentSessionId,
-                url: ''
-            })
-            throw new ApiError(
-                t('chat.sendError.sessionInactive'),
-                409,
-                'session_inactive',
-            )
+            throw error
         }
-    }, [api, session, messages.length, cursorChatStoreStatus?.onDisk, t, addToast])
+    }, [api, session, messages.length, cursorChatStoreStatus?.onDisk, t])
 
     const handleSessionResolved = useCallback((resolvedSessionId: string) => {
         if (session) {

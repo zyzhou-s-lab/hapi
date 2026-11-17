@@ -57,6 +57,7 @@ See `src/router.tsx` for route definitions.
 - Message thread with infinite scroll.
 - Sent messages retain their display identity when the server confirms them, preserving message state and conversation-outline anchors. Message removal and rewind update the rendered list before removed message consumers can read stale runtime IDs.
 - Composer for sending messages.
+- Sending to a resumable inactive session attempts recovery first. Recovery failures retain their API error code and show the hub's readable error in the composer; the draft is preserved and no message is submitted. Only `session_inactive` offers Reopen, and retrying Send can attempt recovery again.
 - Permission mode toggle (default/acceptEdits/auto/bypassPermissions/plan).
 - Model selection (default/sonnet/sonnet[1m]/opus/opus[1m]).
 - Session abort and mode switch controls.
