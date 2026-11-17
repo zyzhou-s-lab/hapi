@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useParams, useSearch } from '@tanstack/react-router'
-import type { GitCommandResponse } from '@/types/api'
+import type { GitCommandResponse, GitScope } from '@/types/api'
 import { FileIcon } from '@/components/FileIcon'
 import { CopyIcon, CheckIcon } from '@/components/icons'
 import { useAppContext } from '@/lib/app-context'
@@ -23,8 +23,13 @@ import { useToast } from '@/lib/toast-context'
 const MAX_COPYABLE_FILE_BYTES = 1_000_000
 const FILE_SCROLL_KEY_PREFIX = 'hapi-file-scroll-'
 
-function getFileScrollStorageKey(sessionId: string, filePath: string, staged: boolean | undefined): string {
-    return `${FILE_SCROLL_KEY_PREFIX}${sessionId}:${encodeURIComponent(filePath)}:${staged === true ? 'staged' : 'unstaged'}`
+function getFileScrollStorageKey(
+    sessionId: string,
+    filePath: string,
+    comparison: { scope?: GitScope; baseRef?: string; staged?: boolean }
+): string {
+    const scope = comparison.scope ?? (comparison.staged ? 'staged' : 'unstaged')
+    return `${FILE_SCROLL_KEY_PREFIX}${sessionId}:${encodeURIComponent(filePath)}:${scope}:${comparison.baseRef ?? ''}`
 }
 const IMAGE_MIME_BY_EXTENSION: Record<string, string> = {
     apng: 'image/apng',
@@ -235,20 +240,27 @@ export default function FilePage() {
     const search = useSearch({ from: '/sessions/$sessionId/file' })
     const encodedPath = typeof search.path === 'string' ? search.path : ''
     const staged = search.staged
+    const scope = search.scope
+    const baseRef = search.baseRef
     const focusLine = typeof search.line === 'number' ? search.line : undefined
-    const diffRequested = staged !== undefined
+    const diffRequested = scope !== undefined || staged !== undefined
 
     const filePath = useMemo(() => decodePath(encodedPath), [encodedPath])
     const fileName = filePath.split('/').pop() || filePath || t('file.page.fallbackName')
     const imageMimeType = useMemo(() => resolveImageMimeType(filePath), [filePath])
 
     const diffQuery = useQuery({
-        queryKey: queryKeys.gitFileDiff(sessionId, filePath, staged),
+        queryKey: queryKeys.gitFileDiff(sessionId, filePath, { scope, baseRef, staged }),
         queryFn: async () => {
             if (!api || !sessionId || !filePath) {
                 throw new Error('Missing session or path')
             }
-            return await api.getGitDiffFile(sessionId, filePath, staged)
+            return await api.getGitDiffFile(
+                sessionId,
+                filePath,
+                scope ? undefined : staged,
+                scope ? { scope, baseRef } : undefined
+            )
         },
         enabled: Boolean(api && sessionId && filePath && diffRequested)
     })
@@ -336,8 +348,8 @@ export default function FilePage() {
     const fileScrollRef = useRef<HTMLDivElement>(null)
     const restoredScrollKeyRef = useRef<string | null>(null)
     const fileScrollKey = useMemo(
-        () => getFileScrollStorageKey(sessionId, filePath, staged),
-        [filePath, sessionId, staged]
+        () => getFileScrollStorageKey(sessionId, filePath, { scope, baseRef, staged }),
+        [baseRef, filePath, scope, sessionId, staged]
     )
 
     const restoreFileScroll = useCallback((element: HTMLDivElement | null = fileScrollRef.current) => {
@@ -401,8 +413,8 @@ export default function FilePage() {
             setEditing(false)
             setSaveError(null)
             await Promise.all([
-                queryClient.invalidateQueries({ queryKey: queryKeys.gitStatus(sessionId) }),
-                queryClient.invalidateQueries({ queryKey: queryKeys.gitFileDiff(sessionId, filePath, staged) })
+                queryClient.invalidateQueries({ queryKey: queryKeys.gitRepositoryAll(sessionId) }),
+                queryClient.invalidateQueries({ queryKey: queryKeys.gitFileDiff(sessionId, filePath, { scope, baseRef, staged }) })
             ])
             toast.addToast({
                 title: t('file.page.saved'),

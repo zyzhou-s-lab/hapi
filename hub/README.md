@@ -134,9 +134,10 @@ Accepted `POST /api/auth` bodies:
 
 ### Git/Files (`src/web/routes/git.ts`)
 
-- `GET /api/sessions/:id/git-status` - Git status.
+- `GET /api/sessions/:id/git-status` - Raw status, or structured repository state with `details=true`, `scope=working|staged|unstaged|branch` and optional `baseRef`.
 - `GET /api/sessions/:id/git-diff-numstat` - Diff summary.
-- `GET /api/sessions/:id/git-diff-file` - File-specific diff.
+- `GET /api/sessions/:id/git-diff-file` - File-specific diff with the same `scope` and `baseRef`.
+- `POST /api/sessions/:id/git-action` - Validated stage/commit/push/ff-only pull/PR or explicit compound action. Requires an authorized active, non-busy session; derives cwd from session metadata and executes on its owning CLI. Returns completed steps and partial failures. No browser-supplied cwd or arbitrary command.
 - `GET /api/sessions/:id/file` - Read file content.
 - `GET /api/sessions/:id/files` - File search with ripgrep.
 

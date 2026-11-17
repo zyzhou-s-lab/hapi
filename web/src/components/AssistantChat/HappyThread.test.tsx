@@ -38,6 +38,7 @@ import type { ThreadMessageLike } from '@assistant-ui/react'
 import type { ConversationOutlineItem } from '@/chat/outline'
 import { createSessionEntityStore } from '@/chat/store/sessionEntityStore'
 import { SessionEntityStoreProvider } from '@/hooks/useSessionEntityStore'
+import { revealThreadEntry } from '@/fork-features/thread-windowing/useThreadEntryWindow'
 
 const outlineItems: ConversationOutlineItem[] = [
     {
@@ -1158,7 +1159,62 @@ describe('3-state scroll mode and structure version helpers', () => {
 })
 
 describe('StoreThreadMessagesById offscreen turn windowing', () => {
-    it('replaces measured offscreen turns with height-cached placeholders when > 3 entries exist and remounts them on scroll', () => {
+    it('keeps unmeasured history out of the initial mount while retaining anchors and the latest answer', () => {
+        const store = createSessionEntityStore()
+        store.reconcileMessages('cold-window', Array.from({ length: 30 }, (_, index) => ({
+            id: `cold-${index}`,
+            seq: index + 1,
+            localId: null,
+            createdAt: 1_000 + index,
+            content: index % 2 === 0
+                ? { role: 'user', content: { type: 'text', text: `Question ${index}` } }
+                : { role: 'agent', content: { type: 'output', data: { type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: `Answer ${index}` }] } } } },
+        })))
+        const entries = store.getTimelineIndex()
+        const rendered = new Set<string>()
+        const Message = ({ messageId }: { messageId?: string }) => {
+            rendered.add(messageId!)
+            return <div data-thread-entry-id={messageId}>{messageId}</div>
+        }
+        const components = { UserMessage: Message, AssistantMessage: Message, SystemMessage: Message }
+        const { container } = render(
+            <SessionEntityStoreProvider store={store}>
+                <ThreadMessagesById components={components} />
+            </SessionEntityStoreProvider>
+        )
+
+        expect(rendered.has(entries[0]!.id)).toBe(false)
+        expect(rendered.has(entries[28]!.id)).toBe(true)
+        expect(rendered.has(entries[29]!.id)).toBe(true)
+        expect(container.querySelector(`[data-thread-entry-id="${entries[0]!.id}"]`))
+            .toHaveAttribute('data-hapi-offscreen-placeholder', 'true')
+    })
+
+    it('cancels a pending reveal when its destination is removed', async () => {
+        const store = createSessionEntityStore()
+        const messages = Array.from({ length: 6 }, (_, index) => ({
+            id: `removed-${index}`, seq: index + 1, localId: null, createdAt: 1_000 + index,
+            content: { role: 'user', content: { type: 'text', text: `Question ${index}` } },
+        }))
+        store.reconcileMessages('removed-window', messages)
+        const targetId = store.getTimelineIndex()[0]!.id
+        const Message = ({ messageId }: { messageId?: string }) => (
+            <div data-thread-entry-id={messageId}>{messageId}</div>
+        )
+        const { container } = render(
+            <SessionEntityStoreProvider store={store}>
+                <div className="chat-scroll-y">
+                    <ThreadMessagesById components={{ UserMessage: Message, AssistantMessage: Message, SystemMessage: Message }} />
+                </div>
+            </SessionEntityStoreProvider>
+        )
+        const pending = revealThreadEntry(container.querySelector<HTMLElement>('.chat-scroll-y')!, targetId)
+        act(() => { store.reconcileMessages('removed-window', messages.slice(1)) })
+        await expect(pending).resolves.toBe(false)
+        expect(container.querySelector(`[data-thread-entry-id="${targetId}"]`)).toBeNull()
+    }, 2_000)
+
+    it('retains offscreen anchors and progressively remounts the scrolled neighborhood', async () => {
         const store = createSessionEntityStore()
         const rawMessages = Array.from({ length: 30 }, (_, index) => ({
             id: `m-${index + 1}`,
@@ -1230,16 +1286,17 @@ describe('StoreThreadMessagesById offscreen turn windowing', () => {
             `[data-thread-entry-id="${entries[3]!.id}"][data-hapi-offscreen-placeholder="true"]`
         )
         expect(placeholder).not.toBeNull()
-        expect(placeholder?.style.minHeight).toBe('300px')
 
         // Scrolling back to top remounts top entries (0, 3) and collapses distant lower entries (20, 29).
         viewport.scrollTop = 0
         act(() => {
             fireEvent.scroll(viewport)
         })
-        expect(screen.queryByTestId(`mounted-${entries[0]!.id}`)).not.toBeNull()
-        expect(screen.queryByTestId(`mounted-${entries[3]!.id}`)).not.toBeNull()
-        expect(screen.queryByTestId(`mounted-${entries[20]!.id}`)).toBeNull()
-        expect(screen.queryByTestId(`mounted-${entries[29]!.id}`)).toBeNull()
+        await waitFor(() => {
+            expect(screen.queryByTestId(`mounted-${entries[0]!.id}`)).not.toBeNull()
+            expect(screen.queryByTestId(`mounted-${entries[3]!.id}`)).not.toBeNull()
+            expect(screen.queryByTestId(`mounted-${entries[20]!.id}`)).toBeNull()
+            expect(screen.queryByTestId(`mounted-${entries[29]!.id}`)).toBeNull()
+        })
     })
 })

@@ -7,12 +7,16 @@ import { ApiError, type ApiClient } from '@/api/client'
 import { queryKeys } from '@/lib/query-keys'
 import { appendOptimisticMessage, updateMessageStatus } from '@/lib/message-window-store'
 
-vi.mock('@/lib/message-window-store', () => ({
-    appendOptimisticMessage: vi.fn(),
-    getMessageWindowState: vi.fn(() => ({ messages: [] })),
-    updateMessageStatus: vi.fn(),
-    removeOptimisticMessage: vi.fn(),
-}))
+vi.mock(import('@/lib/message-window-store'), async (importOriginal) => {
+    const actual = await importOriginal()
+    return {
+        ...actual,
+        appendOptimisticMessage: vi.fn(),
+        getMessageWindowState: vi.fn(actual.getMessageWindowState),
+        updateMessageStatus: vi.fn(),
+        removeOptimisticMessage: vi.fn(),
+    }
+})
 
 vi.mock('@/hooks/usePlatform', () => ({
     usePlatform: () => ({

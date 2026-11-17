@@ -121,6 +121,82 @@ let persistTimerId: ReturnType<typeof setTimeout> | null = null
 let pagehidePersistListenerBound = false
 let lastNotifyAt = 0
 
+// One active Hub/account, matching the session-tabs scope identity. Requests
+// capture a separate lifetime so a later scope cannot reuse their authority.
+const STORAGE_SCOPE_KEY = 'hapi:message-window:scope'
+let scopeInitialized = false
+let currentScope: string | null | undefined
+let storageScopeReady = true
+let scopeLifetime = 0
+
+export function getMessageWindowScopeVersion(): number {
+    return scopeLifetime
+}
+
+export function captureMessageWindowScope(): () => boolean {
+    const lifetime = scopeLifetime
+    return () => lifetime === scopeLifetime
+}
+
+export function suspendMessageWindowScope(): void {
+    scopeLifetime += 1
+    tailSyncControllers.clear()
+    pendingOperations.clear()
+    pendingNotifySessionIds.clear()
+    cancelPendingNotifyIfIdle(true)
+    for (const [sessionId, state] of states) {
+        if (state.isSyncingTail || state.isLoadingMore) {
+            states.set(sessionId, buildState(state, {
+                isSyncingTail: false,
+                isLoadingMore: false,
+                syncGeneration: state.syncGeneration + 1,
+                olderGeneration: state.olderGeneration + 1,
+            }))
+        }
+    }
+    flushDeferredPersistedStates()
+}
+
+/** undefined is unresolved auth; null is a confirmed unauthenticated boundary. */
+export function setMessageWindowScope(scope: string | null | undefined): boolean {
+    if (scopeInitialized && currentScope === scope) return false
+    const previousScope = currentScope
+    const wasInitialized = scopeInitialized
+    suspendMessageWindowScope()
+    states.clear()
+    listeners.clear()
+    pendingPersistSessionIds.clear()
+    deferredPersistSessionIds.clear()
+    if (persistTimerId !== null) {
+        clearTimeout(persistTimerId)
+        persistTimerId = null
+    }
+    currentScope = scope
+    scopeInitialized = true
+    storageScopeReady = false
+    if (!isSessionStorageAvailable()) return true
+    try {
+        const owner = sessionStorage.getItem(STORAGE_SCOPE_KEY)
+        // Initial pending auth must not destroy a matching reload cache. Once
+        // an authenticated scope departs, even pending auth retires its cache.
+        if (scope === undefined && (!wasInitialized || previousScope === undefined)) return true
+        if (scope === null || owner !== scope) {
+            sessionStorage.removeItem(STORAGE_SCOPE_KEY)
+            for (let index = sessionStorage.length - 1; index >= 0; index -= 1) {
+                const key = sessionStorage.key(index)
+                if (key?.startsWith(STORAGE_KEY_PREFIX)) sessionStorage.removeItem(key)
+            }
+        }
+        if (typeof scope === 'string') {
+            sessionStorage.setItem(STORAGE_SCOPE_KEY, scope)
+            storageScopeReady = sessionStorage.getItem(STORAGE_SCOPE_KEY) === scope
+        }
+    } catch {
+        // Unknown ownership must never authorize hydration or persistence.
+    }
+    return true
+}
+
 function requestNotifyFrame(): void {
     if (notifyRafId !== null) {
         return
@@ -284,7 +360,7 @@ function shouldPersistState(state: InternalState): boolean {
 }
 
 function persistState(sessionId: string, state: InternalState): void {
-    if (!isSessionStorageAvailable()) {
+    if (!storageScopeReady || !isSessionStorageAvailable()) {
         return
     }
     try {
@@ -362,7 +438,7 @@ function ensurePagehidePersistListener(): void {
 }
 
 function schedulePersist(sessionId: string, deferWhileStreaming = false): void {
-    if (!isSessionStorageAvailable()) {
+    if (!storageScopeReady || !isSessionStorageAvailable()) {
         return
     }
     ensurePagehidePersistListener()
@@ -406,7 +482,7 @@ function createState(sessionId: string): InternalState {
 }
 
 function hydrateState(sessionId: string): InternalState | null {
-    if (!isSessionStorageAvailable()) {
+    if (!storageScopeReady || !isSessionStorageAvailable()) {
         return null
     }
     try {
@@ -1151,6 +1227,7 @@ function finishTailSync(sessionId: string, generation: number, warning: string |
 }
 
 async function runTailSync(api: ApiClient, sessionId: string): Promise<void> {
+    const isScopeCurrent = captureMessageWindowScope()
     const preflight = getState(sessionId)
     // While the user is reading history, requiresLatestReset only records that
     // the tail was evicted from the bounded window — the epoch is still valid.
@@ -1175,7 +1252,7 @@ async function runTailSync(api: ApiClient, sessionId: string): Promise<void> {
         if (!canIncrement) {
             const requestBaseline = new Map(getState(sessionId).messages.map((message) => [message.id, message]))
             const response = await api.getMessages(sessionId, { turns: TURN_PAGE_SIZE })
-            if (!isCurrentTailSync(sessionId, generation)) return
+            if (!isScopeCurrent() || !isCurrentTailSync(sessionId, generation)) return
             updateState(sessionId, (previous) => {
                 if (previous.syncGeneration !== generation) return previous
                 const next = applyLatestResponse(previous, response, {
@@ -1202,7 +1279,7 @@ async function runTailSync(api: ApiClient, sessionId: string): Promise<void> {
                 epoch: initial.epoch,
                 limit: PAGE_SIZE
             })
-            if (!isCurrentTailSync(sessionId, generation)) return
+            if (!isScopeCurrent() || !isCurrentTailSync(sessionId, generation)) return
 
             if (response.page.reset || response.page.direction === 'latest') {
                 updateState(sessionId, (previous) => {
@@ -1261,7 +1338,7 @@ async function runTailSync(api: ApiClient, sessionId: string): Promise<void> {
 
         finishTailSync(sessionId, generation, null)
     } catch (error) {
-        if (!isCurrentTailSync(sessionId, generation)) return
+        if (!isScopeCurrent() || !isCurrentTailSync(sessionId, generation)) return
         finishTailSync(
             sessionId,
             generation,
@@ -1430,6 +1507,7 @@ export async function fetchOlderMessages(
         onBeforeApply?: (historyVersion: number) => boolean
     } = {}
 ): Promise<OlderLoadOutcome> {
+    const isScopeCurrent = captureMessageWindowScope()
     const initial = getState(sessionId)
     const before = readPosition(initial.oldestPositionAt, initial.oldestPositionSeq)
     if (initial.isSyncingTail || initial.isLoadingMore) {
@@ -1454,7 +1532,7 @@ export async function fetchOlderMessages(
             beforeSeq: before.seq,
             turns: TURN_PAGE_SIZE
         })
-        if (getState(sessionId).olderGeneration !== generation) {
+        if (!isScopeCurrent() || getState(sessionId).olderGeneration !== generation) {
             return { kind: 'stopped', reason: 'invalidated' }
         }
 
@@ -1541,7 +1619,7 @@ export async function fetchOlderMessages(
             addedRenderableCount
         }
     } catch (error) {
-        if (getState(sessionId).olderGeneration !== generation) {
+        if (!isScopeCurrent() || getState(sessionId).olderGeneration !== generation) {
             return { kind: 'stopped', reason: 'invalidated' }
         }
         const loadError = error instanceof Error

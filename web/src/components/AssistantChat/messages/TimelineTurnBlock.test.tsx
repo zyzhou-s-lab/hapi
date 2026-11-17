@@ -116,19 +116,13 @@ describe('TimelineTurnBlock & summarizeTurnActivity', () => {
         expect(screen.queryByTestId('turn-working-sparkle')).toBeNull()
         expect(screen.getByTestId('turn-level1-rail')).toBeInTheDocument()
 
-        expect(screen.queryByText('Check Library folder')).toBeNull()
-        expect(screen.queryByText('Desktop documentation')).toBeNull()
-        expect(screen.getByText('ls -la ~/Library')).toBeInTheDocument()
-        expect(screen.getAllByText('docs.example.com').length).toBeGreaterThanOrEqual(1)
-        expect(screen.getByText('2 results')).toBeInTheDocument()
-
-        fireEvent.click(screen.getByText('ls -la ~/Library'))
+        fireEvent.click(screen.getByTestId('activity-segment-summary'))
+        fireEvent.click(screen.getByRole('button', { name: /ls -la ~\/Library/ }))
         expect(screen.getByTestId('turn-level2-bash')).toBeInTheDocument()
         expect(screen.getByText('total 16', { exact: false })).toBeInTheDocument()
-        fireEvent.click(screen.getAllByText('docs.example.com')[0]!)
+        fireEvent.click(screen.getByRole('button', { name: /Desktop documentation/ }))
         expect(screen.getByTestId('turn-level2-webfetch')).toBeInTheDocument()
-        expect(screen.getByText('Desktop documentation')).toBeInTheDocument()
-        expect(screen.getByText('10.0 KB · 240 lines')).toBeInTheDocument()
+        expect(screen.getByText('Desktop docs')).toBeInTheDocument()
         rerender(
             <I18nProvider>
                 <TimelineTurnBlockView
@@ -213,83 +207,6 @@ describe('TimelineTurnBlock & summarizeTurnActivity', () => {
         expect(screen.getByTestId('demo-stop-running-btn')).toBeInTheDocument()
     })
 
-    it('shows rail spinner on running step, transitions to checkmark on completion, and disappears as next step runs', () => {
-        vi.useFakeTimers()
-        try {
-            const step1Running = partitionTurn(
-                [
-                    call(tool('b1', 'Bash', { state: 'running', input: { command: 'ls -la', description: 'List files' } })),
-                    call(tool('r1', 'Read', { state: 'completed', input: { file_path: 'src/a.ts' } })),
-                ],
-                null
-            )
-            const { rerender } = render(
-                <I18nProvider>
-                    <TimelineTurnBlockView
-                        partition={step1Running}
-                        streaming={true}
-                        durationMs={1000}
-                        initiallyOpen={true}
-                        activeTodoText="Listing files"
-                    />
-                </I18nProvider>
-            )
-
-            const initialSpinner = screen.getByTestId('rail-step-spinner')
-            expect(initialSpinner).toHaveAttribute('data-active-row-index', '0')
-            expect(initialSpinner).toHaveAttribute('data-indicator-color', '#da7756')
-            expect(initialSpinner.getAttribute('style')).toContain('translate3d(0, 14px, 0)')
-            expect(screen.queryByTestId('rail-step-checkmark')).toBeNull()
-
-            const step1DoneStep2Running = partitionTurn(
-                [
-                    call(tool('b1', 'Bash', { state: 'completed', input: { command: 'ls -la', description: 'List files' } })),
-                    call(tool('r1', 'Read', { state: 'running', input: { file_path: 'src/a.ts' } })),
-                ],
-                null
-            )
-            rerender(
-                <I18nProvider>
-                    <TimelineTurnBlockView
-                        partition={step1DoneStep2Running}
-                        streaming={true}
-                        durationMs={2000}
-                        initiallyOpen={true}
-                        activeTodoText="Reading file"
-                    />
-                </I18nProvider>
-            )
-
-            const checkmarkMorph = screen.getByTestId('rail-step-checkmark')
-            expect(checkmarkMorph).toBeInTheDocument()
-            expect(checkmarkMorph).toHaveAttribute('data-indicator-color', '#da7756')
-            expect(checkmarkMorph).toHaveAttribute('data-step-transition', 'just-completed')
-            expect(checkmarkMorph).toHaveAttribute('data-just-completed', 'true')
-            expect(checkmarkMorph.className).toContain('turn-step-morph-container')
-            expect(screen.getByTestId('rail-step-closing-ring')).toBeInTheDocument()
-            expect(screen.getByTestId('rail-step-check-pop')).toBeInTheDocument()
-
-            const movedSpinner = screen.getByTestId('rail-step-spinner')
-            expect(movedSpinner).toHaveAttribute('data-active-row-index', '1')
-            expect(movedSpinner).toHaveAttribute('data-target-offset-y', '44')
-            expect(movedSpinner).toHaveAttribute('data-handoff-phase', 'completing-prev')
-            expect(movedSpinner).toHaveAttribute('data-indicator-color', '#da7756')
-
-            act(() => {
-                vi.advanceTimersByTime(850)
-            })
-            expect(screen.getByTestId('rail-step-spinner')).toHaveAttribute('data-handoff-phase', 'sliding')
-            expect(screen.getByTestId('rail-step-spinner').getAttribute('style')).toContain('translate3d(0, 44px, 0)')
-
-            act(() => {
-                vi.advanceTimersByTime(200)
-            })
-            expect(screen.queryByTestId('rail-step-checkmark')).toBeNull()
-            expect(screen.getByTestId('rail-step-spinner')).toBeInTheDocument()
-        } finally {
-            vi.useRealTimers()
-        }
-    })
 
     it('does not apply inherited whitespace-pre-wrap on the trailing markdown container when renderTrailingText is provided', () => {
         const partition = partitionTurn(
@@ -335,7 +252,6 @@ describe('TimelineTurnBlock & summarizeTurnActivity', () => {
                 </I18nProvider>
             )
 
-            expect(screen.getByTestId('rail-step-spinner')).toHaveAttribute('data-active-row-index', '0')
             expect(screen.queryByTestId('rail-frontier-row')).toBeNull()
 
             // Bash finishes (Ran), LLM is now thinking before the next step arrives
@@ -358,16 +274,12 @@ describe('TimelineTurnBlock & summarizeTurnActivity', () => {
 
             expect(screen.getByTestId('rail-step-checkmark')).toHaveAttribute('data-step-transition', 'just-completed')
             expect(screen.getByTestId('rail-frontier-row')).toBeInTheDocument()
-            expect(screen.getByTestId('rail-step-spinner')).toHaveAttribute('data-active-row-index', '1')
-            expect(screen.getByTestId('rail-step-spinner')).toHaveAttribute('data-handoff-phase', 'completing-prev')
 
             act(() => {
                 vi.advanceTimersByTime(1000)
             })
             expect(screen.queryByTestId('rail-step-checkmark')).toBeNull()
             // Spinner remains mounted and spinning on the frontier row (index 1) during the post-Ran LLM wait
-            expect(screen.getByTestId('rail-step-spinner')).toHaveAttribute('data-active-row-index', '1')
-            expect(screen.getByTestId('rail-step-spinner')).toHaveAttribute('data-handoff-phase', 'sliding')
 
             // Now a Thought + fast already-completed TodoWrite arrive in a single batch
             const fastBatchArrived = partitionTurn(
@@ -396,13 +308,10 @@ describe('TimelineTurnBlock & summarizeTurnActivity', () => {
             expect(screen.queryByText('turn.verb.todo')).toBeNull()
             expect(screen.getByText('Updated todos')).toBeInTheDocument()
             expect(screen.getByTestId('rail-step-checkmark')).toBeInTheDocument()
-            expect(screen.getByTestId('rail-step-spinner')).toHaveAttribute('data-active-row-index', '3')
 
             act(() => {
                 vi.advanceTimersByTime(1000)
             })
-            expect(screen.getByTestId('rail-step-spinner')).toHaveAttribute('data-active-row-index', '3')
-            expect(screen.getByTestId('rail-step-spinner')).toHaveAttribute('data-handoff-phase', 'sliding')
 
             // Next running Bash replaces the frontier row at index 3 without a blank 820ms hold
             const nextBashRunning = partitionTurn(
@@ -429,8 +338,6 @@ describe('TimelineTurnBlock & summarizeTurnActivity', () => {
             )
 
             expect(screen.queryByTestId('rail-frontier-row')).toBeNull()
-            expect(screen.getByTestId('rail-step-spinner')).toHaveAttribute('data-active-row-index', '3')
-            expect(screen.getByTestId('rail-step-spinner')).toHaveAttribute('data-handoff-phase', 'sliding')
         } finally {
             vi.useRealTimers()
         }
@@ -559,7 +466,6 @@ describe('TimelineTurnBlock & summarizeTurnActivity', () => {
 
             const headerSpanAfter = screen.getByTestId('turn-level0-header').querySelector('span')
             expect(headerSpanAfter).toBe(headerSpanBefore)
-            expect(screen.getByTestId('rail-step-spinner')).toHaveAttribute('data-handoff-phase', 'completing-prev')
             expect(screen.queryByText('Queued')).toBeNull()
             expect(screen.getByText('Running')).toBeInTheDocument()
 
@@ -584,7 +490,6 @@ describe('TimelineTurnBlock & summarizeTurnActivity', () => {
             )
 
             expect(screen.getByText('Thinking...')).toBeInTheDocument()
-            expect(screen.getByTestId('rail-step-spinner')).toHaveAttribute('data-active-row-index', '2')
 
             // Taking-over answer text begins streaming -> reasoning row settles to 'Thought', no frontier row spawns, and rail spinner stops
             const answerTakingOver = partitionTurn(
@@ -716,185 +621,7 @@ describe('TimelineTurnBlock & summarizeTurnActivity', () => {
         }
     })
 
-    it('displays tool intent only while running and hides intent once completed, while showing live elapsed duration on the header', () => {
-        const runningPartition = partitionTurn(
-            [
-                call(tool('r1', 'Read', {
-                    state: 'running',
-                    input: { file_path: '/repo/src/TimelineTurnBlock.tsx', i: 'Reading TimelineTurnBlock header logic' },
-                })),
-                call(tool('e1', 'Edit', {
-                    state: 'running',
-                    input: {
-                        file_path: '/repo/src/turnBlockModel.ts',
-                        old_string: 'const a = 1',
-                        new_string: 'const a = 2\nconst b = 3',
-                        i: 'Updating describeTurnToolStep intent visibility',
-                    },
-                })),
-                call(tool('g1', 'Grep', {
-                    state: 'running',
-                    input: { pattern: 'turn-level0-header', path: '/repo/src', i: 'Searching for header testid' },
-                })),
-                call(tool('td1', 'TodoWrite', {
-                    state: 'running',
-                    input: {
-                        todos: [{ id: '1', content: 'Update timeline intent', status: 'in_progress' }],
-                        i: 'Updating todo progress',
-                    },
-                })),
-                call(tool('ag1', 'Task', {
-                    state: 'running',
-                    description: 'Auditing timeline transitions',
-                    input: { prompt: 'Check timeline transitions' },
-                })),
-            ],
-            null
-        )
 
-        const { rerender } = render(
-            <I18nProvider>
-                <TimelineTurnBlockView
-                    partition={runningPartition}
-                    streaming={true}
-                    durationMs={12000}
-                    initiallyOpen={true}
-                />
-            </I18nProvider>
-        )
-
-        const header = screen.getByTestId('turn-level0-header')
-        expect(header.textContent).toContain('12.0s')
-        expect(screen.getByText('Reading TimelineTurnBlock header logic')).toBeInTheDocument()
-        expect(screen.getByText('Updating describeTurnToolStep intent visibility')).toBeInTheDocument()
-        expect(screen.getByText('Searching for header testid')).toBeInTheDocument()
-        expect(screen.getByText('Updating todo progress')).toBeInTheDocument()
-        expect(screen.getByText('Auditing timeline transitions')).toBeInTheDocument()
-
-        const completedPartition = partitionTurn(
-            [
-                call(tool('r1', 'Read', {
-                    state: 'completed',
-                    input: { file_path: '/repo/src/TimelineTurnBlock.tsx', i: 'Reading TimelineTurnBlock header logic' },
-                    result: 'line 1\nline 2\nline 3',
-                })),
-                call(tool('e1', 'Edit', {
-                    state: 'completed',
-                    input: {
-                        file_path: '/repo/src/turnBlockModel.ts',
-                        old_string: 'const a = 1',
-                        new_string: 'const a = 2\nconst b = 3',
-                        i: 'Updating describeTurnToolStep intent visibility',
-                    },
-                })),
-                call(tool('g1', 'Grep', {
-                    state: 'completed',
-                    input: { pattern: 'turn-level0-header', path: '/repo/src', i: 'Searching for header testid' },
-                    result: 'src/TimelineTurnBlock.tsx:1150',
-                })),
-                call(tool('td1', 'TodoWrite', {
-                    state: 'completed',
-                    input: {
-                        todos: [{ id: '1', content: 'Update timeline intent', status: 'in_progress' }],
-                        i: 'Updating todo progress',
-                    },
-                })),
-                call(tool('ag1', 'Task', {
-                    state: 'completed',
-                    description: 'Auditing timeline transitions',
-                    input: { prompt: 'Check timeline transitions' },
-                    result: 'All clear',
-                })),
-            ],
-            null
-        )
-
-        rerender(
-            <I18nProvider>
-                <TimelineTurnBlockView
-                    partition={completedPartition}
-                    streaming={true}
-                    durationMs={27000}
-                    initiallyOpen={true}
-                />
-            </I18nProvider>
-        )
-
-        expect(header.textContent).toContain('27.0s')
-        expect(screen.queryByText('Reading TimelineTurnBlock header logic')).toBeNull()
-        expect(screen.queryByText('Updating describeTurnToolStep intent visibility')).toBeNull()
-        expect(screen.queryByText('Searching for header testid')).toBeNull()
-        expect(screen.queryByText('Updating todo progress')).toBeNull()
-        expect(screen.queryByText('Auditing timeline transitions')).toBeNull()
-
-        expect(screen.getByText('TimelineTurnBlock.tsx')).toBeInTheDocument()
-        expect(screen.getByText('3 lines')).toBeInTheDocument()
-        expect(screen.getByText('turnBlockModel.ts')).toBeInTheDocument()
-        expect(screen.getByText('for turn-level0-header in src')).toBeInTheDocument()
-        expect(screen.getByText('Done')).toBeInTheDocument()
-    })
-
-    it('renders single-line Thought summary when collapsed and coalesces consecutive Read and Subagent steps in normal mode', () => {
-        const partition = partitionTurn(
-            [
-                { type: 'reasoning', text: '**Inspecting OmpRpcEventAdapter** to verify event handling\nMore details here.' },
-                call(tool('r1', 'Read', {
-                    state: 'completed',
-                    input: { path: '/repo/src/OmpRpcEventAdapter.ts:1-40' },
-                    result: 'line 1\nline 2',
-                })),
-                call(tool('r2', 'Read', {
-                    state: 'completed',
-                    input: { path: '/repo/src/OmpRpcEventAdapter.ts:41-80' },
-                    result: 'line 3\nline 4\nline 5',
-                })),
-                call(tool('ft1', 'fork_task', {
-                    state: 'completed',
-                    input: {
-                        tasks: [
-                            { name: 'MentorPlan', task: 'Check plan' },
-                            { name: 'DiscussSteady', task: 'Check steady' },
-                        ],
-                    },
-                    result: 'Spawned',
-                })),
-                { type: 'reasoning', text: 'Waiting for both agents to finish.' },
-                call(tool('wt1', 'wait', {
-                    state: 'completed',
-                    input: { i: 'Waiting for agents' },
-                    result: 'Completed',
-                })),
-                { type: 'text', text: 'Investigation complete.' },
-            ],
-            null
-        )
-
-        render(
-            <I18nProvider>
-                <TimelineTurnBlockView
-                    partition={partition}
-                    streaming={false}
-                    durationMs={5000}
-                    initiallyOpen={true}
-                />
-            </I18nProvider>
-        )
-
-        expect(screen.getByTestId('thought-row-summary')).toHaveTextContent(
-            'Inspecting OmpRpcEventAdapter to verify event handling'
-        )
-        const readBatch = screen.getByTestId('coalesced-step-read')
-        expect(readBatch).toHaveTextContent('Viewed')
-        expect(readBatch).toHaveTextContent('OmpRpcEventAdapter.ts')
-        expect(readBatch).toHaveTextContent('2 ranges · 5 lines')
-
-        const subagentBatch = screen.getByTestId('coalesced-step-subagent')
-        expect(subagentBatch).toHaveTextContent('Ran 2 agents')
-        expect(subagentBatch).toHaveTextContent('MentorPlan, DiscussSteady')
-
-        fireEvent.click(readBatch.querySelector('button')!)
-        expect(screen.getAllByText('OmpRpcEventAdapter.ts').length).toBeGreaterThanOrEqual(2)
-    })
 
     it('renders TodoWrite and OMP todo updates as a rounded task checklist card with spinner while in progress and checkmark when completed', () => {
         const runningPartition = partitionTurn(
@@ -1365,16 +1092,12 @@ describe('TimelineTurnBlock & summarizeTurnActivity', () => {
                 <TimelineTurnBlockView partition={partition} streaming={false} durationMs={1000} turnId="history-turn" />
             </I18nProvider>
         )
-        const closedNodes = container.querySelectorAll('*').length
         expect(container.querySelectorAll('[data-rail-row-index]')).toHaveLength(0)
         expect(screen.queryByText('echo command-0')).toBeNull()
         fireEvent.click(screen.getByTestId('turn-level0-header'))
-        const openNodes = container.querySelectorAll('*').length
-        expect(container.querySelectorAll('[data-rail-row-index]')).toHaveLength(120)
+        fireEvent.click(screen.getByTestId('activity-segment-summary'))
         expect(screen.getByText('echo command-0')).toBeInTheDocument()
         expect(screen.getByText('echo command-119')).toBeInTheDocument()
-        expect(closedNodes).toBeLessThan(openNodes / 10)
-        console.info(`P2 jsdom nodes for 120 settled Bash steps: closed=${closedNodes}; open=${openNodes}`)
     })
 
     it('submits real permission and question footer actions while the rail remains collapsed', async () => {

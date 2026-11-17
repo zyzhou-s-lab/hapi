@@ -98,11 +98,51 @@ async function branchExists(repoRoot: string, branch: string): Promise<boolean> 
   }
 }
 
+const MAX_START_REF_LENGTH = 255;
+
+type StartRefResolution =
+  | { ok: true; commit: string }
+  | { ok: false; error: string };
+
+function isSafeStartRef(value: string): boolean {
+  return value.length > 0
+    && value.length <= MAX_START_REF_LENGTH
+    && !value.startsWith('-')
+    && !/[\u0000-\u001f\u007f]/.test(value);
+}
+
+/**
+ * Resolve a browser-supplied branch/tag/commit to an immutable commit id.
+ * argv-only git invocation plus `--end-of-options`; nothing here can move an
+ * existing checkout or touch another worktree.
+ */
+async function resolveStartRef(repoRoot: string, startRef: string): Promise<StartRefResolution> {
+  const trimmed = startRef.trim();
+  if (!isSafeStartRef(trimmed)) {
+    return { ok: false, error: `Invalid Git start ref: "${startRef}".` };
+  }
+  try {
+    const result = await runGit(
+      ['rev-parse', '--verify', '--quiet', '--end-of-options', `${trimmed}^{commit}`],
+      repoRoot
+    );
+    const commit = result.stdout.trim();
+    if (!/^[0-9a-f]{40,64}$/i.test(commit)) {
+      return { ok: false, error: `Git ref "${trimmed}" did not resolve to a commit.` };
+    }
+    return { ok: true, commit };
+  } catch {
+    return { ok: false, error: `Git ref "${trimmed}" was not found in this repository.` };
+  }
+}
+
 export async function createWorktree(options: {
   basePath: string;
   nameHint?: string;
+  /** Branch/tag/commit for the new branch; omitted = repo HEAD. */
+  startRef?: string;
 }): Promise<WorktreeResult> {
-  const { basePath, nameHint } = options;
+  const { basePath, nameHint, startRef } = options;
   let repoRoot: string;
 
   try {
@@ -113,6 +153,15 @@ export async function createWorktree(options: {
       ok: false,
       error: `Path is not a Git repository: ${message}`
     };
+  }
+
+  let startPoint: string | undefined;
+  if (startRef?.trim()) {
+    const resolved = await resolveStartRef(repoRoot, startRef);
+    if (!resolved.ok) {
+      return { ok: false, error: resolved.error };
+    }
+    startPoint = resolved.commit;
   }
 
   const repoParent = dirname(repoRoot);
@@ -136,7 +185,11 @@ export async function createWorktree(options: {
     }
 
     try {
-      await runGit(['worktree', 'add', '-b', branch, worktreePath], repoRoot);
+      const addArgs = ['worktree', 'add', '-b', branch, worktreePath];
+      if (startPoint) {
+        addArgs.push(startPoint);
+      }
+      await runGit(addArgs, repoRoot);
       return {
         ok: true,
         info: {

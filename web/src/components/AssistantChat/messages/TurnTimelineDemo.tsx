@@ -621,34 +621,6 @@ function DemoConversation(props: {
                         active
                         thinking={running}
                         agentState={null}
-                        gitBranch="main"
-                        gitStatus={{
-                            branch: 'main',
-                            stagedFiles: [
-                                {
-                                    fileName: 'TimelineTurnBlock.tsx',
-                                    filePath: 'web/src/components/AssistantChat/messages/TimelineTurnBlock.tsx',
-                                    fullPath: 'web/src/components/AssistantChat/messages/TimelineTurnBlock.tsx',
-                                    status: 'modified',
-                                    isStaged: true,
-                                    linesAdded: 30,
-                                    linesRemoved: 4,
-                                },
-                            ],
-                            unstagedFiles: [
-                                {
-                                    fileName: 'TurnTodoSection.tsx',
-                                    filePath: 'web/src/components/AssistantChat/messages/TurnTodoSection.tsx',
-                                    fullPath: 'web/src/components/AssistantChat/messages/TurnTodoSection.tsx',
-                                    status: 'modified',
-                                    isStaged: false,
-                                    linesAdded: 18,
-                                    linesRemoved: 8,
-                                },
-                            ],
-                            totalStaged: 1,
-                            totalUnstaged: 1,
-                        }}
                         hideContextUsage
                     />
                     {state.stage === 'asking-user' ? (

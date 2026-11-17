@@ -89,6 +89,9 @@ export function NewSession(props: {
     onChooseFolder?: (args: { machineId: string | null; directory: string }) => void
     initialDirectory?: string
     initialMachineId?: string
+    initialSessionType?: SessionType
+    initialWorktreeStartRef?: string
+    initialWorktreeName?: string
 }) {
     const { haptic } = usePlatform()
     const { t } = useTranslation()
@@ -117,8 +120,9 @@ export function NewSession(props: {
     const [yoloMode, setYoloMode] = useState(loadPreferredYoloMode)
     const [codexFamilyPermissionMode, setCodexFamilyPermissionMode] = useState<PermissionMode>('default')
     const [grokPermissionMode, setGrokPermissionMode] = useState<GrokPermissionMode>('default')
-    const [sessionType, setSessionType] = useState<SessionType>('simple')
-    const [worktreeName, setWorktreeName] = useState('')
+    const [sessionType, setSessionType] = useState<SessionType>(props.initialSessionType ?? 'simple')
+    const [worktreeName, setWorktreeName] = useState(props.initialWorktreeName ?? '')
+    const [worktreeStartRef, setWorktreeStartRef] = useState(props.initialWorktreeStartRef ?? '')
     const [directoryCreationConfirmed, setDirectoryCreationConfirmed] = useState(false)
     const [error, setError] = useState<string | null>(null)
     const [codexImportSessions, setCodexImportSessions] = useState<CodexLocalSessionSummary[]>([])
@@ -210,6 +214,24 @@ export function NewSession(props: {
         }
     }, [props.initialMachineId])
 
+    useEffect(() => {
+        if (props.initialSessionType !== undefined) {
+            setSessionType(props.initialSessionType)
+        }
+    }, [props.initialSessionType])
+
+    useEffect(() => {
+        if (props.initialWorktreeStartRef !== undefined) {
+            setWorktreeStartRef(props.initialWorktreeStartRef)
+        }
+    }, [props.initialWorktreeStartRef])
+
+    useEffect(() => {
+        if (props.initialWorktreeName !== undefined) {
+            setWorktreeName(props.initialWorktreeName)
+        }
+    }, [props.initialWorktreeName])
+
     const restoredFromBrowseRef = useRef(false)
     useEffect(() => {
         if (restoredFromBrowseRef.current) {
@@ -249,12 +271,16 @@ export function NewSession(props: {
         setYoloMode(draft.yoloMode)
         setCodexFamilyPermissionMode(draft.codexFamilyPermissionMode)
         setGrokPermissionMode(draft.grokPermissionMode)
-        setSessionType(draft.sessionType)
-        setWorktreeName(draft.worktreeName)
+        setSessionType(props.initialSessionType ?? draft.sessionType)
+        setWorktreeName(props.initialWorktreeName ?? draft.worktreeName)
+        setWorktreeStartRef(props.initialWorktreeStartRef ?? draft.worktreeStartRef)
         clearNewSessionFormDraft()
     }, [
         props.initialDirectory,
         props.initialMachineId,
+        props.initialSessionType,
+        props.initialWorktreeStartRef,
+        props.initialWorktreeName,
         machineId
     ])
 
@@ -1365,7 +1391,8 @@ export function NewSession(props: {
             codexFamilyPermissionMode,
             grokPermissionMode,
             sessionType,
-            worktreeName
+            worktreeName,
+            worktreeStartRef
         })
         props.onChooseFolder({ machineId, directory: trimmedDirectory })
     }, [
@@ -1386,6 +1413,7 @@ export function NewSession(props: {
         grokPermissionMode,
         sessionType,
         worktreeName,
+        worktreeStartRef,
         trimmedDirectory
     ])
 
@@ -1606,6 +1634,7 @@ export function NewSession(props: {
                         : undefined,
                 sessionType,
                 worktreeName: sessionType === 'worktree' ? (worktreeName.trim() || undefined) : undefined,
+                worktreeStartRef: sessionType === 'worktree' ? (worktreeStartRef.trim() || undefined) : undefined,
                 serviceTier: resolvedServiceTier,
                 collaborationMode: resolvedCollaborationMode,
                 copilotAgentMode: agent === 'copilot' ? copilotAgentMode : undefined,
@@ -1717,10 +1746,12 @@ export function NewSession(props: {
             <SessionTypeSelector
                 sessionType={sessionType}
                 worktreeName={worktreeName}
+                worktreeStartRef={worktreeStartRef}
                 worktreeInputRef={worktreeInputRef}
                 isDisabled={isFormDisabled}
                 onSessionTypeChange={setSessionType}
                 onWorktreeNameChange={setWorktreeName}
+                onWorktreeStartRefChange={setWorktreeStartRef}
             />
             <AgentSelector
                 agent={agent}

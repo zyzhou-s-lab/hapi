@@ -27,7 +27,8 @@ describe('newSessionFormDraft', () => {
             codexFamilyPermissionMode: 'default',
             grokPermissionMode: 'default',
             sessionType: 'simple',
-            worktreeName: ''
+            worktreeName: '',
+            worktreeStartRef: ''
         })
 
         expect(loadNewSessionFormDraft()).toEqual({
@@ -44,8 +45,35 @@ describe('newSessionFormDraft', () => {
             codexFamilyPermissionMode: 'default',
             grokPermissionMode: 'default',
             sessionType: 'simple',
-            worktreeName: ''
+            worktreeName: '',
+            worktreeStartRef: ''
         })
+    })
+
+    it('round-trips the selected worktree start ref', () => {
+        saveNewSessionFormDraft({
+            agent: 'claude',
+            model: 'auto',
+            cursorSelectedBase: 'auto',
+            machineId: 'machine-1',
+            effort: 'auto',
+            modelReasoningEffort: 'default',
+            serviceTier: 'standard',
+            collaborationMode: 'default',
+            copilotAgentMode: 'interactive',
+            yoloMode: false,
+            codexFamilyPermissionMode: 'default',
+            grokPermissionMode: 'default',
+            sessionType: 'worktree',
+            worktreeName: 'feature-x',
+            worktreeStartRef: 'origin/main'
+        })
+
+        expect(loadNewSessionFormDraft()).toEqual(expect.objectContaining({
+            sessionType: 'worktree',
+            worktreeName: 'feature-x',
+            worktreeStartRef: 'origin/main'
+        }))
     })
 
     it('restores only when returning from browse with a directory in search', () => {
@@ -74,7 +102,8 @@ describe('newSessionFormDraft', () => {
             codexFamilyPermissionMode: 'default',
             grokPermissionMode: 'default',
             sessionType: 'simple',
-            worktreeName: ''
+            worktreeName: '',
+            worktreeStartRef: ''
         })
         const loaded = loadNewSessionFormDraft()!
         expect(newSessionDraftMatchesMachine(loaded, 'machine-1')).toBe(true)
@@ -95,7 +124,8 @@ describe('newSessionFormDraft', () => {
             codexFamilyPermissionMode: 'default',
             grokPermissionMode: 'default',
             sessionType: 'simple',
-            worktreeName: ''
+            worktreeName: '',
+            worktreeStartRef: ''
         })
         const draft = loadNewSessionFormDraft()!
         expect(newSessionDraftMatchesMachine(draft, 'machine-b')).toBe(false)
@@ -118,7 +148,8 @@ describe('newSessionFormDraft', () => {
             codexFamilyPermissionMode: 'default',
             grokPermissionMode: 'default',
             sessionType: 'simple',
-            worktreeName: ''
+            worktreeName: '',
+            worktreeStartRef: ''
         })
 
         const loaded = loadNewSessionFormDraft()!
@@ -148,7 +179,8 @@ describe('newSessionFormDraft', () => {
             copilotAgentMode: 'interactive',
             yoloMode: true,
             sessionType: 'simple',
-            worktreeName: ''
+            worktreeName: '',
+            worktreeStartRef: ''
         }))
 
         const loaded = loadNewSessionFormDraft()!

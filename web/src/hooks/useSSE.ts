@@ -21,7 +21,7 @@ import type {
     SyncEvent
 } from '@/types/api'
 import { queryKeys } from '@/lib/query-keys'
-import { clearMessageWindow, getMessageWindowState, ingestIncomingMessages, markMessagesConsumed, markMessagesIndeterminate, markMessagesRequeued, removeOptimisticMessage, updateMessageStatus } from '@/lib/message-window-store'
+import { captureMessageWindowScope, clearMessageWindow, getMessageWindowState, ingestIncomingMessages, markMessagesConsumed, markMessagesIndeterminate, markMessagesRequeued, removeOptimisticMessage, updateMessageStatus } from '@/lib/message-window-store'
 import { agentSkillMachinesQueryKey } from '@/fork-features/agent-skill-readiness/machineQuery'
 import { applySessionDetailPatch } from '@/lib/sessionPatch'
 import { applyCardInvalidated, refetchWatchedCardTopics } from '@/fork-features/work-lines/cardTopics'
@@ -316,8 +316,8 @@ export function useSSE(options: {
     const scope = options.scope ?? 'full'
 
     const subscriptionKey = useMemo(() => {
-        return `${scope}|${subscription.all ? '1' : '0'}|${subscription.sessionId ?? ''}|${subscription.machineId ?? ''}`
-    }, [scope, subscription.all, subscription.sessionId, subscription.machineId])
+        return `${options.baseUrl}|${options.accountId ?? ''}|${scope}|${subscription.all ? '1' : '0'}|${subscription.sessionId ?? ''}|${subscription.machineId ?? ''}`
+    }, [options.baseUrl, options.accountId, scope, subscription.all, subscription.sessionId, subscription.machineId])
 
     useEffect(() => {
         if (!options.enabled) {
@@ -350,12 +350,16 @@ export function useSSE(options: {
             sessionId: subscription.sessionId ?? undefined
         }, getVisibilityState(), resumeCursor)
         const eventSource = new EventSource(url)
+        const isScopeCurrent = captureMessageWindowScope()
+        let disposed = false
+        const isCurrentSource = () => !disposed && isScopeCurrent() && eventSourceRef.current === eventSource
         let disconnectNotified = false
         let reconnectRequested = false
         eventSourceRef.current = eventSource
         lastActivityAtRef.current = Date.now()
 
         const scheduleReconnect = () => {
+            if (disposed || !isScopeCurrent()) return
             // Nobody is looking at a hidden tab, and every retry through the
             // relay costs a TLS handshake. Defer until the tab is visible
             // again; onVisibilityChange reconnects immediately at that point.
@@ -383,6 +387,7 @@ export function useSSE(options: {
                 clearTimeout(reconnectTimerRef.current)
             }
             reconnectTimerRef.current = setTimeout(() => {
+                if (disposed || !isScopeCurrent()) return
                 reconnectTimerRef.current = null
                 setReconnectNonce((value) => value + 1)
             }, exponentialDelay + jitter)
@@ -397,6 +402,7 @@ export function useSSE(options: {
         }
 
         const requestReconnect = (reason: string, force = false) => {
+            if (disposed || !isScopeCurrent()) return
             if (reconnectRequested && !force) {
                 return
             }
@@ -411,6 +417,7 @@ export function useSSE(options: {
         }
 
         const flushInvalidations = () => {
+            if (disposed || !isScopeCurrent()) return
             const pending = pendingInvalidationsRef.current
             if (
                 !pending.sessions
@@ -798,6 +805,7 @@ export function useSSE(options: {
         }
 
         const handleMessage = (message: MessageEvent<string>) => {
+            if (!isCurrentSource()) return
             if (typeof message.data !== 'string') {
                 return
             }
@@ -846,6 +854,7 @@ export function useSSE(options: {
         }, CONNECT_TIMEOUT_MS)
 
         eventSource.onopen = () => {
+            if (!isCurrentSource()) return
             clearTimeout(connectDeadlineTimer)
             if (reconnectTimerRef.current) {
                 clearTimeout(reconnectTimerRef.current)
@@ -859,6 +868,7 @@ export function useSSE(options: {
             // connection-changed handshake, which carries the resume verdict.
         }
         eventSource.onerror = (error) => {
+            if (!isCurrentSource()) return
             onErrorRef.current?.(error)
             if (eventSource.readyState === EventSource.CLOSED) {
                 requestReconnect('closed')
@@ -892,6 +902,7 @@ export function useSSE(options: {
         // browser ever noticing, so a missed heartbeat interval at resume
         // already warrants a proactive reconnect.
         const onVisibilityChange = () => {
+            if (disposed || !isScopeCurrent()) return
             if (getVisibilityState() !== 'visible') return
             // A retry fell due while the tab was hidden and was deliberately
             // not scheduled. Run it now, before the identity guard below:
@@ -909,6 +920,7 @@ export function useSSE(options: {
         document.addEventListener('visibilitychange', onVisibilityChange)
 
         return () => {
+            disposed = true
             clearInterval(watchdogTimer)
             clearTimeout(connectDeadlineTimer)
             document.removeEventListener('visibilitychange', onVisibilityChange)

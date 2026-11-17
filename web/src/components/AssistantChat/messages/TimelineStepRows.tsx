@@ -34,6 +34,7 @@ export type StepExpansionEntry = {
     readonly open: boolean
     readonly hasOpened: boolean
     readonly defaultExpanded: boolean
+    readonly userToggled?: boolean
 }
 
 /** UI state only; owned by the mounted turn, outside the conditional rail rows. */
@@ -59,12 +60,12 @@ export function resolveTurnStepBlockId(
     return row.key
 }
 
-function useTurnStepExpansion(stepId: string, defaultExpanded: boolean) {
+export function useTurnStepExpansion(stepId: string, defaultExpanded: boolean) {
     const store = useContext(TurnStepExpansionContext)
     const [saved, setSaved] = useState<StepExpansionEntry>(() => (
         store?.entries.get(stepId) ?? { open: defaultExpanded, hasOpened: defaultExpanded, defaultExpanded }
     ))
-    const entry = saved.defaultExpanded === defaultExpanded ? saved : {
+    const entry = saved.defaultExpanded === defaultExpanded || saved.userToggled ? saved : {
         open: defaultExpanded,
         hasOpened: saved.hasOpened || defaultExpanded,
         defaultExpanded,
@@ -77,7 +78,7 @@ function useTurnStepExpansion(stepId: string, defaultExpanded: boolean) {
 
     const toggle = useCallback(() => {
         setSaved((prev) => {
-            const next = { open: !prev.open, hasOpened: true, defaultExpanded }
+            const next = { open: !prev.open, hasOpened: true, defaultExpanded, userToggled: true }
             store?.entries.set(stepId, next)
             return next
         })
@@ -331,6 +332,7 @@ export const TimelineToolStepRow = memo(function TimelineToolStepRow(props: {
     forceMorph?: boolean
     showInlineRailSpinner?: boolean
     suppressRunningShimmer?: boolean
+    onExpandedChange?: (open: boolean) => void
 }) {
     const ctx = useOptionalHappyChatStaticContext()
     const blockEntity = useOptionalSessionBlockEntity(props.row.block.id)
@@ -347,6 +349,7 @@ export const TimelineToolStepRow = memo(function TimelineToolStepRow(props: {
         () => describeTurnToolStep(effectiveRow, props.lang),
         [effectiveRow, props.lang]
     )
+    useEffect(() => { props.onExpandedChange?.(open) }, [open, props.onExpandedChange])
 
     const asks = isAskUserQuestionToolName(effectiveRow.block.tool.name)
     const requestsInput = isRequestUserInputToolName(effectiveRow.block.tool.name)

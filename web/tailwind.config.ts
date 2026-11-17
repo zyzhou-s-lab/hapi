@@ -15,6 +15,7 @@ export default {
             },
             fontFamily: {
                 sans: ['var(--app-font-sans)'],
+                prose: ['var(--app-font-prose)'],
                 mono: ['var(--app-font-mono)']
             },
             fontWeight: {

@@ -2,15 +2,28 @@ import { execFile, type ExecFileOptions } from 'child_process'
 import { promisify } from 'util'
 import type { CommandResponse } from '@hapi/protocol/apiTypes'
 import { RPC_METHODS } from '@hapi/protocol/rpcMethods'
+import {
+    GitActionRequestSchema,
+    GitReadOptionsSchema,
+    type GitActionRequest,
+    type GitActionResponse,
+    type GitRepositoryResponse,
+    type GitScope
+} from '@hapi/protocol/sourceControl'
 import type { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager'
 import { validatePath } from '../pathSecurity'
 import { rpcError } from '../rpcResponses'
+import { runGitAction } from './gitActions'
+import { readRepositoryStatus, readScopedFileDiff, resolveRepositoryContext } from './gitRepository'
 
 const execFileAsync = promisify(execFile)
 
 interface GitStatusRequest {
     cwd?: string
     timeout?: number
+    details?: boolean
+    scope?: GitScope
+    baseRef?: string
 }
 
 interface GitDiffNumstatRequest {
@@ -23,8 +36,12 @@ interface GitDiffFileRequest {
     cwd?: string
     filePath: string
     staged?: boolean
+    scope?: GitScope
+    baseRef?: string
     timeout?: number
 }
+
+type GitActionRpcRequest = GitActionRequest & { cwd?: string }
 
 type GitCommandResponse = CommandResponse
 
@@ -87,16 +104,50 @@ async function runGitCommand(
 }
 
 export function registerGitHandlers(rpcHandlerManager: RpcHandlerManager, workingDirectory: string): void {
-    rpcHandlerManager.registerHandler<GitStatusRequest, GitCommandResponse>(RPC_METHODS.GitStatus, async (data) => {
+    rpcHandlerManager.registerHandler<GitStatusRequest, GitRepositoryResponse>(RPC_METHODS.GitStatus, async (data) => {
         const resolved = resolveCwd(data.cwd, workingDirectory)
         if (resolved.error) {
             return rpcError(resolved.error)
         }
-        return await runGitCommand(
-            ['status', '--porcelain=v2', '--branch', '--untracked-files=all'],
-            resolved.cwd,
-            data.timeout
-        )
+
+        if (!data.details) {
+            return await runGitCommand(
+                ['status', '--porcelain=v2', '--branch', '--untracked-files=all'],
+                resolved.cwd,
+                data.timeout
+            )
+        }
+
+        const readOptions = GitReadOptionsSchema.safeParse({
+            scope: data.scope,
+            baseRef: data.baseRef,
+            details: data.details
+        })
+        if (!readOptions.success) {
+            return rpcError('Invalid Git read options')
+        }
+
+        const contextResult = await resolveRepositoryContext(resolved.cwd, workingDirectory)
+        if (!contextResult.context) {
+            return rpcError(contextResult.error ?? 'Unable to resolve git repository')
+        }
+
+        const result = await readRepositoryStatus(contextResult.context, workingDirectory, {
+            scope: readOptions.data.scope,
+            baseRef: readOptions.data.baseRef,
+            timeoutMs: data.timeout
+        })
+        if (!result.repository) {
+            return rpcError(result.error ?? 'Unable to read git status')
+        }
+
+        return {
+            success: true,
+            stdout: '',
+            stderr: '',
+            exitCode: 0,
+            repository: result.repository
+        }
     })
 
     rpcHandlerManager.registerHandler<GitDiffNumstatRequest, GitCommandResponse>(RPC_METHODS.GitDiffNumstat, async (data) => {
@@ -115,14 +166,63 @@ export function registerGitHandlers(rpcHandlerManager: RpcHandlerManager, workin
         if (resolved.error) {
             return rpcError(resolved.error)
         }
-        const fileError = validateFilePath(data.filePath, workingDirectory)
-        if (fileError) {
-            return rpcError(fileError)
+
+        const scoped = data.scope !== undefined || data.baseRef !== undefined
+        if (!scoped) {
+            const fileError = validateFilePath(data.filePath, workingDirectory)
+            if (fileError) {
+                return rpcError(fileError)
+            }
+
+            const args = data.staged
+                ? ['diff', '--cached', '--no-ext-diff', '--', data.filePath]
+                : ['diff', '--no-ext-diff', '--', data.filePath]
+            return await runGitCommand(args, resolved.cwd, data.timeout)
         }
 
-        const args = data.staged
-            ? ['diff', '--cached', '--no-ext-diff', '--', data.filePath]
-            : ['diff', '--no-ext-diff', '--', data.filePath]
-        return await runGitCommand(args, resolved.cwd, data.timeout)
+        const readOptions = GitReadOptionsSchema.safeParse({
+            scope: data.scope,
+            baseRef: data.baseRef
+        })
+        if (!readOptions.success) {
+            return rpcError('Invalid Git read options')
+        }
+
+        const contextResult = await resolveRepositoryContext(resolved.cwd, workingDirectory)
+        if (!contextResult.context) {
+            return rpcError(contextResult.error ?? 'Unable to resolve git repository')
+        }
+
+        const result = await readScopedFileDiff(contextResult.context, workingDirectory, {
+            filePath: data.filePath,
+            scope: readOptions.data.scope,
+            baseRef: readOptions.data.baseRef,
+            timeoutMs: data.timeout
+        })
+        return result
+    })
+
+    rpcHandlerManager.registerHandler<GitActionRpcRequest, GitActionResponse>(RPC_METHODS.GitAction, async (data) => {
+        const request = (data ?? {}) as GitActionRpcRequest
+        const { cwd, ...payload } = request
+        const parsed = GitActionRequestSchema.safeParse(payload)
+        if (!parsed.success) {
+            const field = parsed.error.issues[0]?.path.join('.')
+            return {
+                success: false,
+                steps: [],
+                error: field ? `Invalid Git action request (${field})` : 'Invalid Git action request'
+            }
+        }
+
+        const resolved = resolveCwd(cwd, workingDirectory)
+        if (resolved.error) {
+            return { success: false, steps: [], error: resolved.error }
+        }
+
+        return await runGitAction(parsed.data, {
+            cwd: resolved.cwd,
+            workingDirectory
+        })
     })
 }

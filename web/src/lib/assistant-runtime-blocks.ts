@@ -12,10 +12,9 @@ import type { ToolGroupBlock, VisibleChatBlock, VisibleChatBlockRole } from '@/c
 import { visibleBlockRole } from '@/chat/toolGroups'
 import {
     partitionTurn,
-    projectTurn,
-    type ProjectedTurn,
     type TurnPartition,
 } from '@/components/AssistantChat/messages/turnBlockModel'
+import { projectTurn, type ProjectedTurn } from '@/components/AssistantChat/messages/turnProjection'
 import type { SessionMetadataSummary } from '@/types/api'
 export { filterVisibleBlocksForFlavor } from '@/fork-features/omp-product/eventVisibility'
 

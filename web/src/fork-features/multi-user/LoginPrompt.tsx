@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { ApiClient } from '@/api/client'
 import { LanguageSwitcher } from '@/components/LanguageSwitcher'
 import { Spinner } from '@/components/Spinner'
@@ -33,9 +33,18 @@ export function LoginPrompt(props: LoginPromptProps) {
     const [isServerDialogOpen, setIsServerDialogOpen] = useState(false)
     const [serverInput, setServerInput] = useState(props.serverUrl ?? '')
     const [serverError, setServerError] = useState<string | null>(null)
+    const loginLeaseRef = useRef<object | null>(null)
+
+    useLayoutEffect(() => {
+        const lease = {}
+        loginLeaseRef.current = lease
+        return () => { loginLeaseRef.current = null }
+    }, [props.baseUrl])
 
     const handleSubmit = useCallback(async (e: React.FormEvent) => {
         e.preventDefault()
+        const lease = loginLeaseRef.current
+        if (!lease) return
 
         const useToken = isBindMode || loginMode === 'token'
         const trimmedToken = accessToken.trim()
@@ -71,6 +80,7 @@ export function LoginPrompt(props: LoginPromptProps) {
                 // Validate token by attempting to authenticate
                 const client = new ApiClient('', { baseUrl: props.baseUrl })
                 await client.authenticate({ accessToken: trimmedToken })
+                if (loginLeaseRef.current !== lease) return
                 // If successful, pass token to parent
                 if (!props.onLogin) {
                     setError(t('login.error.loginUnavailable'))
@@ -80,6 +90,7 @@ export function LoginPrompt(props: LoginPromptProps) {
             } else {
                 const client = new ApiClient('', { baseUrl: props.baseUrl })
                 const auth = await client.authenticate({ username: trimmedUsername, password: trimmedPassword })
+                if (loginLeaseRef.current !== lease) return
                 if (!props.onPasswordLogin) {
                     setError(t('login.error.loginUnavailable'))
                     return
@@ -87,10 +98,11 @@ export function LoginPrompt(props: LoginPromptProps) {
                 props.onPasswordLogin(auth.token)
             }
         } catch (e) {
+            if (loginLeaseRef.current !== lease) return
             const fallbackMessage = isBindMode ? t('login.error.bindFailed') : t('login.error.authFailed')
             setError(e instanceof Error ? e.message : fallbackMessage)
         } finally {
-            setIsLoading(false)
+            if (loginLeaseRef.current === lease) setIsLoading(false)
         }
     }, [accessToken, username, password, loginMode, props, t, isBindMode])
 

@@ -528,6 +528,7 @@ export async function startRunner(options: { workspaceRoots?: string[] } = {}): 
       const yolo = options.yolo === true;
       const sessionType = options.sessionType ?? 'simple';
       const worktreeName = options.worktreeName;
+      const worktreeStartRef = options.worktreeStartRef?.trim() || undefined;
       let directoryCreated = false;
       let spawnDirectory = directory;
       let worktreeInfo: WorktreeInfo | null = null;
@@ -586,7 +587,9 @@ export async function startRunner(options: { workspaceRoots?: string[] } = {}): 
         // over HAPI's sibling-directory worktree so Cursor sandbox/skills see the same layout.
         // Exception: if `directory` is already a linked git worktree (e.g. HAPI feature
         // worktree or driver/), nesting `--cursor-worktree` hangs ACP initialize (#1085).
-        if (agent === 'cursor') {
+        // An explicit start ref cannot be expressed through Cursor's native flag, so it
+        // always uses HAPI's own worktree branch from that commit.
+        if (agent === 'cursor' && !worktreeStartRef) {
           spawnDirectory = directory;
           if (isLinkedGitWorktree(directory)) {
             logger.debug(
@@ -598,7 +601,8 @@ export async function startRunner(options: { workspaceRoots?: string[] } = {}): 
         } else {
           const worktreeResult = await createWorktree({
             basePath: directory,
-            nameHint: worktreeName
+            nameHint: worktreeName,
+            startRef: worktreeStartRef
           });
           if (!worktreeResult.ok) {
             logger.debug(`[RUNNER RUN] Worktree creation failed: ${worktreeResult.error}`);
@@ -1622,7 +1626,7 @@ export function buildCliArgs(
       args.push('--yolo');
     }
   }
-  if (agent === 'cursor' && options.sessionType === 'worktree') {
+  if (agent === 'cursor' && options.sessionType === 'worktree' && !options.worktreeStartRef?.trim()) {
     // Nested Cursor --worktree inside an existing linked git worktree hangs ACP
     // initialize (banner ignored, but never reaches protocolVersion / cursorSessionId).
     if (!isLinkedGitWorktree(options.directory)) {

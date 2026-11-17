@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { memo, useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import type { SessionSummary } from '@/types/api'
 import { isWildcardSearch, matchesSearchQuery } from '@hapi/protocol'
 import type { ApiClient } from '@/api/client'
@@ -759,8 +759,8 @@ export function SessionListSearch(props: {
                     className={cn(
                         'relative shrink-0 transition-colors hover:bg-[var(--app-subtle-bg)]',
                         variant === 'standalone'
-                            ? 'rounded-full p-1.5 hover:text-[var(--app-fg)]'
-                            : 'flex items-center rounded-r-lg rounded-l-md px-1',
+                            ? 'flex h-7 w-7 items-center justify-center rounded-md hover:text-[var(--app-fg)]'
+                            : 'flex w-7 items-center justify-center rounded-r-md rounded-l-md',
                         hasDateRange ? 'text-[var(--app-link)]' : 'text-[var(--app-hint)]'
                     )}
                     title={hasDateRange ? `${props.customStart} – ${props.customEnd}` : t('sessions.timeFilter.label')}
@@ -769,7 +769,7 @@ export function SessionListSearch(props: {
                         : t('sessions.timeFilter.label')}
                     aria-expanded={datePickerOpen}
                 >
-                    <CalendarIcon className="h-5 w-5" />
+                    <CalendarIcon className="h-4 w-4" />
                     {hasDateRange ? (
                         <span className={cn(
                             'absolute h-1.5 w-1.5 rounded-full bg-[var(--app-link)]',
@@ -819,7 +819,7 @@ export function SessionListSearch(props: {
         return (
             <div className="relative flex items-center gap-1">
                 <div className={cn(
-                    'relative flex min-w-0 items-center rounded-full transition-colors',
+                    'relative flex min-w-0 items-center rounded-md transition-colors',
                     hasTextQuery
                         // Keep the query and its clear action inside the same compact chip.
                         ? 'max-w-[9rem] bg-[var(--app-chat-user-chip-bg)] text-[var(--app-chat-user-chip-fg)]'
@@ -830,15 +830,15 @@ export function SessionListSearch(props: {
                         type="button"
                         onClick={() => props.onExpandedChange(true)}
                         className={cn(
-                            'relative flex min-w-0 items-center gap-1 transition-colors',
+                            'relative flex h-7 min-w-0 items-center justify-center gap-1 transition-colors',
                             hasTextQuery
-                                ? 'flex-1 rounded-l-full bg-[var(--app-chat-user-chip-bg)] px-2 py-1 text-[var(--app-chat-user-chip-fg)] hover:opacity-90'
-                                : 'shrink-0 rounded-full p-1.5 text-[var(--app-hint)] hover:bg-[var(--app-subtle-bg)] hover:text-[var(--app-fg)]'
+                                ? 'flex-1 rounded-l-md bg-[var(--app-chat-user-chip-bg)] px-2 py-1 text-[var(--app-chat-user-chip-fg)] hover:opacity-90'
+                                : 'w-7 shrink-0 rounded-md text-[var(--app-hint)] hover:bg-[var(--app-subtle-bg)] hover:text-[var(--app-fg)]'
                         )}
                         title={collapsedLabel}
                         aria-label={collapsedLabel}
                     >
-                        <SearchIcon className="h-5 w-5 shrink-0" />
+                        <SearchIcon className="h-4 w-4 shrink-0" />
                         {hasTextQuery ? (
                             <span className="min-w-0 truncate text-xs font-medium">{props.value}</span>
                         ) : null}
@@ -852,7 +852,7 @@ export function SessionListSearch(props: {
                                 // the collapsed search trigger instead of dropping to body.
                                 collapsedButtonRef.current?.focus()
                             }}
-                            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-r-full bg-[var(--app-chat-user-chip-action-bg)] text-[var(--app-chat-user-chip-action-fg)] transition-colors hover:text-[var(--app-chat-user-chip-action-hover-fg)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-link)] focus-visible:ring-inset"
+                            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-r-md bg-[var(--app-chat-user-chip-action-bg)] text-[var(--app-chat-user-chip-action-fg)] transition-colors hover:text-[var(--app-chat-user-chip-action-hover-fg)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-link)] focus-visible:ring-inset"
                             title={t('sessions.search.clear')}
                             aria-label={t('sessions.search.clear')}
                         >
@@ -886,7 +886,7 @@ export function SessionListSearch(props: {
                 aria-label={searchLabel}
                 title={searchLabel}
                 className={cn(
-                    'w-full appearance-none rounded-lg border border-[var(--app-border)] bg-[var(--app-bg)] py-1.5 pl-8 text-sm text-[var(--app-fg)] outline-none transition-colors placeholder:text-[var(--app-hint)] [text-overflow:ellipsis] focus:border-[var(--app-link)] [&::-webkit-search-cancel-button]:hidden [&::-webkit-search-decoration]:hidden',
+                    'h-7 w-full appearance-none rounded-md border border-[var(--app-border)] bg-[var(--app-bg)] py-1 pl-8 text-[13px] text-[var(--app-fg)] outline-none transition-colors placeholder:text-[var(--app-hint)] [text-overflow:ellipsis] focus:border-[var(--app-link)] [&::-webkit-search-cancel-button]:hidden [&::-webkit-search-decoration]:hidden',
                     props.value ? 'pr-16' : 'pr-7'
                 )}
             />
@@ -912,7 +912,7 @@ export function SessionListSearch(props: {
     )
 }
 
-function SessionItem(props: {
+const SessionItem = memo(function SessionItem(props: {
     session: SessionSummary
     onSelect: (sessionId: string) => void
     showPath?: boolean
@@ -943,6 +943,9 @@ function SessionItem(props: {
     const { haptic } = usePlatform()
     const [menuOpen, setMenuOpen] = useState(false)
     const [menuAnchorPoint, setMenuAnchorPoint] = useState<{ x: number; y: number }>({ x: 0, y: 0 })
+    const menuId = useId()
+    const menuTriggerRef = useRef<HTMLButtonElement>(null)
+    const menuOpenedWithButtonRef = useRef(false)
     const [renameOpen, setRenameOpen] = useState(false)
     const [exportOpen, setExportOpen] = useState(false)
     const [archiveOpen, setArchiveOpen] = useState(false)
@@ -1031,6 +1034,7 @@ function SessionItem(props: {
 
     const longPressHandlers = useLongPress({
         onLongPress: (point) => {
+            menuOpenedWithButtonRef.current = false
             haptic.impact('medium')
             setMenuAnchorPoint(point)
             setMenuOpen(true)
@@ -1061,6 +1065,7 @@ function SessionItem(props: {
     )
     return (
         <>
+            <div className="group/session-row relative min-w-0">
             <button
                 type="button"
                 {...longPressHandlers}
@@ -1070,7 +1075,10 @@ function SessionItem(props: {
                     }
                 }}
                 data-session-id={s.id}
-                className={`session-list-item group/session-row flex w-full flex-col gap-1 py-2 pl-2.5 pr-2 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-link)] select-none rounded-lg ${selected ? 'bg-[var(--app-secondary-bg)]' : ''}`}
+                className={cn(
+                    'session-list-item flex w-full min-w-0 flex-col gap-1 rounded-[10px] px-2 py-2 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-link)] select-none md:pr-9',
+                    selected && 'bg-[var(--app-session-selected-bg)] shadow-[inset_0_0_0_1px_var(--app-border),0_1px_2px_rgba(0,0,0,0.05)]'
+                )}
                 style={{ WebkitTouchCallout: 'none' }}
                 aria-current={selected ? 'page' : undefined}
                 aria-describedby={describedBy}
@@ -1089,10 +1097,42 @@ function SessionItem(props: {
                     machineLabel={machineLabel}
                 />
             </button>
+                <button
+                    ref={menuTriggerRef}
+                    type="button"
+                    aria-label={t('session.more')}
+                    title={t('session.more')}
+                    aria-haspopup="menu"
+                    aria-expanded={menuOpen}
+                    aria-controls={menuOpen ? menuId : undefined}
+                    onPointerDown={(event) => event.stopPropagation()}
+                    onClick={(event) => {
+                        const rect = event.currentTarget.getBoundingClientRect()
+                        menuOpenedWithButtonRef.current = true
+                        setMenuAnchorPoint({ x: rect.left + rect.width / 2, y: rect.bottom })
+                        setMenuOpen((open) => !open)
+                    }}
+                    className={cn(
+                        'absolute right-1 top-1.5 hidden h-7 w-7 items-center justify-center rounded-md text-[var(--app-hint)] transition-opacity hover:bg-[var(--app-subtle-bg)] hover:text-[var(--app-fg)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-link)] md:flex',
+                        menuOpen ? 'opacity-100' : 'opacity-0 group-hover/session-row:opacity-100 group-focus-within/session-row:opacity-100'
+                    )}
+                >
+                    <svg viewBox="0 0 24 24" fill="currentColor" className="h-4 w-4" aria-hidden="true">
+                        <circle cx="5" cy="12" r="1.5" />
+                        <circle cx="12" cy="12" r="1.5" />
+                        <circle cx="19" cy="12" r="1.5" />
+                    </svg>
+                </button>
+            </div>
 
             <SessionActionMenu
                 isOpen={menuOpen}
-                onClose={() => setMenuOpen(false)}
+                onClose={() => {
+                    setMenuOpen(false)
+                    if (menuOpenedWithButtonRef.current) {
+                        menuTriggerRef.current?.focus()
+                    }
+                }}
                 sessionId={s.id}
                 sessionTitle={sessionName}
                 sessionActive={s.active}
@@ -1110,6 +1150,7 @@ function SessionItem(props: {
                 onFork={forkSupported ? handleFork : undefined}
                 forkSupported={forkSupported}
                 anchorPoint={menuAnchorPoint}
+                menuId={menuId}
             />
 
             {reopenError ? (
@@ -1191,7 +1232,7 @@ function SessionItem(props: {
             ) : null}
         </>
     )
-}
+})
 
 type PullToRefreshState = 'idle' | 'pulling' | 'ready'
 
@@ -1545,66 +1586,57 @@ export function SessionList(props: {
         }
         return (
             <div key={sectionKey}>
-                <div
-                    className="group/running flex min-w-0 w-full select-none cursor-pointer items-center gap-2 rounded-lg py-1.5 pl-2 pr-2 transition-colors hover:bg-[var(--app-secondary-bg)]"
-                    role="button"
-                    tabIndex={0}
-                    aria-expanded={!collapsed || isFiltering}
-                    onClick={onToggle}
-                    onKeyDown={(event) => {
-                        if (event.key === 'Enter' || event.key === ' ') {
-                            event.preventDefault()
-                            onToggle()
-                        }
-                    }}
-                    title={t(titleKey)}
-                >
-                    <ChevronIcon className="h-3.5 w-3.5 text-[var(--app-hint)] shrink-0" collapsed={collapsed && !isFiltering} />
-                    <span className="inline-flex h-3.5 w-3.5 shrink-0 items-center justify-center" aria-hidden="true">
-                        <span className={`h-1.5 w-1.5 rounded-full bg-[var(--app-badge-success-text)] ${pulse ? 'animate-pulse' : ''}`} />
-                    </span>
-                    <span className="min-w-0 flex-1 truncate text-sm font-medium">
-                        {t(titleKey)}
-                    </span>
-                    <span className="shrink-0 text-[11px] tabular-nums text-[var(--app-hint)]">
-                        ({count})
-                    </span>
-                </div>
+                <div className="group/running flex min-w-0 w-full select-none cursor-pointer items-center gap-2 rounded-md py-1 pl-2 pr-2 transition-colors hover:bg-[var(--app-secondary-bg)]" role="button"
+                tabIndex={0}
+                aria-expanded={!collapsed || isFiltering}
+                onClick={onToggle}
+                onKeyDown={(event) => {
+                    if (event.key === 'Enter' || event.key === ' ') {
+                        event.preventDefault()
+                        onToggle()
+                    }
+                }}
+                title={t(titleKey)}><ChevronIcon className="h-3.5 w-3.5 text-[var(--app-hint)] shrink-0" collapsed={collapsed && !isFiltering} />
+                <span className="inline-flex h-3.5 w-3.5 shrink-0 items-center justify-center" aria-hidden="true">
+                    <span className={`h-1.5 w-1.5 rounded-full bg-[var(--app-badge-success-text)] ${pulse ? 'animate-pulse' : ''}`} />
+                </span>
+                <span className="min-w-0 flex-1 truncate text-xs font-medium text-[var(--app-hint)]">
+                    {t(titleKey)}
+                </span>
+                <span className="inline-flex h-5 min-w-5 shrink-0 items-center justify-center rounded-md bg-[var(--app-subtle-bg)] px-1 text-[11px] tabular-nums text-[var(--app-hint)]">{count}</span></div>
                 <div className="collapsible-panel" data-open={(!collapsed || isFiltering) || undefined}>
                     <div className="collapsible-inner">
-                    <div className="flex flex-col gap-0.5 ml-3 pl-1 py-1">
-                        {bucketKeys.map((bucketKey) => {
-                            const bucket = RUNNING_BUCKETS.find((b) => b.key === bucketKey)
-                            const sessions = runningSessions[bucketKey]
-                            if (!bucket || sessions.length === 0) {
-                                return null
-                            }
-                            return (
-                                <div key={bucketKey}>
-                                    <div className={`flex items-center gap-1 px-1 pt-1 pb-0.5 text-[11px] font-medium ${bucket.colorClass}`}>
-                                        <span className={`h-1.5 w-1.5 shrink-0 rounded-full bg-current ${bucket.pulse ? 'animate-pulse' : ''}`} aria-hidden="true" />
-                                        {t(bucket.labelKey)} ({sessions.length})
-                                    </div>
-                                    {sessions.map((s) => (
-                                        <SessionItem
-                                            key={s.id}
-                                            session={s}
-                                            onSelect={props.onSelect}
-                                            showPath={false}
-                                            api={api}
-                                            titleSuggestionAvailable={titleSuggestionAvailable}
-                                            selected={s.id === selectedSessionId}
-                                            showDetailedStatus={showDetailedStatus}
-                                            inRunningSection
-                                            projectLabel={getGroupDisplayName(s.metadata?.worktree?.basePath ?? s.metadata?.path ?? 'Other')}
-                                            machineLabel={resolveMachineLabel(s.metadata?.machineId ?? null)}
-                                            lastSeenVersion={lastSeenVersion}
-                                        />
-                                    ))}
+                    <div className="my-0.5 flex flex-col gap-0.5 py-0.5">{bucketKeys.map((bucketKey) => {
+                        const bucket = RUNNING_BUCKETS.find((b) => b.key === bucketKey)
+                        const sessions = runningSessions[bucketKey]
+                        if (!bucket || sessions.length === 0) {
+                            return null
+                        }
+                        return (
+                            <div key={bucketKey}>
+                                <div className={`flex items-center gap-1 px-1 pt-1 pb-0.5 text-[11px] font-medium ${bucket.colorClass}`}>
+                                    <span className={`h-1.5 w-1.5 shrink-0 rounded-full bg-current ${bucket.pulse ? 'animate-pulse' : ''}`} aria-hidden="true" />
+                                    {t(bucket.labelKey)} ({sessions.length})
                                 </div>
-                            )
-                        })}
-                    </div>
+                                {sessions.map((s) => (
+                                    <SessionItem
+                                        key={s.id}
+                                        session={s}
+                                        onSelect={props.onSelect}
+                                        showPath={false}
+                                        api={api}
+                                        titleSuggestionAvailable={titleSuggestionAvailable}
+                                        selected={s.id === selectedSessionId}
+                                        showDetailedStatus={showDetailedStatus}
+                                        inRunningSection
+                                        projectLabel={getGroupDisplayName(s.metadata?.worktree?.basePath ?? s.metadata?.path ?? 'Other')}
+                                        machineLabel={resolveMachineLabel(s.metadata?.machineId ?? null)}
+                                        lastSeenVersion={lastSeenVersion}
+                                    />
+                                ))}
+                            </div>
+                        )
+                    })}</div>
                     </div>
                 </div>
             </div>
@@ -1623,7 +1655,7 @@ export function SessionList(props: {
                     className="group/project sticky top-0 z-10 flex items-center gap-2 bg-[var(--app-bg)] py-1.5 pl-2 pr-2 text-left rounded-lg transition-colors hover:bg-[var(--app-secondary-bg)] min-w-0 w-full select-none"
                     title={group.directory}
                 >
-                    <span className="font-medium text-sm truncate flex-1">
+                    <span className="font-medium text-xs text-[var(--app-hint)] truncate flex-1">
                         {groupTitle}
                     </span>
                     <CopyPathButton path={group.directory} className="opacity-0 group-hover/project:opacity-100 transition-opacity duration-150" />
@@ -1673,87 +1705,70 @@ export function SessionList(props: {
             : group.displayName
         return (
             <div key={group.key}>
-                <div
-                    className="group/project sticky top-0 z-10 flex items-center gap-2 bg-[var(--app-bg)] py-1.5 pl-2 pr-2 text-left rounded-lg transition-colors hover:bg-[var(--app-secondary-bg)] cursor-pointer min-w-0 w-full select-none"
-                    onClick={() => toggleGroup(group.key, isCollapsed)}
-                    title={group.directory}
-                >
-                    <ChevronIcon className="h-3.5 w-3.5 text-[var(--app-hint)] shrink-0" collapsed={isCollapsed} />
-                    <span className="font-medium text-sm truncate flex-1">
-                        {groupTitle}
-                    </span>
-                    <CopyPathButton path={group.directory} className="opacity-0 group-hover/project:opacity-100 transition-opacity duration-150" />
-                    {onNewSessionInDirectory && canStartInGroupDirectory ? (
-                        <button
-                            type="button"
-                            onClick={(event) => {
-                                event.stopPropagation()
-                                onNewSessionInDirectory({
-                                    machineId: group.machineId,
-                                    directory: group.directory
-                                })
-                            }}
-                            className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[var(--app-hint)] opacity-70 transition-colors hover:bg-[var(--app-secondary-bg)] hover:text-[var(--app-link)] hover:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-link)]"
-                            title={t('sessions.group.new')}
-                            aria-label={t('sessions.group.new')}
-                        >
-                            <PlusIcon className="h-3.5 w-3.5" />
-                        </button>
-                    ) : null}
-                    <span className="text-[11px] tabular-nums text-[var(--app-hint)] shrink-0">
-                        ({group.sessions.length})
-                    </span>
-                </div>
+                <div className="group/project sticky top-0 z-10 flex items-center gap-2 bg-[var(--app-bg)] py-1 pl-2 pr-2 text-left rounded-md transition-colors hover:bg-[var(--app-secondary-bg)] cursor-pointer min-w-0 w-full select-none" onClick={() => toggleGroup(group.key, isCollapsed)}
+                title={group.directory}><ChevronIcon className="h-3.5 w-3.5 text-[var(--app-hint)] shrink-0" collapsed={isCollapsed} />
+                <span className="font-medium text-xs text-[var(--app-hint)] truncate flex-1">
+                    {groupTitle}
+                </span>
+                <CopyPathButton path={group.directory} className="opacity-0 group-hover/project:opacity-100 transition-opacity duration-150" />
+                {onNewSessionInDirectory && canStartInGroupDirectory ? (
+                    <button
+                        type="button"
+                        onClick={(event) => {
+                            event.stopPropagation()
+                            onNewSessionInDirectory({
+                                machineId: group.machineId,
+                                directory: group.directory
+                            })
+                        }}
+                        className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[var(--app-hint)] opacity-70 transition-colors hover:bg-[var(--app-secondary-bg)] hover:text-[var(--app-link)] hover:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-link)]"
+                        title={t('sessions.group.new')}
+                        aria-label={t('sessions.group.new')}
+                    >
+                        <PlusIcon className="h-3.5 w-3.5" />
+                    </button>
+                ) : null}
+                <span className="inline-flex h-5 min-w-5 shrink-0 items-center justify-center rounded-md bg-[var(--app-subtle-bg)] px-1 text-[11px] tabular-nums text-[var(--app-hint)]">
+                    {group.sessions.length}
+                </span></div>
 
                 {/* Sessions */}
                 <div className="collapsible-panel" data-open={!isCollapsed || undefined}>
                     <div className="collapsible-inner">
-                    <div className="flex flex-col gap-0.5 ml-3 pl-1 py-1">
-                        {visibleGroupSessions.map((s, index) => (
-                            <div key={s.id} className="contents">
-                                {shouldShowPinnedDivider(visibleGroupSessions, index) ? (
-                                    <div
-                                        className="ml-2.5 mr-2 my-1 border-t border-[var(--app-border)]"
-                                        aria-hidden="true"
-                                    />
-                                ) : null}
-                                <SessionItem
-                                    session={s}
-                                    onSelect={selectSession}
-                                    showPath={false}
-                                    api={api}
-                                    titleSuggestionAvailable={titleSuggestionAvailable}
-                                    selected={s.id === selectedSessionId}
-                                    showDetailedStatus={showDetailedStatus}
-                                    lastSeenVersion={lastSeenVersion}
+                    <div className="my-0.5 flex flex-col gap-0.5 py-0.5">{visibleGroupSessions.map((s, index) => (
+                        <div key={s.id} className="contents">
+                            {shouldShowPinnedDivider(visibleGroupSessions, index) ? (
+                                <div
+                                    className="mx-2 my-0.5 border-t border-[var(--app-border)]/70"
+                                    aria-hidden="true"
                                 />
-                            </div>
-                        ))}
-                        {group.sessions.length > sessionPreviewLimit && (hiddenSessionCount > 0 || canShowFewerSessions) ? (
-                            <div className="ml-2.5 mr-2 my-1 flex gap-1.5">
-                                {canShowFewerSessions ? (
-                                    <button
-                                        type="button"
-                                        onClick={() => showFewerSessions(group)}
-                                        className="flex min-w-0 flex-1 items-center justify-center gap-1 rounded-md border border-dashed border-[var(--app-border)] px-2 py-1 text-center text-xs text-[var(--app-hint)] transition-colors hover:bg-[var(--app-subtle-bg)] hover:text-[var(--app-fg)]"
-                                    >
-                                        <SessionPreviewArrowIcon direction="up" className="h-3 w-3 shrink-0" />
-                                        {t('sessions.group.collapse', { n: collapseCount })}
-                                    </button>
-                                ) : null}
-                                {hiddenSessionCount > 0 ? (
-                                    <button
-                                        type="button"
-                                        onClick={() => showMoreSessions(group)}
-                                        className="flex min-w-0 flex-1 items-center justify-center gap-1 rounded-md border border-dashed border-[var(--app-border)] px-2 py-1 text-center text-xs text-[var(--app-hint)] transition-colors hover:bg-[var(--app-subtle-bg)] hover:text-[var(--app-fg)]"
-                                    >
-                                        <SessionPreviewArrowIcon direction="down" className="h-3 w-3 shrink-0" />
-                                        {t('sessions.group.expand', { n: expandCount })}
-                                    </button>
-                                ) : null}
-                            </div>
-                        ) : null}
-                    </div>
+                            ) : null}
+                            <SessionItem
+                                session={s}
+                                onSelect={selectSession}
+                                showPath={false}
+                                api={api}
+                                titleSuggestionAvailable={titleSuggestionAvailable}
+                                selected={s.id === selectedSessionId}
+                                showDetailedStatus={showDetailedStatus}
+                                lastSeenVersion={lastSeenVersion}
+                            />
+                        </div>
+                    ))}
+                    {group.sessions.length > sessionPreviewLimit && (hiddenSessionCount > 0 || canShowFewerSessions) ? (
+                        <div className="ml-2.5 mr-2 my-1 flex gap-1.5">
+                            {canShowFewerSessions ? (
+                                <button type="button"
+                                onClick={() => showFewerSessions(group)} className="flex min-w-0 flex-1 items-center justify-center gap-1 rounded-md px-2 py-1 text-center text-[11px] font-medium text-[var(--app-hint)] transition-colors hover:bg-[var(--app-subtle-bg)] hover:text-[var(--app-fg)]"><SessionPreviewArrowIcon direction="up" className="h-3 w-3 shrink-0" />
+                                {t('sessions.group.collapse', { n: collapseCount })}</button>
+                            ) : null}
+                            {hiddenSessionCount > 0 ? (
+                                <button type="button"
+                                onClick={() => showMoreSessions(group)} className="flex min-w-0 flex-1 items-center justify-center gap-1 rounded-md px-2 py-1 text-center text-[11px] font-medium text-[var(--app-hint)] transition-colors hover:bg-[var(--app-subtle-bg)] hover:text-[var(--app-fg)]"><SessionPreviewArrowIcon direction="down" className="h-3 w-3 shrink-0" />
+                                {t('sessions.group.expand', { n: expandCount })}</button>
+                            ) : null}
+                        </div>
+                    ) : null}</div>
                     </div>
                 </div>
             </div>
@@ -1940,8 +1955,7 @@ export function SessionList(props: {
 
     return (
         <div className="flex min-h-0 w-full flex-1 flex-col">
-            <div className="session-list-scrollbar-offset mx-auto w-full max-w-content shrink-0">
-            {showHeaderRow ? (
+            <div className="session-list-scrollbar-offset mx-auto w-full max-w-content shrink-0 split:max-w-none">{showHeaderRow ? (
                 <div className="flex items-center gap-1 px-2 py-1">
                     {showSearch ? (
                         <SessionListSearch
@@ -1976,7 +1990,7 @@ export function SessionList(props: {
                                 title={t('sessions.unreadFilter.toggle')}
                                 aria-label={t('sessions.unreadFilter.toggle')}
                                 className={cn(
-                                    'flex h-9 w-9 items-center justify-center rounded-full transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-link)]',
+                                    'flex h-7 w-7 items-center justify-center rounded-md transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-link)]',
                                     showUnreadOnly
                                         ? 'bg-[var(--app-subtle-bg)]'
                                         : 'hover:bg-[var(--app-subtle-bg)]'
@@ -1997,10 +2011,10 @@ export function SessionList(props: {
                                 <button
                                     type="button"
                                     onClick={props.onNewSession}
-                                    className="session-list-new-button flex h-9 w-9 items-center justify-center rounded-full text-[var(--app-link)] transition-colors"
+                                    className="session-list-new-button flex h-7 w-7 items-center justify-center rounded-md text-[var(--app-link)] hover:bg-[var(--app-subtle-bg)] transition-colors"
                                     title={t('sessions.new')}
                                 >
-                                    <PlusIcon className="h-5 w-5" />
+                                    <PlusIcon className="h-4 w-4" />
                                 </button>
                             ) : null}
                             {props.headerActions}
@@ -2008,7 +2022,7 @@ export function SessionList(props: {
                     ) : null}
                 </div>
             ) : null}
-
+            
             {showMachineFilterBar ? (
                 <MachineFilterBar
                     machines={machineFilterItems}
@@ -2016,8 +2030,7 @@ export function SessionList(props: {
                     value={activeMachineFilter}
                     onChange={setMachineFilter}
                 />
-            ) : null}
-            </div>
+            ) : null}</div>
 
             <div className="relative flex min-h-0 flex-1 flex-col">
             {isRefreshing || pullState !== 'idle' || props.isLoading ? (
@@ -2044,94 +2057,83 @@ export function SessionList(props: {
                 ref={assignScrollContainer}
                 className="app-scroll-y session-list-scrollbar-left min-h-0 flex-1"
             >
-            <div className="mx-auto flex w-full max-w-content flex-col gap-1 pl-1.5 pr-2 pb-2">
-                {props.sessions.length === 0 && !props.isLoading ? (
-                    <SessionsEmptyState
-                        onNewSession={props.onNewSession}
-                        onBrowse={props.onBrowse}
-                    />
-                ) : null}
-
-                {props.sessions.length > 0 && (isFiltering || activeMachineFilter !== null || showUnreadOnly) && groups.length === 0 && runningSessionTotal === 0 && activeSessionTotal === 0 && globalPinnedSessions.length === 0 ? (
-                    <div className="px-4 py-8 text-center text-sm text-[var(--app-hint)]">
-                        {t('sessions.search.noResults')}
-                    </div>
-                ) : null}
-
-                {globalPinnedSessions.length > 0 ? (
-                    <div key="pinned-section">
-                        <div
-                            className="group/pinned flex min-w-0 w-full select-none cursor-pointer items-center gap-2 rounded-lg py-1.5 pl-2 pr-2 transition-colors hover:bg-[var(--app-secondary-bg)]"
-                            role="button"
-                            tabIndex={0}
-                            aria-expanded={!pinnedSectionCollapsed || isFiltering}
-                            onClick={() => setPinnedSectionCollapsed((value) => !value)}
-                            onKeyDown={(event) => {
-                                if (event.key === 'Enter' || event.key === ' ') {
-                                    event.preventDefault()
-                                    setPinnedSectionCollapsed((value) => !value)
-                                }
-                            }}
-                            title={t('sessions.pinnedSection')}
-                        >
-                            <ChevronIcon className="h-3.5 w-3.5 text-[var(--app-hint)] shrink-0" collapsed={pinnedSectionCollapsed && !isFiltering} />
-                            <span className="inline-flex min-w-0 items-center gap-1">
-                                <span className="min-w-0 truncate text-sm font-medium">
-                                    {t('sessions.pinnedSection')}
-                                </span>
-                                <PinnedSectionIcon className="h-3.5 w-3.5 shrink-0 -translate-y-px text-[var(--app-hint)]" />
-                            </span>
-                            <span className="min-w-0 flex-1" aria-hidden="true" />
-                            <span className="shrink-0 text-[11px] tabular-nums text-[var(--app-hint)]">
-                                ({globalPinnedSessions.length})
-                            </span>
-                        </div>
-                        <div className="collapsible-panel" data-open={(!pinnedSectionCollapsed || isFiltering) || undefined}>
-                            <div className="collapsible-inner">
-                                <div className="flex flex-col gap-0.5 ml-3 pl-1 py-1">
-                                    {globalPinnedSessions.map((s) => (
-                                        <SessionItem
-                                            key={s.id}
-                                            session={s}
-                                            onSelect={selectSession}
-                                            showPath={false}
-                                            api={api}
-                                            titleSuggestionAvailable={titleSuggestionAvailable}
-                                            selected={s.id === selectedSessionId}
-                                            showDetailedStatus={showDetailedStatus}
-                                            inRunningSection
-                                            projectLabel={getGroupDisplayName(s.metadata?.worktree?.basePath ?? s.metadata?.path ?? 'Other')}
-                                            machineLabel={resolveMachineLabel(s.metadata?.machineId ?? null)}
-                                            lastSeenVersion={lastSeenVersion}
-                                        />
-                                    ))}
-                                </div>
-                            </div>
+            <div className="mx-auto flex w-full max-w-content flex-col gap-1 px-2 pb-2 split:max-w-none">{props.sessions.length === 0 && !props.isLoading ? (
+                <SessionsEmptyState
+                    onNewSession={props.onNewSession}
+                    onBrowse={props.onBrowse}
+                />
+            ) : null}
+            
+            {props.sessions.length > 0 && (isFiltering || activeMachineFilter !== null || showUnreadOnly) && groups.length === 0 && runningSessionTotal === 0 && activeSessionTotal === 0 && globalPinnedSessions.length === 0 ? (
+                <div className="px-4 py-8 text-center text-sm text-[var(--app-hint)]">
+                    {t('sessions.search.noResults')}
+                </div>
+            ) : null}
+            
+            {globalPinnedSessions.length > 0 ? (
+                <div key="pinned-section">
+                    <div className="group/pinned flex min-w-0 w-full select-none cursor-pointer items-center gap-2 rounded-md py-1 pl-2 pr-2 transition-colors hover:bg-[var(--app-secondary-bg)]" role="button"
+                    tabIndex={0}
+                    aria-expanded={!pinnedSectionCollapsed || isFiltering}
+                    onClick={() => setPinnedSectionCollapsed((value) => !value)}
+                    onKeyDown={(event) => {
+                        if (event.key === 'Enter' || event.key === ' ') {
+                            event.preventDefault()
+                            setPinnedSectionCollapsed((value) => !value)
+                        }
+                    }}
+                    title={t('sessions.pinnedSection')}><ChevronIcon className="h-3.5 w-3.5 text-[var(--app-hint)] shrink-0" collapsed={pinnedSectionCollapsed && !isFiltering} />
+                    <span className="inline-flex min-w-0 items-center gap-1">
+                        <span className="min-w-0 truncate text-xs font-medium text-[var(--app-hint)]">
+                            {t('sessions.pinnedSection')}
+                        </span>
+                        <PinnedSectionIcon className="h-3.5 w-3.5 shrink-0 -translate-y-px text-[var(--app-hint)]" />
+                    </span>
+                    <span className="min-w-0 flex-1" aria-hidden="true" />
+                    <span className="inline-flex h-5 min-w-5 shrink-0 items-center justify-center rounded-md bg-[var(--app-subtle-bg)] px-1 text-[11px] tabular-nums text-[var(--app-hint)]">{globalPinnedSessions.length}</span></div>
+                    <div className="collapsible-panel" data-open={(!pinnedSectionCollapsed || isFiltering) || undefined}>
+                        <div className="collapsible-inner">
+                            <div className="my-0.5 flex flex-col gap-0.5 py-0.5">{globalPinnedSessions.map((s) => (
+                                <SessionItem
+                                    key={s.id}
+                                    session={s}
+                                    onSelect={selectSession}
+                                    showPath={false}
+                                    api={api}
+                                    titleSuggestionAvailable={titleSuggestionAvailable}
+                                    selected={s.id === selectedSessionId}
+                                    showDetailedStatus={showDetailedStatus}
+                                    inRunningSection
+                                    projectLabel={getGroupDisplayName(s.metadata?.worktree?.basePath ?? s.metadata?.path ?? 'Other')}
+                                    machineLabel={resolveMachineLabel(s.metadata?.machineId ?? null)}
+                                    lastSeenVersion={lastSeenVersion}
+                                />
+                            ))}</div>
                         </div>
                     </div>
-                ) : null}
-
-                {renderPinnedSection({
-                    sectionKey: 'running-section',
-                    titleKey: 'sessions.runningSection',
-                    collapsed: runningSectionCollapsed,
-                    onToggle: () => setRunningSectionCollapsed((value) => !value),
-                    pulse: true,
-                    count: runningSessionTotal,
-                    bucketKeys: ['working', 'pending'],
-                })}
-                {renderPinnedSection({
-                    sectionKey: 'active-section',
-                    titleKey: 'sessions.activeSection',
-                    collapsed: activeSectionCollapsed,
-                    onToggle: () => setActiveSectionCollapsed((value) => !value),
-                    pulse: false,
-                    count: activeSessionTotal,
-                    bucketKeys: ['active'],
-                })}
-                {groups.map(renderDirectoryGroup)}
-                {actionOnlyGroups.map(renderActionOnlyGroupHeader)}
-            </div>
+                </div>
+            ) : null}
+            
+            {renderPinnedSection({
+                sectionKey: 'running-section',
+                titleKey: 'sessions.runningSection',
+                collapsed: runningSectionCollapsed,
+                onToggle: () => setRunningSectionCollapsed((value) => !value),
+                pulse: true,
+                count: runningSessionTotal,
+                bucketKeys: ['working', 'pending'],
+            })}
+            {renderPinnedSection({
+                sectionKey: 'active-section',
+                titleKey: 'sessions.activeSection',
+                collapsed: activeSectionCollapsed,
+                onToggle: () => setActiveSectionCollapsed((value) => !value),
+                pulse: false,
+                count: activeSessionTotal,
+                bucketKeys: ['active'],
+            })}
+            {groups.map(renderDirectoryGroup)}
+            {actionOnlyGroups.map(renderActionOnlyGroupHeader)}</div>
             </div>
             </div>
         </div>

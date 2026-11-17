@@ -9,10 +9,10 @@ import {
     hasTurnContentActivity,
     partitionTurn,
     turnDurationMs,
-    type ProjectedTurn,
     type TurnContentPart,
     type TurnPartition,
 } from '@/components/AssistantChat/messages/turnBlockModel'
+import type { ProjectedTurn } from '@/components/AssistantChat/messages/turnProjection'
 import { TimelineTurnBlockView, type TranscriptViewMode } from '@/components/AssistantChat/messages/TimelineTurnBlock'
 import { TurnStepExpansionStore } from '@/components/AssistantChat/messages/TimelineStepRows'
 import type { HappyChatMessageMetadata } from '@/lib/assistant-runtime'

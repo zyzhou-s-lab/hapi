@@ -1,6 +1,6 @@
 import type { Attachment } from '@assistant-ui/react'
 import { ComposerPrimitive, useAui, useAuiState } from '@assistant-ui/react'
-import type { MutableRefObject } from 'react'
+import type { MutableRefObject, ReactNode } from 'react'
 import {
     useCallback,
     useEffect,
@@ -32,7 +32,7 @@ import type { ScratchlistParkResult } from '@/lib/scratchlistAttachmentFlow'
 import { useFue } from '@/lib/use-fue'
 import { useTranslation } from '@/lib/use-translation'
 import type { ConversationStatus } from '@/realtime/types'
-import type { AgentState, GitStatusFiles, ThreadGoal } from '@/types/api'
+import type { AgentState, ThreadGoal } from '@/types/api'
 import type { ComposerFlavorPropsInput } from './composer/ComposerSettingsSheet'
 import {
     ComposerSettingsSheet,
@@ -123,9 +123,7 @@ export interface HappyComposerProps extends ComposerFlavorPropsInput {
     attachmentOrderRef?: MutableRefObject<string[]>
     /** Chip hover / aria-label resolver (SessionChat → useSessions). */
     resolveSessionMentionTooltip?: (id: string, title: string) => SessionMentionResolveResult
-    gitBranch?: string | null
-    gitStatus?: GitStatusFiles | null
-    onViewFiles?: () => void
+    sourceControl?: ReactNode
 }
 
 export function HappyComposer(props: HappyComposerProps) {
@@ -467,7 +465,7 @@ export function HappyComposer(props: HappyComposerProps) {
                     <ComposerPrimitive.Root className={rootClassName} onSubmit={handleSubmit}>
                         {overlays}
 
-                        {shouldShowComposerStatusBar(agentFlavor) ? (
+                        {shouldShowComposerStatusBar(agentFlavor) || props.sourceControl ? (
                             <StatusBar
                                 active={active}
                                 thinking={thinking}
@@ -489,9 +487,7 @@ export function HappyComposer(props: HappyComposerProps) {
                                 threadGoal={threadGoal}
                                 agentFlavor={agentFlavor}
                                 voiceStatus={effectiveVoiceStatus}
-                                gitBranch={props.gitBranch}
-                                gitStatus={props.gitStatus}
-                                onViewFiles={props.onViewFiles}
+                                sourceControl={props.sourceControl}
                                 hideContextUsage
                             />
                         ) : null}

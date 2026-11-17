@@ -1,5 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
-import { projectTurn, type ProjectedSubturn, type ProjectedTurn, type TurnPartition } from '@/components/AssistantChat/messages/turnBlockModel'
+import type { TurnPartition } from '@/components/AssistantChat/messages/turnBlockModel'
+import { projectTurn, type ProjectedSubturn, type ProjectedTurn } from '@/components/AssistantChat/messages/turnProjection'
 import { TurnExecutionRail } from '@/components/AssistantChat/messages/TurnExecutionRail'
 import { TimelineTodoChecklistCard, TurnTodoSection } from '@/components/AssistantChat/messages/TurnTodoSection'
 import { TurnAnswerSection } from '@/components/AssistantChat/messages/TurnAnswerSection'

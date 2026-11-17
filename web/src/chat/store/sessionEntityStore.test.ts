@@ -29,9 +29,9 @@ const { normalizeDecryptedMessage } = normalizeModule
 const { reduceChatBlocks } = reducerModule
 import {
     partitionTurn,
-    projectTurn,
     type TurnContentPart,
 } from '@/components/AssistantChat/messages/turnBlockModel'
+import { projectTurn } from '@/components/AssistantChat/messages/turnProjection'
 import type { AgentState, DecryptedMessage } from '@/types/api'
 
 function makeUserMessage(id: string, text: string, seq: number, createdAt = seq * 1000): DecryptedMessage {

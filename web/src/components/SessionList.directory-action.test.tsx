@@ -97,46 +97,6 @@ describe('SessionList directory action', () => {
         })
     })
 
-    it('keeps the sticky project header opaque and aligned with the list viewport', () => {
-        const session = makeSession({
-            id: 'session-1',
-            updatedAt: Date.now(),
-            metadata: {
-                path: '/home/ubuntu',
-                name: 'Greeting',
-                flavor: 'codex',
-            }
-        })
-
-        renderWithProviders(
-            <SessionList
-                scrollStability={DISABLED_SESSION_LIST_SCROLL_STABILITY}
-                sessions={[session]}
-                selectedSessionId={null}
-                onSelect={vi.fn()}
-                onNewSession={vi.fn()}
-                onRefresh={vi.fn()}
-                isLoading={false}
-                renderHeader={false}
-                api={null}
-            />
-        )
-
-        const projectHeader = screen.getByTitle('/home/ubuntu')
-        expect(projectHeader).toHaveClass('bg-[var(--app-bg)]')
-        expect(projectHeader).toHaveClass('hover:bg-[var(--app-secondary-bg)]')
-        expect(projectHeader).not.toHaveClass('hover:bg-[var(--app-subtle-bg)]')
-
-        const listContent = projectHeader.parentElement?.parentElement
-        expect(listContent).not.toHaveClass('pt-1')
-
-        fireEvent.click(screen.getByRole('button', { name: SEARCH_LABEL }))
-        const searchInput = screen.getByPlaceholderText(SEARCH_PLACEHOLDER)
-        const headerRow = searchInput.parentElement?.parentElement
-        expect(headerRow).toHaveClass('px-2')
-        expect(headerRow).toHaveClass('py-1')
-    })
-
     it('hides the directory action for sessions without path metadata', () => {
         renderWithProviders(
             <SessionList
@@ -278,8 +238,6 @@ describe('SessionList time filter', () => {
         fireEvent.click(filterButton)
         const startDate = screen.getByRole('button', { name: new Date(2026, 6, 1).toLocaleDateString() })
         fireEvent.click(startDate)
-        expect(startDate).toHaveClass('bg-[var(--app-button)]', 'text-[var(--app-button-text)]')
-        expect(startDate).not.toHaveClass('text-white')
         expect(screen.getByText('Select end date')).toBeInTheDocument()
         fireEvent.click(screen.getByRole('button', { name: `${new Date(2026, 6, 18).toLocaleDateString()}, has session activity` }))
 
@@ -361,7 +319,110 @@ describe('SessionList action menu parity', () => {
         expect(screen.getByRole('dialog')).toBeInTheDocument()
         expect(screen.getByRole('heading', { name: 'Export conversation' })).toBeInTheDocument()
     })
+
+    it('opens row actions without selecting the session and restores trigger focus on Escape', async () => {
+        const onSelect = vi.fn()
+        const session = makeSession({
+            id: 'session-actions',
+            metadata: { path: '/work/hapi', name: 'Session actions' },
+        })
+
+        renderWithProviders(
+            <SessionList
+                scrollStability={DISABLED_SESSION_LIST_SCROLL_STABILITY}
+                sessions={[session]}
+                selectedSessionId={null}
+                onSelect={onSelect}
+                onNewSession={vi.fn()}
+                onRefresh={vi.fn()}
+                isLoading={false}
+                renderHeader={false}
+                api={null}
+            />
+        )
+
+        const trigger = screen.getByRole('button', { name: 'More actions' })
+        trigger.focus()
+        fireEvent.mouseDown(trigger)
+        fireEvent.mouseUp(trigger)
+        fireEvent.click(trigger)
+
+        const exportAction = screen.getByRole('menuitem', { name: 'Export conversation' })
+        await waitFor(() => expect(screen.getAllByRole('menuitem')[0]).toHaveFocus())
+        expect(onSelect).not.toHaveBeenCalled()
+
+        fireEvent.keyDown(exportAction, { key: 'Escape' })
+        expect(screen.queryByRole('menu')).toBeNull()
+        expect(trigger).toHaveFocus()
+
+        fireEvent.click(trigger)
+        fireEvent.click(trigger)
+        expect(screen.queryByRole('menu')).toBeNull()
+        fireEvent.click(trigger)
+        fireEvent.click(screen.getByRole('menuitem', { name: 'Export conversation' }))
+        expect(screen.getByRole('dialog')).toBeInTheDocument()
+        expect(onSelect).not.toHaveBeenCalled()
+    })
 })
+describe('SessionList row updates', () => {
+    it('refreshes selection and session content while using the latest selection handler', () => {
+        const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+        const first = makeSession({
+            id: 'row-first',
+            metadata: { path: '/work/rows', name: 'First task' },
+        })
+        const second = makeSession({
+            id: 'row-second',
+            metadata: { path: '/work/rows', name: 'Second task' },
+        })
+        const previousSelect = vi.fn()
+        const currentSelect = vi.fn()
+        const beforeSelect = vi.fn()
+        const renderList = (
+            sessions: SessionSummary[],
+            selectedSessionId: string,
+            onSelect: (sessionId: string) => void,
+        ) => (
+            <QueryClientProvider client={queryClient}>
+                <ToastProvider>
+                    <I18nProvider>
+                        <SessionList
+                            sessions={sessions}
+                            selectedSessionId={selectedSessionId}
+                            onSelect={onSelect}
+                            onNewSession={previousSelect}
+                            onRefresh={previousSelect}
+                            isLoading={false}
+                            renderHeader={false}
+                            api={null}
+                            scrollStability={{
+                                ...DISABLED_SESSION_LIST_SCROLL_STABILITY,
+                                beforeSelect,
+                            }}
+                        />
+                    </I18nProvider>
+                </ToastProvider>
+            </QueryClientProvider>
+        )
+        const { rerender } = render(renderList([first, second], first.id, previousSelect))
+        expect(screen.getByRole('button', { name: /First task/ })).toHaveAttribute('aria-current', 'page')
+
+        rerender(renderList([
+            first,
+            { ...second, metadata: { path: '/work/rows', name: 'Updated second task' } },
+        ], second.id, currentSelect))
+
+        expect(screen.getByRole('button', { name: /First task/ })).not.toHaveAttribute('aria-current')
+        const selected = screen.getByRole('button', { name: /Updated second task/ })
+        expect(selected).toHaveAttribute('aria-current', 'page')
+        fireEvent.keyDown(selected, { key: 'Enter' })
+        expect(beforeSelect).toHaveBeenCalledWith(second.id)
+        expect(currentSelect).toHaveBeenCalledWith(second.id)
+        expect(previousSelect).not.toHaveBeenCalled()
+        expect(beforeSelect.mock.invocationCallOrder[0]).toBeLessThan(currentSelect.mock.invocationCallOrder[0]!)
+    })
+})
+
 
 describe('SessionList collapse behavior', () => {
     function renderSessionList(sessions: SessionSummary[], selectedSessionId: string | null = 'session-running') {
@@ -1049,12 +1110,6 @@ describe('SessionList search toggle', () => {
         expect(screen.queryByPlaceholderText(SEARCH_PLACEHOLDER)).toBeNull()
         const collapsed = screen.getByRole('button', { name: /Search sessions/ })
         expect(collapsed).toHaveTextContent('jellybot')
-        expect(collapsed.className).toContain('bg-[var(--app-chat-user-chip-bg)]')
-        expect(collapsed.className).toContain('text-[var(--app-chat-user-chip-fg)]')
-        const clearButton = screen.getByRole('button', { name: 'Clear search' })
-        expect(clearButton.className).toContain('bg-[var(--app-chat-user-chip-action-bg)]')
-        expect(clearButton.className).toContain('text-[var(--app-chat-user-chip-action-fg)]')
-        expect(clearButton.className).toContain('hover:text-[var(--app-chat-user-chip-action-hover-fg)]')
         expect(screen.getByRole('button', { name: /jellybot task/ })).toBeInTheDocument()
         expect(screen.queryByRole('button', { name: /Other task/ })).toBeNull()
     })

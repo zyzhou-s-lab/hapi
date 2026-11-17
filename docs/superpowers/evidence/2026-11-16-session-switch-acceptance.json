@@ -1,0 +1,2697 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-11-16T11:28:36.895Z",
+  "environment": {
+    "entry": "http://127.0.0.1:5174",
+    "frontend": "Vite development, current workspace source",
+    "browser": "Linux Chromium149.0.7827.55",
+    "viewport": {
+      "width": 1280,
+      "height": 800
+    },
+    "cpuProfiler": false,
+    "trace": false,
+    "screenshots": false,
+    "video": false,
+    "apiWrites": "only authentication allowed; GET/HEAD and CORS OPTIONS permitted"
+  },
+  "timing": {
+    "samples": [
+      {
+        "target": "44463dcc-0fb3-4a00-8f7d-2c2d3d8d8d97",
+        "start": 221682.5999994278,
+        "dom": 221817.0999994278,
+        "raf": 221965.19999980927,
+        "applied": 222402.79999923706,
+        "sawSync": true,
+        "wrongSessionFrames": 0,
+        "emptyFrames": 0,
+        "routeSeen": true,
+        "end": 224515.69999980927,
+        "tasks": [
+          {
+            "start": 221684.19999980927,
+            "duration": 132
+          },
+          {
+            "start": 221820.5,
+            "duration": 143
+          },
+          {
+            "start": 222011.5,
+            "duration": 159
+          }
+        ],
+        "events": [
+          {
+            "name": "pointerdown",
+            "start": 221682.5999994278,
+            "duration": 152,
+            "processingStart": 221684.5,
+            "processingEnd": 221685.0999994278,
+            "interactionId": 8190
+          },
+          {
+            "name": "pointerup",
+            "start": 221682.69999980927,
+            "duration": 152,
+            "processingStart": 221686,
+            "processingEnd": 221686.0999994278,
+            "interactionId": 8190
+          },
+          {
+            "name": "click",
+            "start": 221682.69999980927,
+            "duration": 152,
+            "processingStart": 221815.39999961853,
+            "processingEnd": 221815.5,
+            "interactionId": 8190
+          }
+        ],
+        "resources": [
+          {
+            "start": 221773.89999961853,
+            "end": 222354.69999980927,
+            "encoded": 621880,
+            "decoded": 4059990
+          }
+        ]
+      },
+      {
+        "target": "00628dc6-6a7f-4d59-98d4-8bf6872d1628",
+        "start": 224549.0999994278,
+        "dom": 224736.5,
+        "raf": 224847.79999923706,
+        "applied": 225299.5999994278,
+        "sawSync": true,
+        "wrongSessionFrames": 0,
+        "emptyFrames": 0,
+        "routeSeen": true,
+        "end": 227414.5,
+        "tasks": [
+          {
+            "start": 224550.5999994278,
+            "duration": 184
+          },
+          {
+            "start": 224740.39999961853,
+            "duration": 106
+          },
+          {
+            "start": 224873.0999994278,
+            "duration": 137
+          }
+        ],
+        "events": [
+          {
+            "name": "pointerdown",
+            "start": 224549.0999994278,
+            "duration": 208,
+            "processingStart": 224551,
+            "processingEnd": 224551.5,
+            "interactionId": 8197
+          },
+          {
+            "name": "pointerup",
+            "start": 224549.0999994278,
+            "duration": 200,
+            "processingStart": 224552.39999961853,
+            "processingEnd": 224552.39999961853,
+            "interactionId": 8197
+          },
+          {
+            "name": "click",
+            "start": 224549.0999994278,
+            "duration": 200,
+            "processingStart": 224734.19999980927,
+            "processingEnd": 224734.29999923706,
+            "interactionId": 8197
+          }
+        ],
+        "resources": [
+          {
+            "start": 224660.89999961853,
+            "end": 225269.39999961853,
+            "encoded": 643039,
+            "decoded": 2568360
+          }
+        ]
+      },
+      {
+        "target": "44463dcc-0fb3-4a00-8f7d-2c2d3d8d8d97",
+        "start": 227448.79999923706,
+        "dom": 227571.5,
+        "raf": 227715.19999980927,
+        "applied": 228438.79999923706,
+        "sawSync": true,
+        "wrongSessionFrames": 0,
+        "emptyFrames": 0,
+        "routeSeen": true,
+        "end": 230548,
+        "tasks": [
+          {
+            "start": 227450.0999994278,
+            "duration": 120
+          },
+          {
+            "start": 227575,
+            "duration": 139
+          },
+          {
+            "start": 227764.19999980927,
+            "duration": 147
+          }
+        ],
+        "events": [
+          {
+            "name": "pointerdown",
+            "start": 227448.79999923706,
+            "duration": 136,
+            "processingStart": 227450.39999961853,
+            "processingEnd": 227451,
+            "interactionId": 8204
+          },
+          {
+            "name": "pointerup",
+            "start": 227448.79999923706,
+            "duration": 136,
+            "processingStart": 227451.79999923706,
+            "processingEnd": 227451.79999923706,
+            "interactionId": 8204
+          },
+          {
+            "name": "click",
+            "start": 227448.79999923706,
+            "duration": 136,
+            "processingStart": 227569.5999994278,
+            "processingEnd": 227569.69999980927,
+            "interactionId": 8204
+          }
+        ],
+        "resources": [
+          {
+            "start": 227528.69999980927,
+            "end": 228389.79999923706,
+            "encoded": 621880,
+            "decoded": 4059990
+          }
+        ]
+      },
+      {
+        "target": "00628dc6-6a7f-4d59-98d4-8bf6872d1628",
+        "start": 230581.79999923706,
+        "dom": 230762.5999994278,
+        "raf": 230870.5999994278,
+        "applied": 231238.19999980927,
+        "sawSync": true,
+        "wrongSessionFrames": 0,
+        "emptyFrames": 0,
+        "routeSeen": true,
+        "end": 233347.89999961853,
+        "tasks": [
+          {
+            "start": 230583,
+            "duration": 178
+          },
+          {
+            "start": 230766.5999994278,
+            "duration": 103
+          },
+          {
+            "start": 230898.0999994278,
+            "duration": 136
+          }
+        ],
+        "events": [
+          {
+            "name": "pointerdown",
+            "start": 230581.79999923706,
+            "duration": 208,
+            "processingStart": 230583.29999923706,
+            "processingEnd": 230584,
+            "interactionId": 8211
+          },
+          {
+            "name": "pointerup",
+            "start": 230581.89999961853,
+            "duration": 208,
+            "processingStart": 230584.69999980927,
+            "processingEnd": 230584.79999923706,
+            "interactionId": 8211
+          },
+          {
+            "name": "click",
+            "start": 230581.89999961853,
+            "duration": 208,
+            "processingStart": 230760.39999961853,
+            "processingEnd": 230760.5,
+            "interactionId": 8211
+          }
+        ],
+        "resources": [
+          {
+            "start": 230688.29999923706,
+            "end": 231205.79999923706,
+            "encoded": 643039,
+            "decoded": 2568360
+          }
+        ]
+      },
+      {
+        "target": "44463dcc-0fb3-4a00-8f7d-2c2d3d8d8d97",
+        "start": 233382.29999923706,
+        "dom": 233502.5999994278,
+        "raf": 233638.5,
+        "applied": 234122,
+        "sawSync": true,
+        "wrongSessionFrames": 0,
+        "emptyFrames": 0,
+        "routeSeen": true,
+        "end": 236230.79999923706,
+        "tasks": [
+          {
+            "start": 233383.39999961853,
+            "duration": 118
+          },
+          {
+            "start": 233506.19999980927,
+            "duration": 131
+          },
+          {
+            "start": 233691.5,
+            "duration": 144
+          }
+        ],
+        "events": [
+          {
+            "name": "pointerdown",
+            "start": 233382.29999923706,
+            "duration": 136,
+            "processingStart": 233383.79999923706,
+            "processingEnd": 233384.39999961853,
+            "interactionId": 8218
+          },
+          {
+            "name": "pointerup",
+            "start": 233382.29999923706,
+            "duration": 136,
+            "processingStart": 233385.29999923706,
+            "processingEnd": 233385.29999923706,
+            "interactionId": 8218
+          },
+          {
+            "name": "click",
+            "start": 233382.29999923706,
+            "duration": 136,
+            "processingStart": 233501,
+            "processingEnd": 233501,
+            "interactionId": 8218
+          }
+        ],
+        "resources": [
+          {
+            "start": 233461,
+            "end": 234075,
+            "encoded": 621880,
+            "decoded": 4059990
+          }
+        ]
+      },
+      {
+        "target": "00628dc6-6a7f-4d59-98d4-8bf6872d1628",
+        "start": 236265,
+        "dom": 236441.69999980927,
+        "raf": 236548.5,
+        "applied": 236891.89999961853,
+        "sawSync": true,
+        "wrongSessionFrames": 0,
+        "emptyFrames": 0,
+        "routeSeen": true,
+        "end": 238997.39999961853,
+        "tasks": [
+          {
+            "start": 236266.29999923706,
+            "duration": 174
+          },
+          {
+            "start": 236445.5999994278,
+            "duration": 101
+          },
+          {
+            "start": 236576.19999980927,
+            "duration": 131
+          }
+        ],
+        "events": [
+          {
+            "name": "pointerdown",
+            "start": 236265,
+            "duration": 208,
+            "processingStart": 236266.5999994278,
+            "processingEnd": 236267.0999994278,
+            "interactionId": 8225
+          },
+          {
+            "name": "pointerup",
+            "start": 236265,
+            "duration": 208,
+            "processingStart": 236267.89999961853,
+            "processingEnd": 236267.89999961853,
+            "interactionId": 8225
+          },
+          {
+            "name": "click",
+            "start": 236265,
+            "duration": 208,
+            "processingStart": 236439.39999961853,
+            "processingEnd": 236439.5,
+            "interactionId": 8225
+          }
+        ],
+        "resources": [
+          {
+            "start": 236373.0999994278,
+            "end": 236862.29999923706,
+            "encoded": 643039,
+            "decoded": 2568360
+          }
+        ]
+      },
+      {
+        "target": "44463dcc-0fb3-4a00-8f7d-2c2d3d8d8d97",
+        "start": 239031.5999994278,
+        "dom": 239148.0999994278,
+        "raf": 239284.69999980927,
+        "applied": 239781.5999994278,
+        "sawSync": true,
+        "wrongSessionFrames": 0,
+        "emptyFrames": 0,
+        "routeSeen": true,
+        "end": 241897.29999923706,
+        "tasks": [
+          {
+            "start": 239032.79999923706,
+            "duration": 114
+          },
+          {
+            "start": 239151.5,
+            "duration": 132
+          },
+          {
+            "start": 239327.89999961853,
+            "duration": 154
+          }
+        ],
+        "events": [
+          {
+            "name": "pointerdown",
+            "start": 239031.5999994278,
+            "duration": 136,
+            "processingStart": 239033.19999980927,
+            "processingEnd": 239033.79999923706,
+            "interactionId": 8232
+          },
+          {
+            "name": "pointerup",
+            "start": 239031.69999980927,
+            "duration": 136,
+            "processingStart": 239034.5999994278,
+            "processingEnd": 239034.69999980927,
+            "interactionId": 8232
+          },
+          {
+            "name": "click",
+            "start": 239031.69999980927,
+            "duration": 136,
+            "processingStart": 239146.5,
+            "processingEnd": 239146.5,
+            "interactionId": 8232
+          }
+        ],
+        "resources": [
+          {
+            "start": 239107,
+            "end": 239735.39999961853,
+            "encoded": 621880,
+            "decoded": 4059990
+          }
+        ]
+      },
+      {
+        "target": "00628dc6-6a7f-4d59-98d4-8bf6872d1628",
+        "start": 241931.29999923706,
+        "dom": 242106.0999994278,
+        "raf": 242204.5,
+        "applied": 242815.5999994278,
+        "sawSync": true,
+        "wrongSessionFrames": 0,
+        "emptyFrames": 0,
+        "routeSeen": true,
+        "end": 244930.5,
+        "tasks": [
+          {
+            "start": 241932.5999994278,
+            "duration": 172
+          },
+          {
+            "start": 242110.0999994278,
+            "duration": 92
+          },
+          {
+            "start": 242230.29999923706,
+            "duration": 124
+          }
+        ],
+        "events": [
+          {
+            "name": "pointerdown",
+            "start": 241931.29999923706,
+            "duration": 208,
+            "processingStart": 241932.89999961853,
+            "processingEnd": 241933.5,
+            "interactionId": 8239
+          },
+          {
+            "name": "pointerup",
+            "start": 241931.5,
+            "duration": 200,
+            "processingStart": 241934.19999980927,
+            "processingEnd": 241934.19999980927,
+            "interactionId": 8239
+          },
+          {
+            "name": "click",
+            "start": 241931.5,
+            "duration": 200,
+            "processingStart": 242103.89999961853,
+            "processingEnd": 242104,
+            "interactionId": 8239
+          }
+        ],
+        "resources": [
+          {
+            "start": 242035.0999994278,
+            "end": 242785.89999961853,
+            "encoded": 643039,
+            "decoded": 2568360
+          }
+        ]
+      },
+      {
+        "target": "44463dcc-0fb3-4a00-8f7d-2c2d3d8d8d97",
+        "start": 244964.69999980927,
+        "dom": 245083,
+        "raf": 245215.0999994278,
+        "applied": 245652.69999980927,
+        "sawSync": true,
+        "wrongSessionFrames": 0,
+        "emptyFrames": 0,
+        "routeSeen": true,
+        "end": 247763.79999923706,
+        "tasks": [
+          {
+            "start": 244965.79999923706,
+            "duration": 116
+          },
+          {
+            "start": 245086.19999980927,
+            "duration": 127
+          },
+          {
+            "start": 245256.89999961853,
+            "duration": 142
+          }
+        ],
+        "events": [
+          {
+            "name": "pointerdown",
+            "start": 244964.69999980927,
+            "duration": 136,
+            "processingStart": 244966.19999980927,
+            "processingEnd": 244966.69999980927,
+            "interactionId": 8246
+          },
+          {
+            "name": "pointerup",
+            "start": 244964.69999980927,
+            "duration": 136,
+            "processingStart": 244967.5,
+            "processingEnd": 244967.5,
+            "interactionId": 8246
+          },
+          {
+            "name": "click",
+            "start": 244964.69999980927,
+            "duration": 136,
+            "processingStart": 245081.19999980927,
+            "processingEnd": 245081.29999923706,
+            "interactionId": 8246
+          }
+        ],
+        "resources": [
+          {
+            "start": 245043.19999980927,
+            "end": 245605.89999961853,
+            "encoded": 621880,
+            "decoded": 4059990
+          }
+        ]
+      },
+      {
+        "target": "00628dc6-6a7f-4d59-98d4-8bf6872d1628",
+        "start": 247798,
+        "dom": 247966,
+        "raf": 248070.89999961853,
+        "applied": 248614.29999923706,
+        "sawSync": true,
+        "wrongSessionFrames": 0,
+        "emptyFrames": 0,
+        "routeSeen": true,
+        "end": 250730.5,
+        "tasks": [
+          {
+            "start": 247799.19999980927,
+            "duration": 165
+          },
+          {
+            "start": 247969.89999961853,
+            "duration": 99
+          },
+          {
+            "start": 248098.69999980927,
+            "duration": 131
+          }
+        ],
+        "events": [
+          {
+            "name": "pointerdown",
+            "start": 247798,
+            "duration": 184,
+            "processingStart": 247799.5,
+            "processingEnd": 247800,
+            "interactionId": 8253
+          },
+          {
+            "name": "pointerup",
+            "start": 247798.0999994278,
+            "duration": 184,
+            "processingStart": 247800.79999923706,
+            "processingEnd": 247800.89999961853,
+            "interactionId": 8253
+          },
+          {
+            "name": "click",
+            "start": 247798.0999994278,
+            "duration": 184,
+            "processingStart": 247963.79999923706,
+            "processingEnd": 247964,
+            "interactionId": 8253
+          }
+        ],
+        "resources": [
+          {
+            "start": 247900.39999961853,
+            "end": 248581.5,
+            "encoded": 643039,
+            "decoded": 2568360
+          }
+        ]
+      },
+      {
+        "target": "44463dcc-0fb3-4a00-8f7d-2c2d3d8d8d97",
+        "start": 250765.19999980927,
+        "dom": 250878.19999980927,
+        "raf": 251012.19999980927,
+        "applied": 251406.29999923706,
+        "sawSync": true,
+        "wrongSessionFrames": 0,
+        "emptyFrames": 0,
+        "routeSeen": true,
+        "end": 253513.5,
+        "tasks": [
+          {
+            "start": 250766.29999923706,
+            "duration": 111
+          },
+          {
+            "start": 250881.69999980927,
+            "duration": 129
+          },
+          {
+            "start": 251061.5999994278,
+            "duration": 138
+          }
+        ],
+        "events": [
+          {
+            "name": "pointerdown",
+            "start": 250765.19999980927,
+            "duration": 136,
+            "processingStart": 250766.69999980927,
+            "processingEnd": 250767.29999923706,
+            "interactionId": 8260
+          },
+          {
+            "name": "pointerup",
+            "start": 250765.19999980927,
+            "duration": 136,
+            "processingStart": 250768.0999994278,
+            "processingEnd": 250768.0999994278,
+            "interactionId": 8260
+          },
+          {
+            "name": "click",
+            "start": 250765.19999980927,
+            "duration": 136,
+            "processingStart": 250876.5999994278,
+            "processingEnd": 250876.5999994278,
+            "interactionId": 8260
+          }
+        ],
+        "resources": [
+          {
+            "start": 250839.29999923706,
+            "end": 251361,
+            "encoded": 621880,
+            "decoded": 4059990
+          }
+        ]
+      },
+      {
+        "target": "00628dc6-6a7f-4d59-98d4-8bf6872d1628",
+        "start": 253548,
+        "dom": 253729.69999980927,
+        "raf": 253841.79999923706,
+        "applied": 254211.79999923706,
+        "sawSync": true,
+        "wrongSessionFrames": 0,
+        "emptyFrames": 0,
+        "routeSeen": true,
+        "end": 256313.5,
+        "tasks": [
+          {
+            "start": 253549.19999980927,
+            "duration": 179
+          },
+          {
+            "start": 253734.39999961853,
+            "duration": 106
+          },
+          {
+            "start": 253897.39999961853,
+            "duration": 128
+          }
+        ],
+        "events": [
+          {
+            "name": "pointerdown",
+            "start": 253548,
+            "duration": 208,
+            "processingStart": 253549.5,
+            "processingEnd": 253550,
+            "interactionId": 8267
+          },
+          {
+            "name": "pointerup",
+            "start": 253548.0999994278,
+            "duration": 208,
+            "processingStart": 253550.79999923706,
+            "processingEnd": 253550.79999923706,
+            "interactionId": 8267
+          },
+          {
+            "name": "click",
+            "start": 253548.0999994278,
+            "duration": 208,
+            "processingStart": 253726.89999961853,
+            "processingEnd": 253727,
+            "interactionId": 8267
+          }
+        ],
+        "resources": [
+          {
+            "start": 253653.0999994278,
+            "end": 254181.79999923706,
+            "encoded": 643039,
+            "decoded": 2568360
+          }
+        ]
+      },
+      {
+        "target": "44463dcc-0fb3-4a00-8f7d-2c2d3d8d8d97",
+        "start": 256347.5999994278,
+        "dom": 256470.0999994278,
+        "raf": 256605.19999980927,
+        "applied": 256993.0999994278,
+        "sawSync": true,
+        "wrongSessionFrames": 0,
+        "emptyFrames": 0,
+        "routeSeen": true,
+        "end": 259096.29999923706,
+        "tasks": [
+          {
+            "start": 256348.69999980927,
+            "duration": 120
+          },
+          {
+            "start": 256473.69999980927,
+            "duration": 130
+          },
+          {
+            "start": 256660,
+            "duration": 137
+          }
+        ],
+        "events": [
+          {
+            "name": "pointerdown",
+            "start": 256347.5999994278,
+            "duration": 152,
+            "processingStart": 256349.19999980927,
+            "processingEnd": 256349.69999980927,
+            "interactionId": 8274
+          },
+          {
+            "name": "pointerup",
+            "start": 256347.5999994278,
+            "duration": 152,
+            "processingStart": 256350.5,
+            "processingEnd": 256350.5,
+            "interactionId": 8274
+          },
+          {
+            "name": "click",
+            "start": 256347.5999994278,
+            "duration": 152,
+            "processingStart": 256468.19999980927,
+            "processingEnd": 256468.29999923706,
+            "interactionId": 8274
+          }
+        ],
+        "resources": [
+          {
+            "start": 256426.39999961853,
+            "end": 256949.0999994278,
+            "encoded": 621880,
+            "decoded": 4059990
+          }
+        ]
+      },
+      {
+        "target": "00628dc6-6a7f-4d59-98d4-8bf6872d1628",
+        "start": 259130.79999923706,
+        "dom": 259303.89999961853,
+        "raf": 259400.69999980927,
+        "applied": 259767,
+        "sawSync": true,
+        "wrongSessionFrames": 0,
+        "emptyFrames": 0,
+        "routeSeen": true,
+        "end": 261879.69999980927,
+        "tasks": [
+          {
+            "start": 259131.89999961853,
+            "duration": 171
+          },
+          {
+            "start": 259307.69999980927,
+            "duration": 90
+          },
+          {
+            "start": 259423.79999923706,
+            "duration": 129
+          }
+        ],
+        "events": [
+          {
+            "name": "pointerdown",
+            "start": 259130.79999923706,
+            "duration": 184,
+            "processingStart": 259132.29999923706,
+            "processingEnd": 259132.79999923706,
+            "interactionId": 8281
+          },
+          {
+            "name": "pointerup",
+            "start": 259130.79999923706,
+            "duration": 184,
+            "processingStart": 259133.5,
+            "processingEnd": 259133.5999994278,
+            "interactionId": 8281
+          },
+          {
+            "name": "click",
+            "start": 259130.79999923706,
+            "duration": 184,
+            "processingStart": 259301.69999980927,
+            "processingEnd": 259301.89999961853,
+            "interactionId": 8281
+          }
+        ],
+        "resources": [
+          {
+            "start": 259233.5999994278,
+            "end": 259736,
+            "encoded": 643039,
+            "decoded": 2568360
+          }
+        ]
+      },
+      {
+        "target": "44463dcc-0fb3-4a00-8f7d-2c2d3d8d8d97",
+        "start": 261914.19999980927,
+        "dom": 262031.19999980927,
+        "raf": 262161.5999994278,
+        "applied": 262506.89999961853,
+        "sawSync": true,
+        "wrongSessionFrames": 0,
+        "emptyFrames": 0,
+        "routeSeen": true,
+        "end": 264613.0999994278,
+        "tasks": [
+          {
+            "start": 261915.29999923706,
+            "duration": 115
+          },
+          {
+            "start": 262034.29999923706,
+            "duration": 126
+          },
+          {
+            "start": 262201.39999961853,
+            "duration": 149
+          }
+        ],
+        "events": [
+          {
+            "name": "pointerdown",
+            "start": 261914.19999980927,
+            "duration": 136,
+            "processingStart": 261915.5999994278,
+            "processingEnd": 261916.19999980927,
+            "interactionId": 8288
+          },
+          {
+            "name": "pointerup",
+            "start": 261914.19999980927,
+            "duration": 136,
+            "processingStart": 261917,
+            "processingEnd": 261917,
+            "interactionId": 8288
+          },
+          {
+            "name": "click",
+            "start": 261914.19999980927,
+            "duration": 136,
+            "processingStart": 262029.39999961853,
+            "processingEnd": 262029.5999994278,
+            "interactionId": 8288
+          }
+        ],
+        "resources": [
+          {
+            "start": 261989,
+            "end": 262445.5,
+            "encoded": 621880,
+            "decoded": 4059990
+          }
+        ]
+      },
+      {
+        "target": "00628dc6-6a7f-4d59-98d4-8bf6872d1628",
+        "start": 264646.5999994278,
+        "dom": 264817.29999923706,
+        "raf": 264913.5,
+        "applied": 265406.5999994278,
+        "sawSync": true,
+        "wrongSessionFrames": 0,
+        "emptyFrames": 0,
+        "routeSeen": true,
+        "end": 267513,
+        "tasks": [
+          {
+            "start": 264647.79999923706,
+            "duration": 168
+          },
+          {
+            "start": 264821.0999994278,
+            "duration": 90
+          },
+          {
+            "start": 264937.89999961853,
+            "duration": 126
+          }
+        ],
+        "events": [
+          {
+            "name": "pointerdown",
+            "start": 264646.5999994278,
+            "duration": 184,
+            "processingStart": 264648.0999994278,
+            "processingEnd": 264648.69999980927,
+            "interactionId": 8295
+          },
+          {
+            "name": "pointerup",
+            "start": 264646.69999980927,
+            "duration": 184,
+            "processingStart": 264649.39999961853,
+            "processingEnd": 264649.39999961853,
+            "interactionId": 8295
+          },
+          {
+            "name": "click",
+            "start": 264646.69999980927,
+            "duration": 184,
+            "processingStart": 264815,
+            "processingEnd": 264815.0999994278,
+            "interactionId": 8295
+          }
+        ],
+        "resources": [
+          {
+            "start": 264746.29999923706,
+            "end": 265375.19999980927,
+            "encoded": 643039,
+            "decoded": 2568360
+          }
+        ]
+      },
+      {
+        "target": "44463dcc-0fb3-4a00-8f7d-2c2d3d8d8d97",
+        "start": 267547.0999994278,
+        "dom": 267660.39999961853,
+        "raf": 267787.69999980927,
+        "applied": 268485.5999994278,
+        "sawSync": true,
+        "wrongSessionFrames": 0,
+        "emptyFrames": 0,
+        "routeSeen": true,
+        "end": 270599.0999994278,
+        "tasks": [
+          {
+            "start": 267548.19999980927,
+            "duration": 111
+          },
+          {
+            "start": 267663.5999994278,
+            "duration": 122
+          },
+          {
+            "start": 267813,
+            "duration": 142
+          }
+        ],
+        "events": [
+          {
+            "name": "pointerdown",
+            "start": 267547.0999994278,
+            "duration": 136,
+            "processingStart": 267548.69999980927,
+            "processingEnd": 267549.19999980927,
+            "interactionId": 8302
+          },
+          {
+            "name": "pointerup",
+            "start": 267547.19999980927,
+            "duration": 136,
+            "processingStart": 267549.89999961853,
+            "processingEnd": 267549.89999961853,
+            "interactionId": 8302
+          },
+          {
+            "name": "click",
+            "start": 267547.19999980927,
+            "duration": 136,
+            "processingStart": 267658.79999923706,
+            "processingEnd": 267658.79999923706,
+            "interactionId": 8302
+          }
+        ],
+        "resources": [
+          {
+            "start": 267620.89999961853,
+            "end": 268440.5,
+            "encoded": 621880,
+            "decoded": 4059990
+          }
+        ]
+      },
+      {
+        "target": "00628dc6-6a7f-4d59-98d4-8bf6872d1628",
+        "start": 270630.29999923706,
+        "dom": 270794.29999923706,
+        "raf": 270893.0999994278,
+        "applied": 271342,
+        "sawSync": true,
+        "wrongSessionFrames": 0,
+        "emptyFrames": 0,
+        "routeSeen": true,
+        "end": 273446.19999980927,
+        "tasks": [
+          {
+            "start": 270631.5,
+            "duration": 162
+          },
+          {
+            "start": 270798,
+            "duration": 92
+          },
+          {
+            "start": 270918,
+            "duration": 113
+          }
+        ],
+        "events": [
+          {
+            "name": "pointerdown",
+            "start": 270630.29999923706,
+            "duration": 184,
+            "processingStart": 270631.79999923706,
+            "processingEnd": 270632.29999923706,
+            "interactionId": 8309
+          },
+          {
+            "name": "pointerup",
+            "start": 270630.29999923706,
+            "duration": 184,
+            "processingStart": 270633.0999994278,
+            "processingEnd": 270633.0999994278,
+            "interactionId": 8309
+          },
+          {
+            "name": "click",
+            "start": 270630.29999923706,
+            "duration": 184,
+            "processingStart": 270792.19999980927,
+            "processingEnd": 270792.39999961853,
+            "interactionId": 8309
+          }
+        ],
+        "resources": [
+          {
+            "start": 270728.29999923706,
+            "end": 271311.89999961853,
+            "encoded": 643039,
+            "decoded": 2568360
+          }
+        ]
+      },
+      {
+        "target": "44463dcc-0fb3-4a00-8f7d-2c2d3d8d8d97",
+        "start": 273480.29999923706,
+        "dom": 273591.39999961853,
+        "raf": 273730.0999994278,
+        "applied": 274245.5,
+        "sawSync": true,
+        "wrongSessionFrames": 0,
+        "emptyFrames": 0,
+        "routeSeen": true,
+        "end": 276362.69999980927,
+        "tasks": [
+          {
+            "start": 273481.89999961853,
+            "duration": 108
+          },
+          {
+            "start": 273594.69999980927,
+            "duration": 134
+          },
+          {
+            "start": 273778.5,
+            "duration": 126
+          }
+        ],
+        "events": [
+          {
+            "name": "pointerdown",
+            "start": 273480.29999923706,
+            "duration": 136,
+            "processingStart": 273482.19999980927,
+            "processingEnd": 273482.79999923706,
+            "interactionId": 8316
+          },
+          {
+            "name": "pointerup",
+            "start": 273480.39999961853,
+            "duration": 136,
+            "processingStart": 273483.5,
+            "processingEnd": 273483.5999994278,
+            "interactionId": 8316
+          },
+          {
+            "name": "click",
+            "start": 273480.39999961853,
+            "duration": 136,
+            "processingStart": 273590,
+            "processingEnd": 273590.0999994278,
+            "interactionId": 8316
+          }
+        ],
+        "resources": [
+          {
+            "start": 273555,
+            "end": 274194.5999994278,
+            "encoded": 621880,
+            "decoded": 4059990
+          }
+        ]
+      },
+      {
+        "target": "00628dc6-6a7f-4d59-98d4-8bf6872d1628",
+        "start": 276396.79999923706,
+        "dom": 276559.39999961853,
+        "raf": 276658.0999994278,
+        "applied": 276992.5,
+        "sawSync": true,
+        "wrongSessionFrames": 0,
+        "emptyFrames": 0,
+        "routeSeen": true,
+        "end": 279095.89999961853,
+        "tasks": [
+          {
+            "start": 276397.89999961853,
+            "duration": 160
+          },
+          {
+            "start": 276562.89999961853,
+            "duration": 93
+          },
+          {
+            "start": 276681.79999923706,
+            "duration": 112
+          }
+        ],
+        "events": [
+          {
+            "name": "pointerdown",
+            "start": 276396.79999923706,
+            "duration": 184,
+            "processingStart": 276398.19999980927,
+            "processingEnd": 276398.79999923706,
+            "interactionId": 8323
+          },
+          {
+            "name": "pointerup",
+            "start": 276396.89999961853,
+            "duration": 184,
+            "processingStart": 276399.5,
+            "processingEnd": 276399.5999994278,
+            "interactionId": 8323
+          },
+          {
+            "name": "click",
+            "start": 276396.89999961853,
+            "duration": 184,
+            "processingStart": 276557.29999923706,
+            "processingEnd": 276557.39999961853,
+            "interactionId": 8323
+          }
+        ],
+        "resources": [
+          {
+            "start": 276497.0999994278,
+            "end": 276960.19999980927,
+            "encoded": 643039,
+            "decoded": 2568360
+          }
+        ]
+      },
+      {
+        "target": "44463dcc-0fb3-4a00-8f7d-2c2d3d8d8d97",
+        "start": 279130,
+        "dom": 279238.69999980927,
+        "raf": 279365.0999994278,
+        "applied": 279824.19999980927,
+        "sawSync": true,
+        "wrongSessionFrames": 0,
+        "emptyFrames": 0,
+        "routeSeen": true,
+        "end": 281929,
+        "tasks": [
+          {
+            "start": 279131.0999994278,
+            "duration": 106
+          },
+          {
+            "start": 279241.5999994278,
+            "duration": 122
+          },
+          {
+            "start": 279397.29999923706,
+            "duration": 118
+          }
+        ],
+        "events": [
+          {
+            "name": "pointerdown",
+            "start": 279130,
+            "duration": 136,
+            "processingStart": 279131.39999961853,
+            "processingEnd": 279131.89999961853,
+            "interactionId": 8330
+          },
+          {
+            "name": "pointerup",
+            "start": 279130,
+            "duration": 136,
+            "processingStart": 279132.69999980927,
+            "processingEnd": 279132.69999980927,
+            "interactionId": 8330
+          },
+          {
+            "name": "click",
+            "start": 279130,
+            "duration": 136,
+            "processingStart": 279237,
+            "processingEnd": 279237.0999994278,
+            "interactionId": 8330
+          }
+        ],
+        "resources": [
+          {
+            "start": 279201.79999923706,
+            "end": 279779.29999923706,
+            "encoded": 621880,
+            "decoded": 4059990
+          }
+        ]
+      },
+      {
+        "target": "00628dc6-6a7f-4d59-98d4-8bf6872d1628",
+        "start": 281963.19999980927,
+        "dom": 282132.5999994278,
+        "raf": 282225.89999961853,
+        "applied": 282757.19999980927,
+        "sawSync": true,
+        "wrongSessionFrames": 0,
+        "emptyFrames": 0,
+        "routeSeen": true,
+        "end": 284862.0999994278,
+        "tasks": [
+          {
+            "start": 281964.39999961853,
+            "duration": 167
+          },
+          {
+            "start": 282136.39999961853,
+            "duration": 86
+          },
+          {
+            "start": 282249,
+            "duration": 109
+          }
+        ],
+        "events": [
+          {
+            "name": "pointerdown",
+            "start": 281963.19999980927,
+            "duration": 192,
+            "processingStart": 281964.69999980927,
+            "processingEnd": 281965.19999980927,
+            "interactionId": 8337
+          },
+          {
+            "name": "pointerup",
+            "start": 281963.19999980927,
+            "duration": 192,
+            "processingStart": 281965.89999961853,
+            "processingEnd": 281966,
+            "interactionId": 8337
+          },
+          {
+            "name": "click",
+            "start": 281963.19999980927,
+            "duration": 192,
+            "processingStart": 282130.19999980927,
+            "processingEnd": 282130.39999961853,
+            "interactionId": 8337
+          }
+        ],
+        "resources": [
+          {
+            "start": 282061.0999994278,
+            "end": 282727.19999980927,
+            "encoded": 643039,
+            "decoded": 2568360
+          }
+        ]
+      },
+      {
+        "target": "44463dcc-0fb3-4a00-8f7d-2c2d3d8d8d97",
+        "start": 284896.5,
+        "dom": 285003.19999980927,
+        "raf": 285125.29999923706,
+        "applied": 285699.5,
+        "sawSync": true,
+        "wrongSessionFrames": 0,
+        "emptyFrames": 0,
+        "routeSeen": true,
+        "end": 287811.89999961853,
+        "tasks": [
+          {
+            "start": 284897.5,
+            "duration": 105
+          },
+          {
+            "start": 285006.39999961853,
+            "duration": 117
+          },
+          {
+            "start": 285154.0999994278,
+            "duration": 122
+          }
+        ],
+        "events": [
+          {
+            "name": "pointerdown",
+            "start": 284896.5,
+            "duration": 120,
+            "processingStart": 284897.89999961853,
+            "processingEnd": 284898.39999961853,
+            "interactionId": 8344
+          },
+          {
+            "name": "pointerup",
+            "start": 284896.5,
+            "duration": 120,
+            "processingStart": 284899.19999980927,
+            "processingEnd": 284899.19999980927,
+            "interactionId": 8344
+          },
+          {
+            "name": "click",
+            "start": 284896.5,
+            "duration": 120,
+            "processingStart": 285001.5999994278,
+            "processingEnd": 285001.69999980927,
+            "interactionId": 8344
+          }
+        ],
+        "resources": [
+          {
+            "start": 284966.29999923706,
+            "end": 285654,
+            "encoded": 621880,
+            "decoded": 4059990
+          }
+        ]
+      },
+      {
+        "target": "00628dc6-6a7f-4d59-98d4-8bf6872d1628",
+        "start": 287846.19999980927,
+        "dom": 288007.19999980927,
+        "raf": 288105.39999961853,
+        "applied": 288575.79999923706,
+        "sawSync": true,
+        "wrongSessionFrames": 0,
+        "emptyFrames": 0,
+        "routeSeen": true,
+        "end": 290678.5999994278,
+        "tasks": [
+          {
+            "start": 287847.29999923706,
+            "duration": 158
+          },
+          {
+            "start": 288011.19999980927,
+            "duration": 92
+          },
+          {
+            "start": 288130,
+            "duration": 109
+          }
+        ],
+        "events": [
+          {
+            "name": "pointerdown",
+            "start": 287846.19999980927,
+            "duration": 184,
+            "processingStart": 287847.5999994278,
+            "processingEnd": 287848.0999994278,
+            "interactionId": 8351
+          },
+          {
+            "name": "pointerup",
+            "start": 287846.19999980927,
+            "duration": 184,
+            "processingStart": 287848.79999923706,
+            "processingEnd": 287848.89999961853,
+            "interactionId": 8351
+          },
+          {
+            "name": "click",
+            "start": 287846.19999980927,
+            "duration": 184,
+            "processingStart": 288004.89999961853,
+            "processingEnd": 288005,
+            "interactionId": 8351
+          }
+        ],
+        "resources": [
+          {
+            "start": 287943.29999923706,
+            "end": 288542.5,
+            "encoded": 643039,
+            "decoded": 2568360
+          }
+        ]
+      },
+      {
+        "target": "44463dcc-0fb3-4a00-8f7d-2c2d3d8d8d97",
+        "start": 290712.69999980927,
+        "dom": 290824.5999994278,
+        "raf": 290948.5999994278,
+        "applied": 291689.69999980927,
+        "sawSync": true,
+        "wrongSessionFrames": 0,
+        "emptyFrames": 0,
+        "routeSeen": true,
+        "end": 293795,
+        "tasks": [
+          {
+            "start": 290713.89999961853,
+            "duration": 109
+          },
+          {
+            "start": 290828,
+            "duration": 119
+          },
+          {
+            "start": 290974.5,
+            "duration": 124
+          }
+        ],
+        "events": [
+          {
+            "name": "pointerdown",
+            "start": 290712.69999980927,
+            "duration": 136,
+            "processingStart": 290714.29999923706,
+            "processingEnd": 290714.79999923706,
+            "interactionId": 8358
+          },
+          {
+            "name": "pointerup",
+            "start": 290712.69999980927,
+            "duration": 136,
+            "processingStart": 290715.5999994278,
+            "processingEnd": 290715.5999994278,
+            "interactionId": 8358
+          },
+          {
+            "name": "click",
+            "start": 290712.69999980927,
+            "duration": 136,
+            "processingStart": 290822.79999923706,
+            "processingEnd": 290822.89999961853,
+            "interactionId": 8358
+          }
+        ],
+        "resources": [
+          {
+            "start": 290786.5999994278,
+            "end": 291636.69999980927,
+            "encoded": 621880,
+            "decoded": 4059990
+          }
+        ]
+      },
+      {
+        "target": "00628dc6-6a7f-4d59-98d4-8bf6872d1628",
+        "start": 293829.19999980927,
+        "dom": 293992,
+        "raf": 294089.0999994278,
+        "applied": 294603.89999961853,
+        "sawSync": true,
+        "wrongSessionFrames": 0,
+        "emptyFrames": 0,
+        "routeSeen": true,
+        "end": 296711.69999980927,
+        "tasks": [
+          {
+            "start": 293830.39999961853,
+            "duration": 160
+          },
+          {
+            "start": 293995.89999961853,
+            "duration": 90
+          },
+          {
+            "start": 294112.79999923706,
+            "duration": 107
+          }
+        ],
+        "events": [
+          {
+            "name": "pointerdown",
+            "start": 293829.19999980927,
+            "duration": 184,
+            "processingStart": 293830.69999980927,
+            "processingEnd": 293831.19999980927,
+            "interactionId": 8365
+          },
+          {
+            "name": "pointerup",
+            "start": 293829.19999980927,
+            "duration": 184,
+            "processingStart": 293831.89999961853,
+            "processingEnd": 293832,
+            "interactionId": 8365
+          },
+          {
+            "name": "click",
+            "start": 293829.19999980927,
+            "duration": 184,
+            "processingStart": 293989.79999923706,
+            "processingEnd": 293989.89999961853,
+            "interactionId": 8365
+          }
+        ],
+        "resources": [
+          {
+            "start": 293926,
+            "end": 294573.0999994278,
+            "encoded": 643039,
+            "decoded": 2568360
+          }
+        ]
+      },
+      {
+        "target": "44463dcc-0fb3-4a00-8f7d-2c2d3d8d8d97",
+        "start": 296745.69999980927,
+        "dom": 296855,
+        "raf": 296975.5999994278,
+        "applied": 297313,
+        "sawSync": true,
+        "wrongSessionFrames": 0,
+        "emptyFrames": 0,
+        "routeSeen": true,
+        "end": 299428.39999961853,
+        "tasks": [
+          {
+            "start": 296746.89999961853,
+            "duration": 107
+          },
+          {
+            "start": 296858,
+            "duration": 116
+          },
+          {
+            "start": 296999,
+            "duration": 125
+          }
+        ],
+        "events": [
+          {
+            "name": "pointerdown",
+            "start": 296745.69999980927,
+            "duration": 136,
+            "processingStart": 296747.19999980927,
+            "processingEnd": 296747.69999980927,
+            "interactionId": 8372
+          },
+          {
+            "name": "pointerup",
+            "start": 296745.79999923706,
+            "duration": 136,
+            "processingStart": 296748.5,
+            "processingEnd": 296748.5,
+            "interactionId": 8372
+          },
+          {
+            "name": "click",
+            "start": 296745.79999923706,
+            "duration": 136,
+            "processingStart": 296853.29999923706,
+            "processingEnd": 296853.39999961853,
+            "interactionId": 8372
+          }
+        ],
+        "resources": [
+          {
+            "start": 296817.5,
+            "end": 297269.29999923706,
+            "encoded": 621880,
+            "decoded": 4059990
+          }
+        ]
+      },
+      {
+        "target": "00628dc6-6a7f-4d59-98d4-8bf6872d1628",
+        "start": 299462.5999994278,
+        "dom": 299628.79999923706,
+        "raf": 299728,
+        "applied": 300052,
+        "sawSync": true,
+        "wrongSessionFrames": 0,
+        "emptyFrames": 0,
+        "routeSeen": true,
+        "end": 302161.5999994278,
+        "tasks": [
+          {
+            "start": 299463.69999980927,
+            "duration": 164
+          },
+          {
+            "start": 299632.79999923706,
+            "duration": 92
+          },
+          {
+            "start": 299752.39999961853,
+            "duration": 110
+          }
+        ],
+        "events": [
+          {
+            "name": "pointerdown",
+            "start": 299462.5999994278,
+            "duration": 184,
+            "processingStart": 299464.0999994278,
+            "processingEnd": 299464.5999994278,
+            "interactionId": 8379
+          },
+          {
+            "name": "pointerup",
+            "start": 299462.69999980927,
+            "duration": 184,
+            "processingStart": 299465.29999923706,
+            "processingEnd": 299465.39999961853,
+            "interactionId": 8379
+          },
+          {
+            "name": "click",
+            "start": 299462.69999980927,
+            "duration": 184,
+            "processingStart": 299626.29999923706,
+            "processingEnd": 299626.5,
+            "interactionId": 8379
+          }
+        ],
+        "resources": [
+          {
+            "start": 299560.0999994278,
+            "end": 300020.89999961853,
+            "encoded": 643039,
+            "decoded": 2568360
+          }
+        ]
+      },
+      {
+        "target": "44463dcc-0fb3-4a00-8f7d-2c2d3d8d8d97",
+        "start": 302195.5999994278,
+        "dom": 302303.0999994278,
+        "raf": 302422,
+        "applied": 303001,
+        "sawSync": true,
+        "wrongSessionFrames": 0,
+        "emptyFrames": 0,
+        "routeSeen": true,
+        "end": 305111.39999961853,
+        "tasks": [
+          {
+            "start": 302196.69999980927,
+            "duration": 105
+          },
+          {
+            "start": 302306.19999980927,
+            "duration": 114
+          },
+          {
+            "start": 302446.5,
+            "duration": 126
+          }
+        ],
+        "events": [
+          {
+            "name": "pointerdown",
+            "start": 302195.5999994278,
+            "duration": 120,
+            "processingStart": 302197,
+            "processingEnd": 302197.5999994278,
+            "interactionId": 8386
+          },
+          {
+            "name": "pointerup",
+            "start": 302195.5999994278,
+            "duration": 120,
+            "processingStart": 302198.29999923706,
+            "processingEnd": 302198.5,
+            "interactionId": 8386
+          },
+          {
+            "name": "click",
+            "start": 302195.5999994278,
+            "duration": 120,
+            "processingStart": 302301.5,
+            "processingEnd": 302301.5,
+            "interactionId": 8386
+          }
+        ],
+        "resources": [
+          {
+            "start": 302266.19999980927,
+            "end": 302956.19999980927,
+            "encoded": 621880,
+            "decoded": 4059990
+          }
+        ]
+      },
+      {
+        "target": "00628dc6-6a7f-4d59-98d4-8bf6872d1628",
+        "start": 305145.69999980927,
+        "dom": 305305.79999923706,
+        "raf": 305399.29999923706,
+        "applied": 305734.89999961853,
+        "sawSync": true,
+        "wrongSessionFrames": 0,
+        "emptyFrames": 0,
+        "routeSeen": true,
+        "end": 307844.69999980927,
+        "tasks": [
+          {
+            "start": 305146.79999923706,
+            "duration": 158
+          },
+          {
+            "start": 305309.5999994278,
+            "duration": 87
+          },
+          {
+            "start": 305423.89999961853,
+            "duration": 104
+          }
+        ],
+        "events": [
+          {
+            "name": "pointerdown",
+            "start": 305145.69999980927,
+            "duration": 184,
+            "processingStart": 305147.0999994278,
+            "processingEnd": 305147.5999994278,
+            "interactionId": 8393
+          },
+          {
+            "name": "pointerup",
+            "start": 305145.69999980927,
+            "duration": 184,
+            "processingStart": 305148.29999923706,
+            "processingEnd": 305148.39999961853,
+            "interactionId": 8393
+          },
+          {
+            "name": "click",
+            "start": 305145.69999980927,
+            "duration": 184,
+            "processingStart": 305303.5999994278,
+            "processingEnd": 305303.69999980927,
+            "interactionId": 8393
+          }
+        ],
+        "resources": [
+          {
+            "start": 305239.69999980927,
+            "end": 305703.19999980927,
+            "encoded": 643039,
+            "decoded": 2568360
+          }
+        ]
+      },
+      {
+        "target": "44463dcc-0fb3-4a00-8f7d-2c2d3d8d8d97",
+        "start": 307878.69999980927,
+        "dom": 307985.29999923706,
+        "raf": 308105.5999994278,
+        "applied": 308657.0999994278,
+        "sawSync": true,
+        "wrongSessionFrames": 0,
+        "emptyFrames": 0,
+        "routeSeen": true,
+        "end": 310761.29999923706,
+        "tasks": [
+          {
+            "start": 307879.79999923706,
+            "duration": 104
+          },
+          {
+            "start": 307988.5,
+            "duration": 116
+          },
+          {
+            "start": 308132,
+            "duration": 123
+          }
+        ],
+        "events": [
+          {
+            "name": "pointerdown",
+            "start": 307878.69999980927,
+            "duration": 120,
+            "processingStart": 307880.0999994278,
+            "processingEnd": 307880.69999980927,
+            "interactionId": 8400
+          },
+          {
+            "name": "pointerup",
+            "start": 307878.69999980927,
+            "duration": 120,
+            "processingStart": 307881.39999961853,
+            "processingEnd": 307881.39999961853,
+            "interactionId": 8400
+          },
+          {
+            "name": "click",
+            "start": 307878.69999980927,
+            "duration": 120,
+            "processingStart": 307983.5,
+            "processingEnd": 307983.5999994278,
+            "interactionId": 8400
+          }
+        ],
+        "resources": [
+          {
+            "start": 307948.5999994278,
+            "end": 308605.69999980927,
+            "encoded": 621880,
+            "decoded": 4059990
+          }
+        ]
+      },
+      {
+        "target": "00628dc6-6a7f-4d59-98d4-8bf6872d1628",
+        "start": 310796,
+        "dom": 310963.5999994278,
+        "raf": 311051.5999994278,
+        "applied": 311474.5999994278,
+        "sawSync": true,
+        "wrongSessionFrames": 0,
+        "emptyFrames": 0,
+        "routeSeen": true,
+        "end": 313578,
+        "tasks": [
+          {
+            "start": 310797.39999961853,
+            "duration": 165
+          },
+          {
+            "start": 310967.5999994278,
+            "duration": 81
+          },
+          {
+            "start": 311075.5,
+            "duration": 110
+          }
+        ],
+        "events": [
+          {
+            "name": "pointerdown",
+            "start": 310796,
+            "duration": 184,
+            "processingStart": 310797.79999923706,
+            "processingEnd": 310798.29999923706,
+            "interactionId": 8407
+          },
+          {
+            "name": "pointerup",
+            "start": 310796.0999994278,
+            "duration": 184,
+            "processingStart": 310799.19999980927,
+            "processingEnd": 310799.19999980927,
+            "interactionId": 8407
+          },
+          {
+            "name": "click",
+            "start": 310796.0999994278,
+            "duration": 184,
+            "processingStart": 310961,
+            "processingEnd": 310961.19999980927,
+            "interactionId": 8407
+          }
+        ],
+        "resources": [
+          {
+            "start": 310894.79999923706,
+            "end": 311442.39999961853,
+            "encoded": 643039,
+            "decoded": 2568360
+          }
+        ]
+      },
+      {
+        "target": "44463dcc-0fb3-4a00-8f7d-2c2d3d8d8d97",
+        "start": 313612.0999994278,
+        "dom": 313725.19999980927,
+        "raf": 313846.39999961853,
+        "applied": 314225.5999994278,
+        "sawSync": true,
+        "wrongSessionFrames": 0,
+        "emptyFrames": 0,
+        "routeSeen": true,
+        "end": 316328,
+        "tasks": [
+          {
+            "start": 313613.39999961853,
+            "duration": 110
+          },
+          {
+            "start": 313728.5,
+            "duration": 116
+          },
+          {
+            "start": 313872.29999923706,
+            "duration": 125
+          }
+        ],
+        "events": [
+          {
+            "name": "pointerdown",
+            "start": 313612.0999994278,
+            "duration": 136,
+            "processingStart": 313613.79999923706,
+            "processingEnd": 313614.39999961853,
+            "interactionId": 8414
+          },
+          {
+            "name": "pointerup",
+            "start": 313612.0999994278,
+            "duration": 136,
+            "processingStart": 313615.19999980927,
+            "processingEnd": 313615.29999923706,
+            "interactionId": 8414
+          },
+          {
+            "name": "click",
+            "start": 313612.0999994278,
+            "duration": 136,
+            "processingStart": 313723.39999961853,
+            "processingEnd": 313723.39999961853,
+            "interactionId": 8414
+          }
+        ],
+        "resources": [
+          {
+            "start": 313687.79999923706,
+            "end": 314175.89999961853,
+            "encoded": 621880,
+            "decoded": 4059990
+          }
+        ]
+      },
+      {
+        "target": "00628dc6-6a7f-4d59-98d4-8bf6872d1628",
+        "start": 316362,
+        "dom": 316531.29999923706,
+        "raf": 316630.5999994278,
+        "applied": 316961.0999994278,
+        "sawSync": true,
+        "wrongSessionFrames": 0,
+        "emptyFrames": 0,
+        "routeSeen": true,
+        "end": 319077.5,
+        "tasks": [
+          {
+            "start": 316363.29999923706,
+            "duration": 167
+          },
+          {
+            "start": 316535.79999923706,
+            "duration": 92
+          },
+          {
+            "start": 316655,
+            "duration": 107
+          }
+        ],
+        "events": [
+          {
+            "name": "pointerdown",
+            "start": 316362,
+            "duration": 184,
+            "processingStart": 316363.5999994278,
+            "processingEnd": 316364.19999980927,
+            "interactionId": 8421
+          },
+          {
+            "name": "pointerup",
+            "start": 316362,
+            "duration": 184,
+            "processingStart": 316365,
+            "processingEnd": 316365,
+            "interactionId": 8421
+          },
+          {
+            "name": "click",
+            "start": 316362,
+            "duration": 184,
+            "processingStart": 316528.89999961853,
+            "processingEnd": 316529,
+            "interactionId": 8421
+          }
+        ],
+        "resources": [
+          {
+            "start": 316459.69999980927,
+            "end": 316931.0999994278,
+            "encoded": 643039,
+            "decoded": 2568360
+          }
+        ]
+      },
+      {
+        "target": "44463dcc-0fb3-4a00-8f7d-2c2d3d8d8d97",
+        "start": 319111.79999923706,
+        "dom": 319219.39999961853,
+        "raf": 319339.0999994278,
+        "applied": 319875.0999994278,
+        "sawSync": true,
+        "wrongSessionFrames": 0,
+        "emptyFrames": 0,
+        "routeSeen": true,
+        "end": 321977.5,
+        "tasks": [
+          {
+            "start": 319113.19999980927,
+            "duration": 105
+          },
+          {
+            "start": 319222.79999923706,
+            "duration": 115
+          },
+          {
+            "start": 319363.19999980927,
+            "duration": 125
+          }
+        ],
+        "events": [
+          {
+            "name": "pointerdown",
+            "start": 319111.79999923706,
+            "duration": 136,
+            "processingStart": 319113.5999994278,
+            "processingEnd": 319114.0999994278,
+            "interactionId": 8428
+          },
+          {
+            "name": "pointerup",
+            "start": 319111.89999961853,
+            "duration": 136,
+            "processingStart": 319115,
+            "processingEnd": 319115,
+            "interactionId": 8428
+          },
+          {
+            "name": "click",
+            "start": 319111.89999961853,
+            "duration": 136,
+            "processingStart": 319217.69999980927,
+            "processingEnd": 319217.69999980927,
+            "interactionId": 8428
+          }
+        ],
+        "resources": [
+          {
+            "start": 319183.39999961853,
+            "end": 319824,
+            "encoded": 621880,
+            "decoded": 4059990
+          }
+        ]
+      },
+      {
+        "target": "00628dc6-6a7f-4d59-98d4-8bf6872d1628",
+        "start": 322011.79999923706,
+        "dom": 322175.29999923706,
+        "raf": 322267.79999923706,
+        "applied": 322841.5,
+        "sawSync": true,
+        "wrongSessionFrames": 0,
+        "emptyFrames": 0,
+        "routeSeen": true,
+        "end": 324943.89999961853,
+        "tasks": [
+          {
+            "start": 322013,
+            "duration": 161
+          },
+          {
+            "start": 322179.29999923706,
+            "duration": 86
+          },
+          {
+            "start": 322290.89999961853,
+            "duration": 109
+          }
+        ],
+        "events": [
+          {
+            "name": "pointerdown",
+            "start": 322011.79999923706,
+            "duration": 184,
+            "processingStart": 322013.39999961853,
+            "processingEnd": 322013.89999961853,
+            "interactionId": 8435
+          },
+          {
+            "name": "pointerup",
+            "start": 322011.89999961853,
+            "duration": 184,
+            "processingStart": 322014.69999980927,
+            "processingEnd": 322014.79999923706,
+            "interactionId": 8435
+          },
+          {
+            "name": "click",
+            "start": 322011.89999961853,
+            "duration": 184,
+            "processingStart": 322173,
+            "processingEnd": 322173,
+            "interactionId": 8435
+          }
+        ],
+        "resources": [
+          {
+            "start": 322113.29999923706,
+            "end": 322810.69999980927,
+            "encoded": 643039,
+            "decoded": 2568360
+          }
+        ]
+      },
+      {
+        "target": "44463dcc-0fb3-4a00-8f7d-2c2d3d8d8d97",
+        "start": 324978.19999980927,
+        "dom": 325088.39999961853,
+        "raf": 325207.29999923706,
+        "applied": 325699.79999923706,
+        "sawSync": true,
+        "wrongSessionFrames": 0,
+        "emptyFrames": 0,
+        "routeSeen": true,
+        "end": 327810.69999980927,
+        "tasks": [
+          {
+            "start": 324979.5,
+            "duration": 108
+          },
+          {
+            "start": 325091.89999961853,
+            "duration": 114
+          },
+          {
+            "start": 325231.89999961853,
+            "duration": 122
+          }
+        ],
+        "events": [
+          {
+            "name": "pointerdown",
+            "start": 324978.19999980927,
+            "duration": 136,
+            "processingStart": 324979.89999961853,
+            "processingEnd": 324980.5,
+            "interactionId": 8442
+          },
+          {
+            "name": "pointerup",
+            "start": 324978.29999923706,
+            "duration": 136,
+            "processingStart": 324981.29999923706,
+            "processingEnd": 324981.29999923706,
+            "interactionId": 8442
+          },
+          {
+            "name": "click",
+            "start": 324978.29999923706,
+            "duration": 136,
+            "processingStart": 325086.5999994278,
+            "processingEnd": 325086.69999980927,
+            "interactionId": 8442
+          }
+        ],
+        "resources": [
+          {
+            "start": 325052.5999994278,
+            "end": 325655.79999923706,
+            "encoded": 621880,
+            "decoded": 4059990
+          }
+        ]
+      },
+      {
+        "target": "00628dc6-6a7f-4d59-98d4-8bf6872d1628",
+        "start": 327844.5999994278,
+        "dom": 328014,
+        "raf": 328107.69999980927,
+        "applied": 328573.0999994278,
+        "sawSync": true,
+        "wrongSessionFrames": 0,
+        "emptyFrames": 0,
+        "routeSeen": true,
+        "end": 330677,
+        "tasks": [
+          {
+            "start": 327846,
+            "duration": 167
+          },
+          {
+            "start": 328017.89999961853,
+            "duration": 87
+          },
+          {
+            "start": 328132,
+            "duration": 103
+          }
+        ],
+        "events": [
+          {
+            "name": "pointerdown",
+            "start": 327844.5999994278,
+            "duration": 184,
+            "processingStart": 327846.29999923706,
+            "processingEnd": 327846.79999923706,
+            "interactionId": 8449
+          },
+          {
+            "name": "pointerup",
+            "start": 327844.69999980927,
+            "duration": 184,
+            "processingStart": 327847.69999980927,
+            "processingEnd": 327847.69999980927,
+            "interactionId": 8449
+          },
+          {
+            "name": "click",
+            "start": 327844.69999980927,
+            "duration": 184,
+            "processingStart": 328011.5999994278,
+            "processingEnd": 328011.69999980927,
+            "interactionId": 8449
+          }
+        ],
+        "resources": [
+          {
+            "start": 327943.0999994278,
+            "end": 328540.69999980927,
+            "encoded": 643039,
+            "decoded": 2568360
+          }
+        ]
+      },
+      {
+        "target": "44463dcc-0fb3-4a00-8f7d-2c2d3d8d8d97",
+        "start": 330715.29999923706,
+        "dom": 330835,
+        "raf": 330969.89999961853,
+        "applied": 331310.5999994278,
+        "sawSync": true,
+        "wrongSessionFrames": 0,
+        "emptyFrames": 0,
+        "routeSeen": true,
+        "end": 333427.0999994278,
+        "tasks": [
+          {
+            "start": 330717.19999980927,
+            "duration": 117
+          },
+          {
+            "start": 330838.19999980927,
+            "duration": 130
+          },
+          {
+            "start": 331009.19999980927,
+            "duration": 130
+          }
+        ],
+        "events": [
+          {
+            "name": "pointerdown",
+            "start": 330715.29999923706,
+            "duration": 128,
+            "processingStart": 330717.69999980927,
+            "processingEnd": 330718.39999961853,
+            "interactionId": 8456
+          },
+          {
+            "name": "pointerup",
+            "start": 330715.39999961853,
+            "duration": 128,
+            "processingStart": 330719.39999961853,
+            "processingEnd": 330719.39999961853,
+            "interactionId": 8456
+          },
+          {
+            "name": "click",
+            "start": 330715.39999961853,
+            "duration": 128,
+            "processingStart": 330833.29999923706,
+            "processingEnd": 330833.39999961853,
+            "interactionId": 8456
+          }
+        ],
+        "resources": [
+          {
+            "start": 330800,
+            "end": 331225.39999961853,
+            "encoded": 621880,
+            "decoded": 4059990
+          }
+        ]
+      },
+      {
+        "target": "00628dc6-6a7f-4d59-98d4-8bf6872d1628",
+        "start": 333461.19999980927,
+        "dom": 333632.69999980927,
+        "raf": 333730.5999994278,
+        "applied": 334216.5,
+        "sawSync": true,
+        "wrongSessionFrames": 0,
+        "emptyFrames": 0,
+        "routeSeen": true,
+        "end": 336326.79999923706,
+        "tasks": [
+          {
+            "start": 333462.5,
+            "duration": 169
+          },
+          {
+            "start": 333637.39999961853,
+            "duration": 90
+          },
+          {
+            "start": 333761.5,
+            "duration": 116
+          }
+        ],
+        "events": [
+          {
+            "name": "pointerdown",
+            "start": 333461.19999980927,
+            "duration": 192,
+            "processingStart": 333462.89999961853,
+            "processingEnd": 333463.39999961853,
+            "interactionId": 8463
+          },
+          {
+            "name": "pointerup",
+            "start": 333461.29999923706,
+            "duration": 184,
+            "processingStart": 333464.19999980927,
+            "processingEnd": 333464.29999923706,
+            "interactionId": 8463
+          },
+          {
+            "name": "click",
+            "start": 333461.29999923706,
+            "duration": 184,
+            "processingStart": 333630.19999980927,
+            "processingEnd": 333630.29999923706,
+            "interactionId": 8463
+          }
+        ],
+        "resources": [
+          {
+            "start": 333561.89999961853,
+            "end": 334185.19999980927,
+            "encoded": 643039,
+            "decoded": 2568360
+          }
+        ]
+      }
+    ],
+    "summary": {
+      "00628dc6-6a7f-4d59-98d4-8bf6872d1628": {
+        "n": 20,
+        "domP50": 169.29999923706055,
+        "domP95": 181.69999980926514,
+        "domMax": 187.4000005722046,
+        "longestTaskP95": 179,
+        "longestTaskMax": 184,
+        "interactionP95": 208,
+        "missingEventSamples": 0,
+        "emptyFrames": 0,
+        "wrongTailFrames": 0,
+        "postApplyMinMs": 2101.7000007629395
+      },
+      "44463dcc-0fb3-4a00-8f7d-2c2d3d8d8d97": {
+        "n": 20,
+        "domP50": 113,
+        "domP95": 122.70000076293945,
+        "domMax": 134.5,
+        "longestTaskP95": 154,
+        "longestTaskMax": 159,
+        "interactionP95": 152,
+        "missingEventSamples": 0,
+        "emptyFrames": 0,
+        "wrongTailFrames": 0,
+        "postApplyMinMs": 2102.4000005722046
+      }
+    },
+    "nearestRank": true,
+    "eventObservationThresholdMs": 16,
+    "definitions": {
+      "start": "captured pointerdown event timeStamp of actual sidebar input",
+      "dom": "first animation-frame check observing expected target-tail ID/hash, materialized and intersecting chat viewport; not exact DOM commit or Paint",
+      "raf": "next requestAnimationFrame callback after observed target readiness; not Paint",
+      "applied": "actual loaded Store isSyncingTail observed true then false; includes network and notification delay, not pure response CPU",
+      "task": "LongTask entry intersecting pointerdown through end of observation; >=50ms reporting threshold",
+      "events": "EventTiming entries for isolated click observation, reported next presentation, not target-specific Paint",
+      "window": "at least2100ms after both observed target readiness and tail-sync completion"
+    },
+    "limits": [
+      "No exact target-content Paint or150ms interactive certification",
+      "First subscription attempt used a duplicate untimestamped Vite module, produced0 retained samples; excluded",
+      "One failed first browser action reset eval; owned Chrome no longer present afterward"
+    ],
+    "gate": {
+      "longest100ms": "failed",
+      "paintedInteractive150ms": "not accepted; no target-Paint measurement; interaction next-presentation P95 above150ms"
+    }
+  },
+  "auth": {
+    "realFormTokenLoginHttp": 200,
+    "automaticAuthInitScript": false,
+    "oldRawStorageCount": 1,
+    "credentialRemovalReload": {
+      "chatEntries": 0,
+      "rawKeys": 0,
+      "owner": null
+    },
+    "logoutUi": "no sign-out action observed in settings; clearAuth has no consumer in web/src",
+    "customHub": {
+      "origin": "http://127.0.0.1:3006",
+      "backend": "same forwarded Hub, not independent second Hub",
+      "login": "blocked by CORS; no Access-Control-Allow-Origin",
+      "oldChatVisible": false
+    },
+    "crossAccount": "not exercised; no second existing account credential established",
+    "gate": "partial only, real cross-account/cross-Hub/UI logout unaccepted"
+  },
+  "macFonts": {
+    "status": "passed tested glyph scope",
+    "os": "macOS15.6 build24G84",
+    "browser": "Chrome147.0.7727.56",
+    "mode": "independent temporary headless Chrome, production dist-only glyph fixture",
+    "css": {
+      "path": "/assets/index-C02zZCKk.css",
+      "bytes": 169318,
+      "sha256": "f41130bb131140337a7e254903a89cb9c47ad5819457862c2e6fffcfa9a07f45"
+    },
+    "glyphs": [
+      {
+        "face": "Source Serif normal",
+        "postScript": "SourceSerif4Roman-Regular_wght_opszE0000",
+        "customGlyphs": 24,
+        "bytes": 122360,
+        "http": 200
+      },
+      {
+        "face": "Source Serif italic",
+        "postScript": "SourceSerif4Italic-Italic_wght_opszE0000",
+        "customGlyphs": 24,
+        "bytes": 130188,
+        "http": 200
+      },
+      {
+        "face": "KaTeX Main",
+        "postScript": "KaTeX_Main-Regular",
+        "customGlyphs": 14,
+        "bytes": 26272,
+        "http": 200
+      },
+      {
+        "face": "KaTeX Math italic",
+        "postScript": "KaTeX_Math-Italic",
+        "customGlyphs": 3,
+        "bytes": 16440,
+        "http": 200
+      }
+    ],
+    "fallbackGlyphs": 0,
+    "missingAssets": 0,
+    "exceptions": 0,
+    "consoleErrors": 0
+  },
+  "hubIdentity": {
+    "status": "unverified",
+    "healthHttp": 200,
+    "protocolVersion": 1,
+    "buildIdentityExposed": false,
+    "runtime": "100.64.170.85:3006 via existing SOCKS/forwarder",
+    "missing": "authenticated read-only mapping of serving process/container to immutable executable/image digest and build revision",
+    "webShaExcluded": true
+  },
+  "cleanup": {
+    "parentBrowserClosed": true,
+    "macBrowserTunnelClosed": true,
+    "productionChanges": false,
+    "stagingCommitDeployment": false
+  },
+  "memory": {
+    "gate": "30-session and long-term acceptance unfulfilled",
+    "coverage": {
+      "requestedDistinct": 30,
+      "listedSessionCount": 22,
+      "actualSidebarDistinct": 20,
+      "rounds": 3,
+      "visitsPerRound": 21,
+      "additionalDocumentLoads": 0,
+      "allTailsMounted": true
+    },
+    "measurements": [
+      {
+        "label": "baseline",
+        "usedJSHeapBytes": 59627076,
+        "documents": 2,
+        "nodes": 2821,
+        "listeners": 1022,
+        "idleActualMs": 2001,
+        "gcsBeforeSample": 2,
+        "derivedStores": 1,
+        "activeDerivedStores": 1,
+        "inactiveDerivedStores": 0,
+        "inactiveDerivedSubscriptions": 0,
+        "viewports": 1,
+        "entryAnchors": 9,
+        "renderedEntries": 3
+      },
+      {
+        "label": "round-1",
+        "usedJSHeapBytes": 172420996,
+        "documents": 2,
+        "nodes": 2896,
+        "listeners": 1028,
+        "idleActualMs": 2001,
+        "gcsBeforeSample": 2,
+        "derivedStores": 1,
+        "activeDerivedStores": 1,
+        "inactiveDerivedStores": 0,
+        "inactiveDerivedSubscriptions": 0,
+        "viewports": 1,
+        "entryAnchors": 9,
+        "renderedEntries": 3
+      },
+      {
+        "label": "round-2",
+        "usedJSHeapBytes": 171821164,
+        "documents": 2,
+        "nodes": 2896,
+        "listeners": 1028,
+        "idleActualMs": 2000,
+        "gcsBeforeSample": 2,
+        "derivedStores": 1,
+        "activeDerivedStores": 1,
+        "inactiveDerivedStores": 0,
+        "inactiveDerivedSubscriptions": 0,
+        "viewports": 1,
+        "entryAnchors": 9,
+        "renderedEntries": 3
+      },
+      {
+        "label": "round-3",
+        "usedJSHeapBytes": 173548920,
+        "documents": 2,
+        "nodes": 2896,
+        "listeners": 1028,
+        "idleActualMs": 2001,
+        "gcsBeforeSample": 2,
+        "derivedStores": 1,
+        "activeDerivedStores": 1,
+        "inactiveDerivedStores": 0,
+        "inactiveDerivedSubscriptions": 0,
+        "viewports": 1,
+        "entryAnchors": 9,
+        "renderedEntries": 3
+      },
+      {
+        "label": "post-round-idle",
+        "usedJSHeapBytes": 172317752,
+        "documents": 2,
+        "nodes": 2896,
+        "listeners": 1028,
+        "idleActualMs": 300001,
+        "gcsBeforeSample": 2,
+        "derivedStores": 1,
+        "activeDerivedStores": 1,
+        "inactiveDerivedStores": 0,
+        "inactiveDerivedSubscriptions": 0,
+        "viewports": 1,
+        "entryAnchors": 9,
+        "renderedEntries": 3
+      }
+    ],
+    "snapshotCounts": {
+      "rawStateObjects": 22,
+      "derivedStoreObjects": 1,
+      "queryObjects": 80,
+      "queryObserverObjects": 151
+    },
+    "measuredRunMs": 438535,
+    "blockedWrites": {
+      "path": "POST /api/visibility",
+      "count": 676
+    },
+    "limits": [
+      "20 distinct sidebar sessions does not satisfy30-session criterion; current observed session list count22",
+      "Stable comparable round DOM/listener/Store counters do not prove indefinite steady-state or no memory leak",
+      "RawState count and Query/QueryObserver counts are separate ownership types, not exclusive retained byte sizes",
+      "All live observer targets reported connected; this does not independently prove every inactive-session observer callback is absent",
+      "Additional Query ownership inspection failed; no new instrumentation after existing bounded run"
+    ],
+    "cleanup": {
+      "ownedBrowserConnected": false,
+      "ownedContexts": 0,
+      "cdpDetached": true,
+      "snapshotDiscarded": true,
+      "createdScripts": 0,
+      "sourceEdits": 0,
+      "screenshots": 0,
+      "videos": 0,
+      "traces": 0,
+      "cpuProfiles": 0
+    },
+    "environment": {
+      "entry": "http://127.0.0.1:5174",
+      "authHelperHub": "http://127.0.0.1:3006",
+      "corsRestrictionDisabledForIndependentBrowser": true,
+      "acceptanceScope": "memory only, not authentication isolation"
+    },
+    "idleIncludingGcAndEndpointSamplingMs": 301650,
+    "observers": {
+      "mutation": 4,
+      "resize": 9,
+      "intersection": 1,
+      "detachedTargets": 0,
+      "sessionOwnershipEstablished": false
+    },
+    "discovery": {
+      "apiListedIds": 22,
+      "sidebarNavigableIds": 20,
+      "tried": [
+        "default sidebar",
+        "active-date control",
+        "missing ID search"
+      ],
+      "oneMissingIdSearchResults": 0
+    }
+  }
+}

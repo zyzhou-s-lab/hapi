@@ -1,0 +1,10 @@
+.git-control-row {
+    min-height: 32px;
+}
+
+@media (max-width: 640px) {
+    .git-control-row,
+    [data-testid="statusbar-git-trigger"] {
+        min-height: 44px;
+    }
+}

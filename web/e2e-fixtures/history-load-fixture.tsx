@@ -1,20 +1,17 @@
-import { useMemo, useRef } from 'react'
+import { useEffect, useMemo } from 'react'
 import ReactDOM from 'react-dom/client'
 import { AssistantRuntimeProvider } from '@assistant-ui/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { isHumanTurnStart, TURN_PAGE_ROW_MAX, TURN_PAGE_SIZE } from '@hapi/protocol/turnBoundary'
 import '../src/index.css'
 import type { ApiClient } from '../src/api/client'
 import type { DecryptedMessage, MessagesResponse, Session } from '../src/types/api'
 import { I18nProvider } from '../src/lib/i18n-context'
 import { useMessages } from '../src/hooks/queries/useMessages'
-import { normalizeDecryptedMessage } from '../src/chat/normalize'
-import { reduceChatBlocks } from '../src/chat/reducer'
-import { reconcileChatBlocks } from '../src/chat/reconcile'
-import { buildVisibleChatBlocks } from '../src/chat/toolGroups'
-import { isQueuedForInvocation } from '../src/lib/messages'
+import { createSessionEntityStore } from '../src/chat/store/sessionEntityStore'
+import { SessionEntityStoreProvider } from '../src/hooks/useSessionEntityStore'
 import { useHappyRuntime } from '../src/lib/assistant-runtime'
 import { HappyThread } from '../src/components/AssistantChat/HappyThread'
-import type { ChatBlock } from '../src/chat/types'
 import { getMessageWindowState } from '../src/lib/message-window-store'
 
 // Drives the real message-window store + chat pipeline + HappyThread against a
@@ -23,11 +20,12 @@ import { getMessageWindowState } from '../src/lib/message-window-store'
 // assertions (e.g. "exactly one older page per top-approach").
 
 const SESSION_ID = 'history-load-fixture'
-const TOTAL_MESSAGES = 1200
+// Leave more than one row-budget page of meta-only history for filteredOlder.
+const TOTAL_MESSAGES = 2400
 const BASE_AT = 1_700_000_000_000
 
 type Probe = {
-    requests: { direction: string; beforeSeq: number | null; limit: number | undefined; at: number }[]
+    requests: { direction: string; beforeSeq: number | null; limit: number | undefined; turns: number | undefined; at: number }[]
     refetch: () => Promise<void>
     windowState: () => { messageCount: number; oldestSeq: number | null; newestSeq: number | null }
 }
@@ -52,7 +50,7 @@ window.__probe = {
 }
 
 // Test knobs via query params:
-// - ?shortPages=1  — `before` pages return 2 messages regardless of limit, so
+// - ?shortPages=1  — `before` pages have a two-row response budget, so
 //   one page is shorter than the preload margin and cannot push the top
 //   sentinel out of the observed box (no intersection transition).
 // - ?failBefore=N  — the first N `before` requests reject, mimicking a
@@ -75,14 +73,19 @@ let beforeAttempts = 0
 
 const allMessages: DecryptedMessage[] = Array.from({ length: TOTAL_MESSAGES }, (_, index) => {
     const seq = index + 1
-    const filtered = filteredOlder && seq <= TOTAL_MESSAGES - 200
+    const filtered = filteredOlder && seq <= TOTAL_MESSAGES - TURN_PAGE_SIZE
+    // Eight normal turns must overflow the viewport; short older pages must
+    // still leave the sentinel covered after the prepend is restored.
+    const body = shortPages && seq <= TOTAL_MESSAGES - TURN_PAGE_SIZE
+        ? ''
+        : `\n${'History anchor content.\n'.repeat(5)}`
     return {
         id: `m-${seq}`,
         seq,
         localId: null,
         content: filtered
             ? { role: 'agent', content: { type: 'output', data: { isMeta: true } } }
-            : { role: 'user', content: { type: 'text', text: `Fixture message ${seq}` } },
+            : { role: 'user', content: { type: 'text', text: `Fixture message ${seq}${body}` } },
         createdAt: BASE_AT + seq,
         invokedAt: BASE_AT + seq
     } as DecryptedMessage
@@ -111,15 +114,22 @@ function pageFrom(messages: DecryptedMessage[], overrides: Partial<MessagesRespo
     }
 }
 
+// Match the backward API contract: stop at the requested human-turn boundary
+// or the row budget. Meta-only history can exhaust the budget without a turn.
+function backwardPage(messages: DecryptedMessage[], turns: number, rowBudget: number): DecryptedMessage[] {
+    let start = messages.length
+    let humanTurns = 0
+    while (start > 0 && messages.length - start < rowBudget) {
+        start -= 1
+        if (isHumanTurnStart(messages[start]!) && ++humanTurns === turns) break
+    }
+    return messages.slice(start)
+}
+
 const fakeApi = {
-    getMessages: async (_sessionId: string, query: {
-        limit?: number
-        beforeAt?: number | null
-        beforeSeq?: number | null
-        afterAt?: number | null
-        afterSeq?: number | null
-    }): Promise<MessagesResponse> => {
+    getMessages: async (_sessionId: string, query: NonNullable<Parameters<ApiClient['getMessages']>[1]>): Promise<MessagesResponse> => {
         const limit = query.limit ?? 200
+        const turns = query.turns ?? TURN_PAGE_SIZE
         let direction = 'latest'
         if (query.beforeSeq != null || query.beforeAt != null) direction = 'before'
         else if (query.afterSeq != null || query.afterAt != null) direction = 'after'
@@ -127,6 +137,7 @@ const fakeApi = {
             direction,
             beforeSeq: query.beforeSeq ?? null,
             limit: query.limit,
+            turns: query.turns,
             at: Date.now()
         })
         // Small async delay to mimic latency. Some tests deliberately keep an
@@ -147,7 +158,7 @@ const fakeApi = {
                 const position = positionOf(message)
                 return position.at < cursorAt || (position.at === cursorAt && position.seq < cursorSeq)
             })
-            const pageMessages = shortPages ? older.slice(-2) : older.slice(-limit)
+            const pageMessages = backwardPage(older, turns, shortPages ? 2 : TURN_PAGE_ROW_MAX)
             const oldest = pageMessages[0] ?? null
             return {
                 messages: pageMessages,
@@ -166,7 +177,33 @@ const fakeApi = {
             }
         }
 
-        const pageMessages = allMessages.slice(-limit)
+        if (direction === 'after') {
+            const cursorAt = query.afterAt ?? Number.NEGATIVE_INFINITY
+            const cursorSeq = query.afterSeq ?? Number.NEGATIVE_INFINITY
+            const newer = allMessages.filter((message) => {
+                const position = positionOf(message)
+                const after = position.at > cursorAt || (position.at === cursorAt && position.seq > cursorSeq)
+                const withinSnapshot = query.untilAt == null || position.at < query.untilAt
+                    || (position.at === query.untilAt && position.seq <= (query.untilSeq ?? Number.POSITIVE_INFINITY))
+                return after && withinSnapshot
+            })
+            const pageMessages = newer.slice(0, limit)
+            const head = allMessages[allMessages.length - 1]!
+            return {
+                messages: pageMessages,
+                page: pageFrom(pageMessages, {
+                    direction: 'after',
+                    limit,
+                    hasMore: newer.length > pageMessages.length,
+                    nextBeforeAt: null,
+                    nextBeforeSeq: null,
+                    snapshotHeadAt: positionOf(head).at,
+                    snapshotHeadSeq: head.seq ?? null
+                })
+            }
+        }
+
+        const pageMessages = backwardPage(allMessages, turns, TURN_PAGE_ROW_MAX)
         // After an epoch bump the "rewritten" tail renders taller rows, so
         // the reset changes content height — this is what re-fires the
         // ResizeObserver coverage re-check in the epoch-reset scenario.
@@ -177,7 +214,7 @@ const fakeApi = {
                     ...message,
                     content: {
                         role: 'user',
-                        content: { type: 'text', text: `Fixture message ${message.seq} ${'x'.repeat(400)}` }
+                        content: { type: 'text', text: `Fixture message ${message.seq}\n${'Epoch reset anchor content.\n'.repeat(10)}` }
                     }
                 }) as DecryptedMessage)
                 : pageMessages,
@@ -219,31 +256,15 @@ function FixtureThread() {
 
     window.__probe.refetch = refetch
 
-    const blocksByIdRef = useRef<Map<string, ChatBlock>>(new Map())
-
-    const normalizedMessages = useMemo(() => {
-        const normalized = []
-        for (const message of messages) {
-            if (isQueuedForInvocation(message)) continue
-            const next = normalizeDecryptedMessage(message)
-            if (next) normalized.push(next)
-        }
-        return normalized
-    }, [messages])
-
-    const reduced = useMemo(() => reduceChatBlocks(normalizedMessages, null, {}), [normalizedMessages])
-    const reconciled = useMemo(
-        () => reconcileChatBlocks(reduced.blocks, blocksByIdRef.current),
-        [reduced.blocks]
+    const entityStore = useMemo(() => createSessionEntityStore(), [])
+    const { visibleBlocks, normalizedMessages } = entityStore.reconcileMessages(
+        SESSION_ID, messages, hasMore, { deferNotifications: true }
     )
-    blocksByIdRef.current = reconciled.byId
-    const visibleBlocks = useMemo(
-        () => buildVisibleChatBlocks(reconciled.blocks, { hasMoreMessages: hasMore }),
-        [reconciled.blocks, hasMore]
-    )
+    useEffect(() => entityStore.flushNotifications())
 
     const runtime = useHappyRuntime({
         session: fakeSession,
+        entityStore,
         blocks: visibleBlocks,
         messagesVersion,
         historyVersion,
@@ -253,36 +274,38 @@ function FixtureThread() {
     })
 
     return (
-        <AssistantRuntimeProvider runtime={runtime}>
-            <div className="flex h-screen min-h-0 flex-col">
-                <HappyThread
-                    api={fakeApi}
-                    session={fakeSession}
-                    sessionId={SESSION_ID}
-                    metadata={null}
-                    disabled={false}
-                    onRefresh={() => {}}
-                    onViewModeChange={setViewMode}
-                    isSyncingTail={isSyncingTail}
-                    messagesWarning={warning}
-                    hasMoreMessages={hasMore}
-                    isLoadingMoreMessages={isLoadingMore}
-                    onLoadMore={loadMore}
-                    onCancelLoadMore={cancelLoadMore}
-                    // This fixture drives HappyThread directly, bypassing the
-                    // SessionChat block reduction that computes the real count.
-                    unseenCount={0}
-                    rawMessagesCount={messages.length}
-                    normalizedMessagesCount={normalizedMessages.length}
-                    messagesVersion={messagesVersion}
-                    historyVersion={historyVersion}
-                    forceScrollToken={0}
-                    outlineOpen={false}
-                    outlineItems={[]}
-                    onOutlineOpenChange={() => {}}
-                />
-            </div>
-        </AssistantRuntimeProvider>
+        <SessionEntityStoreProvider store={entityStore}>
+            <AssistantRuntimeProvider runtime={runtime}>
+                <div className="flex h-screen min-h-0 flex-col">
+                    <HappyThread
+                        api={fakeApi}
+                        session={fakeSession}
+                        sessionId={SESSION_ID}
+                        metadata={null}
+                        disabled={false}
+                        onRefresh={() => {}}
+                        onViewModeChange={setViewMode}
+                        isSyncingTail={isSyncingTail}
+                        messagesWarning={warning}
+                        hasMoreMessages={hasMore}
+                        isLoadingMoreMessages={isLoadingMore}
+                        onLoadMore={loadMore}
+                        onCancelLoadMore={cancelLoadMore}
+                        // This fixture drives HappyThread directly, bypassing the
+                        // SessionChat block reduction that computes the real count.
+                        unseenCount={0}
+                        rawMessagesCount={messages.length}
+                        normalizedMessagesCount={normalizedMessages.length}
+                        messagesVersion={messagesVersion}
+                        historyVersion={historyVersion}
+                        forceScrollToken={0}
+                        outlineOpen={false}
+                        outlineItems={[]}
+                        onOutlineOpenChange={() => {}}
+                    />
+                </div>
+            </AssistantRuntimeProvider>
+        </SessionEntityStoreProvider>
     )
 }
 

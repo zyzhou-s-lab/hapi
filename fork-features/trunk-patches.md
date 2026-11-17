@@ -510,6 +510,61 @@ Remaining trunk hooks:
 | `web/src/hooks/useSSE.ts` | No machine-update cache extension point | One import + one invalidation keeps the fork-owned all-machines query current without changing the upstream online-only cache | machine SSE event → refetch all accessible machines → retain offline runner | Stop a runner while Settings is open and confirm its badges switch to `offline` |
 | `web/src/lib/locales/en.ts`, `web/src/lib/locales/zh-CN.ts` | No locale extension mechanism | `settings.machines.skills.*` keys must live in the closed locale tables | badge/refresh labels | Render page in both locales |
 
+## Bounded Store-thread first mount (2026-11-16)
+
+Window admission, per-owner height measurements and cancellable target reveal live in
+`web/src/fork-features/thread-windowing/useThreadEntryWindow.ts`. No cross-session
+Store pool, keep-alive tree, new pagination protocol or cache TTL is introduced.
+
+| Files | Missing upstream seam | Why it cannot move out | Runtime path | Sync verification |
+|---|---|---|---|---|
+| `web/src/components/AssistantChat/HappyThread.tsx` | No pre-JSX admission hook for Store topology entries | The placeholder branch must run before constructing historical message / Markdown trees and preserve the real direct-child anchor ID | Store topology → bounded hook → real message or height placeholder | HappyThread offscreen tests; `thread-scroll-anchors.spec.ts` prepend/share/outline/resize cases |
+| `web/src/components/AssistantChat/useThreadScrollAndHistoryController.ts` | No asynchronous materialization seam or invalidated-load completion hook | The controller owns session/navigation cancellation, final target alignment, and covered-history rearming after an overlapping tail sync | Outline select → load/locate → reveal → guarded re-align; invalidated older completion → guarded coverage recheck | Outline target materializes without cross-session motion; `history-load.spec.ts` covers fast sync rearm, terminal pauses, retries and cancellation |
+
+Remove these seams when upstream supplies bounded first construction and target
+materialization with equivalent anchor/cancellation semantics. A small mounted
+outer window does not bound a giant individual turn's render time. See the
+2026-11-16 execution record in the chat performance benchmark; absolute latency
+and retained-path memory gates remain unpassed.
+
+`SessionList.tsx` also memoizes `SessionItem` with the default shallow comparison;
+`router.tsx` supplies a stable, dependency-complete selection callback. This stays
+at the row/navigation boundary because no fork-feature hook owns row construction.
+It preserves last-seen/context/status/local-state invalidation and may be removed
+when upstream provides the same memo boundary. Three sidebar suites (88 tests)
+cover consumer behavior; sampled absence of a row stack is not a latency SLA.
+
+## Auth-scoped raw message windows (2026-11-16)
+
+`web/src/lib/message-window-scope.tsx` owns consumer admission after a layout-effect
+scope transition. `App.tsx` supplies the existing `${baseUrl}|${user.id}` identity;
+`message-window-store.ts` owns one active RAM cache, persisted ownership and request
+lifetimes. No shared cache is mutated during render, and ordinary same-scope token
+refresh/client recreation does not clear warm windows.
+
+The integration stays in the auth/ingestion owners: `useAuth.ts`, `useAuthSource.ts`
+and `useServerUrl.ts` mask retired credentials/Hub state; `useMessages.ts`, `useSSE.ts`,
+`queued-state-reconciliation.ts` and send/cancel/retry mutations reject retired work.
+These seams are necessary while upstream session-ID-only singleton caches and
+asynchronous producers have no common auth-scope authority. Remove them together
+when upstream provides equivalent pre-consumer admission and stale-writer rejection.
+
+Eight targeted suites (168 tests), unchanged generated fixtures and a synthetic
+browser scope-transition smoke cover this repair; a real Hub/account/logout UI
+chain and long-term memory bounds remain unverified. No LRU, TTL or Store pool.
+
+## Browser Settings logout (2026-11-16)
+
+`App.tsx` exposes the existing `clearAuth` through `lib/app-context.tsx`;
+`routes/settings/layout.tsx` renders the browser-only action. These remain narrow
+trunk seams because upstream has no authenticated settings-action registration.
+`useAuthSource.ts` consumes URL tokens and clears only the current Hub credentials;
+the fork-owned `multi-user/LoginPrompt.tsx` rejects retired form completions.
+Existing auth lifetimes and message-window/Query scope admission own retirement;
+normal same-account refresh retains warmth. Telegram automatic auth has no logout action.
+
+Remove these seams together if upstream supplies equivalent logout and retirement.
+
 ## Verification record
 
 | Date | Operation | Result |

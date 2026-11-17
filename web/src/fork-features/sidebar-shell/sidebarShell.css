@@ -1,0 +1,106 @@
+/* Keep the list mounted and at its expanded width while its outer pane closes.
+   Only explicit toggles animate; viewport changes and manual resizing do not. */
+@media (min-width: 920px) {
+    .fork-sidebar-shell {
+        --sidebar-motion-duration: 0s;
+        --sidebar-motion-ease: cubic-bezier(0.22, 1, 0.36, 1);
+    }
+
+    .fork-sidebar-shell[data-sidebar-motion]:not([data-sidebar-dragging]) {
+        --sidebar-motion-duration: 200ms;
+    }
+
+    .fork-sidebar-pane {
+        /* Reserve 420px for detail and 4px for the handle on compact split views. */
+        --sidebar-expanded-width: min(var(--sidebar-w), calc(100vw - 424px));
+        width: var(--sidebar-expanded-width);
+        overflow: hidden;
+        visibility: visible;
+        transition: width var(--sidebar-motion-duration) var(--sidebar-motion-ease), visibility 0s;
+    }
+
+    .fork-sidebar-content {
+        width: var(--sidebar-expanded-width);
+        opacity: 1;
+        transform: translateX(0);
+        transition: opacity var(--sidebar-motion-duration) var(--sidebar-motion-ease), transform var(--sidebar-motion-duration) var(--sidebar-motion-ease);
+    }
+
+    .fork-sidebar-resize {
+        visibility: visible;
+        transition: width var(--sidebar-motion-duration) var(--sidebar-motion-ease), opacity var(--sidebar-motion-duration) var(--sidebar-motion-ease), visibility 0s, background-color 150ms;
+    }
+
+    .fork-sidebar-shell[data-sidebar-collapsed] > .fork-sidebar-pane,
+    .fork-sidebar-shell[data-sidebar-collapsed] > .fork-sidebar-resize {
+        width: 0;
+        visibility: hidden;
+        pointer-events: none;
+        transition-delay: 0s, var(--sidebar-motion-duration);
+    }
+
+    .fork-sidebar-shell[data-sidebar-collapsed] > .fork-sidebar-resize {
+        opacity: 0;
+        transition-delay: 0s, 0s, var(--sidebar-motion-duration), 0s;
+    }
+
+    .fork-sidebar-shell[data-sidebar-collapsed] .fork-sidebar-content {
+        opacity: 0;
+        transform: translateX(-12px);
+    }
+
+    .fork-sidebar-toggle-fill {
+        opacity: 0.18;
+        transition: opacity var(--sidebar-motion-duration) var(--sidebar-motion-ease);
+    }
+
+    .fork-sidebar-toggle-arrow {
+        transform-origin: 14.5px 12px;
+        transition: transform var(--sidebar-motion-duration) var(--sidebar-motion-ease);
+    }
+
+    .fork-sidebar-shell[data-sidebar-collapsed] .fork-sidebar-toggle-fill {
+        opacity: 0;
+    }
+
+    .fork-sidebar-shell[data-sidebar-collapsed] .fork-sidebar-toggle-arrow {
+        transform: scaleX(-1);
+    }
+
+    .fork-sidebar-new-session {
+        display: flex;
+        flex-shrink: 0;
+        justify-content: flex-end;
+        overflow: hidden;
+        width: 0;
+        opacity: 0;
+        visibility: hidden;
+        transition: width var(--sidebar-motion-duration) var(--sidebar-motion-ease), opacity var(--sidebar-motion-duration) var(--sidebar-motion-ease), visibility 0s var(--sidebar-motion-duration);
+    }
+
+    .fork-sidebar-new-session > button {
+        flex-shrink: 0;
+    }
+
+    .fork-sidebar-shell[data-sidebar-collapsed] .fork-sidebar-new-session {
+        width: 32px;
+        opacity: 1;
+        visibility: visible;
+        transition-delay: 0s;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .fork-sidebar-shell {
+        --sidebar-motion-duration: 0s !important;
+    }
+
+    .fork-sidebar-pane,
+    .fork-sidebar-content,
+    .fork-sidebar-resize,
+    .fork-sidebar-new-session,
+    .fork-sidebar-toggle-fill,
+    .fork-sidebar-toggle-arrow {
+        transition: none !important;
+    }
+}

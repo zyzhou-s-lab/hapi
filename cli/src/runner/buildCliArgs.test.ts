@@ -248,6 +248,17 @@ describe('buildCliArgs', () => {
         }
     })
 
+    it('skips --cursor-worktree when an explicit start ref already created a HAPI worktree', () => {
+        const args = buildCliArgs('cursor', {
+            directory: '/tmp/repo',
+            sessionType: 'worktree',
+            worktreeName: 'feature-x',
+            worktreeStartRef: 'origin/main',
+        })
+        expect(args).not.toContain('--cursor-worktree')
+        expect(args).not.toContain('feature-x')
+    })
+
     it('does not pass --cursor-worktree for non-cursor worktree sessions', () => {
         const args = buildCliArgs('claude', {
             directory: '/tmp/repo',

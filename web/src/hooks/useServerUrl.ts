@@ -70,12 +70,14 @@ function clearStoredServerUrl(): void {
     }
 }
 
-export function useServerUrl(): {
+export type ServerUrlState = {
     serverUrl: string | null
     baseUrl: string
     setServerUrl: (input: string) => ServerUrlResult
     clearServerUrl: () => void
-} {
+}
+
+export function useServerUrl(): ServerUrlState {
     const [serverUrl, setServerUrlState] = useState<string | null>(() => {
         // Priority: URL params > localStorage
         const fromUrl = getServerFromUrlParams()

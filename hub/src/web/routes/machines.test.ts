@@ -336,6 +336,44 @@ describe('machines routes', () => {
         })
     })
 
+    it('forwards worktreeStartRef with sessionType and worktreeName', async () => {
+        const machine = createMachine()
+        let captured: unknown[] | null = null
+        const engine = {
+            getMachine: () => machine,
+            getMachineByNamespace: () => machine,
+            spawnSession: async (...args: unknown[]) => {
+                captured = args
+                return { type: 'success', sessionId: 's-wt' }
+            }
+        } as unknown as Partial<SyncEngine>
+
+        const app = new Hono<WebAppEnv>()
+        app.use('*', async (c, next) => {
+            c.set('namespace', 'default')
+            await next()
+        })
+        app.route('/api', createMachinesRoutes(() => engine as SyncEngine))
+
+        const response = await app.request('/api/machines/machine-1/spawn', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({
+                directory: '/tmp/repo',
+                agent: 'claude',
+                sessionType: 'worktree',
+                worktreeName: 'feature-x',
+                worktreeStartRef: 'origin/main'
+            })
+        })
+
+        expect(response.status).toBe(200)
+        expect(captured).not.toBeNull()
+        expect(captured![6]).toBe('worktree')
+        expect(captured![7]).toBe('feature-x')
+        expect(captured![18]).toBe('origin/main')
+    })
+
     it('forwards startingMode "pty" to SyncEngine.spawnSession in the startingMode slot', async () => {
         const machine = createMachine()
         let captured: unknown[] | null = null

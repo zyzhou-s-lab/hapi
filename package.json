@@ -56,5 +56,8 @@
         "vite-plugin-pwa": "^1.2.0",
         "vitest": "^4.0.16",
         "zod": "^4.2.1"
+    },
+    "patchedDependencies": {
+        "@assistant-ui/react-markdown@0.14.8": "patches/@assistant-ui%2Freact-markdown@0.14.8.patch"
     }
 }

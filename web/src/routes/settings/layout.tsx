@@ -3,6 +3,8 @@ import { useTranslation } from '@/lib/use-translation'
 import { useAppGoBack } from '@/hooks/useAppGoBack'
 import { SettingsNav } from '@/components/settings/SettingsNav'
 import { getSettingsCategory } from './categories'
+import { useAppContext } from '@/lib/app-context'
+import { Button } from '@/components/ui/button'
 
 function BackIcon() {
     return (
@@ -14,6 +16,7 @@ function BackIcon() {
 
 export default function SettingsLayout() {
     const { t } = useTranslation()
+    const { logout } = useAppContext()
     const goBack = useAppGoBack()
     const pathname = useLocation({ select: (location) => location.pathname })
     const category = getSettingsCategory(pathname)
@@ -39,6 +42,7 @@ export default function SettingsLayout() {
                         <h1 className="truncate text-sm font-semibold lg:hidden">{mobileTitle}</h1>
                         <h1 className="hidden text-sm font-semibold lg:block">{t('settings.title')}</h1>
                     </div>
+                    {logout ? <Button type="button" variant="outline" size="sm" onClick={logout}>{t('settings.logout')}</Button> : null}
                 </div>
             </header>
 

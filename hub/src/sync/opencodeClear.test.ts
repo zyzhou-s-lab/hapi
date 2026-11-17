@@ -634,6 +634,8 @@ describe('SyncEngine.clearOpenCodeSession', () => {
                 undefined,
                 undefined,
                 // startingMode — not applicable to an OpenCode clear replacement
+                undefined,
+                // worktreeStartRef — clear replacements are not worktrees
                 undefined
             )
             expect(engine.getSessionByNamespace(replacementSessionId, 'default')?.metadata).toMatchObject({

@@ -22,10 +22,15 @@ function getTelegramInitData(): string | null {
     return initData || null
 }
 
-function getTokenFromUrlParams(): string | null {
+function consumeTokenFromUrlParams(): string | null {
     if (typeof window === 'undefined') return null
-    const query = new URLSearchParams(window.location.search)
-    return query.get('token')
+    const url = new URL(window.location.href)
+    const token = url.searchParams.get('token')
+    if (url.searchParams.has('token')) {
+        url.searchParams.delete('token')
+        window.history.replaceState(window.history.state, '', `${url.pathname}${url.search}${url.hash}`)
+    }
+    return token
 }
 
 function getAccessTokenKey(baseUrl: string): string {
@@ -60,7 +65,7 @@ function clearStoredAccessToken(key: string): void {
     }
 }
 
-export function useAuthSource(baseUrl: string): {
+export type AuthSourceState = {
     authSource: AuthSource | null
     isLoading: boolean
     isTelegram: boolean
@@ -69,7 +74,9 @@ export function useAuthSource(baseUrl: string): {
     persistPasswordToken: (token: string) => void
     clearStoredPasswordToken: () => void
     clearAuth: () => void
-} {
+}
+
+export function useAuthSource(baseUrl: string): AuthSourceState {
     const [authSource, setAuthSource] = useState<AuthSource | null>(null)
     const [isLoading, setIsLoading] = useState(true)
     const [isTelegram, setIsTelegram] = useState(false)
@@ -95,7 +102,7 @@ export function useAuthSource(baseUrl: string): {
         }
 
         // Check for URL token parameter (for direct access links)
-        const urlToken = getTokenFromUrlParams()
+        const urlToken = consumeTokenFromUrlParams()
         if (urlToken) {
             storeAccessToken(accessTokenKey, urlToken) // Save to localStorage for refresh
             setAuthSource({ type: 'accessToken', token: urlToken })
@@ -167,9 +174,11 @@ export function useAuthSource(baseUrl: string): {
     const clearStoredPasswordToken = useCallback(() => clearStoredAccessToken(passwordJwtKey), [passwordJwtKey])
 
     const clearAuth = useCallback(() => {
+        consumeTokenFromUrlParams()
         clearStoredAccessToken(accessTokenKey)
         clearStoredAccessToken(passwordJwtKey)
         setAuthSource(null)
+        setIsLoading(false)
     }, [accessTokenKey, passwordJwtKey])
 
     return {

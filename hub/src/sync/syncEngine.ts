@@ -17,6 +17,7 @@ import type { SteerQueuedMessageResponse } from '@hapi/protocol/schemas'
 import type { AgentFlavor, ClaudeLaunch, CodexCollaborationMode, CopilotAgentMode, DecryptedMessage, PermissionMode, Session, SyncEvent } from '@hapi/protocol/types'
 import { getLiveMessageStreamId, unwrapRoleWrappedRecordEnvelope } from '@hapi/protocol/messages'
 import type { ProbeAgentSkillsResponse, SessionConfigItemSelector } from '@hapi/protocol/schemas'
+import type { GitActionRequest, GitActionResponse, GitReadOptions } from '@hapi/protocol/sourceControl'
 import type { Server } from 'socket.io'
 import { randomUUID } from 'node:crypto'
 import type { Store, CancelQueuedMessageResult } from '../store'
@@ -65,7 +66,8 @@ import {
     type RpcPathExistsResponse,
     type RpcReadFileResponse,
     type RpcWriteFileResponse,
-    type RpcUploadFileResponse
+    type RpcUploadFileResponse,
+    type SpawnSessionResult
 } from './rpcGateway'
 import { SessionCache } from './sessionCache'
 import { ingestNotifySummaryFromMessage } from './workGraphNotifyIngest'
@@ -1549,6 +1551,7 @@ export class SyncEngine {
                 source.collaborationMode,
                 undefined,
                 undefined,
+                undefined,
                 rpcResult.forkSession === true
             )
             if (spawn.type !== 'success') {
@@ -2090,8 +2093,9 @@ export class SyncEngine {
         existingSessionId?: string,
         collaborationMode?: CodexCollaborationMode,
         copilotAgentMode?: CopilotAgentMode,
-        startingMode?: 'remote' | 'pty'
-    ): ReturnType<RpcGateway['spawnSession']> {
+        startingMode?: 'remote' | 'pty',
+        worktreeStartRef?: string
+    ): Promise<SpawnSessionResult> {
         return await this.rpcGateway.spawnSession(
             machineId,
             directory,
@@ -2110,7 +2114,8 @@ export class SyncEngine {
             existingSessionId,
             collaborationMode,
             copilotAgentMode,
-            startingMode
+            startingMode,
+            worktreeStartRef
         )
     }
 
@@ -4038,16 +4043,29 @@ export class SyncEngine {
         return await this.rpcGateway.createMachineDirectory(machineId, parentPath, name)
     }
 
-    async getGitStatus(sessionId: string, cwd?: string): Promise<RpcCommandResponse> {
-        return await this.rpcGateway.getGitStatus(sessionId, cwd)
+    async getGitStatus(
+        sessionId: string,
+        options: { cwd?: string } & GitReadOptions = {}
+    ): Promise<RpcCommandResponse> {
+        return await this.rpcGateway.getGitStatus(sessionId, options)
     }
 
     async getGitDiffNumstat(sessionId: string, options: { cwd?: string; staged?: boolean }): Promise<RpcCommandResponse> {
         return await this.rpcGateway.getGitDiffNumstat(sessionId, options)
     }
 
-    async getGitDiffFile(sessionId: string, options: { cwd?: string; filePath: string; staged?: boolean }): Promise<RpcCommandResponse> {
+    async getGitDiffFile(
+        sessionId: string,
+        options: { cwd?: string; filePath: string; staged?: boolean } & Pick<GitReadOptions, 'scope' | 'baseRef'>
+    ): Promise<RpcCommandResponse> {
         return await this.rpcGateway.getGitDiffFile(sessionId, options)
+    }
+
+    async runGitAction(
+        sessionId: string,
+        options: { cwd?: string } & GitActionRequest
+    ): Promise<GitActionResponse> {
+        return await this.rpcGateway.runGitAction(sessionId, options)
     }
 
     async readSessionFile(sessionId: string, path: string, authorized = false): Promise<RpcReadFileResponse> {

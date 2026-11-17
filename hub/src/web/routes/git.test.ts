@@ -520,3 +520,179 @@ describe('file search route', () => {
         })
     })
 })
+
+describe('scoped Git routes', () => {
+    function session(overrides: Partial<Session> = {}): Session {
+        return {
+            id: 'session-1',
+            namespace: 'default',
+            active: true,
+            thinking: false,
+            metadata: { path: '/repo' },
+            agentState: null,
+            ...overrides
+        } as unknown as Session
+    }
+
+    it('forwards repository details, scope and baseRef with the session cwd', async () => {
+        const current = session()
+        let received: unknown
+        const engine = {
+            resolveSessionAccess: () => ({ ok: true as const, sessionId: current.id, session: current }),
+            getGitStatus: async (_sessionId: string, options: unknown) => {
+                received = options
+                return { success: true, repository: { repoRoot: '/repo' } }
+            }
+        } as unknown as Partial<SyncEngine>
+
+        const response = await buildApp(engine).request(
+            '/api/sessions/session-1/git-status?details=true&scope=branch&baseRef=origin%2Fmain'
+        )
+
+        expect(response.status).toBe(200)
+        expect(received).toEqual({
+            cwd: '/repo',
+            details: true,
+            scope: 'branch',
+            baseRef: 'origin/main'
+        })
+    })
+
+    it('rejects an unknown comparison scope before calling the CLI', async () => {
+        const current = session()
+        let called = false
+        const engine = {
+            resolveSessionAccess: () => ({ ok: true as const, sessionId: current.id, session: current }),
+            getGitStatus: async () => {
+                called = true
+                return { success: true }
+            }
+        } as unknown as Partial<SyncEngine>
+
+        const response = await buildApp(engine).request('/api/sessions/session-1/git-status?scope=everything')
+
+        expect(response.status).toBe(400)
+        expect(called).toBe(false)
+    })
+
+    it('forwards scope and baseRef for a per-file diff', async () => {
+        const current = session()
+        let received: unknown
+        const engine = {
+            resolveSessionAccess: () => ({ ok: true as const, sessionId: current.id, session: current }),
+            getGitDiffFile: async (_sessionId: string, options: unknown) => {
+                received = options
+                return { success: true, stdout: 'diff' }
+            }
+        } as unknown as Partial<SyncEngine>
+
+        const response = await buildApp(engine).request(
+            '/api/sessions/session-1/git-diff-file?path=src%2Fapp.ts&scope=staged&baseRef=origin%2Fmain'
+        )
+
+        expect(response.status).toBe(200)
+        expect(received).toMatchObject({
+            cwd: '/repo',
+            filePath: 'src/app.ts',
+            scope: 'staged',
+            baseRef: 'origin/main'
+        })
+    })
+
+    it('rejects Git writes for an inactive session', async () => {
+        const current = session({ active: false })
+        const engine = {
+            resolveSessionAccess: () => ({ ok: true as const, sessionId: current.id, session: current }),
+            runGitAction: async () => ({ success: true, steps: [] })
+        } as unknown as Partial<SyncEngine>
+
+        const response = await buildApp(engine).request('/api/sessions/session-1/git-action', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({
+                action: 'push',
+                expectedHead: 'abc',
+                expectedBranch: 'main'
+            })
+        })
+
+        expect(response.status).toBe(409)
+        expect(await response.json()).toMatchObject({ code: 'session_inactive' })
+    })
+
+    it('rejects Git writes while the agent has a pending request', async () => {
+        const current = session({
+            agentState: { requests: { 'req-1': { tool: 'Bash' } } } as unknown as Session['agentState']
+        })
+        let called = false
+        const engine = {
+            resolveSessionAccess: () => ({ ok: true as const, sessionId: current.id, session: current }),
+            runGitAction: async () => {
+                called = true
+                return { success: true, steps: [] }
+            }
+        } as unknown as Partial<SyncEngine>
+
+        const response = await buildApp(engine).request('/api/sessions/session-1/git-action', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({
+                action: 'commit',
+                expectedHead: 'abc',
+                expectedBranch: 'main',
+                message: 'test'
+            })
+        })
+
+        expect(response.status).toBe(409)
+        expect(await response.json()).toMatchObject({ code: 'agent_busy' })
+        expect(called).toBe(false)
+    })
+
+    it('forwards a validated action with the session cwd, not a browser-supplied cwd', async () => {
+        const current = session()
+        let received: unknown
+        const engine = {
+            resolveSessionAccess: () => ({ ok: true as const, sessionId: current.id, session: current }),
+            runGitAction: async (_sessionId: string, options: unknown) => {
+                received = options
+                return { success: true, steps: [{ action: 'push', success: true, output: '' }] }
+            }
+        } as unknown as Partial<SyncEngine>
+
+        const response = await buildApp(engine).request('/api/sessions/session-1/git-action', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({
+                action: 'push',
+                expectedHead: 'abc',
+                expectedBranch: 'main',
+                cwd: '/etc'
+            })
+        })
+
+        expect(response.status).toBe(200)
+        expect(received).toEqual({
+            cwd: '/repo',
+            action: 'push',
+            expectedHead: 'abc',
+            expectedBranch: 'main'
+        })
+    })
+
+    it('rejects an invalid Git action body', async () => {
+        const current = session()
+        const engine = {
+            resolveSessionAccess: () => ({ ok: true as const, sessionId: current.id, session: current }),
+            runGitAction: async () => ({ success: true, steps: [] })
+        } as unknown as Partial<SyncEngine>
+
+        const response = await buildApp(engine).request('/api/sessions/session-1/git-action', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ action: 'force-push', expectedHead: null, expectedBranch: null })
+        })
+
+        expect(response.status).toBe(400)
+    })
+})

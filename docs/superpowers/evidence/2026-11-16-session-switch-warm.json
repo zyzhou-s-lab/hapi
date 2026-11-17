@@ -1,0 +1,1887 @@
+{
+  "date": "2026-11-16",
+  "environment": {
+    "build": "Vite development",
+    "reactStrictMode": true,
+    "browser": "Chromium 149.0.7827.55",
+    "viewport": {
+      "width": 1280,
+      "height": 800
+    },
+    "backend": "Vite -> local port3006 forwarder -> SOCKS5 -> remote Hub; remote Hub version unverified",
+    "profiling": false,
+    "settlingMs": 3200
+  },
+  "definitions": {
+    "dom": "pointerdown -> expected tail ID, text hash, route and viewport-intersection DOM check; not Paint/interactivity",
+    "frame": "next requestAnimationFrame callback after DOM checkpoint; not exact Paint",
+    "applied": "pointerdown -> message-window isSyncingTail true-to-false notification; includes waiting/network, not pure application CPU",
+    "initialLongest": "max observed Long Task with start before response body end; includes progressive render",
+    "afterBodyLongest": "max observed Long Task intersecting/following body end; may overlap prior bucket; zero means no >=50ms Long Task observed",
+    "statistics": "ascending nearest-rank; 20 samples per direction"
+  },
+  "summary": {
+    "00628dc6-6a7f-4d59-98d4-8bf6872d1628": {
+      "dom": {
+        "n": 20,
+        "median": 183.30000019073486,
+        "p95": 194.0999994277954,
+        "max": 215.70000076293945
+      },
+      "nextFrame": {
+        "n": 20,
+        "median": 271.30000019073486,
+        "p95": 298.5999994277954,
+        "max": 335.6000003814697
+      },
+      "initialLongest": {
+        "n": 20,
+        "median": 183,
+        "p95": 193,
+        "max": 215
+      },
+      "afterBodyLongest": {
+        "n": 20,
+        "median": 0,
+        "p95": 63,
+        "max": 63
+      },
+      "applied": {
+        "n": 20,
+        "median": 729.3000001907349,
+        "p95": 879,
+        "max": 1078.8000001907349
+      },
+      "allHaveResource": true,
+      "allHaveDOM": true
+    },
+    "44463dcc-0fb3-4a00-8f7d-2c2d3d8d8d97": {
+      "dom": {
+        "n": 20,
+        "median": 124.09999942779541,
+        "p95": 146,
+        "max": 151.60000038146973
+      },
+      "nextFrame": {
+        "n": 20,
+        "median": 240.9000005722046,
+        "p95": 299.69999980926514,
+        "max": 325.9000005722046
+      },
+      "initialLongest": {
+        "n": 20,
+        "median": 125,
+        "p95": 160,
+        "max": 169
+      },
+      "afterBodyLongest": {
+        "n": 20,
+        "median": 0,
+        "p95": 56,
+        "max": 57
+      },
+      "applied": {
+        "n": 20,
+        "median": 711,
+        "p95": 995.8000001907349,
+        "max": 1028.5
+      },
+      "allHaveResource": true,
+      "allHaveDOM": true
+    }
+  },
+  "samples": [
+    {
+      "target": "44463dcc-0fb3-4a00-8f7d-2c2d3d8d8d97",
+      "start": 136698.39999961853,
+      "dom": 151.60000038146973,
+      "frame": 325.9000005722046,
+      "applied": 752,
+      "tasks": [
+        {
+          "at": -1,
+          "duration": 151
+        },
+        {
+          "at": 155.10000038146973,
+          "duration": 169
+        },
+        {
+          "at": 382.5,
+          "duration": 169
+        }
+      ],
+      "events": [
+        {
+          "name": "pointerdown",
+          "at": -2.5,
+          "duration": 184,
+          "delay": 1.9000005722045898
+        },
+        {
+          "name": "click",
+          "at": -2.5,
+          "duration": 184,
+          "delay": 152.30000019073486
+        }
+      ],
+      "resource": {
+        "start": 109.40000057220459,
+        "firstByte": 408.4000005722046,
+        "end": 651.6999998092651,
+        "encoded": 621880,
+        "decoded": 4059990
+      }
+    },
+    {
+      "target": "00628dc6-6a7f-4d59-98d4-8bf6872d1628",
+      "start": 140298.0999994278,
+      "dom": 215.70000076293945,
+      "frame": 335.6000003814697,
+      "applied": 795.6000003814697,
+      "tasks": [
+        {
+          "at": -0.8999996185302734,
+          "duration": 215
+        },
+        {
+          "at": 219.80000019073486,
+          "duration": 114
+        },
+        {
+          "at": 397.9000005722046,
+          "duration": 128
+        },
+        {
+          "at": 795.4000005722046,
+          "duration": 51
+        }
+      ],
+      "events": [
+        {
+          "name": "pointerdown",
+          "at": -2.5,
+          "duration": 240,
+          "delay": 2
+        },
+        {
+          "name": "click",
+          "at": -2.5,
+          "duration": 240,
+          "delay": 215.5
+        }
+      ],
+      "resource": {
+        "start": 134.30000019073486,
+        "firstByte": 341.4000005722046,
+        "end": 759.6000003814697,
+        "encoded": 643039,
+        "decoded": 2568360
+      }
+    },
+    {
+      "target": "44463dcc-0fb3-4a00-8f7d-2c2d3d8d8d97",
+      "start": 143931.5999994278,
+      "dom": 137.70000076293945,
+      "frame": 283.20000076293945,
+      "applied": 745.2000007629395,
+      "tasks": [
+        {
+          "at": -0.8999996185302734,
+          "duration": 137
+        },
+        {
+          "at": 141.10000038146973,
+          "duration": 140
+        },
+        {
+          "at": 335.80000019073486,
+          "duration": 142
+        },
+        {
+          "at": 1138.7000007629395,
+          "duration": 57
+        }
+      ],
+      "events": [
+        {
+          "name": "pointerdown",
+          "at": -2.59999942779541,
+          "duration": 168,
+          "delay": 2
+        },
+        {
+          "name": "click",
+          "at": -2.5,
+          "duration": 168,
+          "delay": 138.5
+        }
+      ],
+      "resource": {
+        "start": 97.20000076293945,
+        "firstByte": 345.20000076293945,
+        "end": 686.1000003814697,
+        "encoded": 621880,
+        "decoded": 4059990
+      }
+    },
+    {
+      "target": "00628dc6-6a7f-4d59-98d4-8bf6872d1628",
+      "start": 147481,
+      "dom": 192.5999994277954,
+      "frame": 295,
+      "applied": 662.0999994277954,
+      "tasks": [
+        {
+          "at": -0.8000001907348633,
+          "duration": 192
+        },
+        {
+          "at": 196.5999994277954,
+          "duration": 96
+        },
+        {
+          "at": 321.80000019073486,
+          "duration": 123
+        },
+        {
+          "at": 548.1999998092651,
+          "duration": 51
+        },
+        {
+          "at": 1344.3000001907349,
+          "duration": 63
+        }
+      ],
+      "events": [
+        {
+          "name": "pointerdown",
+          "at": -2.1000003814697266,
+          "duration": 224,
+          "delay": 1.6999998092651367
+        },
+        {
+          "name": "click",
+          "at": -2,
+          "duration": 224,
+          "delay": 192.19999980926514
+        }
+      ],
+      "resource": {
+        "start": 124.89999961853027,
+        "firstByte": 295.30000019073486,
+        "end": 621.3999996185303,
+        "encoded": 643039,
+        "decoded": 2568360
+      }
+    },
+    {
+      "target": "44463dcc-0fb3-4a00-8f7d-2c2d3d8d8d97",
+      "start": 151032,
+      "dom": 134.80000019073486,
+      "frame": 299.69999980926514,
+      "applied": 711,
+      "tasks": [
+        {
+          "at": -0.9000005722045898,
+          "duration": 134
+        },
+        {
+          "at": 138.19999980926514,
+          "duration": 160
+        },
+        {
+          "at": 351,
+          "duration": 146
+        }
+      ],
+      "events": [
+        {
+          "name": "pointerdown",
+          "at": -2.5,
+          "duration": 152,
+          "delay": 1.8999996185302734
+        },
+        {
+          "name": "click",
+          "at": -2.40000057220459,
+          "duration": 152,
+          "delay": 135.10000038146973
+        }
+      ],
+      "resource": {
+        "start": 94.09999942779541,
+        "firstByte": 332.8999996185303,
+        "end": 645.6999998092651,
+        "encoded": 621880,
+        "decoded": 4059990
+      }
+    },
+    {
+      "target": "00628dc6-6a7f-4d59-98d4-8bf6872d1628",
+      "start": 154614,
+      "dom": 194.0999994277954,
+      "frame": 298.5999994277954,
+      "applied": 729.1999998092651,
+      "tasks": [
+        {
+          "at": -0.9000005722045898,
+          "duration": 193
+        },
+        {
+          "at": 198,
+          "duration": 98
+        },
+        {
+          "at": 325.19999980926514,
+          "duration": 124
+        }
+      ],
+      "events": [
+        {
+          "name": "pointerdown",
+          "at": -2.1999998092651367,
+          "duration": 224,
+          "delay": 1.5999994277954102
+        },
+        {
+          "name": "click",
+          "at": -2.1000003814697266,
+          "duration": 224,
+          "delay": 193.60000038146973
+        }
+      ],
+      "resource": {
+        "start": 125.19999980926514,
+        "firstByte": 293.5999994277954,
+        "end": 685.3000001907349,
+        "encoded": 643039,
+        "decoded": 2568360
+      }
+    },
+    {
+      "target": "44463dcc-0fb3-4a00-8f7d-2c2d3d8d8d97",
+      "start": 158163.69999980927,
+      "dom": 131.89999961853027,
+      "frame": 269.6000003814697,
+      "applied": 618.3999996185303,
+      "tasks": [
+        {
+          "at": -0.8999996185302734,
+          "duration": 131
+        },
+        {
+          "at": 135.10000038146973,
+          "duration": 133
+        },
+        {
+          "at": 311.5,
+          "duration": 143
+        }
+      ],
+      "events": [
+        {
+          "name": "pointerdown",
+          "at": -2.1000003814697266,
+          "duration": 152,
+          "delay": 1.6000003814697266
+        },
+        {
+          "name": "click",
+          "at": -2,
+          "duration": 152,
+          "delay": 132
+        }
+      ],
+      "resource": {
+        "start": 92.10000038146973,
+        "firstByte": 331.69999980926514,
+        "end": 561.3999996185303,
+        "encoded": 621880,
+        "decoded": 4059990
+      }
+    },
+    {
+      "target": "00628dc6-6a7f-4d59-98d4-8bf6872d1628",
+      "start": 161696.89999961853,
+      "dom": 185.9000005722046,
+      "frame": 285.5,
+      "applied": 845.9000005722046,
+      "tasks": [
+        {
+          "at": -1,
+          "duration": 185
+        },
+        {
+          "at": 189.5,
+          "duration": 93
+        },
+        {
+          "at": 308.4000005722046,
+          "duration": 118
+        },
+        {
+          "at": 3365.1000003814697,
+          "duration": 57
+        }
+      ],
+      "events": [
+        {
+          "name": "pointerdown",
+          "at": -2.3000001907348633,
+          "duration": 208,
+          "delay": 1.7000007629394531
+        },
+        {
+          "name": "click",
+          "at": -2.1999998092651367,
+          "duration": 208,
+          "delay": 185.89999961853027
+        }
+      ],
+      "resource": {
+        "start": 122.69999980926514,
+        "firstByte": 306.5,
+        "end": 802.6999998092651,
+        "encoded": 643039,
+        "decoded": 2568360
+      }
+    },
+    {
+      "target": "44463dcc-0fb3-4a00-8f7d-2c2d3d8d8d97",
+      "start": 165229.89999961853,
+      "dom": 129.5,
+      "frame": 259.30000019073486,
+      "applied": 596,
+      "tasks": [
+        {
+          "at": -0.8000001907348633,
+          "duration": 129
+        },
+        {
+          "at": 132.5,
+          "duration": 125
+        },
+        {
+          "at": 281.4000005722046,
+          "duration": 69
+        }
+      ],
+      "events": [
+        {
+          "name": "pointerdown",
+          "at": -1.8999996185302734,
+          "duration": 152,
+          "delay": 1.3999996185302734
+        },
+        {
+          "name": "click",
+          "at": -1.8999996185302734,
+          "duration": 152,
+          "delay": 129.69999980926514
+        }
+      ],
+      "resource": {
+        "start": 92.90000057220459,
+        "firstByte": 309.9000005722046,
+        "end": 541.1999998092651,
+        "encoded": 621880,
+        "decoded": 4059990
+      }
+    },
+    {
+      "target": "00628dc6-6a7f-4d59-98d4-8bf6872d1628",
+      "start": 168746.39999961853,
+      "dom": 187.19999980926514,
+      "frame": 287.19999980926514,
+      "applied": 729.3000001907349,
+      "tasks": [
+        {
+          "at": -0.8000001907348633,
+          "duration": 187
+        },
+        {
+          "at": 190.9000005722046,
+          "duration": 92
+        },
+        {
+          "at": 364.19999980926514,
+          "duration": 77
+        }
+      ],
+      "events": [
+        {
+          "name": "pointerdown",
+          "at": -2.09999942779541,
+          "duration": 224,
+          "delay": 1.6999998092651367
+        },
+        {
+          "name": "click",
+          "at": -1.8999996185302734,
+          "duration": 224,
+          "delay": 186.80000019073486
+        }
+      ],
+      "resource": {
+        "start": 123.40000057220459,
+        "firstByte": 275.6000003814697,
+        "end": 684.3000001907349,
+        "encoded": 643039,
+        "decoded": 2568360
+      }
+    },
+    {
+      "target": "44463dcc-0fb3-4a00-8f7d-2c2d3d8d8d97",
+      "start": 172346.89999961853,
+      "dom": 146,
+      "frame": 285.9000005722046,
+      "applied": 695.3000001907349,
+      "tasks": [
+        {
+          "at": -1,
+          "duration": 146
+        },
+        {
+          "at": 149.60000038146973,
+          "duration": 135
+        },
+        {
+          "at": 348.69999980926514,
+          "duration": 111
+        }
+      ],
+      "events": [
+        {
+          "name": "pointerdown",
+          "at": -2.3000001907348633,
+          "duration": 168,
+          "delay": 1.7000007629394531
+        },
+        {
+          "name": "click",
+          "at": -2.3000001907348633,
+          "duration": 168,
+          "delay": 146.30000019073486
+        }
+      ],
+      "resource": {
+        "start": 94.69999980926514,
+        "firstByte": 365,
+        "end": 639.4000005722046,
+        "encoded": 621880,
+        "decoded": 4059990
+      }
+    },
+    {
+      "target": "00628dc6-6a7f-4d59-98d4-8bf6872d1628",
+      "start": 175913.19999980927,
+      "dom": 189.10000038146973,
+      "frame": 281,
+      "applied": 1078.8000001907349,
+      "tasks": [
+        {
+          "at": -0.8999996185302734,
+          "duration": 188
+        },
+        {
+          "at": 193,
+          "duration": 85
+        },
+        {
+          "at": 303.69999980926514,
+          "duration": 115
+        },
+        {
+          "at": 1078.6999998092651,
+          "duration": 63
+        }
+      ],
+      "events": [
+        {
+          "name": "pointerdown",
+          "at": -2.1999998092651367,
+          "duration": 224,
+          "delay": 1.5999994277954102
+        },
+        {
+          "name": "click",
+          "at": -2.1999998092651367,
+          "duration": 224,
+          "delay": 188.89999961853027
+        }
+      ],
+      "resource": {
+        "start": 119.80000019073486,
+        "firstByte": 322.5,
+        "end": 1036,
+        "encoded": 643039,
+        "decoded": 2568360
+      }
+    },
+    {
+      "target": "44463dcc-0fb3-4a00-8f7d-2c2d3d8d8d97",
+      "start": 179446.39999961853,
+      "dom": 129,
+      "frame": 263.30000019073486,
+      "applied": 662.1999998092651,
+      "tasks": [
+        {
+          "at": -1,
+          "duration": 129
+        },
+        {
+          "at": 132.30000019073486,
+          "duration": 129
+        },
+        {
+          "at": 307.80000019073486,
+          "duration": 133
+        }
+      ],
+      "events": [
+        {
+          "name": "pointerdown",
+          "at": -2.1999998092651367,
+          "duration": 152,
+          "delay": 1.6999998092651367
+        },
+        {
+          "name": "click",
+          "at": -2.09999942779541,
+          "duration": 152,
+          "delay": 129.39999961853027
+        }
+      ],
+      "resource": {
+        "start": 90.30000019073486,
+        "firstByte": 298.9000005722046,
+        "end": 601.8000001907349,
+        "encoded": 621880,
+        "decoded": 4059990
+      }
+    },
+    {
+      "target": "00628dc6-6a7f-4d59-98d4-8bf6872d1628",
+      "start": 182962.5,
+      "dom": 184.30000019073486,
+      "frame": 281.0999994277954,
+      "applied": 729.3000001907349,
+      "tasks": [
+        {
+          "at": -0.8000001907348633,
+          "duration": 184
+        },
+        {
+          "at": 187.80000019073486,
+          "duration": 90
+        },
+        {
+          "at": 306.30000019073486,
+          "duration": 110
+        },
+        {
+          "at": 2091.0999994277954,
+          "duration": 63
+        }
+      ],
+      "events": [
+        {
+          "name": "pointerdown",
+          "at": -2.1999998092651367,
+          "duration": 208,
+          "delay": 1.6999998092651367
+        },
+        {
+          "name": "click",
+          "at": -2.1000003814697266,
+          "duration": 208,
+          "delay": 184.19999980926514
+        }
+      ],
+      "resource": {
+        "start": 122,
+        "firstByte": 288,
+        "end": 699.0999994277954,
+        "encoded": 643039,
+        "decoded": 2568360
+      }
+    },
+    {
+      "target": "44463dcc-0fb3-4a00-8f7d-2c2d3d8d8d97",
+      "start": 186495.69999980927,
+      "dom": 128.39999961853027,
+      "frame": 265.80000019073486,
+      "applied": 598.3000001907349,
+      "tasks": [
+        {
+          "at": -0.8999996185302734,
+          "duration": 128
+        },
+        {
+          "at": 131.80000019073486,
+          "duration": 132
+        },
+        {
+          "at": 309.1000003814697,
+          "duration": 150
+        },
+        {
+          "at": 2329.6000003814697,
+          "duration": 56
+        }
+      ],
+      "events": [
+        {
+          "name": "pointerdown",
+          "at": -2.1999998092651367,
+          "duration": 152,
+          "delay": 1.6999998092651367
+        },
+        {
+          "name": "click",
+          "at": -2.1000003814697266,
+          "duration": 152,
+          "delay": 128.70000076293945
+        }
+      ],
+      "resource": {
+        "start": 88.5,
+        "firstByte": 291.3999996185303,
+        "end": 540.8000001907349,
+        "encoded": 621880,
+        "decoded": 4059990
+      }
+    },
+    {
+      "target": "00628dc6-6a7f-4d59-98d4-8bf6872d1628",
+      "start": 190028.80000019073,
+      "dom": 184.89999961853027,
+      "frame": 281.5,
+      "applied": 829.1999998092651,
+      "tasks": [
+        {
+          "at": -0.9000005722045898,
+          "duration": 184
+        },
+        {
+          "at": 188.5,
+          "duration": 91
+        },
+        {
+          "at": 304.0999994277954,
+          "duration": 115
+        }
+      ],
+      "events": [
+        {
+          "name": "pointerdown",
+          "at": -2.200000762939453,
+          "duration": 208,
+          "delay": 1.7000007629394531
+        },
+        {
+          "name": "click",
+          "at": -2,
+          "duration": 208,
+          "delay": 184.89999961853027
+        }
+      ],
+      "resource": {
+        "start": 121.09999942779541,
+        "firstByte": 350.69999980926514,
+        "end": 791.5,
+        "encoded": 643039,
+        "decoded": 2568360
+      }
+    },
+    {
+      "target": "44463dcc-0fb3-4a00-8f7d-2c2d3d8d8d97",
+      "start": 193562.0999994278,
+      "dom": 125.20000076293945,
+      "frame": 252.10000038146973,
+      "applied": 845.9000005722046,
+      "tasks": [
+        {
+          "at": -0.8999996185302734,
+          "duration": 125
+        },
+        {
+          "at": 128.20000076293945,
+          "duration": 122
+        },
+        {
+          "at": 307.70000076293945,
+          "duration": 134
+        }
+      ],
+      "events": [
+        {
+          "name": "pointerdown",
+          "at": -2.09999942779541,
+          "duration": 152,
+          "delay": 1.6999998092651367
+        },
+        {
+          "name": "click",
+          "at": -2.09999942779541,
+          "duration": 152,
+          "delay": 125.69999980926514
+        }
+      ],
+      "resource": {
+        "start": 89.30000019073486,
+        "firstByte": 381.20000076293945,
+        "end": 782.9000005722046,
+        "encoded": 621880,
+        "decoded": 4059990
+      }
+    },
+    {
+      "target": "00628dc6-6a7f-4d59-98d4-8bf6872d1628",
+      "start": 197078.89999961853,
+      "dom": 183.30000019073486,
+      "frame": 271.30000019073486,
+      "applied": 762.3000001907349,
+      "tasks": [
+        {
+          "at": -0.8999996185302734,
+          "duration": 183
+        },
+        {
+          "at": 187.5,
+          "duration": 81
+        },
+        {
+          "at": 294.69999980926514,
+          "duration": 107
+        }
+      ],
+      "events": [
+        {
+          "name": "pointerdown",
+          "at": -2.1999998092651367,
+          "duration": 208,
+          "delay": 1.6999998092651367
+        },
+        {
+          "name": "click",
+          "at": -2.1999998092651367,
+          "duration": 208,
+          "delay": 183.19999980926514
+        }
+      ],
+      "resource": {
+        "start": 114.80000019073486,
+        "firstByte": 269.9000005722046,
+        "end": 726.1000003814697,
+        "encoded": 643039,
+        "decoded": 2568360
+      }
+    },
+    {
+      "target": "44463dcc-0fb3-4a00-8f7d-2c2d3d8d8d97",
+      "start": 200611.69999980927,
+      "dom": 121,
+      "frame": 238.60000038146973,
+      "applied": 712.8000001907349,
+      "tasks": [
+        {
+          "at": -0.8999996185302734,
+          "duration": 121
+        },
+        {
+          "at": 124.10000038146973,
+          "duration": 113
+        },
+        {
+          "at": 264.30000019073486,
+          "duration": 114
+        }
+      ],
+      "events": [
+        {
+          "name": "pointerdown",
+          "at": -2.1999998092651367,
+          "duration": 136,
+          "delay": 1.6999998092651367
+        },
+        {
+          "name": "click",
+          "at": -2.1000003814697266,
+          "duration": 136,
+          "delay": 121.40000057220459
+        }
+      ],
+      "resource": {
+        "start": 86.19999980926514,
+        "firstByte": 283.80000019073486,
+        "end": 663.6000003814697,
+        "encoded": 621880,
+        "decoded": 4059990
+      }
+    },
+    {
+      "target": "00628dc6-6a7f-4d59-98d4-8bf6872d1628",
+      "start": 204111.80000019073,
+      "dom": 174,
+      "frame": 259.69999980926514,
+      "applied": 729.1999998092651,
+      "tasks": [
+        {
+          "at": -0.7000007629394531,
+          "duration": 173
+        },
+        {
+          "at": 177.5999994277954,
+          "duration": 79
+        },
+        {
+          "at": 280.8999996185303,
+          "duration": 106
+        },
+        {
+          "at": 1111,
+          "duration": 56
+        }
+      ],
+      "events": [
+        {
+          "name": "pointerdown",
+          "at": -2.1000003814697266,
+          "duration": 208,
+          "delay": 1.6999998092651367
+        },
+        {
+          "name": "click",
+          "at": -2,
+          "duration": 208,
+          "delay": 173.79999923706055
+        }
+      ],
+      "resource": {
+        "start": 109.39999961853027,
+        "firstByte": 305.0999994277954,
+        "end": 683.6999998092651,
+        "encoded": 643039,
+        "decoded": 2568360
+      }
+    },
+    {
+      "target": "44463dcc-0fb3-4a00-8f7d-2c2d3d8d8d97",
+      "start": 207628,
+      "dom": 120.09999942779541,
+      "frame": 237.39999961853027,
+      "applied": 665.8000001907349,
+      "tasks": [
+        {
+          "at": -0.8000001907348633,
+          "duration": 120
+        },
+        {
+          "at": 123.19999980926514,
+          "duration": 113
+        },
+        {
+          "at": 261,
+          "duration": 115
+        },
+        {
+          "at": 1195.6999998092651,
+          "duration": 51
+        }
+      ],
+      "events": [
+        {
+          "name": "pointerdown",
+          "at": -2.1000003814697266,
+          "duration": 136,
+          "delay": 1.6999998092651367
+        },
+        {
+          "name": "click",
+          "at": -2.1000003814697266,
+          "duration": 136,
+          "delay": 120.5
+        }
+      ],
+      "resource": {
+        "start": 85.69999980926514,
+        "firstByte": 322.5999994277954,
+        "end": 610.1999998092651,
+        "encoded": 621880,
+        "decoded": 4059990
+      }
+    },
+    {
+      "target": "00628dc6-6a7f-4d59-98d4-8bf6872d1628",
+      "start": 211128.80000019073,
+      "dom": 187.0999994277954,
+      "frame": 286.3999996185303,
+      "applied": 695.8999996185303,
+      "tasks": [
+        {
+          "at": -1,
+          "duration": 187
+        },
+        {
+          "at": 190.79999923706055,
+          "duration": 93
+        },
+        {
+          "at": 307.69999980926514,
+          "duration": 105
+        }
+      ],
+      "events": [
+        {
+          "name": "pointerdown",
+          "at": -2.700000762939453,
+          "duration": 224,
+          "delay": 2.1000003814697266
+        },
+        {
+          "name": "click",
+          "at": -2.6000003814697266,
+          "duration": 224,
+          "delay": 187.39999961853027
+        }
+      ],
+      "resource": {
+        "start": 124.29999923706055,
+        "firstByte": 329.5,
+        "end": 664.7999992370605,
+        "encoded": 643039,
+        "decoded": 2568360
+      }
+    },
+    {
+      "target": "44463dcc-0fb3-4a00-8f7d-2c2d3d8d8d97",
+      "start": 214661.0999994278,
+      "dom": 117.90000057220459,
+      "frame": 240.9000005722046,
+      "applied": 662.8000001907349,
+      "tasks": [
+        {
+          "at": -0.8999996185302734,
+          "duration": 118
+        },
+        {
+          "at": 120.90000057220459,
+          "duration": 118
+        },
+        {
+          "at": 267,
+          "duration": 118
+        }
+      ],
+      "events": [
+        {
+          "name": "pointerdown",
+          "at": -2.09999942779541,
+          "duration": 136,
+          "delay": 1.5999994277954102
+        },
+        {
+          "name": "click",
+          "at": -2,
+          "duration": 136,
+          "delay": 118.30000019073486
+        }
+      ],
+      "resource": {
+        "start": 83.90000057220459,
+        "firstByte": 318.30000019073486,
+        "end": 600.7000007629395,
+        "encoded": 621880,
+        "decoded": 4059990
+      }
+    },
+    {
+      "target": "00628dc6-6a7f-4d59-98d4-8bf6872d1628",
+      "start": 218160.80000019073,
+      "dom": 173.69999980926514,
+      "frame": 264,
+      "applied": 796.1999998092651,
+      "tasks": [
+        {
+          "at": -0.8000001907348633,
+          "duration": 173
+        },
+        {
+          "at": 177.5,
+          "duration": 84
+        },
+        {
+          "at": 286.3999996185303,
+          "duration": 101
+        }
+      ],
+      "events": [
+        {
+          "name": "pointerdown",
+          "at": -2.1000003814697266,
+          "duration": 208,
+          "delay": 1.6000003814697266
+        },
+        {
+          "name": "click",
+          "at": -2.1000003814697266,
+          "duration": 200,
+          "delay": 173.60000038146973
+        }
+      ],
+      "resource": {
+        "start": 114.29999923706055,
+        "firstByte": 281.29999923706055,
+        "end": 753.8999996185303,
+        "encoded": 643039,
+        "decoded": 2568360
+      }
+    },
+    {
+      "target": "44463dcc-0fb3-4a00-8f7d-2c2d3d8d8d97",
+      "start": 221677.89999961853,
+      "dom": 120.10000038146973,
+      "frame": 239.30000019073486,
+      "applied": 779.1000003814697,
+      "tasks": [
+        {
+          "at": -0.8000001907348633,
+          "duration": 120
+        },
+        {
+          "at": 123.10000038146973,
+          "duration": 115
+        },
+        {
+          "at": 264.9000005722046,
+          "duration": 116
+        },
+        {
+          "at": 3449,
+          "duration": 51
+        }
+      ],
+      "events": [
+        {
+          "name": "pointerdown",
+          "at": -2.09999942779541,
+          "duration": 136,
+          "delay": 1.6999998092651367
+        },
+        {
+          "name": "click",
+          "at": -1.8999996185302734,
+          "duration": 136,
+          "delay": 120.30000019073486
+        }
+      ],
+      "resource": {
+        "start": 86.10000038146973,
+        "firstByte": 324.9000005722046,
+        "end": 716.4000005722046,
+        "encoded": 621880,
+        "decoded": 4059990
+      }
+    },
+    {
+      "target": "00628dc6-6a7f-4d59-98d4-8bf6872d1628",
+      "start": 225210.5999994278,
+      "dom": 170.10000038146973,
+      "frame": 253.60000038146973,
+      "applied": 612.8000001907349,
+      "tasks": [
+        {
+          "at": -0.7999992370605469,
+          "duration": 170
+        },
+        {
+          "at": 173.5,
+          "duration": 77
+        },
+        {
+          "at": 268,
+          "duration": 77
+        }
+      ],
+      "events": [
+        {
+          "name": "pointerdown",
+          "at": -1.8999996185302734,
+          "duration": 184,
+          "delay": 1.5
+        },
+        {
+          "name": "click",
+          "at": -1.8999996185302734,
+          "duration": 184,
+          "delay": 169.89999961853027
+        }
+      ],
+      "resource": {
+        "start": 106.5,
+        "firstByte": 276.30000019073486,
+        "end": 577,
+        "encoded": 643039,
+        "decoded": 2568360
+      }
+    },
+    {
+      "target": "44463dcc-0fb3-4a00-8f7d-2c2d3d8d8d97",
+      "start": 228710.89999961853,
+      "dom": 117.60000038146973,
+      "frame": 235.30000019073486,
+      "applied": 745.6999998092651,
+      "tasks": [
+        {
+          "at": -0.8999996185302734,
+          "duration": 117
+        },
+        {
+          "at": 120.60000038146973,
+          "duration": 113
+        },
+        {
+          "at": 263.19999980926514,
+          "duration": 55
+        },
+        {
+          "at": 319,
+          "duration": 69
+        }
+      ],
+      "events": [
+        {
+          "name": "pointerdown",
+          "at": -2.1999998092651367,
+          "duration": 136,
+          "delay": 1.6000003814697266
+        },
+        {
+          "name": "click",
+          "at": -2.1999998092651367,
+          "duration": 136,
+          "delay": 118.19999980926514
+        }
+      ],
+      "resource": {
+        "start": 82.69999980926514,
+        "firstByte": 283.9000005722046,
+        "end": 698.9000005722046,
+        "encoded": 621880,
+        "decoded": 4059990
+      }
+    },
+    {
+      "target": "00628dc6-6a7f-4d59-98d4-8bf6872d1628",
+      "start": 232260.69999980927,
+      "dom": 172.19999980926514,
+      "frame": 258.1000003814697,
+      "applied": 695.6999998092651,
+      "tasks": [
+        {
+          "at": -0.8000001907348633,
+          "duration": 172
+        },
+        {
+          "at": 175.80000019073486,
+          "duration": 80
+        },
+        {
+          "at": 278.80000019073486,
+          "duration": 120
+        }
+      ],
+      "events": [
+        {
+          "name": "pointerdown",
+          "at": -2,
+          "duration": 200,
+          "delay": 1.6000003814697266
+        },
+        {
+          "name": "click",
+          "at": -1.8999996185302734,
+          "duration": 200,
+          "delay": 171.89999961853027
+        }
+      ],
+      "resource": {
+        "start": 108.60000038146973,
+        "firstByte": 308.8999996185303,
+        "end": 664.1000003814697,
+        "encoded": 643039,
+        "decoded": 2568360
+      }
+    },
+    {
+      "target": "44463dcc-0fb3-4a00-8f7d-2c2d3d8d8d97",
+      "start": 235777.80000019073,
+      "dom": 124.09999942779541,
+      "frame": 240.19999980926514,
+      "applied": 1028.5,
+      "tasks": [
+        {
+          "at": -0.9000005722045898,
+          "duration": 124
+        },
+        {
+          "at": 127.19999980926514,
+          "duration": 111
+        },
+        {
+          "at": 265.5,
+          "duration": 111
+        },
+        {
+          "at": 1028.2999992370605,
+          "duration": 54
+        }
+      ],
+      "events": [
+        {
+          "name": "pointerdown",
+          "at": -2.1000003814697266,
+          "duration": 152,
+          "delay": 1.6000003814697266
+        },
+        {
+          "name": "click",
+          "at": -2,
+          "duration": 152,
+          "delay": 124.5
+        }
+      ],
+      "resource": {
+        "start": 85.79999923706055,
+        "firstByte": 319.3999996185303,
+        "end": 966.3999996185303,
+        "encoded": 621880,
+        "decoded": 4059990
+      }
+    },
+    {
+      "target": "00628dc6-6a7f-4d59-98d4-8bf6872d1628",
+      "start": 239277.0999994278,
+      "dom": 172.4000005722046,
+      "frame": 257.20000076293945,
+      "applied": 629.2000007629395,
+      "tasks": [
+        {
+          "at": -0.7999992370605469,
+          "duration": 172
+        },
+        {
+          "at": 175.9000005722046,
+          "duration": 79
+        },
+        {
+          "at": 280,
+          "duration": 103
+        }
+      ],
+      "events": [
+        {
+          "name": "pointerdown",
+          "at": -2,
+          "duration": 200,
+          "delay": 1.5
+        },
+        {
+          "name": "click",
+          "at": -2,
+          "duration": 200,
+          "delay": 172.20000076293945
+        }
+      ],
+      "resource": {
+        "start": 108.90000057220459,
+        "firstByte": 258.70000076293945,
+        "end": 596.7000007629395,
+        "encoded": 643039,
+        "decoded": 2568360
+      }
+    },
+    {
+      "target": "44463dcc-0fb3-4a00-8f7d-2c2d3d8d8d97",
+      "start": 242793.80000019073,
+      "dom": 121.39999961853027,
+      "frame": 236.5,
+      "applied": 678.8999996185303,
+      "tasks": [
+        {
+          "at": -1,
+          "duration": 121
+        },
+        {
+          "at": 124.29999923706055,
+          "duration": 111
+        },
+        {
+          "at": 263,
+          "duration": 114
+        },
+        {
+          "at": 2317.5999994277954,
+          "duration": 54
+        }
+      ],
+      "events": [
+        {
+          "name": "pointerdown",
+          "at": -2.200000762939453,
+          "duration": 152,
+          "delay": 1.6000003814697266
+        },
+        {
+          "name": "click",
+          "at": -2.1000003814697266,
+          "duration": 152,
+          "delay": 121.69999980926514
+        }
+      ],
+      "resource": {
+        "start": 87.39999961853027,
+        "firstByte": 325.5,
+        "end": 626.6999998092651,
+        "encoded": 621880,
+        "decoded": 4059990
+      }
+    },
+    {
+      "target": "00628dc6-6a7f-4d59-98d4-8bf6872d1628",
+      "start": 246294.39999961853,
+      "dom": 181.80000019073486,
+      "frame": 270.5,
+      "applied": 761.6000003814697,
+      "tasks": [
+        {
+          "at": -1,
+          "duration": 181
+        },
+        {
+          "at": 185.19999980926514,
+          "duration": 82
+        },
+        {
+          "at": 292.30000019073486,
+          "duration": 98
+        },
+        {
+          "at": 2530.1000003814697,
+          "duration": 52
+        }
+      ],
+      "events": [
+        {
+          "name": "pointerdown",
+          "at": -2.3999996185302734,
+          "duration": 200,
+          "delay": 1.8000001907348633
+        },
+        {
+          "name": "click",
+          "at": -2.3999996185302734,
+          "duration": 200,
+          "delay": 181.89999961853027
+        }
+      ],
+      "resource": {
+        "start": 123.80000019073486,
+        "firstByte": 391.4000005722046,
+        "end": 720.3000001907349,
+        "encoded": 643039,
+        "decoded": 2568360
+      }
+    },
+    {
+      "target": "44463dcc-0fb3-4a00-8f7d-2c2d3d8d8d97",
+      "start": 249809.89999961853,
+      "dom": 114.10000038146973,
+      "frame": 232.5,
+      "applied": 995.8000001907349,
+      "tasks": [
+        {
+          "at": -1,
+          "duration": 114
+        },
+        {
+          "at": 117.19999980926514,
+          "duration": 114
+        },
+        {
+          "at": 257.6000003814697,
+          "duration": 149
+        }
+      ],
+      "events": [
+        {
+          "name": "pointerdown",
+          "at": -2.09999942779541,
+          "duration": 136,
+          "delay": 1.5
+        },
+        {
+          "name": "click",
+          "at": -2,
+          "duration": 136,
+          "delay": 114.5
+        }
+      ],
+      "resource": {
+        "start": 80.90000057220459,
+        "firstByte": 336.6000003814697,
+        "end": 936.3000001907349,
+        "encoded": 621880,
+        "decoded": 4059990
+      }
+    },
+    {
+      "target": "00628dc6-6a7f-4d59-98d4-8bf6872d1628",
+      "start": 253293.0999994278,
+      "dom": 171.5,
+      "frame": 256.9000005722046,
+      "applied": 812.4000005722046,
+      "tasks": [
+        {
+          "at": -0.8999996185302734,
+          "duration": 171
+        },
+        {
+          "at": 175.10000038146973,
+          "duration": 79
+        },
+        {
+          "at": 278.70000076293945,
+          "duration": 102
+        }
+      ],
+      "events": [
+        {
+          "name": "pointerdown",
+          "at": -2.09999942779541,
+          "duration": 200,
+          "delay": 1.5999994277954102
+        },
+        {
+          "name": "click",
+          "at": -2,
+          "duration": 200,
+          "delay": 171.20000076293945
+        }
+      ],
+      "resource": {
+        "start": 108.5,
+        "firstByte": 288.9000005722046,
+        "end": 772.3000001907349,
+        "encoded": 643039,
+        "decoded": 2568360
+      }
+    },
+    {
+      "target": "44463dcc-0fb3-4a00-8f7d-2c2d3d8d8d97",
+      "start": 256809.80000019073,
+      "dom": 119.89999961853027,
+      "frame": 234.5,
+      "applied": 695.6999998092651,
+      "tasks": [
+        {
+          "at": -0.9000005722045898,
+          "duration": 119
+        },
+        {
+          "at": 122.89999961853027,
+          "duration": 110
+        },
+        {
+          "at": 259.79999923706055,
+          "duration": 110
+        }
+      ],
+      "events": [
+        {
+          "name": "pointerdown",
+          "at": -2.200000762939453,
+          "duration": 136,
+          "delay": 1.7000007629394531
+        },
+        {
+          "name": "click",
+          "at": -2.200000762939453,
+          "duration": 136,
+          "delay": 120.30000019073486
+        }
+      ],
+      "resource": {
+        "start": 86.09999942779541,
+        "firstByte": 322.8999996185303,
+        "end": 650.6999998092651,
+        "encoded": 621880,
+        "decoded": 4059990
+      }
+    },
+    {
+      "target": "00628dc6-6a7f-4d59-98d4-8bf6872d1628",
+      "start": 260309.30000019073,
+      "dom": 187,
+      "frame": 272.5999994277954,
+      "applied": 729.3999996185303,
+      "tasks": [
+        {
+          "at": -0.8000001907348633,
+          "duration": 186
+        },
+        {
+          "at": 190.5999994277954,
+          "duration": 79
+        },
+        {
+          "at": 296.3999996185303,
+          "duration": 105
+        }
+      ],
+      "events": [
+        {
+          "name": "pointerdown",
+          "at": -2.1000003814697266,
+          "duration": 224,
+          "delay": 1.6000003814697266
+        },
+        {
+          "name": "click",
+          "at": -2,
+          "duration": 224,
+          "delay": 186.69999980926514
+        }
+      ],
+      "resource": {
+        "start": 109.5,
+        "firstByte": 263.19999980926514,
+        "end": 689.2999992370605,
+        "encoded": 643039,
+        "decoded": 2568360
+      }
+    },
+    {
+      "target": "44463dcc-0fb3-4a00-8f7d-2c2d3d8d8d97",
+      "start": 263842.80000019073,
+      "dom": 125,
+      "frame": 247.79999923706055,
+      "applied": 762.3999996185303,
+      "tasks": [
+        {
+          "at": -0.9000005722045898,
+          "duration": 125
+        },
+        {
+          "at": 128.0999994277954,
+          "duration": 118
+        },
+        {
+          "at": 274,
+          "duration": 110
+        }
+      ],
+      "events": [
+        {
+          "name": "pointerdown",
+          "at": -2.1000003814697266,
+          "duration": 152,
+          "delay": 1.6000003814697266
+        },
+        {
+          "name": "click",
+          "at": -2,
+          "duration": 152,
+          "delay": 125.19999980926514
+        }
+      ],
+      "resource": {
+        "start": 87.5,
+        "firstByte": 318.29999923706055,
+        "end": 706.3999996185303,
+        "encoded": 621880,
+        "decoded": 4059990
+      }
+    },
+    {
+      "target": "00628dc6-6a7f-4d59-98d4-8bf6872d1628",
+      "start": 267342.69999980927,
+      "dom": 169.39999961853027,
+      "frame": 259.19999980926514,
+      "applied": 879,
+      "tasks": [
+        {
+          "at": -0.8999996185302734,
+          "duration": 169
+        },
+        {
+          "at": 172.89999961853027,
+          "duration": 84
+        },
+        {
+          "at": 282.6000003814697,
+          "duration": 98
+        },
+        {
+          "at": 1483.8000001907349,
+          "duration": 52
+        }
+      ],
+      "events": [
+        {
+          "name": "pointerdown",
+          "at": -2.1000003814697266,
+          "duration": 184,
+          "delay": 1.6000003814697266
+        },
+        {
+          "name": "click",
+          "at": -2.1000003814697266,
+          "duration": 184,
+          "delay": 169.30000019073486
+        }
+      ],
+      "resource": {
+        "start": 111.80000019073486,
+        "firstByte": 267.3999996185303,
+        "end": 846.3999996185303,
+        "encoded": 643039,
+        "decoded": 2568360
+      }
+    },
+    {
+      "target": "44463dcc-0fb3-4a00-8f7d-2c2d3d8d8d97",
+      "start": 270859.19999980927,
+      "dom": 116.80000019073486,
+      "frame": 234.89999961853027,
+      "applied": 762.3000001907349,
+      "tasks": [
+        {
+          "at": -0.8999996185302734,
+          "duration": 116
+        },
+        {
+          "at": 119.89999961853027,
+          "duration": 113
+        },
+        {
+          "at": 259.80000019073486,
+          "duration": 115
+        }
+      ],
+      "events": [
+        {
+          "name": "pointerdown",
+          "at": -2,
+          "duration": 136,
+          "delay": 1.5
+        },
+        {
+          "name": "click",
+          "at": -2,
+          "duration": 136,
+          "delay": 117.10000038146973
+        }
+      ],
+      "resource": {
+        "start": 81.80000019073486,
+        "firstByte": 280.5,
+        "end": 718.6000003814697,
+        "encoded": 621880,
+        "decoded": 4059990
+      }
+    },
+    {
+      "target": "00628dc6-6a7f-4d59-98d4-8bf6872d1628",
+      "start": 274359.0999994278,
+      "dom": 169.70000076293945,
+      "frame": 260,
+      "applied": 679.1000003814697,
+      "tasks": [
+        {
+          "at": -0.8999996185302734,
+          "duration": 169
+        },
+        {
+          "at": 173.30000019073486,
+          "duration": 84
+        },
+        {
+          "at": 282.1000003814697,
+          "duration": 102
+        },
+        {
+          "at": 520.3000001907349,
+          "duration": 56
+        }
+      ],
+      "events": [
+        {
+          "name": "pointerdown",
+          "at": -2,
+          "duration": 200,
+          "delay": 1.5
+        },
+        {
+          "name": "click",
+          "at": -1.8999996185302734,
+          "duration": 200,
+          "delay": 169.5
+        }
+      ],
+      "resource": {
+        "start": 113.30000019073486,
+        "firstByte": 276.6000003814697,
+        "end": 648.4000005722046,
+        "encoded": 643039,
+        "decoded": 2568360
+      }
+    }
+  ],
+  "isolation": {
+    "rapidAtoBtoAWithDelayedB": {
+      "routeA": true,
+      "tailSame": true,
+      "threadCount": 1
+    },
+    "logout": "not verified: init-script auth reinstalls credentials on reload; experiment excluded"
+  },
+  "memory": {
+    "method": "same 10 distinct sessions visited in each of 3 rounds, then A, idle3000ms, two explicit GC calls; counts per page CDP target",
+    "rounds": [
+      {
+        "round": 1,
+        "distinctVisited": 10,
+        "transitions": 11,
+        "usedSize": 95684744,
+        "totalSize": 98545664,
+        "documents": 2,
+        "nodes": 2765,
+        "jsEventListeners": 1015
+      },
+      {
+        "round": 2,
+        "distinctVisited": 10,
+        "transitions": 11,
+        "usedSize": 98523464,
+        "totalSize": 100118528,
+        "documents": 2,
+        "nodes": 2765,
+        "jsEventListeners": 1015
+      },
+      {
+        "round": 3,
+        "distinctVisited": 10,
+        "transitions": 11,
+        "usedSize": 99628292,
+        "totalSize": 101429248,
+        "documents": 2,
+        "nodes": 2765,
+        "jsEventListeners": 1015
+      }
+    ],
+    "interpretation": "DOM/listener counts stable; retained JS heap rose across rounds, no retained-path or 30-distinct-session proof; not a no-leak claim"
+  }
+}

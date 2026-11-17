@@ -53,6 +53,12 @@ import type {
     ImportProviderSessionRequest,
     ImportProviderSessionResponse
 } from '@hapi/protocol/apiTypes'
+import type {
+    GitActionRequest,
+    GitActionResponse,
+    GitReadOptions,
+    GitRepositoryResponse
+} from '@hapi/protocol/sourceControl'
 import type { Server } from 'socket.io'
 import type { RpcRegistry } from '../socket/rpcRegistry'
 
@@ -91,6 +97,14 @@ export type RpcWriteFileResponse = FileWriteResponse
 export type RpcGeneratedImageResponse = GeneratedImageResponse
 export type RpcGeneratedFileResponse = GeneratedFileResponse
 export type RpcUploadFileResponse = UploadFileResponse
+export type SpawnSessionResult =
+    | { type: 'success'; sessionId: string }
+    | {
+        type: 'error'
+        message: string
+        code?: 'agent_unavailable' | 'outside_workspace_roots'
+        agent?: AgentFlavor
+    }
 export type RpcDeleteUploadResponse = DeleteUploadResponse
 export type RpcDirectoryEntry = DirectoryEntry
 export type RpcListDirectoryResponse = ListDirectoryResponse
@@ -219,19 +233,12 @@ export class RpcGateway {
         collaborationMode?: CodexCollaborationMode,
         copilotAgentMode?: CopilotAgentMode,
         startingMode?: 'remote' | 'pty',
+        worktreeStartRef?: string,
         // Hub session id to reuse for this spawn. When set, the runner boots the
         // CLI with `--hapi-session-id`, so the child reuses the existing hub
         // session row (same id) instead of minting a new one.
         forkSession?: boolean
-    ): Promise<
-        | { type: 'success'; sessionId: string }
-        | {
-            type: 'error'
-            message: string
-            code?: 'agent_unavailable' | 'outside_workspace_roots'
-            agent?: AgentFlavor
-        }
-    > {
+    ): Promise<SpawnSessionResult> {
         try {
             const result = await this.machineRpc(
                 machineId,
@@ -245,6 +252,7 @@ export class RpcGateway {
                     yolo,
                     sessionType,
                     worktreeName,
+                    worktreeStartRef,
                     resumeSessionId,
                     effort,
                     permissionMode,
@@ -392,16 +400,29 @@ export class RpcGateway {
         await this.machineRpc(machineId, RPC_METHODS.StopRunner, {})
     }
 
-    async getGitStatus(sessionId: string, cwd?: string): Promise<RpcCommandResponse> {
-        return await this.sessionRpc(sessionId, RPC_METHODS.GitStatus, { cwd }) as RpcCommandResponse
+    async getGitStatus(
+        sessionId: string,
+        options: { cwd?: string } & GitReadOptions = {}
+    ): Promise<GitRepositoryResponse> {
+        return await this.sessionRpc(sessionId, RPC_METHODS.GitStatus, options) as GitRepositoryResponse
     }
 
     async getGitDiffNumstat(sessionId: string, options: { cwd?: string; staged?: boolean }): Promise<RpcCommandResponse> {
         return await this.sessionRpc(sessionId, RPC_METHODS.GitDiffNumstat, options) as RpcCommandResponse
     }
 
-    async getGitDiffFile(sessionId: string, options: { cwd?: string; filePath: string; staged?: boolean }): Promise<RpcCommandResponse> {
+    async getGitDiffFile(
+        sessionId: string,
+        options: { cwd?: string; filePath: string; staged?: boolean } & Pick<GitReadOptions, 'scope' | 'baseRef'>
+    ): Promise<RpcCommandResponse> {
         return await this.sessionRpc(sessionId, RPC_METHODS.GitDiffFile, options) as RpcCommandResponse
+    }
+
+    async runGitAction(
+        sessionId: string,
+        options: { cwd?: string } & GitActionRequest
+    ): Promise<GitActionResponse> {
+        return await this.sessionRpc(sessionId, RPC_METHODS.GitAction, options) as GitActionResponse
     }
 
     async readSessionFile(sessionId: string, path: string, authorized = false): Promise<RpcReadFileResponse> {

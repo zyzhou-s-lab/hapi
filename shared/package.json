@@ -17,6 +17,7 @@
         "./omp": "./src/omp.ts",
         "./ompSessionMutation": "./src/ompSessionMutation.ts",
         "./rpcMethods": "./src/rpcMethods.ts",
+        "./sourceControl": "./src/sourceControl.ts",
         "./runnerCapabilities": "./src/runnerCapabilities.ts",
         "./schemas": "./src/schemas.ts",
         "./socketLimits": "./src/socketLimits.ts",

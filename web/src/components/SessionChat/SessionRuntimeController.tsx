@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useMemo, type MutableRefObject, type ReactNode, type RefObject } from 'react'
+import { createContext, useCallback, useContext, useMemo, useRef, type MutableRefObject, type ReactNode, type RefObject } from 'react'
 import { AssistantRuntimeProvider, type AttachmentAdapter } from '@assistant-ui/react'
 import { isSteeringSupportedForSession } from '@hapi/protocol'
 import type { SessionEntityMetaSnapshot, SessionEntityStore } from '@/chat/store/sessionEntityStore'
@@ -11,7 +11,10 @@ import type { PendingSchedule } from '@/components/AssistantChat/ScheduleTimePic
 import { ScratchlistMigrationBanner } from '@/components/AssistantChat/ScratchlistMigrationBanner'
 import { COMPOSER_DOCK_SLOTS, ChatSlotHost, type ComposerDockSlotContext } from '@/components/AssistantChat/slotRegistry'
 import { ShareSeedConsumer } from '@/components/ShareSeedConsumer'
-import { useGitStatusFiles } from '@/hooks/queries/useGitStatusFiles'
+import { SourceControl } from '@/fork-features/source-control/SourceControl'
+import { GitChatProvider, type GitChatContextValue } from '@/fork-features/source-control/GitChatContext'
+import { getLatestGitPreparation } from '@/fork-features/source-control/gitChat'
+import { useGitChatSend } from '@/fork-features/source-control/useGitChatSend'
 import { useSessionTodoSnapshot } from '@/hooks/queries/useSession'
 import { VoiceBackendSession, useSessionVoiceBridge } from '@/hooks/useSessionVoiceBridge'
 import { useHappyRuntime } from '@/lib/assistant-runtime'
@@ -101,8 +104,27 @@ export function SessionRuntimeController(props: SessionSurfaceProps & {
     onAcceptedChatSend: () => void
 }) {
     const session = useSessionControlSession(props.api, props.sessionId, props.session)
-    const hasVisibleMessages = useSessionSurfaceTimelineSelector(props.entityStore, selectHasVisibleMessages)
     const hasRunningChildAgent = useSessionSurfaceMetaSelector(props.entityStore, selectHasRunningChildAgent)
+    const gitDisabled = !session.active || session.thinking || props.isSending
+        || hasRunningChildAgent || (session.backgroundTaskCount ?? 0) > 0
+        || Object.keys(session.agentState?.requests ?? {}).length > 0
+    const { send: sendGitMessage, composerSendError } = useGitChatSend({
+        sessionId: props.sessionId,
+        disabled: gitDisabled,
+        onSend: props.onSend,
+        sendSettlement: props.sendSettlement,
+        sendError: props.sendError,
+        onDelivered: props.onAcceptedChatSend,
+    })
+    const preparation = useSessionSurfaceTimelineSelector(
+        props.entityStore,
+        snapshot => getLatestGitPreparation(snapshot.visibleMessages),
+        sameShallowSelection,
+    )
+    const gitChat = useMemo<GitChatContextValue>(() => ({
+        preparation, disabled: gitDisabled, send: sendGitMessage,
+    }), [preparation, gitDisabled, sendGitMessage])
+    const hasVisibleMessages = useSessionSurfaceTimelineSelector(props.entityStore, selectHasVisibleMessages)
     const timelineVersion = useSessionSurfaceTimelineSelector(props.entityStore, selectTimelineVersion)
     const inactiveCanResume = inactiveSessionCanResume(session, hasVisibleMessages ? 1 : 0, props.cursorChatOnDisk)
     const flavorController = useSessionFlavorModelController({
@@ -118,7 +140,7 @@ export function SessionRuntimeController(props: SessionSurfaceProps & {
         onSend: props.onSend,
         resolveSessionIdForUpload: props.resolveSessionIdForUpload,
         onUploadSessionResolved: props.onUploadSessionResolved,
-        sendError: props.sendError,
+        sendError: composerSendError,
         onClearSendError: props.onClearSendError,
         onAcceptedChatSend: props.onAcceptedChatSend,
     })
@@ -168,7 +190,7 @@ export function SessionRuntimeController(props: SessionSurfaceProps & {
         onScratchlistToggle: sendBridge.handleScratchlistToggle,
         onParkScratchlist: sendBridge.onParkScratchlist,
         onScratchlistParkingChange: sendBridge.setIsScratchlistParking,
-        sendError: props.sendError ?? null,
+        sendError: composerSendError ?? null,
         onClearSendError: sendBridge.handleClearSendError,
         onSuppressSendErrorRestore: props.onSuppressSendErrorRestore,
         pendingSendIntentRef: sendBridge.pendingSendIntentRef,
@@ -180,7 +202,7 @@ export function SessionRuntimeController(props: SessionSurfaceProps & {
         props.autocompleteSuggestions,
         props.isSending,
         props.onSuppressSendErrorRestore,
-        props.sendError,
+        composerSendError,
         props.sendSettlement,
         props.sessionId,
         resumeStoredDraft,
@@ -255,36 +277,38 @@ export function SessionRuntimeController(props: SessionSurfaceProps & {
     ])
     return (
         <RuntimeComposerContext.Provider value={value}>
-            <SessionAssistantRuntimeHost
-                entityStore={props.entityStore}
-                session={session}
-                inactiveCanResume={inactiveCanResume}
-                timelineVersion={timelineVersion}
-                historyVersion={props.historyVersion}
-                viewMode={props.viewMode}
-                isSyncingTail={props.isSyncingTail}
-                isLoadingMoreMessages={props.isLoadingMoreMessages}
-                isSending={props.isSending}
-                hasRunningChildAgent={hasRunningChildAgent}
-                onSendMessage={sendBridge.handleSend}
-                attachmentOrderRef={sendBridge.attachmentOrderRef}
-                onAbort={flavorController.handleAbort}
-                attachmentAdapter={sendBridge.attachmentAdapter}
-                pendingScheduleRef={sendBridge.pendingScheduleRef}
-                pendingSendIntentRef={sendBridge.pendingSendIntentRef}
-                hasPendingSchedule={sendBridge.pendingSchedule != null}
-                isScratchlistParking={sendBridge.isScratchlistParking}
-            >
-                {props.children}
-            </SessionAssistantRuntimeHost>
-            {voice ? (
-                <VoiceBackendSession
-                    api={props.api}
-                    micMuted={voice.micMuted}
-                    onStatusChange={voice.setStatus}
-                    onReadyChange={voiceBridge.setVoiceBackendReady}
-                />
-            ) : null}
+            <GitChatProvider key={props.sessionId} value={gitChat}>
+                <SessionAssistantRuntimeHost
+                    entityStore={props.entityStore}
+                    session={session}
+                    inactiveCanResume={inactiveCanResume}
+                    timelineVersion={timelineVersion}
+                    historyVersion={props.historyVersion}
+                    viewMode={props.viewMode}
+                    isSyncingTail={props.isSyncingTail}
+                    isLoadingMoreMessages={props.isLoadingMoreMessages}
+                    isSending={props.isSending}
+                    hasRunningChildAgent={hasRunningChildAgent}
+                    onSendMessage={sendBridge.handleSend}
+                    attachmentOrderRef={sendBridge.attachmentOrderRef}
+                    onAbort={flavorController.handleAbort}
+                    attachmentAdapter={sendBridge.attachmentAdapter}
+                    pendingScheduleRef={sendBridge.pendingScheduleRef}
+                    pendingSendIntentRef={sendBridge.pendingSendIntentRef}
+                    hasPendingSchedule={sendBridge.pendingSchedule != null}
+                    isScratchlistParking={sendBridge.isScratchlistParking}
+                >
+                    {props.children}
+                </SessionAssistantRuntimeHost>
+                {voice ? (
+                    <VoiceBackendSession
+                        api={props.api}
+                        micMuted={voice.micMuted}
+                        onStatusChange={voice.setStatus}
+                        onReadyChange={voiceBridge.setVoiceBackendReady}
+                    />
+                ) : null}
+            </GitChatProvider>
         </RuntimeComposerContext.Provider>
     )
 }
@@ -308,7 +332,6 @@ export function SessionComposerSection(props: SessionSurfaceProps & {
     const { t } = useTranslation()
     const todos = useSessionTodoSnapshot(props.api, props.sessionId, props.session)
     const meta = useSessionSurfaceMetaSelector(props.entityStore, selectComposerMeta, sameShallowSelection)
-    const { status: gitStatus } = useGitStatusFiles(props.api, controller.session.active ? props.sessionId : null)
     const resolveSessionMentionTooltip = useSessionMentionTooltipResolver(props.api)
     const { composerProps, session } = controller
     const dockContext = useMemo<ComposerDockSlotContext>(() => ({
@@ -351,8 +374,7 @@ export function SessionComposerSection(props: SessionSurfaceProps & {
                 contextWindow={meta.latestUsage?.contextWindow ?? composerProps.flavorController?.piContextWindow}
                 contextModel={meta.latestUsage?.model ?? session.model}
                 onTerminal={session.active && terminalSupported ? props.onViewTerminal : undefined}
-                gitStatus={gitStatus}
-                onViewFiles={session.active ? props.onViewFiles : undefined}
+                sourceControl={<SourceControl api={props.api} session={session} backgroundTaskCount={composerProps.backgroundTaskCount} />}
             />
         </>
     )

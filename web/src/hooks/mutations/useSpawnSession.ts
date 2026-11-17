@@ -15,6 +15,7 @@ type SpawnInput = {
     permissionMode?: PermissionMode
     sessionType?: 'simple' | 'worktree'
     worktreeName?: string
+    worktreeStartRef?: string
     serviceTier?: 'fast' | 'standard'
     collaborationMode?: CodexCollaborationMode
     copilotAgentMode?: CopilotAgentMode
@@ -47,7 +48,8 @@ export function useSpawnSession(api: ApiClient | null): {
                 input.serviceTier,
                 input.collaborationMode,
                 input.copilotAgentMode,
-                input.startingMode
+                input.startingMode,
+                input.worktreeStartRef
             )
         },
         onSuccess: () => {

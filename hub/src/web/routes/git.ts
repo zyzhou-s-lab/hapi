@@ -3,6 +3,7 @@ import { Hono } from 'hono'
 import { isWildcardSearch, matchesSearchQuery, toSearchGlob } from '@hapi/protocol'
 import { z } from 'zod'
 import { SessionConfigItemSelectorSchema } from '@hapi/protocol/schemas'
+import { GitActionRequestSchema, GitScopeSchema } from '@hapi/protocol/sourceControl'
 import type { SyncEngine } from '../../sync/syncEngine'
 import type { WebAppEnv } from '../middleware/auth'
 import { grantSessionFileRead, sessionFileReadGranted } from '../../sync/sessionFileAuthorization'
@@ -19,6 +20,11 @@ const directorySchema = z.object({
 
 const filePathSchema = z.object({
     path: z.string().min(1)
+})
+
+const gitStatusQuerySchema = z.object({
+    scope: GitScopeSchema.optional(),
+    baseRef: z.string().min(1).max(256).optional()
 })
 
 const writeFileSchema = z.object({
@@ -100,7 +106,16 @@ export function createGitRoutes(getSyncEngine: () => SyncEngine | null): Hono<We
             return c.json({ success: false, error: 'Session path not available' })
         }
 
-        const result = await runRpc(() => engine.getGitStatus(sessionResult.sessionId, sessionPath))
+        const parsed = gitStatusQuerySchema.safeParse(c.req.query())
+        if (!parsed.success) {
+            return c.json({ success: false, error: 'Invalid Git read options' }, 400)
+        }
+        const details = parseBooleanParam(c.req.query('details'))
+        const result = await runRpc(() => engine.getGitStatus(sessionResult.sessionId, {
+            cwd: sessionPath,
+            ...(details !== undefined ? { details } : {}),
+            ...parsed.data
+        }))
         return c.json(result)
     })
 
@@ -192,10 +207,63 @@ export function createGitRoutes(getSyncEngine: () => SyncEngine | null): Hono<We
         }
 
         const staged = parseBooleanParam(c.req.query('staged'))
+        const rawScope = c.req.query('scope')
+        const scope = rawScope === undefined ? null : GitScopeSchema.safeParse(rawScope)
+        if (scope && !scope.success) {
+            return c.json({ success: false, error: 'Invalid Git comparison scope' }, 400)
+        }
+        const baseRef = c.req.query('baseRef')
+        if (baseRef !== undefined && (baseRef.length < 1 || baseRef.length > 256)) {
+            return c.json({ success: false, error: 'Invalid Git base ref' }, 400)
+        }
         const result = await runRpc(() => engine.getGitDiffFile(sessionResult.sessionId, {
             cwd: sessionPath,
             filePath: parsed.data.path,
-            staged
+            staged,
+            ...(scope?.success ? { scope: scope.data } : {}),
+            ...(baseRef ? { baseRef } : {})
+        }))
+        return c.json(result)
+    })
+
+    app.post('/sessions/:id/git-action', async (c) => {
+        const engine = requireSyncEngine(c, getSyncEngine)
+        if (engine instanceof Response) {
+            return engine
+        }
+
+        const sessionResult = requireSessionFromParam(c, engine, { requireActive: true })
+        if (sessionResult instanceof Response) {
+            return sessionResult
+        }
+
+        const sessionPath = sessionResult.session.metadata?.path
+        if (!sessionPath) {
+            return c.json({ success: false, error: 'Session path not available' })
+        }
+
+        const parsed = GitActionRequestSchema.safeParse(await c.req.json().catch(() => null))
+        if (!parsed.success) {
+            return c.json({ success: false, error: 'Invalid Git action request' }, 400)
+        }
+
+        const session = sessionResult.session
+        const pendingRequests = Object.keys(session.agentState?.requests ?? {}).length
+        const busy = session.thinking
+            || pendingRequests > 0
+            || (session.backgroundTaskCount ?? 0) > 0
+            || session.agentState?.steeringActive === true
+        if (busy) {
+            return c.json({
+                success: false,
+                error: 'Agent is busy; wait for the current turn to finish',
+                code: 'agent_busy'
+            }, 409)
+        }
+
+        const result = await runRpc(() => engine.runGitAction(sessionResult.sessionId, {
+            cwd: sessionPath,
+            ...parsed.data
         }))
         return c.json(result)
     })

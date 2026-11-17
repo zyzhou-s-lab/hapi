@@ -1,9 +1,11 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useSyncExternalStore } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useSyncExternalStore } from 'react'
 import type { ApiClient } from '@/api/client'
 import type { DecryptedMessage } from '@/types/api'
 import {
     activateMessageWindow,
     cancelOlderMessageLoad,
+    captureMessageWindowScope,
+    getMessageWindowScopeVersion,
     fetchOlderMessages,
     getMessageWindowState,
     setMessageViewMode,
@@ -96,44 +98,47 @@ export function areMessageWindowControlsStatesEqual(
 }
 
 function useMessageWindowLifecycleAndActions(api: ApiClient | null, sessionId: string | null) {
+    const version = getMessageWindowScopeVersion()
+    const isScopeCurrent = useMemo(captureMessageWindowScope, [version])
     useLayoutEffect(() => {
-        if (sessionId) {
+        if (api && sessionId && isScopeCurrent()) {
             activateMessageWindow(sessionId)
         }
-    }, [sessionId])
+    }, [api, sessionId, isScopeCurrent])
 
     useEffect(() => {
-        if (api && sessionId) {
+        if (api && sessionId && isScopeCurrent()) {
             void syncTailMessages(api, sessionId)
         }
-    }, [api, sessionId])
+    }, [api, sessionId, isScopeCurrent])
 
     const loadMore = useCallback(async (onBeforeApply?: (historyVersion: number) => boolean) => {
+        if (!isScopeCurrent()) return { kind: 'stopped', reason: 'invalidated' } as const
         if (!api || !sessionId) {
             return { kind: 'stopped', reason: 'unavailable' } as const
         }
         return await fetchOlderMessages(api, sessionId, { onBeforeApply })
-    }, [api, sessionId])
+    }, [api, sessionId, isScopeCurrent])
 
     const cancelLoadMore = useCallback(() => {
-        if (sessionId) {
+        if (api && sessionId && isScopeCurrent()) {
             cancelOlderMessageLoad(sessionId)
         }
-    }, [sessionId])
+    }, [api, sessionId, isScopeCurrent])
 
     const refetch = useCallback(async () => {
-        if (!api || !sessionId) return
+        if (!api || !sessionId || !isScopeCurrent()) return
         await syncTailMessages(api, sessionId, { ensureAfterCurrent: true })
-    }, [api, sessionId])
+    }, [api, sessionId, isScopeCurrent])
 
     const setViewMode = useCallback((mode: MessageViewMode) => {
-        if (!sessionId) return
+        if (!api || !sessionId || !isScopeCurrent()) return
         const previousMode = getMessageWindowState(sessionId).viewMode
         setMessageViewMode(sessionId, mode)
         if (mode === 'tail' && previousMode !== 'tail' && api) {
             void syncTailMessages(api, sessionId, { ensureAfterCurrent: true })
         }
-    }, [api, sessionId])
+    }, [api, sessionId, isScopeCurrent])
 
     return {
         loadMore,
@@ -163,7 +168,7 @@ export function useMessages(api: ApiClient | null, sessionId: string | null): {
             if (!sessionId) return () => {}
             return subscribeMessageWindow(sessionId, listener)
         }, [sessionId]),
-        useCallback(() => sessionId ? getMessageWindowState(sessionId) : EMPTY_STATE, [sessionId]),
+        useCallback(() => api && sessionId ? getMessageWindowState(sessionId) : EMPTY_STATE, [api, sessionId]),
         () => EMPTY_STATE
     )
 
@@ -192,7 +197,7 @@ export function useMessageWindowControls(
 ): MessageWindowControls {
     const snapshotRef = useRef<MessageWindowControlsState | null>(null)
     const getSnapshot = useCallback((): MessageWindowControlsState => {
-        if (!sessionId) {
+        if (!api || !sessionId) {
             return EMPTY_CONTROLS_STATE
         }
         const next = selectMessageWindowControlsState(getMessageWindowState(sessionId))
@@ -201,7 +206,7 @@ export function useMessageWindowControls(
         }
         snapshotRef.current = next
         return next
-    }, [sessionId])
+    }, [api, sessionId])
 
     const state = useSyncExternalStore(
         useCallback((listener) => {

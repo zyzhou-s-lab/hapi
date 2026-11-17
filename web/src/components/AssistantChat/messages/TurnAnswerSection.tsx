@@ -1,5 +1,6 @@
 import { memo } from 'react'
-import type { ProjectedSubturn, TurnTextRow } from '@/components/AssistantChat/messages/turnBlockModel'
+import type { TurnTextRow } from '@/components/AssistantChat/messages/turnBlockModel'
+import type { ProjectedSubturn } from '@/components/AssistantChat/messages/turnProjection'
 import { renderSimpleMarkdownText } from '@/components/AssistantChat/messages/TimelineStepRows'
 import { GeneratedFileCard, GeneratedImageCard } from '@/components/AssistantChat/messages/ToolMessage'
 import { useOptionalSessionVisibleEntity } from '@/hooks/useSessionEntityStore'
@@ -48,7 +49,7 @@ export function TurnAnswerSection(props: {
                     {visibleNonTrailingTextRows.map(({ row }) => (
                         <div
                             key={row.key}
-                            className="py-1.5 text-[15px] leading-relaxed text-[var(--app-fg)]"
+                            className="happy-chat-text py-1.5 text-[var(--app-fg)]"
                         >
                             <TurnEntityTextBody
                                 row={row}
@@ -84,7 +85,7 @@ export function TurnAnswerSection(props: {
                 return (
                     <div
                         key={row.key}
-                        className="mt-3 text-[15px] leading-relaxed text-[var(--app-fg)]"
+                        className="happy-chat-text mt-3 text-[var(--app-fg)]"
                         data-testid="turn-trailing-answer"
                     >
                         <TurnEntityTextBody

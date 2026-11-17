@@ -1,0 +1,26 @@
+diff --git a/dist/overrides/CodeOverride.js b/dist/overrides/CodeOverride.js
+index 2958a60343c6318cde527727e4f3a1a144f99e9f..ac736d2469e1a57ac7678460e006872516feb379 100644
+--- a/dist/overrides/CodeOverride.js
++++ b/dist/overrides/CodeOverride.js
+@@ -12,7 +12,7 @@ const CodeBlockOverride = ({ node, components: { Pre, Code, SyntaxHighlighter: F
+ 	const WrappedPre = useCallbackRef((props) => /* @__PURE__ */ jsx(Pre, { ...getPreProps(props) }));
+ 	const getCodeProps = withDefaultProps(codeProps);
+ 	const WrappedCode = useCallbackRef((props) => /* @__PURE__ */ jsx(Code, { ...getCodeProps(props) }));
+-	const language = /language-(\w+)/.exec(codeProps.className || "")?.[1] ?? "";
++	const language = /language-([^\s]+)/.exec(codeProps.className || "")?.[1] ?? "";
+ 	if (typeof children !== "string") return /* @__PURE__ */ jsx(DefaultCodeBlockContent, {
+ 		node,
+ 		components: {
+diff --git a/src/overrides/CodeOverride.tsx b/src/overrides/CodeOverride.tsx
+index 93c7f1a9445d20309747d7604b22a6cac959660d..fd12d7554441e0002c2e9247d6c22045b2595c01 100644
+--- a/src/overrides/CodeOverride.tsx
++++ b/src/overrides/CodeOverride.tsx
+@@ -41,7 +41,7 @@ const CodeBlockOverride: FC<CodeOverrideProps> = ({
+     <Code {...getCodeProps(props)} />
+   ));
+ 
+-  const language = /language-(\w+)/.exec(codeProps.className || "")?.[1] ?? "";
++  const language = /language-([^\s]+)/.exec(codeProps.className || "")?.[1] ?? "";
+ 
+   // if the code content is not string (due to rehype plugins), return a default code block
+   if (typeof children !== "string") {

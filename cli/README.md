@@ -79,6 +79,14 @@ runner's home directory.
 
 See `src/runner/run.ts`.
 
+### Git operations from the web app
+
+The session's CLI executes scoped status/diff and explicitly confirmed stage, commit, normal push, fast-forward-only pull and PR operations. `gh` must be installed and authenticated on that machine for PR creation; prompts are disabled and failures are returned to the web app. No automatic force-push, stash, reset or rebase.
+
+Stage paths are literal, explicitly selected complete files; commits use the index without implicit staging. Session-directory boundaries apply to reads, staging and commit coverage. HAPI serializes writes per repository and rechecks HEAD, branch, index and dirty-file content; external Git processes can still race, so refresh after a changed-state error.
+
+New worktree sessions accept `worktreeStartRef`, resolve it to a commit before creation, then create a separate branch/worktree. Existing agent cwd and linked worktrees remain unchanged. Update/restart the runner before using selected-ref creation; older runners do not enforce this field.
+
 ### Diagnostics
 
 - `hapi doctor` - Show full diagnostics (version, runner status, logs, processes).

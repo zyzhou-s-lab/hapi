@@ -1,3 +1,4 @@
+import { useEffect } from 'react'
 import { MessagePrimitive, useAuiState } from '@assistant-ui/react'
 import { isLegacyCompactionStartEvent } from '@/chat/reducerEvents'
 import { getEventPresentation, renderEventLabel } from '@/chat/presentation'
@@ -8,8 +9,16 @@ import { useOptionalHappyChatSessionStateContext } from '@/components/AssistantC
 import { useOptionalSessionEntityStore, useOptionalSessionVisibleEntity } from '@/hooks/useSessionEntityStore'
 import { MessageTimestamp } from '@/components/AssistantChat/messages/MessageTimestamp'
 import { MarkdownRenderer } from '@/components/MarkdownRenderer'
+import { useOptionalToast } from '@/lib/toast-context'
 import { cn } from '@/lib/utils'
 
+const emittedSystemEventToastKeys = new Set<string>()
+const SYSTEM_EVENT_TOAST_LIVE_WINDOW_MS = 15_000
+const SYSTEM_EVENT_TOAST_DURATION_MS = 5_000
+
+export function __resetEmittedSystemEventToastKeysForTests(): void {
+    emittedSystemEventToastKeys.clear()
+}
 function isActiveSystemEvent(event: AgentEvent | undefined): boolean {
     if (!event) return false
     if (event.type === 'omp-compaction' && 'phase' in event && event.phase === 'started') return true
@@ -23,6 +32,116 @@ function formatTokenDelta(event: AgentEvent | undefined): string | null {
     if (typeof event.estimatedTokensAfter === 'number') parts.push(event.estimatedTokensAfter.toLocaleString())
     if (parts.length === 0) return null
     return parts.length === 2 ? `${parts[0]} → ${parts[1]} tokens` : `${parts[0]} tokens`
+}
+type CossToastSystemBannerModel = {
+    kind: 'omp-notice' | 'title-changed'
+    type: 'info' | 'warning' | 'error'
+    title: string
+    description?: string
+}
+
+function splitSystemNoticeContent(text: string): { title: string; description?: string } {
+    if (text.startsWith('xd://: ')) {
+        return {
+            title: 'xd://',
+            description: text.slice('xd://: '.length),
+        }
+    }
+    return { title: text }
+}
+
+export function parsePromptKitSystemBanner(
+    event: AgentEvent | undefined,
+    text: string
+): CossToastSystemBannerModel | null {
+    const isTitleEvent =
+        event?.type === 'title-changed'
+        || (event?.type === 'omp-extension-ui' && 'method' in event && event.method === 'setTitle')
+        || (!event && /^Title changed to\s+".+"$/i.test(text))
+
+    if (isTitleEvent) {
+        const rawTitle =
+            event?.type === 'title-changed' && typeof event.title === 'string' && event.title.length > 0
+                ? event.title
+                : event?.type === 'omp-extension-ui' && 'title' in event && typeof event.title === 'string' && event.title.length > 0
+                    ? event.title
+                    : null
+        if (rawTitle) {
+            return {
+                kind: 'title-changed',
+                type: 'info',
+                title: 'Title changed',
+                description: rawTitle,
+            }
+        }
+        const match = /^Title changed to\s+"(.+)"$/i.exec(text)
+        if (match) {
+            return {
+                kind: 'title-changed',
+                type: 'info',
+                title: 'Title changed',
+                description: match[1],
+            }
+        }
+        return {
+            kind: 'title-changed',
+            type: 'info',
+            title: text,
+        }
+    }
+
+    const isOmpNotice =
+        event?.type === 'omp-notice'
+        || (!event && /^xd:\/\/:/i.test(text))
+
+    if (isOmpNotice) {
+        const level = event?.type === 'omp-notice' && typeof event.level === 'string'
+            ? event.level
+            : undefined
+        const type: 'info' | 'warning' | 'error' =
+            level === 'error' ? 'error' : level === 'warning' ? 'warning' : 'info'
+        const { title, description } = splitSystemNoticeContent(text)
+        return {
+            kind: 'omp-notice',
+            type,
+            title,
+            description,
+        }
+    }
+
+    return null
+}
+
+export function PromptKitSystemEventBanner(props: {
+    banner: CossToastSystemBannerModel
+    messageId?: string
+    createdAt?: number
+    className?: string
+}) {
+    const { banner, messageId, createdAt } = props
+    const toastCtx = useOptionalToast()
+    const toastKey = `${messageId ?? ''}:${banner.kind}:${banner.title}:${banner.description ?? ''}`
+
+    useEffect(() => {
+        if (!toastCtx) return
+        if (emittedSystemEventToastKeys.has(toastKey)) return
+        const isHistorical =
+            typeof createdAt === 'number'
+            && createdAt > 0
+            && Date.now() - createdAt > SYSTEM_EVENT_TOAST_LIVE_WINDOW_MS
+        emittedSystemEventToastKeys.add(toastKey)
+        if (isHistorical) return
+        toastCtx.addToast({
+            title: banner.title,
+            body: banner.description ?? '',
+            sessionId: '',
+            url: '',
+            variant: banner.type,
+            durationMs: SYSTEM_EVENT_TOAST_DURATION_MS,
+        })
+    }, [banner.description, banner.title, banner.type, createdAt, toastCtx, toastKey])
+
+    return null
 }
 
 function SystemMessageView(props: {
@@ -65,6 +184,16 @@ function SystemMessageView(props: {
         )
     }
 
+    const promptKitBanner = parsePromptKitSystemBanner(event, text)
+    if (promptKitBanner) {
+        return (
+            <PromptKitSystemEventBanner
+                banner={promptKitBanner}
+                messageId={messageId}
+                createdAt={createdAt}
+            />
+        )
+    }
     return (
         <RootComponent id={elementId} data-hapi-message-role="system" {...rootDataProps} className="aui-message-root scroll-mt-4 py-1">
             <div className="mx-auto w-fit max-w-[92%] px-2 text-center text-xs text-[var(--app-hint)] opacity-80">

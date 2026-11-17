@@ -23,6 +23,8 @@ export interface SpawnSessionOptions {
     token?: string
     sessionType?: 'simple' | 'worktree'
     worktreeName?: string
+    /** Branch/tag/commit the new worktree branch starts from. Omitted = current HEAD. */
+    worktreeStartRef?: string
     startingMode?: 'remote' | 'pty'
     /** Claude: spawn with --fork-session after --resume. */
     forkSession?: boolean

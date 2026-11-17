@@ -1,11 +1,7 @@
 import { expect, test } from '@playwright/test'
 
-// Regression: loading an older page prepends hundreds of messages at once.
-// assistant-ui's tap scheduler aborts a flush with more than 50 dirty
-// resources and drops the rest, so the thread never reflected the merged
-// page (see patches/@assistant-ui%2Ftap@0.3.5.patch). This spec drives the
-// real message-window store + HappyThread against a fake paginated API and
-// pins the contract: one page per top approach, scroll position restored.
+// Real message-window store + entity-backed HappyThread against a fake API:
+// one canonical turn page per top approach, with scroll anchors preserved.
 test('scroll-to-top loads one page per approach with correct scroll restore', async ({ page }) => {
     await page.goto('/e2e-fixtures/history-load-fixture.html')
     const viewport = page.locator('.app-scroll-y')
@@ -29,8 +25,11 @@ test('scroll-to-top loads one page per approach with correct scroll restore', as
 
     // Exactly one page loaded, the DOM shows it, scroll restored away from top.
     expect(afterFirst.beforeReqs).toBe(1)
-    expect(afterFirst.childCount).toBe(400)
+    expect(afterFirst.childCount).toBe(16)
     expect(afterFirst.scrollTop).toBeGreaterThan(1000)
+    expect(await page.evaluate(() => window.__probe.windowState())).toEqual({
+        messageCount: 16, oldestSeq: 2385, newestSeq: 2400
+    })
 
     // Idle watch: no further loads may happen without another scroll.
     await page.waitForTimeout(2500)
@@ -55,7 +54,7 @@ test('scroll-to-top loads one page per approach with correct scroll restore', as
         }
     })
     expect(afterSecond.beforeReqs).toBe(2)
-    expect(afterSecond.childCount).toBe(600)
+    expect(afterSecond.childCount).toBe(24)
     expect(afterSecond.scrollTop).toBeGreaterThan(1000)
 })
 
@@ -95,7 +94,7 @@ test('scrolling within the preload area rebases the pending anchor', async ({ pa
 
     await expect.poll(async () => await page.evaluate(() =>
         document.querySelector('.happy-thread-messages')?.childElementCount ?? 0
-    )).toBe(400)
+    )).toBe(16)
 
     const restoredOffset = await page.evaluate((anchorId) => {
         const viewport = document.querySelector('.app-scroll-y') as HTMLElement
@@ -106,10 +105,9 @@ test('scrolling within the preload area rebases the pending anchor', async ({ pa
     expect(Math.abs(restoredOffset - latestAnchor.topOffset)).toBeLessThanOrEqual(2)
 })
 
-// At the 800-row history cap, applying another prepend evicts the newest 200
-// rows. If the user reverses into that side while the request is in flight,
-// invalidate the obsolete load rather than deleting their visible anchor.
-test('reversing toward newer history cancels a prepend at the row cap', async ({ page }) => {
+// Returning to the tail while a slow prepend is pending cancels the obsolete
+// load and preserves the user's latest visible anchor.
+test('returning to the tail cancels a pending prepend', async ({ page }) => {
     await page.goto('/e2e-fixtures/history-load-fixture.html?slowBefore=1')
     const viewport = page.locator('.app-scroll-y')
     await expect(viewport).toBeVisible()
@@ -130,20 +128,19 @@ test('reversing toward newer history cancels a prepend at the row cap', async ({
         await expect.poll(async () => await page.evaluate(() => ({
             beforeReqs: window.__probe.requests.filter((request) => request.direction === 'before').length,
             childCount: document.querySelector('.happy-thread-messages')?.childElementCount ?? 0
-        }))).toEqual({
-            beforeReqs: pageNumber,
-            childCount: 200 + pageNumber * 200
-        })
+        }))).toEqual({ beforeReqs: pageNumber, childCount: 8 + pageNumber * 8 })
     }
+    const beforeCancellation = await page.evaluate(() => window.__probe.windowState())
 
     await approachTop()
     await expect.poll(async () => await page.evaluate(() =>
         window.__probe.requests.filter((request) => request.direction === 'before').length
     )).toBe(4)
 
+    await viewport.dispatchEvent('pointerdown', { button: 0, pointerType: 'mouse' })
     const newerAnchor = await page.evaluate(() => {
         const viewport = document.querySelector('.app-scroll-y') as HTMLElement
-        viewport.scrollTop = Math.max(0, viewport.scrollHeight - viewport.clientHeight - 1000)
+        viewport.scrollTop = viewport.scrollHeight
         viewport.dispatchEvent(new Event('scroll'))
         const viewportRect = viewport.getBoundingClientRect()
         const message = Array.from(
@@ -158,16 +155,16 @@ test('reversing toward newer history cancels a prepend at the row cap', async ({
             topOffset: message.getBoundingClientRect().top - viewportRect.top
         }
     })
-    const anchorSequence = Number(newerAnchor.id.match(/m-(\d+)/)?.[1])
-    expect(anchorSequence).toBeGreaterThan(1000)
+    await viewport.dispatchEvent('pointerup', { button: 0, pointerType: 'mouse' })
 
     // Wait beyond the fixture's 500ms response delay. The invalidated response
-    // must not apply or trim the capped window.
+    // must not apply or discard any of the already loaded history.
     await page.waitForTimeout(1000)
     const afterCancelledLoad = await page.evaluate((anchorId) => {
         const viewport = document.querySelector('.app-scroll-y') as HTMLElement
         const message = document.getElementById(anchorId)
         return {
+            windowState: window.__probe.windowState(),
             childCount: document.querySelector('.happy-thread-messages')?.childElementCount ?? 0,
             beforeReqs: window.__probe.requests.filter((request) => request.direction === 'before').length,
             anchorOffset: message
@@ -176,77 +173,12 @@ test('reversing toward newer history cancels a prepend at the row cap', async ({
         }
     }, newerAnchor.id)
     expect(afterCancelledLoad).toEqual({
-        childCount: 800,
+        childCount: beforeCancellation.messageCount,
+        windowState: beforeCancellation,
         beforeReqs: 4,
         anchorOffset: expect.any(Number)
     })
     expect(Math.abs(afterCancelledLoad.anchorOffset! - newerAnchor.topOffset)).toBeLessThanOrEqual(2)
-})
-
-// The store and rendered thread must publish a capped prepend atomically. With
-// throttled notification, there was a window where the store had already
-// dropped m-1001…m-1200 while the DOM still exposed those rows to scrolling.
-test('capped prepend has no post-apply stale-DOM reversal window', async ({ page }) => {
-    await page.goto('/e2e-fixtures/history-load-fixture.html')
-    const viewport = page.locator('.app-scroll-y')
-    await expect(viewport).toBeVisible()
-    await page.waitForTimeout(3500)
-
-    const approachTop = async () => {
-        await viewport.dispatchEvent('pointerdown', { button: 0, pointerType: 'mouse' })
-        await page.evaluate(() => {
-            const element = document.querySelector('.app-scroll-y') as HTMLElement
-            element.scrollTop = 0
-            element.dispatchEvent(new Event('scroll'))
-        })
-        await viewport.dispatchEvent('pointerup', { button: 0, pointerType: 'mouse' })
-    }
-
-    for (let pageNumber = 1; pageNumber <= 3; pageNumber += 1) {
-        await approachTop()
-        await expect.poll(async () => await page.evaluate(() => ({
-            beforeReqs: window.__probe.requests.filter((request) => request.direction === 'before').length,
-            childCount: document.querySelector('.happy-thread-messages')?.childElementCount ?? 0
-        }))).toEqual({
-            beforeReqs: pageNumber,
-            childCount: 200 + pageNumber * 200
-        })
-    }
-
-    await page.evaluate(() => {
-        delete document.documentElement.dataset.historyStoreDomGap
-        const deadline = Date.now() + 1500
-        const timer = window.setInterval(() => {
-            const state = window.__probe.windowState()
-            if (state.oldestSeq !== 201) {
-                if (Date.now() >= deadline) {
-                    document.documentElement.dataset.historyStoreDomGap = 'timeout'
-                    window.clearInterval(timer)
-                }
-                return
-            }
-
-            const viewport = document.querySelector('.app-scroll-y') as HTMLElement
-            const exposesEvictedRows = Array.from(
-                viewport.querySelectorAll<HTMLElement>('.happy-thread-messages > [id]')
-            ).some((message) => Number(message.id.match(/m-(\d+)/)?.[1]) > 1000)
-            if (exposesEvictedRows) {
-                // Reproduce the dangerous input while the DOM still exposes
-                // rows that the store has already removed.
-                viewport.scrollTop = Math.max(0, viewport.scrollHeight - viewport.clientHeight - 1000)
-                viewport.dispatchEvent(new Event('scroll'))
-                document.documentElement.dataset.historyStoreDomGap = 'stale'
-            } else {
-                document.documentElement.dataset.historyStoreDomGap = 'atomic'
-            }
-            window.clearInterval(timer)
-        }, 0)
-    })
-
-    await approachTop()
-    await expect.poll(async () => await page.evaluate(() =>
-        document.documentElement.dataset.historyStoreDomGap ?? null
-    )).toBe('atomic')
 })
 
 // Regression: a normal tail synchronization invalidates any overlapping
@@ -276,7 +208,7 @@ test('ordinary tail synchronization re-arms covered history loading', async ({ p
         scrollTop: Math.round((document.querySelector('.app-scroll-y') as HTMLElement).scrollTop)
     }))).toEqual({
         beforeReqs: 2,
-        childCount: 400,
+        childCount: 16,
         scrollTop: expect.any(Number)
     })
 
@@ -367,7 +299,7 @@ test('a failed older-page load retries automatically while covered', async ({ pa
     })
 
     expect(state.beforeReqs).toBe(2)
-    expect(state.childCount).toBe(400)
+    expect(state.childCount).toBe(16)
     expect(state.scrollTop).toBeGreaterThan(1000)
 })
 
@@ -396,7 +328,7 @@ test('wheel-up at the top loads older after automatic retries are exhausted', as
         beforeReqs: window.__probe.requests.filter((r) => r.direction === 'before').length
     }))
     expect(stuck.beforeReqs).toBe(4)
-    expect(stuck.childCount).toBe(200)
+    expect(stuck.childCount).toBe(8)
 
     await page.evaluate(() => {
         (document.querySelector('.app-scroll-y') as HTMLElement).scrollTop = 0
@@ -409,15 +341,14 @@ test('wheel-up at the top loads older after automatic retries are exhausted', as
         beforeReqs: window.__probe.requests.filter((r) => r.direction === 'before').length
     }))
     expect(recovered.beforeReqs).toBe(5)
-    expect(recovered.childCount).toBe(400)
+    expect(recovered.childCount).toBe(16)
     expect(recovered.scrollTop).toBeGreaterThan(1000)
 })
 
 // Regression: a page whose rows are all filtered by normalizeDecryptedMessage
 // renders zero height, so the sentinel cannot move and the restore leaves
 // scrollTop unchanged. Automatic loading must remain paused instead of paging
-// through the entire remaining history. Filtered rows must also stay out of
-// the retained message-window budget.
+// through the remaining history, even though another page is available.
 test('a fully filtered page keeps automatic history loading paused', async ({ page }) => {
     await page.goto('/e2e-fixtures/history-load-fixture.html?filteredOlder=1')
     const viewport = page.locator('.app-scroll-y')
@@ -434,11 +365,9 @@ test('a fully filtered page keeps automatic history loading paused', async ({ pa
         beforeReqs: window.__probe.requests.filter((r) => r.direction === 'before').length
     }))
     expect(state.beforeReqs).toBe(1)
-    expect(state.childCount).toBe(200)
+    expect(state.childCount).toBe(8)
 
-    // A later content shrink (the same ResizeObserver signal produced when a
-    // full prepend window evicts rendered newer rows) must not revive the
-    // no-progress coverage run.
+    // A later content shrink must not revive the no-progress coverage run.
     await page.evaluate(() => {
         const rows = document.querySelectorAll<HTMLElement>('.happy-thread-messages > *')
         const last = rows.item(rows.length - 1)
@@ -473,7 +402,7 @@ test('an epoch-reset stop does not auto re-arm older requests', async ({ page })
         beforeReqs: window.__probe.requests.filter((r) => r.direction === 'before').length
     }))
     expect(state.beforeReqs).toBe(1)
-    expect(state.childCount).toBe(200)
+    expect(state.childCount).toBe(8)
 
     // Scroll events can be browser/programmatic effects of a reset. Moving
     // downward while the sentinel remains covered is not renewed older-history
@@ -536,7 +465,12 @@ test('touch pull shows staged feedback and loads older on release', async ({ pag
     await expect.poll(async () => await page.evaluate(() =>
         window.__probe.requests.filter((request) => request.direction === 'before').length
     )).toBe(1)
+    await expect(page.getByText('Loading…', { exact: true })).toBeVisible()
     await expect(page.getByText('Loading…', { exact: true })).toBeHidden()
+    await viewport.evaluate((element) => {
+        element.scrollTop = 0
+        element.dispatchEvent(new Event('scroll'))
+    })
 
     const dispatchTouch = async (type: 'touchstart' | 'touchmove' | 'touchend', clientY: number) => {
         await viewport.evaluate((element, eventInit) => {
@@ -614,13 +548,9 @@ test('scroll events cannot bypass backoff before an epoch-reset stop', async ({ 
     expect(afterStop).toBe(2)
 })
 
-// Regression: once loaded history exceeds the 800-row cap, the evicted tail
-// marks the window as requiring a latest reset. A tail sync fired while the
-// user was still browsing (SSE reconnect, onRefresh, queued-state
-// reconciliation) used to run that reset immediately — replacing the loaded
-// history with the newest page and snapping the view back to the initial
-// pagination. The reset must be deferred until the window returns to tail mode.
-test('a tail sync while browsing capped history does not snap back to the latest page', async ({ page }) => {
+// Tail synchronization while browsing must not replace loaded history with
+// the latest turn page or move the user's current reading position.
+test('a tail sync while browsing history preserves loaded messages and position', async ({ page }) => {
     await page.goto('/e2e-fixtures/history-load-fixture.html')
     const viewport = page.locator('.app-scroll-y')
     await expect(viewport).toBeVisible()
@@ -636,8 +566,7 @@ test('a tail sync while browsing capped history does not snap back to the latest
         await viewport.dispatchEvent('pointerup', { button: 0, pointerType: 'mouse' })
     }
 
-    // Four older pages: 200 initial + 4×200 = 1000 rows, capped to the oldest
-    // 800 (m-201…m-1000) with the newest 200 evicted.
+    // Four older pages plus the initial tail; no historical rows are evicted.
     for (let pageNumber = 1; pageNumber <= 4; pageNumber += 1) {
         await approachTop()
         await expect.poll(async () => await page.evaluate(() => ({
@@ -645,11 +574,12 @@ test('a tail sync while browsing capped history does not snap back to the latest
             childCount: document.querySelector('.happy-thread-messages')?.childElementCount ?? 0
         }))).toEqual({
             beforeReqs: pageNumber,
-            childCount: Math.min(200 + pageNumber * 200, 800)
+            childCount: 8 + pageNumber * 8
         })
     }
     const beforeSync = await page.evaluate(() => window.__probe.windowState())
-    expect(beforeSync).toEqual({ messageCount: 800, oldestSeq: 201, newestSeq: 1000 })
+    expect(beforeSync).toEqual({ messageCount: 40, oldestSeq: 2361, newestSeq: 2400 })
+    const beforeScrollTop = await viewport.evaluate((element) => element.scrollTop)
 
     await page.evaluate(async () => {
         await window.__probe.refetch()
@@ -660,11 +590,14 @@ test('a tail sync while browsing capped history does not snap back to the latest
     const afterSync = await page.evaluate(() => ({
         windowState: window.__probe.windowState(),
         latestReqs: window.__probe.requests.filter((request) => request.direction === 'latest').length,
-        childCount: document.querySelector('.happy-thread-messages')?.childElementCount ?? 0
+        childCount: document.querySelector('.happy-thread-messages')?.childElementCount ?? 0,
+        scrollTop: (document.querySelector('.app-scroll-y') as HTMLElement).scrollTop
     }))
     expect(afterSync).toEqual({
         windowState: beforeSync,
         latestReqs: 1,
-        childCount: 800
+        childCount: 40,
+        scrollTop: expect.any(Number)
     })
+    expect(Math.abs(afterSync.scrollTop - beforeScrollTop)).toBeLessThanOrEqual(2)
 })

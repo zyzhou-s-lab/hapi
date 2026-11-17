@@ -516,6 +516,9 @@ export function reduceTimeline(
             if (msg.content.type === 'abort-restore') {
                 continue
             }
+            if (msg.content.type === 'turn-lifecycle') {
+                continue
+            }
             if (msg.content.type === 'turn-summary') {
                 const summary = msg.content.summary as RoundSummary
                 type SummaryTargetBlock = Exclude<ChatBlock, UserTextBlock | AgentEventBlock>

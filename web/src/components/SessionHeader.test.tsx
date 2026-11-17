@@ -14,7 +14,7 @@ afterEach(() => {
 
 function ToastMessages() {
     const { toasts } = useToast()
-    return <>{toasts.map((toast) => <div key={toast.id}>{toast.title}: {toast.body}</div>)}</>
+    return <>{toasts.map((toast) => <div key={toast.id}>{toast.title}: {toast.description}</div>)}</>
 }
 
 function baseSession(overrides: Partial<Session> = {}): Session {

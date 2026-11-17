@@ -37,6 +37,7 @@ const NON_EMITTING_EVENTS: Record<string, true> = {
     'abort-restore': true,
     'turn-summary': true,
     'turn-duration': true,
+    'turn-lifecycle': true,
 }
 
 /** A checkpoint is a dependency-closed raw-timeline cut, not a REST page or user turn. */

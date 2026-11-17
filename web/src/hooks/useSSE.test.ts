@@ -4,6 +4,7 @@ import { createElement, type ReactNode } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { SessionSummary } from '@/types/api'
 import type { Session } from '@/types/api'
+import { getMessageWindowState, setMessageWindowScope } from '@/lib/message-window-store'
 import {
     applySessionDetailPatch,
     canApplyVersionedSummaryPatch,
@@ -158,6 +159,44 @@ describe('useSSE connection liveness (mobile suspend/resume)', () => {
         expect(FakeEventSource.instances[1]?.readyState).toBe(FakeEventSource.CLOSED)
 
         unmount()
+    })
+    it('rejects retired sources before callbacks or raw writes, including same-scope reconnects', () => {
+        setMessageWindowScope('http://hub.test|1')
+        const queryClient = new QueryClient()
+        const onEventA = vi.fn()
+        const onEventB = vi.fn()
+        const wrapper = ({ children }: { children: ReactNode }) =>
+            createElement(QueryClientProvider, { client: queryClient }, children)
+        const hook = renderHook(({ account, callback }) => useSSE({
+            enabled: true, token: 'test', baseUrl: 'http://hub.test', accountId: account,
+            subscription: { sessionId: 'scope-session' }, onEvent: callback,
+        }), { wrapper, initialProps: { account: 1, callback: onEventA } })
+        const oldSource = FakeEventSource.instances.at(-1)!
+        const received = (id: string) => ({
+            type: 'message-received', sessionId: 'scope-session', message: {
+                id, seq: 1, localId: null, createdAt: 1_000,
+                content: { role: 'agent', content: { type: 'codex', data: { type: 'message', message: id } } },
+            },
+        })
+        // The boundary revokes ingress before passive SSE cleanup can run.
+        setMessageWindowScope('http://hub.test|2')
+        act(() => { oldSource.simulateMessage(received('private-before-cleanup')) })
+        expect(onEventA).not.toHaveBeenCalled()
+        hook.rerender({ account: 2, callback: onEventB })
+        act(() => { oldSource.simulateMessage(received('private-after-cleanup')) })
+        expect(onEventB).not.toHaveBeenCalled()
+        expect(getMessageWindowState('scope-session').messages).toEqual([])
+        const current = FakeEventSource.instances.at(-1)!
+        act(() => { current.onerror?.({}) })
+        act(() => { current.simulateMessage(received('retired-reconnect')) })
+        expect(getMessageWindowState('scope-session').messages).toEqual([])
+        act(() => { vi.advanceTimersByTime(600) })
+        act(() => { FakeEventSource.instances.at(-1)!.simulateMessage(received('live-current-scope')) })
+        expect(getMessageWindowState('scope-session').messages.map((message) => message.id)).toEqual(['live-current-scope'])
+        expect(onEventB).toHaveBeenCalledTimes(1)
+        hook.unmount()
+        setMessageWindowScope(null)
+        queryClient.clear()
     })
 })
 

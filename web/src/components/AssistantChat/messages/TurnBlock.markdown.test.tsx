@@ -77,13 +77,16 @@ describe('TurnBlockView markdown', () => {
             },
             {
                 type: 'text',
-                text: '| 指标 | 数值 |\n| --- | --- |\n| 延迟 | 12ms |',
+                text: '| 指标 | 数值 |\n| --- | --- |\n| 延迟 | 12ms |\n\n---\n\n### 下一节',
             },
         ], null)
-        renderBlock(<TurnBlockView partition={withTable} streaming={false} durationMs={null} initiallyOpen={false} />)
+        const { container } = renderBlock(<TurnBlockView partition={withTable} streaming={false} durationMs={null} initiallyOpen={false} />)
         expect(screen.getByRole('table')).toHaveClass('aui-md-table')
-        expect(screen.getByRole('columnheader', { name: '指标' })).toHaveClass('aui-md-th')
-        expect(screen.getByRole('cell', { name: '12ms' })).toHaveClass('aui-md-td')
+        expect(screen.getByRole('columnheader', { name: '指标' })).toHaveClass('aui-md-th', 'whitespace-nowrap')
+        const dataCell = screen.getByRole('cell', { name: '12ms' })
+        expect(dataCell).toHaveClass('aui-md-td', 'whitespace-nowrap')
+        expect(dataCell.closest('tr')).toHaveClass('last:border-b-0')
+        expect(container.querySelector('.aui-md-table-wrapper')).toHaveClass('[&+.aui-md-hr]:hidden')
     })
 
     it('supports cycling asc, desc, and original order on multi-row markdown tables including byte units and inline code', () => {

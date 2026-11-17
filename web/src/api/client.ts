@@ -12,6 +12,11 @@ import type {
     CodexCollaborationMode,
     CopilotAgentMode,
     FileSearchResponse,
+    GitActionRequest,
+    GitActionResponse,
+    GitReadOptions,
+    GitRepositoryResponse,
+    GitScope,
     MachinesResponse,
     MessagesResponse,
     OmpInputMode,
@@ -482,8 +487,21 @@ export class ApiClient {
         return await this.request<MessagesResponse>(url)
     }
 
-    async getGitStatus(sessionId: string): Promise<GitCommandResponse> {
-        return await this.request<GitCommandResponse>(`/api/sessions/${encodeURIComponent(sessionId)}/git-status`)
+    async getGitRepository(sessionId: string, options?: GitReadOptions): Promise<GitRepositoryResponse> {
+        const params = new URLSearchParams()
+        params.set('details', options?.details === false ? 'false' : 'true')
+        if (options?.scope) params.set('scope', options.scope)
+        if (options?.baseRef) params.set('baseRef', options.baseRef)
+        return await this.request<GitRepositoryResponse>(
+            `/api/sessions/${encodeURIComponent(sessionId)}/git-status?${params.toString()}`
+        )
+    }
+
+    async runGitAction(sessionId: string, request: GitActionRequest): Promise<GitActionResponse> {
+        return await this.request<GitActionResponse>(`/api/sessions/${encodeURIComponent(sessionId)}/git-action`, {
+            method: 'POST',
+            body: JSON.stringify(request),
+        })
     }
 
     async getSessionConfig(sessionId: string, options?: { fresh?: boolean; check?: string; probe?: boolean }): Promise<SessionConfigResponse> {
@@ -509,17 +527,22 @@ export class ApiClient {
         })
     }
 
-    async getGitDiffNumstat(sessionId: string, staged: boolean): Promise<GitCommandResponse> {
-        const params = new URLSearchParams()
-        params.set('staged', staged ? 'true' : 'false')
-        return await this.request<GitCommandResponse>(`/api/sessions/${encodeURIComponent(sessionId)}/git-diff-numstat?${params.toString()}`)
-    }
-
-    async getGitDiffFile(sessionId: string, path: string, staged?: boolean): Promise<GitCommandResponse> {
+    async getGitDiffFile(
+        sessionId: string,
+        path: string,
+        staged?: boolean,
+        options?: { scope?: GitScope; baseRef?: string }
+    ): Promise<GitCommandResponse> {
         const params = new URLSearchParams()
         params.set('path', path)
         if (staged !== undefined) {
             params.set('staged', staged ? 'true' : 'false')
+        }
+        if (options?.scope) {
+            params.set('scope', options.scope)
+        }
+        if (options?.baseRef) {
+            params.set('baseRef', options.baseRef)
         }
         return await this.request<GitCommandResponse>(`/api/sessions/${encodeURIComponent(sessionId)}/git-diff-file?${params.toString()}`)
     }
@@ -1061,7 +1084,8 @@ export class ApiClient {
         serviceTier?: 'fast' | 'standard',
         collaborationMode?: CodexCollaborationMode,
         copilotAgentMode?: CopilotAgentMode,
-        startingMode?: 'remote' | 'pty'
+        startingMode?: 'remote' | 'pty',
+        worktreeStartRef?: string
     ): Promise<SpawnResponse> {
         return await this.request<SpawnResponse>(`/api/machines/${encodeURIComponent(machineId)}/spawn`, {
             method: 'POST',
@@ -1073,6 +1097,7 @@ export class ApiClient {
                 yolo,
                 sessionType,
                 worktreeName,
+                worktreeStartRef,
                 effort,
                 permissionMode,
                 serviceTier,

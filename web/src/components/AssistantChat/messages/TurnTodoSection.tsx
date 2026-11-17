@@ -1,11 +1,13 @@
 import { memo, useMemo, useRef } from 'react'
 import { resolveTodoToolKind } from '@/chat/projections/todoProjection'
 import {
-    projectSubturnTodoChecklists,
-    type ProjectedTodoChecklist,
     type TurnRow,
     type TurnToolRow,
 } from '@/components/AssistantChat/messages/turnBlockModel'
+import {
+    projectSubturnTodoChecklists,
+    type ProjectedTodoChecklist,
+} from '@/components/AssistantChat/messages/turnProjection'
 import { useLiveTurnRows } from './useLiveTurnRows'
 import { ChecklistList, type ChecklistItem } from '@/components/ToolCard/checklist'
 import { Card } from '@/components/ui/card'

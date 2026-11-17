@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useState } from 'react'
 import { ApiClient, ApiError } from '@/api/client'
 import type { AuthResponse } from '@/types/api'
 
@@ -48,7 +48,7 @@ function rememberAccessToken(baseUrl: string, accessToken: string): void {
     }
 }
 
-export function useAuth(authSource: AuthSource | null, baseUrl: string): {
+export type AuthResult = {
     token: string | null
     user: AuthResponse['user'] | null
     api: ApiClient | null
@@ -56,196 +56,167 @@ export function useAuth(authSource: AuthSource | null, baseUrl: string): {
     error: string | null
     needsBinding: boolean
     bind: (accessToken: string) => Promise<void>
-} {
-    const [token, setToken] = useState<string | null>(null)
-    const [user, setUser] = useState<AuthResponse['user'] | null>(null)
-    const [isLoading, setIsLoading] = useState<boolean>(false)
-    const [error, setError] = useState<string | null>(null)
-    const [needsBinding, setNeedsBinding] = useState<boolean>(false)
-    const refreshPromiseRef = useRef<Promise<string | null> | null>(null)
-    const tokenRef = useRef<string | null>(null)
-    const lastRefreshAttemptRef = useRef<number>(0)
+}
 
-    // Stable reference for auth source to use in effects
-    const authSourceRef = useRef(authSource)
-    authSourceRef.current = authSource
-    tokenRef.current = token
+type AuthState = Pick<AuthResult, 'token' | 'user' | 'isLoading' | 'error' | 'needsBinding'>
+type AuthLifetime = {
+    lease: object | null
+    token: string | null
+    refreshPromise: Promise<string | null> | null
+    lastRefreshAttempt: number
+}
+const EMPTY_AUTH: AuthState = {
+    token: null, user: null, isLoading: false, error: null, needsBinding: false,
+}
+
+export function useAuth(authSource: AuthSource | null, baseUrl: string): AuthResult {
+    const lifetime = useMemo<AuthLifetime>(() => ({
+        lease: null, token: null, refreshPromise: null, lastRefreshAttempt: 0,
+    }), [authSource, baseUrl])
+    const [state, setState] = useState<AuthState & { lifetime: AuthLifetime; lease: object | null }>(() => ({ ...EMPTY_AUTH, lifetime, lease: null }))
+    // A changed credential/Hub never exposes the previous auth, even before effects.
+    const lease = state.lifetime === lifetime ? state.lease : null
+    const { token, user, isLoading, error, needsBinding } = lease === lifetime.lease && state.lifetime === lifetime ? state : EMPTY_AUTH
+
+    useLayoutEffect(() => {
+        // Each attachment gets a fresh lease; StrictMode cannot revive old work.
+        const lease = {}
+        lifetime.lease = lease
+        setState({ ...EMPTY_AUTH, lifetime, lease })
+        return () => {
+            if (lifetime.lease !== lease) return
+            lifetime.lease = null
+            lifetime.token = null
+            lifetime.refreshPromise = null
+            lifetime.lastRefreshAttempt = 0
+        }
+    }, [lifetime])
+
+    const updateAuth = useCallback((lease: object, patch: Partial<AuthState>) => {
+        if (lifetime.lease !== lease) return
+        if (patch.token !== undefined) lifetime.token = patch.token
+        setState((previous) => lifetime.lease === lease ? {
+            ...(previous.lifetime === lifetime && previous.lease === lease ? previous : EMPTY_AUTH),
+            ...patch,
+            lifetime,
+            lease,
+        } : previous)
+    }, [lifetime])
 
     const refreshAuth = useCallback(async (options?: {
         minTtlMs?: number
         hardFail?: boolean
         force?: boolean
     }): Promise<string | null> => {
-        const currentSource = authSourceRef.current
-        const currentToken = tokenRef.current
-        if (!currentSource) {
-            return null
-        }
-
+        if (!authSource || !lease || lifetime.lease !== lease) return null
+        const currentToken = lifetime.token
         const expMs = currentToken ? decodeJwtExpMs(currentToken) : null
         const minTtlMs = options?.minTtlMs ?? 0
         const now = Date.now()
         const ttlMs = expMs ? expMs - now : null
         const needsRefreshForTtl = ttlMs !== null && ttlMs <= minTtlMs
-        if (!options?.force && ttlMs !== null && ttlMs > minTtlMs) {
-            return currentToken
-        }
-        if (!options?.force && !needsRefreshForTtl && now - lastRefreshAttemptRef.current < 15_000) {
-            return currentToken
-        }
-        if (refreshPromiseRef.current) {
-            return await refreshPromiseRef.current
-        }
+        if (!options?.force && ttlMs !== null && ttlMs > minTtlMs) return currentToken
+        if (!options?.force && !needsRefreshForTtl && now - lifetime.lastRefreshAttempt < 15_000) return currentToken
+        if (lifetime.refreshPromise) return await lifetime.refreshPromise
 
         const run = async () => {
-            lastRefreshAttemptRef.current = now
-
+            lifetime.lastRefreshAttempt = now
             try {
-                const client = new ApiClient(currentSource.type === 'password' ? (currentToken ?? currentSource.token) : '', { baseUrl })
-                const auth = currentSource.type === 'password'
+                const client = new ApiClient(authSource.type === 'password' ? (currentToken ?? authSource.token) : '', { baseUrl })
+                const auth = authSource.type === 'password'
                     ? await client.refreshAuth()
-                    : await client.authenticate(getAuthPayload(currentSource))
-                tokenRef.current = auth.token
-                setToken(auth.token)
-                setUser(auth.user)
-                setError(null)
-                setNeedsBinding(false)
+                    : await client.authenticate(getAuthPayload(authSource))
+                if (lifetime.lease !== lease) return null
+                updateAuth(lease, { token: auth.token, user: auth.user, error: null, needsBinding: false })
                 return auth.token
             } catch (error) {
-                if (currentSource.type === 'telegram' && isNotBoundError(error)) {
-                    tokenRef.current = null
-                    setToken(null)
-                    setUser(null)
-                    setError(null)
-                    setNeedsBinding(true)
+                if (lifetime.lease !== lease) return null
+                if (authSource.type === 'telegram' && isNotBoundError(error)) {
+                    updateAuth(lease, { token: null, user: null, error: null, needsBinding: true })
                     return null
                 }
                 const isExpired = expMs ? Date.now() >= expMs : false
                 if (options?.hardFail || isExpired) {
-                    tokenRef.current = null
-                    setToken(null)
-                    setUser(null)
-                    const msg = currentSource.type === 'telegram'
-                        ? 'Session expired. Reopen the Mini App from Telegram.'
-                        : 'Session expired. Please login again.'
-                    setError(msg)
+                    updateAuth(lease, {
+                        token: null,
+                        user: null,
+                        error: authSource.type === 'telegram'
+                            ? 'Session expired. Reopen the Mini App from Telegram.'
+                            : 'Session expired. Please login again.',
+                    })
                 }
                 return null
             }
         }
 
         const refreshPromise = run()
-        refreshPromiseRef.current = refreshPromise
-
+        lifetime.refreshPromise = refreshPromise
         try {
             return await refreshPromise
         } finally {
-            if (refreshPromiseRef.current === refreshPromise) {
-                refreshPromiseRef.current = null
-            }
+            if (lifetime.lease === lease && lifetime.refreshPromise === refreshPromise) lifetime.refreshPromise = null
         }
-    }, [baseUrl])
+    }, [authSource, baseUrl, lease, lifetime, updateAuth])
 
     const bind = useCallback(async (accessToken: string) => {
-        const currentSource = authSourceRef.current
-        if (!currentSource || currentSource.type !== 'telegram') {
-            setError('Binding is only supported in Telegram.')
+        if (!lease || lifetime.lease !== lease) return
+        if (!authSource || authSource.type !== 'telegram') {
+            updateAuth(lease, { error: 'Binding is only supported in Telegram.' })
             return
         }
-
-        setIsLoading(true)
-        setError(null)
+        updateAuth(lease, { isLoading: true, error: null })
         try {
             const client = new ApiClient('', { baseUrl })
-            const auth = await client.bind({ initData: currentSource.initData, accessToken })
-            tokenRef.current = auth.token
-            setToken(auth.token)
-            setUser(auth.user)
-            setNeedsBinding(false)
-            // Persist the CLI access token so Settings → Companion pairing QR
-            // can encode the same long-lived token in the deeplink. The PWA
-            // already does this for browser/CLI logins via useAuthSource.
+            const auth = await client.bind({ initData: authSource.initData, accessToken })
+            if (lifetime.lease !== lease) return
+            updateAuth(lease, { token: auth.token, user: auth.user, needsBinding: false })
             rememberAccessToken(baseUrl, accessToken)
         } catch (error) {
-            setError(error instanceof Error ? error.message : 'Binding failed')
+            if (lifetime.lease !== lease) return
+            updateAuth(lease, { error: error instanceof Error ? error.message : 'Binding failed' })
             throw error
         } finally {
-            setIsLoading(false)
+            updateAuth(lease, { isLoading: false })
         }
-    }, [baseUrl])
+    }, [authSource, baseUrl, lease, lifetime, updateAuth])
 
-    // Keep the ApiClient referentially stable across token *refreshes*: the client always reads
-    // the live token via getToken (tokenRef), so it never needs rebuilding when the token value
-    // changes — only when auth presence toggles (login/logout). Rebuilding on every refresh churns
-    // `api`'s identity, which remounts everything keyed on it (VoiceBackendSession `[props.api]`,
-    // GeneratedImageCard `[ctx.api, ...]`) and drives the remount/refetch storm. Issue #927.
+    // Token refresh changes only this credential lifetime's live token. It does
+    // not recreate the client or grant a retired client the next account's JWT.
     const hasToken = token !== null
-    const api = useMemo(() => (
-        hasToken
-            ? new ApiClient(tokenRef.current ?? '', {
-                baseUrl,
-                getToken: () => tokenRef.current,
-                onUnauthorized: () => refreshAuth({ force: true })
-            })
-            : null
-    ), [baseUrl, refreshAuth, hasToken])
+    const api = useMemo(() => hasToken ? new ApiClient(lifetime.token ?? '', {
+        baseUrl,
+        getToken: () => lifetime.lease === lease ? (lifetime.token ?? '') : '',
+        onUnauthorized: () => refreshAuth({ force: true }),
+    }) : null, [baseUrl, lease, lifetime, refreshAuth, hasToken])
 
     useEffect(() => {
+        const lease = lifetime.lease
+        if (!lease) return
         let isCancelled = false
-
-        async function run() {
-            if (!authSource) {
-                // No auth source - waiting for login
-                setNeedsBinding(false)
-                return
-            }
-
-            setIsLoading(true)
-            setError(null)
-            setNeedsBinding(false)
+        const run = async () => {
+            updateAuth(lease, { ...EMPTY_AUTH, isLoading: Boolean(authSource) })
+            if (!authSource) return
             try {
                 const client = new ApiClient(authSource.type === 'password' ? authSource.token : '', { baseUrl })
                 const auth = authSource.type === 'password'
                     ? await client.refreshAuth()
                     : await client.authenticate(getAuthPayload(authSource))
                 if (isCancelled) return
-                setToken(auth.token)
-                setUser(auth.user)
-                setNeedsBinding(false)
-            } catch (e) {
+                updateAuth(lease, { token: auth.token, user: auth.user, needsBinding: false })
+            } catch (error) {
                 if (isCancelled) return
-                if (authSource.type === 'telegram' && isNotBoundError(e)) {
-                    setToken(null)
-                    setUser(null)
-                    setError(null)
-                    setNeedsBinding(true)
-                    return
+                if (authSource.type === 'telegram' && isNotBoundError(error)) {
+                    updateAuth(lease, { token: null, user: null, error: null, needsBinding: true })
+                } else {
+                    updateAuth(lease, { needsBinding: false, error: error instanceof Error ? error.message : 'Auth failed' })
                 }
-                setNeedsBinding(false)
-                setError(e instanceof Error ? e.message : 'Auth failed')
             } finally {
-                if (!isCancelled) {
-                    setIsLoading(false)
-                }
+                if (!isCancelled) updateAuth(lease, { isLoading: false })
             }
         }
-
-        run()
-
-        return () => {
-            isCancelled = true
-        }
-    }, [authSource, baseUrl])
-
-    useEffect(() => {
-        tokenRef.current = null
-        refreshPromiseRef.current = null
-        lastRefreshAttemptRef.current = 0
-        setToken(null)
-        setUser(null)
-        setError(null)
-        setNeedsBinding(false)
-    }, [baseUrl])
+        void run()
+        return () => { isCancelled = true }
+    }, [authSource, baseUrl, lifetime, updateAuth])
 
     useEffect(() => {
         if (!token || !authSource) {

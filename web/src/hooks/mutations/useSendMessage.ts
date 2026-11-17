@@ -7,6 +7,7 @@ import { getCachedSessionOrPlaceholder } from '@/hooks/queries/useSession'
 import { makeClientSideId } from '@/lib/messages'
 import {
     appendOptimisticMessage,
+    captureMessageWindowScope,
     getMessageWindowState,
     removeOptimisticMessage,
     updateMessageStatus,
@@ -238,6 +239,7 @@ export function useSendMessage(
     sendSettlement: SendMessageSettlement | null
 } {
     const queryClient = useResolvedQueryClient()
+    const [isScopeCurrent] = useState(captureMessageWindowScope)
     const { haptic } = usePlatform()
     const [isResolving, setIsResolving] = useState(false)
     const [sendSettlement, setSendSettlement] = useState<SendMessageSettlement | null>(null)
@@ -246,9 +248,7 @@ export function useSendMessage(
     isSessionThinkingRef.current = options?.isSessionThinking
     const mutation = useMutation({
         mutationFn: async (input: SendMessageInput) => {
-            if (!api) {
-                throw new Error('API unavailable')
-            }
+            if (!api || !isScopeCurrent()) { throw new Error('API unavailable') }
             await api.sendMessage(
                 input.sessionId,
                 input.text,
@@ -260,6 +260,7 @@ export function useSendMessage(
             )
         },
         onMutate: async (input) => {
+            if (!isScopeCurrent()) return
             const isSessionThinking = readCachedSessionThinking(
                 queryClient,
                 input.sessionId,
@@ -272,6 +273,7 @@ export function useSendMessage(
             return { successStatus }
         },
         onSuccess: (_, input, context) => {
+            if (!isScopeCurrent()) return
             setSendSettlement({ attemptId: input.localId, status: 'success' })
             updateMessageStatus(
                 input.sessionId,
@@ -282,6 +284,7 @@ export function useSendMessage(
             options?.onSuccess?.(input.sessionId)
         },
         onError: (error, input) => {
+            if (!isScopeCurrent()) return
             setSendSettlement({ attemptId: input.localId, status: 'error' })
             // Attachment sends keep the legacy failed-bubble UX: the
             // composer-restore path can only re-seat text + scheduledAt,
@@ -321,6 +324,7 @@ export function useSendMessage(
         scheduledAt?: number | null,
         deliveryMode: MessageDeliveryMode = 'queue',
     ): Promise<SendMessageAcceptance | false> => {
+        if (!isScopeCurrent()) return false
         if (!api) {
             options?.onBlocked?.('no-api')
             haptic.notification('error')
@@ -344,6 +348,7 @@ export function useSendMessage(
             setIsResolving(true)
             try {
                 const resolved = await options.resolveSessionId(sessionId)
+                if (!isScopeCurrent()) return false
                 targetSessionId = resolved.sessionId
                 if (resolved.resumed) {
                     // Await draft transfer / navigation before the mutation so
@@ -353,6 +358,7 @@ export function useSendMessage(
                         targetSessionId,
                         { text, attachments },
                     )
+                    if (!isScopeCurrent()) return false
                     if (resolution?.deferUntilDraftHydrated) {
                         // Target composer still needs to hydrate/re-upload files.
                         return false
@@ -362,6 +368,7 @@ export function useSendMessage(
                     }
                 }
             } catch (error) {
+                if (!isScopeCurrent()) return false
                 haptic.notification('error')
                 console.error('Failed to resolve session before send:', error)
                 // #918: surface the failure via onError so the route can render
@@ -388,6 +395,7 @@ export function useSendMessage(
                 setIsResolving(false)
             }
         }
+        if (!isScopeCurrent()) return false
         mutation.mutate({
             sessionId: targetSessionId,
             text,
@@ -401,6 +409,7 @@ export function useSendMessage(
     }
 
     const retryMessage = (localId: string): boolean => {
+        if (!isScopeCurrent()) return false
         if (!api) {
             options?.onBlocked?.('no-api')
             haptic.notification('error')

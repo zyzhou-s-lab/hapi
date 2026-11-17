@@ -10,6 +10,13 @@ import {
     type TurnPartition,
     type TurnRow,
 } from './turnBlockModel'
+import { projectSubagentActivities } from './subagentActivity'
+
+function stepTools(row: TurnDisplayStepRow) {
+    if (row.kind === 'activity' || row.kind === 'coalesced') return row.toolRows
+    if (row.kind === 'subagent') return row.activity.tools
+    return row.kind === 'tool' ? [row] : []
+}
 
 export function useLiveTurnRows(rows: readonly TurnRow[]): readonly TurnRow[] {
     const store = useOptionalSessionEntityStore()
@@ -57,9 +64,7 @@ export function useLiveTurnStepRows(stepRows: readonly TurnDisplayStepRow[]): re
         if (!store) return () => {}
         const ids = new Set<string>()
         for (const row of stepRows) {
-            if (row.kind === 'tool') {
-                ids.add(row.block.id)
-            }
+            for (const tool of stepTools(row)) ids.add(tool.block.id)
         }
         if (ids.size === 0) return () => {}
         const unsubscribe = [...ids].map((id) => store.subscribeEntity(id, listener))
@@ -74,6 +79,21 @@ export function useLiveTurnStepRows(stepRows: readonly TurnDisplayStepRow[]): re
             let changed = false
             const next = stepRows.map((row, index): TurnDisplayStepRow => {
                 const old = previous[index] ?? row
+                if (row.kind === 'activity' || row.kind === 'subagent') {
+                    const original = stepTools(row)
+                    const oldTools = stepTools(old)
+                    const liveTools = original.map((toolRow, toolIndex) => {
+                        const block = store.getBlockEntity(toolRow.block.id)
+                        const live = block?.kind === 'tool-call' ? resolveLiveToolRow(toolRow, block, metadata) : toolRow
+                        return oldTools[toolIndex]?.block === live.block ? oldTools[toolIndex]! : live
+                    })
+                    if (liveTools.every((tool, toolIndex) => tool === oldTools[toolIndex])) return old
+                    changed = true
+                    if (row.kind === 'activity') return { ...row, toolRows: liveTools }
+                    const projected = projectSubagentActivities(liveTools)
+                    const activity = [...projected.activityByAnchorKey.values()].flat().find((task) => task.taskId === row.activity.taskId)
+                    return activity ? { ...row, activity } : { ...row, activity: { ...row.activity, tools: liveTools } }
+                }
                 if (row.kind === 'tool') {
                     const block = store.getBlockEntity(row.block.id)
                     const live = block?.kind === 'tool-call' ? resolveLiveToolRow(row, block, metadata) : row

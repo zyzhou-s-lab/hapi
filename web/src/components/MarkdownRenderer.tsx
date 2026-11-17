@@ -41,12 +41,12 @@ function StandalonePre(props: ComponentPropsWithoutRef<'pre'>) {
     }
 
     const className = String(child.props.className ?? '')
-    const language = /language-(\w+)/.exec(className)?.[1] ?? 'unknown'
+    const language = /language-([^\s]+)/.exec(className)?.[1] ?? 'unknown'
     const code = String(child.props.children ?? '').replace(/\n$/, '')
-    const Highlighter: ComponentType<SyntaxHighlighterProps> =
-        MARKDOWN_COMPONENTS_BY_LANGUAGE[language as keyof typeof MARKDOWN_COMPONENTS_BY_LANGUAGE]?.SyntaxHighlighter
-        ?? SyntaxHighlighter
-    const CodeHeader = defaultComponents.CodeHeader as ComponentType<CodeHeaderProps>
+    const overrides: NonNullable<MarkdownTextPrimitiveProps['componentsByLanguage']>[string] | undefined =
+        MARKDOWN_COMPONENTS_BY_LANGUAGE[language as keyof typeof MARKDOWN_COMPONENTS_BY_LANGUAGE]
+    const Highlighter: ComponentType<SyntaxHighlighterProps> = overrides?.SyntaxHighlighter ?? SyntaxHighlighter
+    const CodeHeader = (overrides?.CodeHeader ?? defaultComponents.CodeHeader) as ComponentType<CodeHeaderProps>
     const Pre = defaultComponents.pre!
     const Code = defaultComponents.code!
 

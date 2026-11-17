@@ -1,21 +1,24 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { randomId } from '@/lib/randomId'
+import { createContext, useCallback, useContext, useMemo, type ReactNode } from 'react'
+import { Toast as ToastPrimitive } from '@base-ui/react/toast'
 
-export type ToastVariant = 'default' | 'warning'
+export type ToastVariant = 'default' | 'info' | 'success' | 'warning' | 'error' | 'loading'
 
-export type Toast = {
-    id: string
+export type ToastData = {
+    sessionId: string
+    url: string
+    variant: ToastVariant
+}
+
+export type Toast = ToastPrimitive.Root.ToastObject<ToastData>
+
+export type AddToastInput = {
     title: string
     body: string
     sessionId: string
     url: string
     variant?: ToastVariant
-}
-
-export type AddToastInput = Omit<Toast, 'id'> & {
     durationMs?: number
 }
-
 export type ToastContextValue = {
     toasts: Toast[]
     addToast: (toast: AddToastInput) => void
@@ -25,47 +28,31 @@ export type ToastContextValue = {
 const ToastContext = createContext<ToastContextValue | null>(null)
 const DEFAULT_TOAST_DURATION_MS = 6000
 
-function createToastId(): string {
-    return randomId()
+export function ToastProvider({ children }: { children: ReactNode }) {
+    return (
+        <ToastPrimitive.Provider timeout={DEFAULT_TOAST_DURATION_MS} limit={3}>
+            <ToastContextBridge>{children}</ToastContextBridge>
+        </ToastPrimitive.Provider>
+    )
 }
 
-export function ToastProvider({ children }: { children: ReactNode }) {
-    const [toasts, setToasts] = useState<Toast[]>([])
-    const timersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map())
-
-    useEffect(() => {
-        return () => {
-            for (const timer of timersRef.current.values()) {
-                clearTimeout(timer)
-            }
-            timersRef.current.clear()
-        }
-    }, [])
-
-    const removeToast = useCallback((id: string) => {
-        setToasts((prev) => prev.filter((toast) => toast.id !== id))
-        const timer = timersRef.current.get(id)
-        if (timer) {
-            clearTimeout(timer)
-            timersRef.current.delete(id)
-        }
-    }, [])
-
-    const addToast = useCallback((toast: AddToastInput) => {
-        const id = createToastId()
-        const { durationMs, ...visibleToast } = toast
-        setToasts((prev) => [...prev, { id, ...visibleToast }])
-        const timer = setTimeout(() => {
-            removeToast(id)
-        }, durationMs ?? DEFAULT_TOAST_DURATION_MS)
-        timersRef.current.set(id, timer)
-    }, [removeToast])
+function ToastContextBridge({ children }: { children: ReactNode }) {
+    const { toasts, add, close } = ToastPrimitive.useToastManager<ToastData>()
+    const addToast = useCallback(({ title, body, sessionId, url, variant = 'default', durationMs }: AddToastInput) => {
+        add({
+            title,
+            description: body,
+            type: variant === 'default' ? 'info' : variant,
+            timeout: durationMs,
+            data: { sessionId, url, variant },
+        })
+    }, [add])
 
     const value = useMemo<ToastContextValue>(() => ({
         toasts,
         addToast,
-        removeToast
-    }), [toasts, addToast, removeToast])
+        removeToast: close,
+    }), [toasts, addToast, close])
 
     return (
         <ToastContext.Provider value={value}>
@@ -80,4 +67,8 @@ export function useToast(): ToastContextValue {
         throw new Error('useToast must be used within ToastProvider')
     }
     return ctx
+}
+
+export function useOptionalToast(): ToastContextValue | null {
+    return useContext(ToastContext)
 }

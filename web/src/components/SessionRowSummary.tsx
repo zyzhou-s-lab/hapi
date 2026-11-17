@@ -166,11 +166,11 @@ export function SessionRowSummary(props: {
 
     return (
         <div className={`flex w-full min-w-0 flex-col gap-1 ${className ?? ''}`}>
-            <div className={`grid grid-cols-[minmax(9rem,1fr)_minmax(0,max-content)] items-center gap-2 ${!s.active ? 'opacity-50' : ''}`}>
+            <div className="grid grid-cols-[minmax(9rem,1fr)_minmax(0,max-content)] items-center gap-2">
                 <div className="flex min-w-0 items-center gap-2">
-                    <AgentFlavorIcon flavor={s.metadata?.flavor} className="h-4 w-4 shrink-0 -translate-y-px" />
+                    <AgentFlavorIcon flavor={s.metadata?.flavor} className={`h-4 w-4 shrink-0 -translate-y-px ${!s.active ? 'opacity-60' : ''}`} />
                     <div
-                        className={`min-w-0 flex-1 truncate text-sm font-medium ${s.active ? 'text-[var(--app-fg)]' : 'text-[var(--app-hint)]'}`}
+                        className={`min-w-0 flex-1 truncate text-sm font-medium ${s.active || selected ? 'text-[var(--app-fg)]' : 'text-[var(--app-fg)]/75'}`}
                         title={sessionName}
                     >
                         {sessionName}

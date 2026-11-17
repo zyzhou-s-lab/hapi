@@ -500,6 +500,9 @@ fun reduceTimeline(
             if (eventType == "abort-restore") {
                 continue
             }
+            if (eventType == "turn-lifecycle") {
+                continue
+            }
             if (eventType == "turn-duration") {
                 val raw = msg.event.raw
                 val targetId = asString(raw["targetMessageId"])

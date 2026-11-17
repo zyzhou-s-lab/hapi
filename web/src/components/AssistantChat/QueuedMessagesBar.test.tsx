@@ -27,6 +27,8 @@ const mocks = vi.hoisted(() => ({
     steerMessage: vi.fn(),
     resolveSteer: null as ((result: unknown) => void) | null,
     markMessagesConsumed: vi.fn(),
+    markMessagesRequeued: vi.fn(),
+    removeOptimisticMessage: vi.fn(),
     saveDraft: vi.fn(),
     messageWindowState: { messages: [] as unknown[] },
 }))
@@ -46,7 +48,10 @@ vi.mock('@assistant-ui/react', () => ({
 vi.mock('@/lib/message-window-store', () => ({
     getMessageWindowState: () => mocks.messageWindowState,
     subscribeMessageWindow: () => () => {},
+    captureMessageWindowScope: () => () => true,
     markMessagesConsumed: mocks.markMessagesConsumed,
+    markMessagesRequeued: mocks.markMessagesRequeued,
+    removeOptimisticMessage: mocks.removeOptimisticMessage,
 }))
 
 vi.mock('@/hooks/mutations/useCancelQueuedMessage', () => ({

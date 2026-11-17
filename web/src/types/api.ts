@@ -12,6 +12,21 @@ import type {
 } from '@hapi/protocol/types'
 
 export type {
+    GitActionKind,
+    GitActionRequest,
+    GitActionResponse,
+    GitActionStep,
+    GitChange,
+    GitPullRequest,
+    GitReadOptions,
+    GitRef,
+    GitRepositoryResponse,
+    GitRepositoryStatus,
+    GitScope,
+    GitWorktree
+} from '@hapi/protocol/sourceControl'
+
+export type {
     AgyModelsResponse,
     AgentAvailabilityResponse,
     AgentAvailabilityEntry,
@@ -150,25 +165,6 @@ export type FileSearchResponse = {
     success: boolean
     files?: FileSearchItem[]
     error?: string
-}
-
-export type GitFileStatus = {
-    fileName: string
-    filePath: string
-    fullPath: string
-    status: 'modified' | 'added' | 'deleted' | 'renamed' | 'untracked' | 'conflicted'
-    isStaged: boolean
-    linesAdded: number
-    linesRemoved: number
-    oldPath?: string
-}
-
-export type GitStatusFiles = {
-    stagedFiles: GitFileStatus[]
-    unstagedFiles: GitFileStatus[]
-    branch: string | null
-    totalStaged: number
-    totalUnstaged: number
 }
 
 export type SkillSummary = {

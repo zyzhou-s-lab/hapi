@@ -1,5 +1,6 @@
 import type { ApiClient } from '@/api/client'
 import {
+    captureMessageWindowScope,
     getQueuedReconcileCandidateLocalIds,
     markMessagesConsumed,
     markMessagesIndeterminate,
@@ -13,7 +14,9 @@ export async function reconcileQueuedStateAfterConnect(
     api: ApiClient,
     sessionId: string
 ): Promise<void> {
+    const isScopeCurrent = captureMessageWindowScope()
     await syncTailMessages(api, sessionId, { ensureAfterCurrent: true })
+    if (!isScopeCurrent()) return
     const candidateLocalIds = getQueuedReconcileCandidateLocalIds(sessionId)
     if (candidateLocalIds.length === 0) {
         return
@@ -24,6 +27,7 @@ export async function reconcileQueuedStateAfterConnect(
     for (let index = 0; index < candidateLocalIds.length; index += QUEUED_STATE_BATCH_SIZE) {
         const batch = candidateLocalIds.slice(index, index + QUEUED_STATE_BATCH_SIZE)
         const state = await api.getQueuedState(sessionId, batch)
+        if (!isScopeCurrent()) return
         queuedLocalIds.push(...state.queuedLocalIds)
         indeterminateLocalIds.push(...(state.indeterminateLocalIds ?? []))
         invokedLocalMessages.push(...state.invokedLocalMessages)

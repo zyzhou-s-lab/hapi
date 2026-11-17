@@ -1,4 +1,4 @@
-import React, { memo, useCallback, useMemo, useRef, useState } from 'react'
+import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import ReactDOM from 'react-dom/client'
 import { AssistantRuntimeProvider } from '@assistant-ui/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
@@ -1005,29 +1005,13 @@ function ThreadScrollAnchorsFixture() {
     const [hasMore, setHasMore] = useState(true)
     const [historyGeneration, setHistoryGeneration] = useState(1)
     const [messagesVersion, setMessagesVersion] = useState(1)
+    const [outlineOpen, setOutlineOpen] = useState(false)
 
-    const blocksByIdRef = useRef<Map<string, ChatBlock>>(new Map())
-
-    const normalizedMessages = useMemo(() => {
-        const out = []
-        for (const msg of messages) {
-            const next = normalizeDecryptedMessage(msg)
-            if (next) out.push(next)
-        }
-        return out
-    }, [messages])
-
-    const reduced = useMemo(() => reduceChatBlocks(normalizedMessages, null, {}), [normalizedMessages])
-    const reconciled = useMemo(
-        () => reconcileChatBlocks(reduced.blocks, blocksByIdRef.current),
-        [reduced.blocks]
+    const entityStore = useMemo(() => createSessionEntityStore(), [])
+    const { visibleBlocks, normalizedMessages } = entityStore.reconcileMessages(
+        'session-thread-scroll-anchors', messages, hasMore, { deferNotifications: true }
     )
-    blocksByIdRef.current = reconciled.byId
-
-    const visibleBlocks = useMemo(
-        () => buildVisibleChatBlocks(reconciled.blocks, { hasMoreMessages: hasMore }),
-        [reconciled.blocks, hasMore]
-    )
+    useEffect(() => entityStore.flushNotifications())
 
     const session = useMemo<Session>(() => ({
         id: 'session-thread-scroll-anchors',
@@ -1094,6 +1078,7 @@ function ThreadScrollAnchorsFixture() {
 
     return (
         <QueryClientProvider client={fixtureQueryClient}>
+            <SessionEntityStoreProvider store={entityStore}>
             <AssistantRuntimeProvider runtime={runtime}>
                 <div className="flex h-screen min-h-0 flex-col bg-[var(--app-bg)] text-[var(--app-fg)]" data-testid="thread-scroll-anchors-fixture">
                     <div className="flex shrink-0 items-center justify-between border-b border-[var(--app-border)] bg-[var(--app-subtle-bg)] px-4 py-2 text-xs">
@@ -1104,6 +1089,13 @@ function ThreadScrollAnchorsFixture() {
                             </span>
                         </div>
                         <div className="flex items-center gap-2">
+                            <button
+                                type="button"
+                                data-testid="open-thread-outline"
+                                onClick={() => setOutlineOpen(true)}
+                            >
+                                Outline
+                            </button>
                             <button
                                 type="button"
                                 data-testid="prepend-older-history"
@@ -1136,12 +1128,13 @@ function ThreadScrollAnchorsFixture() {
                         messagesVersion={messagesVersion}
                         historyVersion={historyGeneration}
                         forceScrollToken={0}
-                        outlineOpen={false}
+                        outlineOpen={outlineOpen}
                         outlineItems={[]}
-                        onOutlineOpenChange={() => {}}
+                        onOutlineOpenChange={setOutlineOpen}
                     />
                 </div>
             </AssistantRuntimeProvider>
+            </SessionEntityStoreProvider>
         </QueryClientProvider>
     )
 }

@@ -1,8 +1,10 @@
 import { useMutation } from '@tanstack/react-query'
+import { useState } from 'react'
 import type { ApiClient } from '@/api/client'
 import type { DecryptedMessage } from '@/types/api'
 import {
     appendOptimisticMessage,
+    captureMessageWindowScope,
     markMessagesConsumed,
     removeOptimisticMessage,
 } from '@/lib/message-window-store'
@@ -35,19 +37,20 @@ type CancelQueuedMessageInput = {
  */
 export function useCancelQueuedMessage(api: ApiClient | null) {
     const { haptic } = usePlatform()
+    const [isScopeCurrent] = useState(captureMessageWindowScope)
 
     const mutation = useMutation({
         mutationFn: async (input: CancelQueuedMessageInput) => {
-            if (!api) {
-                throw new Error('API unavailable')
-            }
+            if (!api || !isScopeCurrent()) { throw new Error('API unavailable') }
             return api.cancelMessage(input.sessionId, input.messageId)
         },
         onMutate: (input) => {
+            if (!isScopeCurrent()) return
             // Optimistic: remove from the floating bar immediately.
             removeOptimisticMessage(input.sessionId, input.localId)
         },
         onSuccess: async (result, input) => {
+            if (!isScopeCurrent()) return
             if (result.status === 'busy') {
                 // The row is inside an async steer: restore a held copy, not a
                 // normal FIFO row. A concurrent consumed ACK may have arrived
@@ -59,6 +62,7 @@ export function useCancelQueuedMessage(api: ApiClient | null) {
                 if (api) {
                     try {
                         const state = await api.getQueuedState(input.sessionId, [input.localId])
+                        if (!isScopeCurrent()) return
                         const invoked = state.invokedLocalMessages.find((item) => item.localId === input.localId)
                         if (invoked) {
                             markMessagesConsumed(input.sessionId, [input.localId], invoked.invokedAt)
@@ -87,6 +91,7 @@ export function useCancelQueuedMessage(api: ApiClient | null) {
             // status === 'cancelled': optimistic removal stands — nothing extra to do.
         },
         onError: (_error, input) => {
+            if (!isScopeCurrent()) return
             // Revert: put the message back so it re-appears in the bar.
             appendOptimisticMessage(input.sessionId, input.snapshot)
             haptic.notification('error')

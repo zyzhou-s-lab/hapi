@@ -219,7 +219,7 @@ describe('SessionChat surface isolation and imperative ingestion bridge', () => 
             defaultOptions: { queries: { retry: false, gcTime: Infinity } },
         })
         let shellRenders = 0
-        let latestToastTitles: string[] = []
+        let latestToastTitles: React.ReactNode[] = []
 
         function ToastProbe() {
             const { toasts } = useToast()

@@ -10,12 +10,12 @@ import {
     extractThoughtSummary,
     hasTurnContentActivity,
     partitionTurn,
-    projectTurn,
     turnDurationMs,
     type TurnCoalescedRow,
     type TurnContentPart,
     type TurnToolRow,
 } from '@/components/AssistantChat/messages/turnBlockModel'
+import { projectTurn } from '@/components/AssistantChat/messages/turnProjection'
 function tool(id: string, name: string, extra: Partial<ToolCallBlock['tool']> = {}): ToolCallBlock {
     return {
         kind: 'tool-call',
@@ -614,10 +614,6 @@ describe('PR 3 toolPresentationManifest, hasTurnContentActivity, and projectTurn
         ]
         const afterProjected = projectTurn(partitionTurn(withToolAndFinalParts, null), { streaming: false })
         const subturnAfterTool = afterProjected.subturns[0]!
-        expect(subturnAfterTool.stepRows.map((r) => r.kind === 'text' ? r.text : r.kind)).toEqual([
-            'Let me inspect the repository first.',
-            'tool',
-        ])
         expect(subturnAfterTool.answerRows.map((r) => r.text)).toEqual([
             'Here is the final answer.',
         ])

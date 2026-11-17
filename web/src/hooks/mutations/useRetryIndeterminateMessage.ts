@@ -1,6 +1,7 @@
 import { useMutation } from '@tanstack/react-query'
+import { useState } from 'react'
 import type { ApiClient } from '@/api/client'
-import { markMessagesConsumed, markMessagesRequeued, removeOptimisticMessage } from '@/lib/message-window-store'
+import { captureMessageWindowScope, markMessagesConsumed, markMessagesRequeued, removeOptimisticMessage } from '@/lib/message-window-store'
 import { useTranslation } from '@/lib/use-translation'
 import { useToast } from '@/lib/toast-context'
 
@@ -12,12 +13,14 @@ type RetryIndeterminateMessageInput = {
 export function useRetryIndeterminateMessage(api: ApiClient | null) {
     const { t } = useTranslation()
     const { addToast } = useToast()
+    const [isScopeCurrent] = useState(captureMessageWindowScope)
     return useMutation({
         mutationFn: async (input: RetryIndeterminateMessageInput) => {
-            if (!api) throw new Error('API unavailable')
+            if (!api || !isScopeCurrent()) throw new Error('API unavailable')
             return api.retryIndeterminateMessage(input.sessionId, input.messageId)
         },
         onSuccess: (result, input) => {
+            if (!isScopeCurrent()) return
             if (result.status === 'retried' || result.status === 'already-queued') {
                 markMessagesRequeued(input.sessionId, result.localId ? [result.localId] : [])
             }
@@ -39,6 +42,7 @@ export function useRetryIndeterminateMessage(api: ApiClient | null) {
             }
         },
         onError: (error, input) => {
+            if (!isScopeCurrent()) return
             addToast({
                 title: t('queuedMessages.retryFailed'),
                 body: error instanceof Error ? error.message : '',

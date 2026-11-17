@@ -1,14 +1,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams, useSearch } from '@tanstack/react-router'
 import { PRESERVE_SESSION_SIDEBAR_SCROLL } from '@/lib/sessionNavigation'
-import type { FileSearchItem, GitFileStatus } from '@/types/api'
+import type { FileSearchItem, GitChange, GitRef, GitScope } from '@/types/api'
 import { FileIcon } from '@/components/FileIcon'
 import { DirectoryTree } from '@/components/SessionFiles/DirectoryTree'
 import { SessionHeader } from '@/components/SessionHeader'
 import { LoadingState } from '@/components/LoadingState'
 import { useAppContext } from '@/lib/app-context'
 import { useAppGoBack } from '@/hooks/useAppGoBack'
-import { useGitStatusFiles } from '@/hooks/queries/useGitStatusFiles'
+import { useGitRepository } from '@/fork-features/source-control/useGitRepository'
+import { useGitScope } from '@/fork-features/source-control/useGitScope'
 import { useSession } from '@/hooks/queries/useSession'
 import { useSessionFileSearch } from '@/hooks/queries/useSessionFileSearch'
 import {
@@ -189,23 +190,29 @@ function FolderIcon(props: { className?: string }) {
     )
 }
 
-function StatusBadge(props: { status: GitFileStatus['status'] }) {
-    const { label, color } = useMemo(() => {
-        switch (props.status) {
-            case 'added':
-                return { label: 'A', color: 'var(--app-git-staged-color)' }
-            case 'deleted':
-                return { label: 'D', color: 'var(--app-git-deleted-color)' }
-            case 'renamed':
-                return { label: 'R', color: 'var(--app-git-renamed-color)' }
-            case 'untracked':
-                return { label: '?', color: 'var(--app-git-untracked-color)' }
-            case 'conflicted':
-                return { label: 'U', color: 'var(--app-git-deleted-color)' }
-            default:
-                return { label: 'M', color: 'var(--app-git-unstaged-color)' }
-        }
-    }, [props.status])
+function statusBadge(status: string): { label: string; color: string } {
+    const normalized = status.trim().toLowerCase()
+    const letter = normalized.charAt(0).toUpperCase()
+    if (normalized.startsWith('add') || letter === 'A') {
+        return { label: 'A', color: 'var(--app-git-staged-color)' }
+    }
+    if (normalized.startsWith('del') || letter === 'D') {
+        return { label: 'D', color: 'var(--app-git-deleted-color)' }
+    }
+    if (normalized.startsWith('ren') || normalized.startsWith('cop') || letter === 'R' || letter === 'C') {
+        return { label: 'R', color: 'var(--app-git-renamed-color)' }
+    }
+    if (normalized.startsWith('untrack') || letter === '?') {
+        return { label: '?', color: 'var(--app-git-untracked-color)' }
+    }
+    if (normalized.startsWith('conflict') || normalized.startsWith('unmerged') || letter === 'U') {
+        return { label: 'U', color: 'var(--app-git-deleted-color)' }
+    }
+    return { label: letter || 'M', color: 'var(--app-git-unstaged-color)' }
+}
+
+function StatusBadge(props: { status: string }) {
+    const { label, color } = useMemo(() => statusBadge(props.status), [props.status])
 
     return (
         <span
@@ -217,7 +224,14 @@ function StatusBadge(props: { status: GitFileStatus['status'] }) {
     )
 }
 
-function LineChanges(props: { added: number; removed: number }) {
+function LineChanges(props: { added: number | null; removed: number | null; binary: boolean }) {
+    const { t } = useTranslation()
+    if (props.binary) {
+        return <span className="text-[11px] text-[var(--app-hint)]">{t('sourceControl.binary')}</span>
+    }
+    if (props.added === null || props.removed === null) {
+        return <span className="text-[11px] font-mono text-[var(--app-hint)]" title={t('sourceControl.unknownLines')}>?</span>
+    }
     if (!props.added && !props.removed) return null
 
     return (
@@ -232,13 +246,17 @@ function LineChanges(props: { added: number; removed: number }) {
     )
 }
 
-function GitFileRow(props: {
-    file: GitFileStatus
+function GitChangeRow(props: {
+    file: GitChange
     onOpen: () => void
     showDivider: boolean
 }) {
     const { t } = useTranslation()
-    const subtitle = getProjectRootLabel(props.file.filePath, t)
+    const fileName = props.file.path.split('/').pop() || props.file.path
+    const directory = props.file.path.split('/').slice(0, -1).join('/')
+    const subtitle = props.file.oldPath
+        ? `${props.file.oldPath} → ${props.file.path}`
+        : getProjectRootLabel(directory, t)
 
     return (
         <button
@@ -246,16 +264,84 @@ function GitFileRow(props: {
             onClick={props.onOpen}
             className={`flex w-full items-center gap-3 px-3 py-2 text-left hover:bg-[var(--app-subtle-bg)] transition-colors ${props.showDivider ? 'border-b border-[var(--app-divider)]' : ''}`}
         >
-            <FileIcon fileName={props.file.fileName} size={22} />
+            <FileIcon fileName={fileName} size={22} />
             <div className="min-w-0 flex-1">
-                <div className="truncate font-medium">{props.file.fileName}</div>
+                <div className="flex min-w-0 items-center gap-2">
+                    <span className="truncate font-medium">{fileName}</span>
+                    {props.file.staged ? (
+                        <span
+                            className="shrink-0 rounded border border-[var(--app-git-staged-color)] px-1 text-[10px] font-semibold text-[var(--app-git-staged-color)]"
+                            title={t('sourceControl.scope.staged')}
+                        >S</span>
+                    ) : null}
+                    {props.file.unstaged ? (
+                        <span
+                            className="shrink-0 rounded border border-[var(--app-git-unstaged-color)] px-1 text-[10px] font-semibold text-[var(--app-git-unstaged-color)]"
+                            title={t('sourceControl.scope.unstaged')}
+                        >U</span>
+                    ) : null}
+                    {props.file.untracked ? (
+                        <span className="shrink-0 text-[10px] font-semibold text-[var(--app-git-untracked-color)]">
+                            {t('sourceControl.untracked')}
+                        </span>
+                    ) : null}
+                </div>
                 <div className="truncate text-xs text-[var(--app-hint)]">{subtitle}</div>
             </div>
-            <div className="flex items-center gap-2">
-                <LineChanges added={props.file.linesAdded} removed={props.file.linesRemoved} />
+            <div className="flex shrink-0 items-center gap-2">
+                <LineChanges added={props.file.additions} removed={props.file.deletions} binary={props.file.binary} />
                 <StatusBadge status={props.file.status} />
             </div>
         </button>
+    )
+}
+
+function GitScopePicker(props: {
+    scope: GitScope
+    baseRef?: string
+    refs: GitRef[]
+    defaultBranch: string | null
+    onScopeChange: (scope: GitScope) => void
+    onBaseRefChange: (baseRef: string | undefined) => void
+}) {
+    const { t } = useTranslation()
+    const selectedBaseRef = props.baseRef ?? ''
+    const refNames = props.refs.map((ref) => ref.name)
+    const baseRefOptions = selectedBaseRef && !refNames.includes(selectedBaseRef)
+        ? [selectedBaseRef, ...refNames]
+        : refNames
+
+    return (
+        <div className="flex flex-wrap items-center gap-2">
+            <label className="flex items-center gap-1.5 text-xs text-[var(--app-hint)]">
+                <span>{t('sourceControl.scope')}</span>
+                <select
+                    value={props.scope}
+                    onChange={(event) => props.onScopeChange(event.target.value as GitScope)}
+                    className="h-9 rounded-md border border-[var(--app-border)] bg-[var(--app-bg)] px-2 text-xs text-[var(--app-fg)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-link)]"
+                >
+                    <option value="working">{t('sourceControl.scope.working')}</option>
+                    <option value="staged">{t('sourceControl.scope.staged')}</option>
+                    <option value="unstaged">{t('sourceControl.scope.unstaged')}</option>
+                    <option value="branch">{t('sourceControl.scope.branch')}</option>
+                </select>
+            </label>
+            {props.scope === 'branch' ? (
+                <label className="flex min-w-0 items-center gap-1.5 text-xs text-[var(--app-hint)]">
+                    <span>{t('sourceControl.baseRef')}</span>
+                    <select
+                        value={selectedBaseRef}
+                        onChange={(event) => props.onBaseRefChange(event.target.value || undefined)}
+                        className="h-9 min-w-0 max-w-[220px] rounded-md border border-[var(--app-border)] bg-[var(--app-bg)] px-2 text-xs text-[var(--app-fg)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-link)]"
+                    >
+                        <option value="">{t('sourceControl.chooseBase')}{props.defaultBranch ? ` (${props.defaultBranch})` : ''}</option>
+                        {baseRefOptions.map((name) => (
+                            <option key={name} value={name}>{name}</option>
+                        ))}
+                    </select>
+                </label>
+            ) : null}
+        </div>
     )
 }
 
@@ -366,11 +452,25 @@ export default function FilesPage() {
     }, [activeTab, sessionId])
 
     const {
-        status: gitStatus,
+        scope: persistedScope,
+        baseRef: persistedBaseRef,
+        setScope,
+        setBaseRef
+    } = useGitScope(sessionId)
+    const scope = search.scope ?? persistedScope
+    const baseRef = search.baseRef ?? persistedBaseRef
+    const effectiveBaseRef = scope === 'branch' ? baseRef : undefined
+    const {
+        repository,
         error: gitError,
         isLoading: gitLoading,
         refetch: refetchGit
-    } = useGitStatusFiles(api, sessionId)
+    } = useGitRepository(api, sessionId, scope, effectiveBaseRef)
+
+    useEffect(() => {
+        if (search.scope) setScope(search.scope)
+        if (search.baseRef) setBaseRef(search.baseRef)
+    }, [search.baseRef, search.scope, setBaseRef, setScope])
 
     const shouldSearch = Boolean(searchQuery)
 
@@ -382,10 +482,11 @@ export default function FilesPage() {
         [directorySort, locale, searchResults.files]
     )
 
-    const handleOpenFile = useCallback((path: string, staged?: boolean) => {
+    const handleOpenFile = useCallback((path: string, nextScope?: GitScope, nextBaseRef?: string) => {
         const fileSearch = {
             path: encodeBase64(path),
-            ...(staged !== undefined ? { staged } : {}),
+            ...(nextScope ? { scope: nextScope } : {}),
+            ...(nextScope && nextBaseRef ? { baseRef: nextBaseRef } : {}),
             ...(activeTab === 'directories' ? { tab: 'directories' as const } : {}),
             ...(searchQuery ? { query: searchQuery } : {}),
         }
@@ -397,12 +498,44 @@ export default function FilesPage() {
         })
     }, [activeTab, navigate, searchQuery, sessionId])
 
-    const branchLabel = getDetachedBranchLabel(gitStatus?.branch, t)
-    const showGitErrorBanner = Boolean(gitError)
+    const navigateFilesScope = useCallback((nextScope: GitScope, nextBaseRef: string | undefined) => {
+        navigate({
+            to: '/sessions/$sessionId/files',
+            params: { sessionId },
+            search: {
+                ...(activeTab === 'directories' ? { tab: 'directories' as const } : {}),
+                ...(searchQuery ? { query: searchQuery } : {}),
+                scope: nextScope,
+                ...(nextScope === 'branch' && nextBaseRef ? { baseRef: nextBaseRef } : {}),
+            },
+            replace: true,
+            ...PRESERVE_SESSION_SIDEBAR_SCROLL,
+        })
+    }, [activeTab, navigate, searchQuery, sessionId])
+
+    const handleScopeChange = useCallback((nextScope: GitScope) => {
+        setScope(nextScope)
+        navigateFilesScope(nextScope, baseRef)
+    }, [baseRef, navigateFilesScope, setScope])
+
+    const handleBaseRefChange = useCallback((nextBaseRef: string | undefined) => {
+        setBaseRef(nextBaseRef)
+        navigateFilesScope('branch', nextBaseRef)
+    }, [navigateFilesScope, setBaseRef])
+
+    const branchLabel = getDetachedBranchLabel(repository?.branch, t)
+    const changedFiles = repository?.files ?? []
+    const stagedCount = repository?.stagedFiles.length ?? 0
+    const unstagedCount = repository?.unstagedFiles.length ?? 0
+    const resolvedBaseRef = baseRef ?? repository?.baseRef ?? undefined
     const gitErrorMessage = useMemo(
-        () => (gitError ? formatGitStatusError(gitError, t) : null),
-        [gitError, t]
+        () => {
+            const detail = gitError ?? repository?.blockedReason
+            return detail ? formatGitStatusError(detail, t) : null
+        },
+        [gitError, repository?.blockedReason, t]
     )
+    const showGitErrorBanner = Boolean(gitErrorMessage)
     const searchErrorMessage = useMemo(
         () => (searchResults.error ? formatFileSearchError(searchResults.error, t) : null),
         [searchResults.error, t]
@@ -577,19 +710,35 @@ export default function FilesPage() {
                 </div>
             </div>
 
-            {!gitLoading && gitStatus && !searchQuery && activeTab === 'changes' ? (
+            {!gitLoading && repository && !searchQuery && activeTab === 'changes' ? (
                 <div className="bg-[var(--app-bg)]">
-                    <div className="mx-auto w-full max-w-content px-3 py-2 border-b border-[var(--app-divider)]">
-                        <div className="flex items-center gap-2 text-sm">
+                    <div className="mx-auto w-full max-w-content space-y-2 px-3 py-2 border-b border-[var(--app-divider)]">
+                        <div className="flex flex-wrap items-center gap-2 text-sm">
                             <GitBranchIcon className="text-[var(--app-hint)]" />
                             <span className="font-semibold">{branchLabel}</span>
+                            {repository.ahead > 0 ? (
+                                <span className="text-xs font-mono text-[var(--app-hint)]">↑{repository.ahead}</span>
+                            ) : null}
+                            {repository.behind > 0 ? (
+                                <span className="text-xs font-mono text-[var(--app-hint)]">↓{repository.behind}</span>
+                            ) : null}
+                            <span className="text-xs text-[var(--app-hint)]">
+                                {t('sourceControl.changedCount', { n: changedFiles.length })}
+                            </span>
                         </div>
-                        <div className="text-xs text-[var(--app-hint)]">
-                            {t('files.branch.summary', {
-                                staged: gitStatus.totalStaged,
-                                unstaged: gitStatus.totalUnstaged,
-                            })}
+                        <div className="flex flex-wrap items-center gap-3 text-xs text-[var(--app-hint)]">
+                            {stagedCount > 0 ? <span>{t('sourceControl.stagedCount', { n: stagedCount })}</span> : null}
+                            {unstagedCount > 0 ? <span>{t('sourceControl.modifiedCount', { n: unstagedCount })}</span> : null}
+                            {!session.active ? <span>{t('sourceControl.block.offline')}</span> : null}
                         </div>
+                        <GitScopePicker
+                            scope={scope}
+                            baseRef={resolvedBaseRef}
+                            refs={repository.refs}
+                            defaultBranch={repository.defaultBranch}
+                            onScopeChange={handleScopeChange}
+                            onBaseRefChange={handleBaseRefChange}
+                        />
                     </div>
                 </div>
             ) : null}
@@ -637,49 +786,26 @@ export default function FilesPage() {
                         <FileListSkeleton label={t('loading.git')} />
                     ) : (
                         <div>
-                            {gitStatus?.stagedFiles.length ? (
-                                <div>
-                                    <div className="border-b border-[var(--app-divider)] bg-[var(--app-bg)] px-3 py-2 text-xs font-semibold text-[var(--app-git-staged-color)]">
-                                        {t('files.changes.section.staged', { n: gitStatus.stagedFiles.length })}
-                                    </div>
-                                    {gitStatus.stagedFiles.map((file, index) => (
-                                        <GitFileRow
-                                            key={`staged-${file.fullPath}-${index}`}
+                            {changedFiles.length === 0 ? (
+                                <div className="p-6 text-sm text-[var(--app-hint)]">
+                                    {repository ? t('sourceControl.noScopeChanges') : t('files.changes.empty.unavailable')}
+                                </div>
+                            ) : (
+                                <div className="border-t border-[var(--app-divider)]">
+                                    {changedFiles.map((file, index) => (
+                                        <GitChangeRow
+                                            key={file.path}
                                             file={file}
-                                            onOpen={() => handleOpenFile(file.fullPath, file.isStaged)}
-                                            showDivider={index < gitStatus.stagedFiles.length - 1 || gitStatus.unstagedFiles.length > 0}
+                                            onOpen={() => handleOpenFile(
+                                                file.path,
+                                                scope,
+                                                scope === 'branch' ? resolvedBaseRef : undefined
+                                            )}
+                                            showDivider={index < changedFiles.length - 1}
                                         />
                                     ))}
                                 </div>
-                            ) : null}
-
-                            {gitStatus?.unstagedFiles.length ? (
-                                <div>
-                                    <div className="border-b border-[var(--app-divider)] bg-[var(--app-bg)] px-3 py-2 text-xs font-semibold text-[var(--app-git-unstaged-color)]">
-                                        {t('files.changes.section.unstaged', { n: gitStatus.unstagedFiles.length })}
-                                    </div>
-                                    {gitStatus.unstagedFiles.map((file, index) => (
-                                        <GitFileRow
-                                            key={`unstaged-${file.fullPath}-${index}`}
-                                            file={file}
-                                            onOpen={() => handleOpenFile(file.fullPath, file.isStaged)}
-                                            showDivider={index < gitStatus.unstagedFiles.length - 1}
-                                        />
-                                    ))}
-                                </div>
-                            ) : null}
-
-                            {!gitStatus ? (
-                                <div className="p-6 text-sm text-[var(--app-hint)]">
-                                    {t('files.changes.empty.unavailable')}
-                                </div>
-                            ) : null}
-
-                            {gitStatus && gitStatus.stagedFiles.length === 0 && gitStatus.unstagedFiles.length === 0 ? (
-                                <div className="p-6 text-sm text-[var(--app-hint)]">
-                                    {t('files.changes.empty.none')}
-                                </div>
-                            ) : null}
+                            )}
                         </div>
                     )}
                 </div>

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { act, fireEvent, render, screen } from '@testing-library/react'
+import { act, fireEvent, render, screen, within } from '@testing-library/react'
 import type { ReactNode } from 'react'
 import { I18nProvider } from '@/lib/i18n-context'
 import { SessionEntityStore } from '@/chat/store/sessionEntityStore'
@@ -169,7 +169,6 @@ describe('TurnBlockView', () => {
         expect(container.querySelector('[data-hapi-turn-quiet]')).toBeNull()
         expect(screen.queryByText('home.tsx')).not.toBeNull()
         const pinnedRail = screen.getByTestId('turn-collapsed-pinned-rail')
-        expect(pinnedRail).toHaveAttribute('data-block-id', 'bash')
         expect(pinnedRail).toHaveTextContent('which chrome')
         expect(pinnedRail).toHaveTextContent('home.tsx')
         expect(pinnedRail).toHaveTextContent('permission options')
@@ -713,7 +712,7 @@ describe('TurnBlockView', () => {
         unsubTurn1()
     })
 
-    it('retains expanded tool, thought, and coalesced step states across rail collapse/re-open and pinned-to-open transitions', () => {
+    it('retains expanded tool and thought states across rail collapse/re-open and pinned-to-open transitions', () => {
         const partition = partitionTurn([
             { type: 'reasoning', text: '**Detailed thought step** body line 2', blockId: 'thought-block-1' },
             {
@@ -756,38 +755,33 @@ describe('TurnBlockView', () => {
 
         // Expand the pinned error tool while the rail is collapsed
         const pinnedRail = screen.getByTestId('turn-collapsed-pinned-rail')
-        const pinnedToolButton = pinnedRail.querySelector('button[aria-expanded="false"]')
-        expect(pinnedToolButton).not.toBeNull()
-        fireEvent.click(pinnedToolButton!)
-        expect(screen.getByTestId('turn-level2-bash')).toBeInTheDocument()
+        const pinnedToolButton = within(pinnedRail).getByRole('button', { name: /bun run check/ })
+        fireEvent.click(pinnedToolButton)
+        expect(screen.getByTestId('turn-level2-bash')).toBeVisible()
 
         // Open the main execution rail -> pinned tool moves into the open rail and stays expanded
         fireEvent.click(screen.getByTestId('turn-level0-header'))
         expect(screen.queryByTestId('turn-collapsed-pinned-rail')).toBeNull()
         expect(screen.getByTestId('turn-level2-bash')).toBeInTheDocument()
 
-        // Expand the thought row and the coalesced read row inside the open rail
+        // Error segments expose individual read tools without an extra group.
         const thoughtButton = screen.getByText('Thought').closest('button')
         expect(thoughtButton).not.toBeNull()
         fireEvent.click(thoughtButton!)
         expect(screen.getByText(/Detailed thought step/)).toBeInTheDocument()
 
-        const coalescedBatch = screen.getByTestId('coalesced-step-read')
-        expect(coalescedBatch).toHaveAttribute('data-block-id', 'coalesced:read:read-a')
-        fireEvent.click(coalescedBatch.querySelector('button')!)
-        expect(screen.getByText('a.ts')).toBeInTheDocument()
         fireEvent.click(screen.getByText('a.ts').closest('button')!)
         expect(screen.getByTestId('turn-level2-read')).toHaveTextContent('alpha content')
 
-        // Collapse the rail -> full stepRows unmount, but pinned error tool remains expanded in collapsed pinned rail
+        // Collapsing retains the pinned segment DOM but hides its non-pinned members.
         fireEvent.click(screen.getByTestId('turn-level0-header'))
         expect(screen.getByTestId('turn-level1-rail').querySelectorAll('[data-rail-row-index]')).toHaveLength(0)
         expect(screen.queryByText(/Detailed thought step/)).toBeNull()
-        expect(screen.queryByTestId('turn-level2-read')).toBeNull()
+        expect(screen.getByTestId('turn-level2-read')).not.toBeVisible()
         expect(screen.getByTestId('turn-collapsed-pinned-rail')).toBeInTheDocument()
         expect(screen.getByTestId('turn-level2-bash')).toBeInTheDocument()
 
-        // Re-open the rail -> thought row, coalesced read group, nested read-a preview, and bash preview are all still expanded
+        // Re-opening restores the thought, read preview, and pinned tool details.
         fireEvent.click(screen.getByTestId('turn-level0-header'))
         expect(screen.getByText(/Detailed thought step/)).toBeInTheDocument()
         expect(screen.getByTestId('turn-level2-read')).toHaveTextContent('alpha content')

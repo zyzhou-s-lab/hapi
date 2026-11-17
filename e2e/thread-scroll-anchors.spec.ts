@@ -45,9 +45,11 @@ test.describe('PR 5 HappyThread modularization, scroll anchor preservation & Sha
             const scroller = document.querySelector('.chat-scroll-y')!
             scroller.scrollTop = 120
             const scrollerTop = scroller.getBoundingClientRect().top
-            const anchorEl = document.getElementById('hapi-message-user-text:initial-user-12')!
+            const anchorEl = [...scroller.querySelectorAll<HTMLElement>('[data-hapi-message-role="user"]')]
+                .find((node) => node.getBoundingClientRect().bottom > scrollerTop)!
             return {
                 id: anchorEl.id,
+                turn: Number(anchorEl.id.match(/initial-user-(\d+)/)![1]),
                 offsetFromViewportTop: anchorEl.getBoundingClientRect().top - scrollerTop,
             }
         })
@@ -74,7 +76,7 @@ test.describe('PR 5 HappyThread modularization, scroll anchor preservation & Sha
         expect(anchorAfter.scrollTop).toBeGreaterThan(400)
         expect(Math.abs(anchorAfter.offsetFromViewportTop - anchorBefore.offsetFromViewportTop)).toBeLessThan(140)
 
-        // 3. Click Share Turn button on the assistant sibling of Turn 12 and verify useShareTurnCapture sibling traversal opens ShareTurnDialog
+        // Share the visible turn after materialization; its user/assistant sibling contract is unchanged.
         const shareBtn = page.locator(`[id="${anchorAfter.assistantId}"] [data-hapi-share-action="true"]`)
         await shareBtn.scrollIntoViewIfNeeded()
         await page.waitForTimeout(250)
@@ -83,10 +85,35 @@ test.describe('PR 5 HappyThread modularization, scroll anchor preservation & Sha
 
         const dialog = page.locator('[role="dialog"]')
         await expect(dialog).toBeVisible()
-        await expect(dialog).toContainText('Audit scroll anchor and turn structure for module 12')
-        await expect(dialog).toContainText('Completed verification for Turn 12')
+        await expect(dialog).toContainText(`Audit scroll anchor and turn structure for module ${anchorBefore.turn}`)
+        await expect(dialog).toContainText(`Completed verification for Turn ${anchorBefore.turn}`)
         await page.waitForTimeout(350)
 
         expect(errors).toEqual([])
+    })
+    test('materializes an outline destination and fills the resized tail without visible placeholders', async ({ page }) => {
+        await page.goto('/e2e-fixtures/turn-timeline-demo.html?fixture=thread-scroll-anchors')
+        const first = page.locator('[id="hapi-message-user-text:initial-user-10"]')
+        await expect(first).toHaveAttribute('data-hapi-offscreen-placeholder', 'true')
+        await page.getByTestId('open-thread-outline').click()
+        await page.getByRole('button').filter({ hasText: 'Audit scroll anchor and turn structure for module 13' }).click()
+        const destination = page.locator('[id="hapi-message-user-text:initial-user-13"]')
+        await expect(destination).not.toHaveAttribute('data-hapi-offscreen-placeholder', 'true')
+        await expect.poll(() => destination.evaluate((node) => {
+            const viewport = node.closest('.chat-scroll-y')!
+            return Math.abs(node.getBoundingClientRect().top - viewport.getBoundingClientRect().top)
+        })).toBeLessThan(100)
+
+        const viewport = page.locator('.chat-scroll-y')
+        await viewport.click({ position: { x: 5, y: 5 } })
+        await page.keyboard.press('End')
+        await page.setViewportSize({ width: 412, height: 915 })
+        await expect.poll(() => viewport.evaluate((node) => {
+            const bounds = node.getBoundingClientRect()
+            return [...node.querySelectorAll('[data-hapi-offscreen-placeholder]')].filter((entry) => {
+                const rect = entry.getBoundingClientRect()
+                return rect.bottom > bounds.top + 1 && rect.top < bounds.bottom - 1
+            }).length
+        })).toBe(0)
     })
 })

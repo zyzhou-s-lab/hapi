@@ -1,3 +1,7 @@
+import type { GitScope } from '@hapi/protocol/sourceControl'
+
+export type GitRepositoryQueryKey = readonly ['git-repository', string, GitScope, string | null]
+
 export const queryKeys = {
     sessions: ['sessions'] as const,
     session: (sessionId: string) => ['session', sessionId] as const,
@@ -9,17 +13,28 @@ export const queryKeys = {
     machineCodexModels: (machineId: string) => ['machine-codex-models', machineId] as const,
     machineAgentAvailability: (machineId: string) => ['machine-agent-availability', machineId] as const,
     sessionCodexModels: (sessionId: string) => ['session-codex-models', sessionId] as const,
-    gitStatus: (sessionId: string) => ['git-status', sessionId] as const,
+    gitRepository: (sessionId: string, scope: GitScope, baseRef?: string): GitRepositoryQueryKey => [
+        'git-repository',
+        sessionId,
+        scope,
+        baseRef ?? null
+    ],
+    gitRepositoryAll: (sessionId: string) => ['git-repository', sessionId] as const,
     sessionConfig: (sessionId: string) => ['session-config', sessionId] as const,
     sessionConfigItem: (sessionId: string, itemKey: string) => ['session-config-item', sessionId, itemKey] as const,
     sessionFiles: (sessionId: string, query: string) => ['session-files', sessionId, query] as const,
     sessionDirectory: (sessionId: string, path: string) => ['session-directory', sessionId, path] as const,
     sessionFile: (sessionId: string, path: string) => ['session-file', sessionId, path] as const,
-    gitFileDiff: (sessionId: string, path: string, staged?: boolean) => [
+    gitFileDiff: (
+        sessionId: string,
+        path: string,
+        options?: { scope?: GitScope; baseRef?: string; staged?: boolean }
+    ) => [
         'git-file-diff',
         sessionId,
         path,
-        staged ? 'staged' : 'unstaged'
+        options?.scope ?? (options?.staged ? 'staged' : 'unstaged'),
+        options?.baseRef ?? null
     ] as const,
     slashCommands: (sessionId: string) => ['slash-commands', sessionId] as const,
     sessionCursorModels: (sessionId: string) => ['session-cursor-models', sessionId] as const,

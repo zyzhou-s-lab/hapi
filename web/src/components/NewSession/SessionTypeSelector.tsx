@@ -5,10 +5,12 @@ import { useTranslation } from '@/lib/use-translation'
 export function SessionTypeSelector(props: {
     sessionType: SessionType
     worktreeName: string
+    worktreeStartRef: string
     worktreeInputRef: RefObject<HTMLInputElement | null>
     isDisabled: boolean
     onSessionTypeChange: (value: SessionType) => void
     onWorktreeNameChange: (value: string) => void
+    onWorktreeStartRefChange: (value: string) => void
 }) {
     const { t } = useTranslation()
 
@@ -35,15 +37,36 @@ export function SessionTypeSelector(props: {
                                 <div className="flex-1">
                                     <div className="min-h-[34px] flex items-center">
                                         {props.sessionType === 'worktree' ? (
-                                            <input
-                                                ref={props.worktreeInputRef}
-                                                type="text"
-                                                placeholder={t('newSession.type.worktree.placeholder')}
-                                                value={props.worktreeName}
-                                                onChange={(e) => props.onWorktreeNameChange(e.target.value)}
-                                                disabled={props.isDisabled}
-                                                className="w-full rounded-md border border-[var(--app-border)] bg-[var(--app-bg)] px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--app-link)] disabled:opacity-60"
-                                            />
+                                            <div className="flex w-full flex-col gap-1.5">
+                                                <input
+                                                    ref={props.worktreeInputRef}
+                                                    type="text"
+                                                    placeholder={t('newSession.type.worktree.placeholder')}
+                                                    value={props.worktreeName}
+                                                    onChange={(e) => props.onWorktreeNameChange(e.target.value)}
+                                                    disabled={props.isDisabled}
+                                                    className="w-full rounded-md border border-[var(--app-border)] bg-[var(--app-bg)] px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--app-link)] disabled:opacity-60"
+                                                />
+                                                <label
+                                                    className="text-xs font-medium text-[var(--app-hint)]"
+                                                    htmlFor="worktree-start-ref"
+                                                >
+                                                    {t('newSession.type.worktree.startRef')}
+                                                </label>
+                                                <input
+                                                    id="worktree-start-ref"
+                                                    data-testid="worktree-start-ref"
+                                                    type="text"
+                                                    placeholder={t('newSession.type.worktree.startRefPlaceholder')}
+                                                    value={props.worktreeStartRef}
+                                                    onChange={(e) => props.onWorktreeStartRefChange(e.target.value)}
+                                                    disabled={props.isDisabled}
+                                                    className="w-full rounded-md border border-[var(--app-border)] bg-[var(--app-bg)] px-2 py-1 font-mono text-sm focus:outline-none focus:ring-2 focus:ring-[var(--app-link)] disabled:opacity-60"
+                                                />
+                                                <span className="text-xs text-[var(--app-hint)]">
+                                                    {t('newSession.type.worktree.startRefHint')}
+                                                </span>
+                                            </div>
                                         ) : (
                                             <>
                                                 <label

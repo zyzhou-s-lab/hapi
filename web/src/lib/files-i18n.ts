@@ -58,6 +58,9 @@ export function formatGitStatusError(error: string | null | undefined, t: Transl
     if (!detail || detail === 'Git status unavailable' || detail === 'Session unavailable') {
         return t('files.changes.error.gitStatusUnavailable')
     }
+    if (detail === 'git_protocol_mismatch') {
+        return t('files.changes.error.gitProtocolMismatch')
+    }
 
     const segments = detail
         .split(/(?=Unstaged diff unavailable: |Staged diff unavailable: )/)

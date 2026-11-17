@@ -5,9 +5,9 @@ import { getTelegramWebApp, isTelegramApp } from '@/hooks/useTelegram'
 import { initializeChatSurfaceColors } from '@/hooks/useChatSurfaceColors'
 import { initializeTheme } from '@/hooks/useTheme'
 import { initializeThemeColors } from '@/hooks/useThemeColors'
-import { useAuth } from '@/hooks/useAuth'
-import { useAuthSource } from '@/hooks/useAuthSource'
-import { useServerUrl } from '@/hooks/useServerUrl'
+import { useAuth, type AuthResult } from '@/hooks/useAuth'
+import { useAuthSource, type AuthSourceState } from '@/hooks/useAuthSource'
+import { useServerUrl, type ServerUrlState } from '@/hooks/useServerUrl'
 import { useSSE } from '@/hooks/useSSE'
 import { useReconnectingState } from '@/hooks/useReconnectingState'
 import { useSyncingState } from '@/hooks/useSyncingState'
@@ -17,6 +17,7 @@ import { useVisibilityReporter } from '@/hooks/useVisibilityReporter'
 import { queryKeys } from '@/lib/query-keys'
 import { AppContextProvider } from '@/lib/app-context'
 import { clearMessageWindow, syncTailMessages } from '@/lib/message-window-store'
+import { MessageWindowScopeProvider } from '@/lib/message-window-scope'
 import { useAppGoBack } from '@/hooks/useAppGoBack'
 import { useTranslation } from '@/lib/use-translation'
 import { VoiceProvider } from '@/lib/voice-context'
@@ -52,20 +53,41 @@ function withPwaBanner(content: ReactNode) {
 }
 
 export function App() {
+    const server = useServerUrl()
     return (
         <ToastProvider>
             <PwaUpdateProvider>
-                <AppInner />
+                <HubAuth key={server.baseUrl} server={server} />
             </PwaUpdateProvider>
         </ToastProvider>
     )
 }
 
-function AppInner() {
+function HubAuth({ server }: { server: ServerUrlState }) {
+    const source = useAuthSource(server.baseUrl)
+    const auth = useAuth(source.authSource, server.baseUrl)
+    const scope = auth.api && auth.user
+        ? `${server.baseUrl}|${auth.user.id}`
+        : source.isLoading || (source.authSource && !auth.error && !auth.needsBinding)
+            ? undefined
+            : null
+
+    return (
+        <MessageWindowScopeProvider scope={scope}>
+            <AppInner server={server} source={source} auth={auth} />
+        </MessageWindowScopeProvider>
+    )
+}
+
+function AppInner({ server, source, auth }: {
+    server: ServerUrlState
+    source: AuthSourceState
+    auth: AuthResult
+}) {
     const { t } = useTranslation()
-    const { serverUrl, baseUrl, setServerUrl, clearServerUrl } = useServerUrl()
-    const { authSource, isLoading: isAuthSourceLoading, setAccessToken, setPasswordToken, persistPasswordToken, clearStoredPasswordToken } = useAuthSource(baseUrl)
-    const { token, user, api, isLoading: isAuthLoading, error: authError, needsBinding, bind } = useAuth(authSource, baseUrl)
+    const { serverUrl, baseUrl, setServerUrl, clearServerUrl } = server
+    const { authSource, isLoading: isAuthSourceLoading, setAccessToken, setPasswordToken, persistPasswordToken, clearStoredPasswordToken, clearAuth } = source
+    const { token, user, api, isLoading: isAuthLoading, error: authError, needsBinding, bind } = auth
     const [titleSuggestionAvailable, setTitleSuggestionAvailable] = useState(false)
 
     useEffect(() => {
@@ -179,19 +201,9 @@ function AppInner() {
     } = useReconnectingState()
     const syncTokenRef = useRef(0)
     const isFirstConnectRef = useRef(true)
-    const baseUrlRef = useRef(baseUrl)
     const pushPromptedRef = useRef(false)
     const { isSupported: isPushSupported, permission: pushPermission, requestPermission, subscribe } = usePushNotifications(api)
 
-    useEffect(() => {
-        if (baseUrlRef.current === baseUrl) {
-            return
-        }
-        baseUrlRef.current = baseUrl
-        isFirstConnectRef.current = true
-        syncTokenRef.current = 0
-        queryClient.clear()
-    }, [baseUrl, queryClient])
 
     // Clean up URL params after successful auth (for direct access links)
     useEffect(() => {
@@ -501,7 +513,7 @@ function AppInner() {
     }
 
     return (
-        <AppContextProvider value={{ api, token, baseUrl, user: (user ?? { id: 0 }) as { id: number; username?: string; role?: 'admin' | 'user'; defaultNamespace?: string }, titleSuggestionAvailable }}>
+        <AppContextProvider value={{ api, token, baseUrl, user: (user ?? { id: 0 }) as { id: number; username?: string; role?: 'admin' | 'user'; defaultNamespace?: string }, titleSuggestionAvailable, logout: authSource.type === 'telegram' ? undefined : clearAuth }}>
             <VoiceProvider>
                 <PwaUpdateBannerWithStatusOffset
                     isSyncing={isSyncing}

@@ -1787,4 +1787,43 @@ describe('reduceTimeline', () => {
             state: 'error', completionSource: 'invocation-cutoff', completedAt: null
         })
     })
+
+    it('skips turn-lifecycle boundary events instead of rendering them as agent-event blocks', () => {
+        const messages: TracedMessage[] = [
+            makeUserMessage('Scan the repo'),
+            {
+                id: 'evt-lifecycle-started',
+                localId: null,
+                createdAt: 1_700_000_000_100,
+                role: 'event',
+                content: {
+                    type: 'turn-lifecycle',
+                    eventId: 'evt-lifecycle-started',
+                    transition: 'started',
+                    turnId: 'turn-1',
+                    scope: 'main'
+                },
+                isSidechain: false
+            } as TracedMessage,
+            makeAgentMessage('Done scanning.'),
+            {
+                id: 'evt-lifecycle-finished',
+                localId: null,
+                createdAt: 1_700_000_001_000,
+                role: 'event',
+                content: {
+                    type: 'turn-lifecycle',
+                    eventId: 'evt-lifecycle-finished',
+                    transition: 'finished',
+                    turnId: 'turn-1',
+                    scope: 'main',
+                    outcome: 'completed'
+                },
+                isSidechain: false
+            } as TracedMessage
+        ]
+
+        const { blocks } = reduceTimeline(messages, makeContext())
+        expect(blocks.map(block => block.kind)).toEqual(['user-text', 'agent-text'])
+    })
 })

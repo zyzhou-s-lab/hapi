@@ -37,6 +37,7 @@ import {
     type ThreadScrollStatePatch,
 } from '@/components/AssistantChat/threadScrollHelpers'
 import { useThreadViewportEvents } from '@/components/AssistantChat/useThreadViewportEvents'
+import { revealThreadEntry } from '@/fork-features/thread-windowing/useThreadEntryWindow'
 
 export function useThreadScrollAndHistoryController(props: {
     sessionId: string
@@ -76,6 +77,7 @@ export function useThreadScrollAndHistoryController(props: {
     const onViewModeChangeRef = useRef(props.onViewModeChange)
     const forceScrollTokenRef = useRef(props.forceScrollToken)
     const sessionIdRef = useRef(props.sessionId)
+    const outlineNavigationRef = useRef(0)
 
     // Consolidated controller state records:
     // - scrollStateRef: authoritative 4-phase scroll machine ('INITIAL_PINNING' | 'PINNED_FOLLOW' | 'USER_SCROLLED' | 'PREPENDING_HISTORY')
@@ -618,6 +620,11 @@ export function useThreadScrollAndHistoryController(props: {
                 terminalStop ? 'terminal-stop' : 'transient-stop',
                 terminalStop ? true : current.autoPaused
             )
+            // Tail sync may finish before the invalidated request settles, so
+            // its prop-driven coverage check can still see this pending load.
+            if (outcome.reason === 'invalidated' && current.source !== 'consumer') {
+                void requestOlderRef.current('coverage')
+            }
         })()
     }, [
         clearFailureRetryTimer,
@@ -738,17 +745,25 @@ export function useThreadScrollAndHistoryController(props: {
     loadOlderFromUserGestureRef.current = loadOlderFromUserGesture
 
     const handleOutlineSelect = useCallback(async (item: ConversationOutlineItem) => {
+        const navigation = ++outlineNavigationRef.current
+        const sessionId = sessionIdRef.current
+        props.onOutlineOpenChange(false)
         const target = await locateOutlineTargetMessage({
             targetMessageId: item.targetMessageId,
             findTarget: (anchorId) => document.getElementById(anchorId),
             hasMoreMessages: () => hasMoreMessagesRef.current,
             loadOlderPreservingScroll: loadOlderForOutline
         })
-        if (target) {
-            target.scrollIntoView({ block: 'start', behavior: 'smooth' })
-            updateScrollState({ autoScrollEnabled: false })
+        if (!target || navigation !== outlineNavigationRef.current || sessionId !== sessionIdRef.current) return
+        updateScrollState({ autoScrollEnabled: false })
+        target.scrollIntoView({ block: 'start', behavior: 'instant' })
+        const viewport = viewportRef.current
+        if (viewport && target.hasAttribute('data-hapi-offscreen-placeholder')) {
+            const mounted = await revealThreadEntry(viewport, item.targetMessageId)
+            if (mounted && navigation === outlineNavigationRef.current && sessionId === sessionIdRef.current) {
+                document.getElementById(target.id)?.scrollIntoView({ block: 'start', behavior: 'instant' })
+            }
         }
-        props.onOutlineOpenChange(false)
     }, [loadOlderForOutline, props.onOutlineOpenChange, updateScrollState])
     useEffect(() => {
         if (

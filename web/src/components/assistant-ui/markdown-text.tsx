@@ -32,6 +32,7 @@ import { classifyNoSchemeHref } from '@/lib/markdown-href-policy'
 import { remarkSessionPathLinks } from '@/lib/remark-session-path-links'
 import { buildSessionReferencePath, parseSessionPathHref } from '@/lib/sessionReference'
 import { UriConfirmDialog } from '@/components/UriConfirmDialog'
+import { GitDraftEditor, GitDraftHeader } from '@/fork-features/source-control/GitDraftEditor'
 
 import type { MarkdownTextPrimitiveProps } from '@assistant-ui/react-markdown'
 
@@ -119,6 +120,10 @@ export const MARKDOWN_CLASSNAME = 'aui-md happy-chat-text min-w-0 max-w-full bre
 export const MARKDOWN_COMPONENTS_BY_LANGUAGE = {
     mermaid: {
         SyntaxHighlighter: MermaidDiagram,
+    },
+    'hapi-git-draft': {
+        CodeHeader: GitDraftHeader,
+        SyntaxHighlighter: GitDraftEditor,
     },
 } satisfies NonNullable<MarkdownTextPrimitiveProps['componentsByLanguage']>
 
@@ -535,7 +540,7 @@ function Code(props: ComponentPropsWithoutRef<'code'>) {
         <code
             {...props}
             className={cn(
-                'aui-md-code break-words [overflow-wrap:anywhere] [box-decoration-break:clone] [-webkit-box-decoration-break:clone] rounded-md border border-[var(--app-inline-code-border)] bg-[var(--app-inline-code-bg)] px-[0.38em] py-[0.14em] font-mono text-[var(--app-inline-code-fg)]',
+                'aui-md-code break-words [box-decoration-break:clone] [-webkit-box-decoration-break:clone] rounded-[5px] border border-[var(--app-inline-code-border)] bg-[var(--app-inline-code-bg)] px-[0.35em] py-[0.12em] font-mono text-[var(--app-inline-code-fg)]',
                 props.className
             )}
         >
@@ -932,7 +937,7 @@ export function Table(props: ComponentPropsWithoutRef<'table'>) {
 
     return (
         <MarkdownTableSortContext.Provider value={contextValue}>
-            <div className="aui-md-table-wrapper my-3 w-full max-w-full">
+            <div className="aui-md-table-wrapper my-3 w-full max-w-full [&+.aui-md-hr]:hidden">
                 <table {...rest} className={cn('aui-md-table w-full max-w-full table-auto border-collapse text-sm', className)}>
                     {children}
                 </table>
@@ -1010,7 +1015,7 @@ export function Tr(props: ComponentPropsWithoutRef<'tr'>) {
             {...rest}
             className={cn(
                 'aui-md-tr border-b border-[var(--app-divider)]',
-                section === 'tbody' && 'transition-colors hover:bg-[var(--app-subtle-bg)]/40',
+                section === 'tbody' && 'last:border-b-0 transition-colors hover:bg-[var(--app-subtle-bg)]/40',
                 className
             )}
         >
@@ -1039,7 +1044,7 @@ export function Th(props: ComponentPropsWithoutRef<'th'>) {
                     : undefined
             }
             className={cn(
-                'aui-md-th px-3 py-2.5 first:pl-0 last:pr-0 text-left align-bottom font-semibold text-[var(--app-fg)] [[align=center]]:text-center [[align=right]]:text-right',
+                'aui-md-th whitespace-nowrap px-3 py-2.5 first:pl-0 last:pr-0 text-left align-bottom font-semibold text-[var(--app-fg)] [[align=center]]:text-center [[align=right]]:text-right',
                 className
             )}
         >
@@ -1047,7 +1052,7 @@ export function Th(props: ComponentPropsWithoutRef<'th'>) {
                 <button
                     type="button"
                     onClick={() => sortCtx?.onToggleSort(colIndex)}
-                    className="aui-md-th-sort-btn group/th inline-flex max-w-full items-center gap-1 text-left font-semibold text-[var(--app-fg)] focus-visible:outline-none"
+                    className="aui-md-th-sort-btn group/th inline-flex max-w-full items-center gap-1 whitespace-nowrap text-left font-semibold text-[var(--app-fg)] focus-visible:outline-none"
                 >
                     <span>{children}</span>
                     <span
@@ -1082,12 +1087,20 @@ export function Th(props: ComponentPropsWithoutRef<'th'>) {
     )
 }
 
+const COMPACT_METRIC_CELL_RE = /^第\s*\d+(?:\s*[-–~至]\s*\d+)?\s*[行页条个项]$/
+
 export function Td(props: ComponentPropsWithoutRef<'td'>) {
+    const cellText = extractCodeText(props.children).trim()
+    const isCompactMetric =
+        cellText.length > 0 &&
+        cellText.length <= 24 &&
+        (parseSortableCellNumber(cellText) !== null || COMPACT_METRIC_CELL_RE.test(cellText))
     return (
         <td
             {...props}
             className={cn(
                 'aui-md-td px-3 py-2.5 first:pl-0 last:pr-0 align-top text-[var(--app-fg)] [[align=center]]:text-center [[align=right]]:text-right',
+                isCompactMetric && 'whitespace-nowrap',
                 props.className
             )}
         />
@@ -1095,27 +1108,27 @@ export function Td(props: ComponentPropsWithoutRef<'td'>) {
 }
 
 function H1(props: ComponentPropsWithoutRef<'h1'>) {
-    return <h1 {...props} className={cn('aui-md-h1 mt-4 tracking-[-0.01em] first:mt-0', props.className)} />
+    return <h1 {...props} className={cn('aui-md-h1 mt-5 mb-2 tracking-[-0.015em] first:mt-0', props.className)} />
 }
 
 function H2(props: ComponentPropsWithoutRef<'h2'>) {
-    return <h2 {...props} className={cn('aui-md-h2 mt-4 text-base font-semibold tracking-[-0.01em] first:mt-0', props.className)} />
+    return <h2 {...props} className={cn('aui-md-h2 mt-5 mb-2 text-[1.25em] font-semibold tracking-[-0.01em] first:mt-0', props.className)} />
 }
 
 function H3(props: ComponentPropsWithoutRef<'h3'>) {
-    return <h3 {...props} className={cn('aui-md-h3 mt-3 text-[0.95rem] font-semibold first:mt-0', props.className)} />
+    return <h3 {...props} className={cn('aui-md-h3 mt-4 mb-1.5 text-[1.1em] font-semibold first:mt-0', props.className)} />
 }
 
 function H4(props: ComponentPropsWithoutRef<'h4'>) {
-    return <h4 {...props} className={cn('aui-md-h4 mt-3 text-[0.92rem] font-semibold first:mt-0', props.className)} />
+    return <h4 {...props} className={cn('aui-md-h4 mt-3 mb-1 text-[1em] font-semibold first:mt-0', props.className)} />
 }
 
 function H5(props: ComponentPropsWithoutRef<'h5'>) {
-    return <h5 {...props} className={cn('aui-md-h5 mt-2.5 text-[0.9rem] font-semibold first:mt-0', props.className)} />
+    return <h5 {...props} className={cn('aui-md-h5 mt-2.5 text-[0.9375em] font-semibold first:mt-0', props.className)} />
 }
 
 function H6(props: ComponentPropsWithoutRef<'h6'>) {
-    return <h6 {...props} className={cn('aui-md-h6 mt-2.5 text-[0.88rem] font-semibold first:mt-0', props.className)} />
+    return <h6 {...props} className={cn('aui-md-h6 mt-2.5 text-[0.875em] font-semibold first:mt-0', props.className)} />
 }
 
 function Strong(props: ComponentPropsWithoutRef<'strong'>) {

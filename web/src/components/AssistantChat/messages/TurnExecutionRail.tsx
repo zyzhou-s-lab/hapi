@@ -1,12 +1,14 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { formatDuration } from '@/chat/presentation'
 import {
-    type ProjectedSubturn,
     type TurnPartition,
     type TurnReasoningRow,
     type TurnTextRow,
     type TurnToolRow,
+    type TurnActivityRow,
+    type TurnSubagentRow,
 } from '@/components/AssistantChat/messages/turnBlockModel'
+import type { ProjectedSubturn } from '@/components/AssistantChat/messages/turnProjection'
 import {
     RailSlidingActiveSpinner,
     resolveTurnStepBlockId,
@@ -20,6 +22,8 @@ import { cn } from '@/lib/utils'
 import { MarkdownRenderer } from '@/components/MarkdownRenderer'
 import { TurnRailSummary } from './TurnRailSummary'
 import { useLiveTurnStepRows } from './useLiveTurnRows'
+import { ActivitySegmentRow } from './ActivitySegmentRow'
+import { SubagentActivityRow } from './SubagentActivityRow'
 const railCaptureRendererRegistry = new WeakMap<HTMLElement, () => ReactNode>()
 
 export function renderCollapsedRailForShareCapture(railElement: HTMLElement): ReactNode {
@@ -108,7 +112,8 @@ export function TurnExecutionRail(props: {
 
     const hasRunningOrPendingTool = useMemo(
         () => stepRows.some(
-            (row) => row.kind === 'tool' && (row.block.tool.state === 'running' || row.block.tool.state === 'pending' || row.permission)
+            (row) => (row.kind === 'activity' ? row.toolRows : row.kind === 'subagent' ? row.activity.tools : row.kind === 'tool' ? [row] : [])
+                .some((tool) => tool.block.tool.state === 'running' || tool.block.tool.state === 'pending' || tool.permission)
         ),
         [stepRows]
     )
@@ -343,10 +348,12 @@ export function TurnExecutionRail(props: {
 
     const collapsedRows = useMemo(() => {
         const pinnedKeySet = new Set(collapsedPinnedRailRows.map((row) => row.key))
-        return stepRows.filter((row): row is TurnToolRow | (typeof collapsedPinnedRailRows)[number] => {
+        return stepRows.filter((row): row is TurnToolRow | TurnActivityRow | TurnSubagentRow | (typeof collapsedPinnedRailRows)[number] => {
             if (row.kind === 'coalesced') {
                 return pinnedKeySet.has(row.key)
             }
+            if (row.kind === 'activity') return row.toolRows.some((tool) => tool.pinned || tool.permission)
+            if (row.kind === 'subagent') return row.activity.status === 'failed' || row.activity.status === 'canceled'
             if (row.kind === 'tool') {
                 return pinnedKeySet.has(row.key) || row.permission
             }
@@ -427,6 +434,15 @@ export function TurnExecutionRail(props: {
                                 {stepRows.map((row, idx) => {
                                     const isLastStep = idx === stepRows.length - 1
                                     const stepBlockId = resolveTurnStepBlockId(row)
+                                    if (row.kind === 'activity' || row.kind === 'subagent') {
+                                        return (
+                                            <div key={row.key} ref={(el) => { rowElsRef.current[idx] = el }} data-rail-row-index={idx} data-block-id={stepBlockId}>
+                                                {row.kind === 'activity'
+                                                    ? <ActivitySegmentRow row={row} lang={lang} accentColor={accentColor} shareCapture={shareCapture} />
+                                                    : <SubagentActivityRow activity={row.activity} lang={lang} accentColor={accentColor} />}
+                                            </div>
+                                        )
+                                    }
                                     if (row.kind === 'reasoning') {
                                         return (
                                             <div
@@ -574,7 +590,11 @@ export function TurnExecutionRail(props: {
                             data-block-id={resolveTurnStepBlockId(collapsedRows[0]!)}
                         >
                             {collapsedRows.map((row, idx) =>
-                                row.kind === 'coalesced' ? (
+                                row.kind === 'activity' ? (
+                                    <ActivitySegmentRow key={row.key} row={row} lang={lang} accentColor={accentColor} pinnedOnly={true} />
+                                ) : row.kind === 'subagent' ? (
+                                    <SubagentActivityRow key={row.key} activity={row.activity} lang={lang} accentColor={accentColor} />
+                                ) : row.kind === 'coalesced' ? (
                                     <TimelineCoalescedStepRow
                                         key={row.key}
                                         row={row}
@@ -601,7 +621,7 @@ export function TurnExecutionRail(props: {
                 <div
                     key={row.key}
                     data-block-id={resolveTurnStepBlockId(row)}
-                    className="hidden py-1.5 text-[15px] leading-relaxed text-[var(--app-fg)]"
+                    className="happy-chat-text hidden py-1.5 text-[var(--app-fg)]"
                     data-hapi-turn-quiet="true"
                 >
                     <RailEntityTextBody

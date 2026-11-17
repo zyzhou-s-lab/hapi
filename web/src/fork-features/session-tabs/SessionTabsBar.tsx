@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react'
+import { useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react'
 import { useNavigate } from '@tanstack/react-router'
 import type { SessionSummary } from '@/types/api'
 import { useAppContext } from '@/lib/app-context'
@@ -186,6 +186,7 @@ export function SessionTabsBar(props: {
     machineLabel: (session: SessionSummary) => string
     /** 固定在最左，回到会话列表（窄屏）或取消选中（桌面）。本 fork 没有工作总览。 */
     home?: { active: boolean; onOpen: () => void }
+    leadingAction?: ReactNode
 }) {
     const { t } = useTranslation()
     const navigate = useNavigate()
@@ -232,7 +233,7 @@ export function SessionTabsBar(props: {
         }
     }, [menu])
 
-    if (tabs.length === 0) return null
+    if (tabs.length === 0 && !props.leadingAction) return null
 
     const go = (id: string | null) => {
         if (id) navigate(getSessionListSelectionNavigation(id))
@@ -282,7 +283,9 @@ export function SessionTabsBar(props: {
     const dialogSession = dialog ? byId.get(dialog.id) : undefined
 
     return (
-        <div className="session-tabs-bar flex shrink-0 items-end border-b border-[var(--app-divider)] bg-[var(--app-secondary-bg)] pt-[env(safe-area-inset-top)]" role="tablist" aria-label={t('tabs.label')}>
+        <div className={cn('session-tabs-bar shrink-0 items-end border-b border-[var(--app-divider)] bg-[var(--app-secondary-bg)] pt-[env(safe-area-inset-top)]', tabs.length > 0 ? 'flex' : 'hidden min-h-10 split:flex')}>
+            {props.leadingAction}
+            <div className="flex min-w-0 flex-1 items-end" role="tablist" aria-label={t('tabs.label')}>
             {props.home ? (
                 <div className="shrink-0 pl-1.5 pt-1.5">
                     <div
@@ -335,6 +338,7 @@ export function SessionTabsBar(props: {
                         />
                     )
                 })}
+            </div>
             </div>
             {menu ? (
                 <div

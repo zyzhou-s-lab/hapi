@@ -19,9 +19,15 @@ const mocks = vi.hoisted(() => ({
         onSessionReopened?: (newSessionId: string) => void | Promise<void>
     },
     search: {
-        tab: 'directories' as const,
+        tab: 'directories',
         query: '感',
+    } as {
+        tab?: 'changes' | 'directories'
+        query?: string
+        scope?: 'working' | 'staged' | 'unstaged' | 'branch'
+        baseRef?: string
     },
+    repository: null as null | Record<string, unknown>,
 }))
 
 vi.mock('@tanstack/react-router', () => ({
@@ -51,12 +57,21 @@ vi.mock('@/hooks/queries/useSession', () => ({
     }),
 }))
 
-vi.mock('@/hooks/queries/useGitStatusFiles', () => ({
-    useGitStatusFiles: () => ({
-        status: null,
+vi.mock('@/fork-features/source-control/useGitRepository', () => ({
+    useGitRepository: () => ({
+        repository: mocks.repository,
         error: null,
         isLoading: false,
         refetch: vi.fn(),
+    }),
+}))
+
+vi.mock('@/fork-features/source-control/useGitScope', () => ({
+    useGitScope: () => ({
+        scope: 'working',
+        baseRef: undefined,
+        setScope: vi.fn(),
+        setBaseRef: vi.fn(),
     }),
 }))
 
@@ -161,6 +176,91 @@ describe('FilesPage search navigation', () => {
             replace: true,
             resetScroll: false,
         })
+    })
+})
+
+describe('FilesPage scoped changes', () => {
+    beforeEach(() => {
+        vi.clearAllMocks()
+        window.localStorage.clear()
+        window.sessionStorage.clear()
+        mocks.search = { tab: 'changes' }
+        mocks.repository = {
+            repoRoot: '/workspace/project',
+            branch: 'feature/git',
+            head: 'abc',
+            indexDigest: 'a'.repeat(64),
+            worktreeDigest: 'b'.repeat(64),
+            defaultBranch: 'main',
+            baseRef: 'origin/main',
+            mergeBase: 'base',
+            branchChangedFiles: 1,
+            upstream: 'origin/feature/git',
+            remote: 'origin',
+            ahead: 0,
+            behind: 0,
+            dirty: true,
+            scope: 'working',
+            files: [
+                {
+                    path: 'src/renamed.ts',
+                    oldPath: 'src/old.ts',
+                    status: 'R',
+                    staged: true,
+                    unstaged: false,
+                    untracked: false,
+                    binary: false,
+                    additions: 2,
+                    deletions: 1
+                },
+                {
+                    path: 'assets/logo.png',
+                    status: 'M',
+                    staged: false,
+                    unstaged: true,
+                    untracked: false,
+                    binary: true,
+                    additions: null,
+                    deletions: null
+                },
+                {
+                    path: 'src/zero.ts',
+                    status: 'M',
+                    staged: true,
+                    unstaged: true,
+                    untracked: false,
+                    binary: false,
+                    additions: 0,
+                    deletions: 0
+                }
+            ],
+            stagedFiles: [],
+            unstagedFiles: [],
+            refs: [{ name: 'origin/main', remote: true, current: false }],
+            worktrees: [],
+            pullRequest: null,
+            ghAvailable: true,
+            ghAuthenticated: true
+        }
+    })
+
+    it('renders unique scoped files with rename and binary states, and opens the exact scope', () => {
+        renderFilesPage()
+
+        expect(screen.getByText('3 changed files')).toBeInTheDocument()
+        expect(screen.getByText('Binary')).toBeInTheDocument()
+        expect(screen.getByText('src/old.ts → src/renamed.ts')).toBeInTheDocument()
+        expect(screen.getByText('zero.ts')).toBeInTheDocument()
+
+        fireEvent.click(screen.getByRole('button', { name: /renamed\.ts/ }))
+        expect(mocks.navigate).toHaveBeenCalledWith(expect.objectContaining({
+            to: '/sessions/$sessionId/file',
+            params: { sessionId: 'session-1' },
+            search: expect.objectContaining({
+                path: encodeBase64('src/renamed.ts'),
+                scope: 'working'
+            })
+        }))
     })
 })
 

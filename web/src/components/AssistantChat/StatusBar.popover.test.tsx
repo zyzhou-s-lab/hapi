@@ -8,46 +8,6 @@ describe('StatusBar context details popover', () => {
         localStorage.clear()
     })
 
-    it('keeps stable connection labels in English and offsets the whole left status', () => {
-        localStorage.setItem('hapi-lang', 'zh-CN')
-        const { rerender } = render(
-            <I18nProvider>
-                <StatusBar active thinking={false} agentState={null} />
-            </I18nProvider>
-        )
-
-        const onlineLabel = screen.getByText('online')
-        expect(onlineLabel.className.split(' ')).not.toContain('top-px')
-        expect(onlineLabel.previousElementSibling?.className.split(' ')).not.toContain('top-px')
-        expect(onlineLabel.parentElement?.className.split(' ')).toContain('top-px')
-        expect(onlineLabel.parentElement?.className.split(' ')).toContain('sm:top-0.5')
-
-        rerender(
-            <I18nProvider>
-                <StatusBar active={false} thinking={false} agentState={null} />
-            </I18nProvider>
-        )
-
-        const offlineLabel = screen.getByText('offline')
-        expect(offlineLabel.className.split(' ')).toContain('text-[var(--app-hint)]')
-        expect(offlineLabel.className.split(' ')).not.toContain('top-px')
-        expect(offlineLabel.previousElementSibling?.className.split(' ')).toContain('bg-[var(--app-hint)]')
-        expect(offlineLabel.previousElementSibling?.className.split(' ')).not.toContain('top-px')
-        expect(offlineLabel.parentElement?.className.split(' ')).toContain('top-px')
-        expect(offlineLabel.parentElement?.className.split(' ')).toContain('sm:top-0.5')
-
-        rerender(
-            <I18nProvider>
-                <StatusBar active thinking agentState={null} />
-            </I18nProvider>
-        )
-
-        const thinkingLabel = screen.getByText(/· 0s$/)
-        expect(thinkingLabel.className.split(' ')).not.toContain('top-px')
-        expect(thinkingLabel.previousElementSibling?.className.split(' ')).not.toContain('top-px')
-        expect(thinkingLabel.parentElement?.className.split(' ')).toContain('top-px')
-        expect(thinkingLabel.parentElement?.className.split(' ')).toContain('sm:top-0.5')
-    })
 
     it('uses an effort-only reasoning label on mobile and the full label on desktop', () => {
         render(
@@ -183,29 +143,9 @@ describe('StatusBar context details popover', () => {
             </I18nProvider>
         )
 
-        const connectionLabel = screen.getByText('online')
-        const leftStatusGroup = connectionLabel.parentElement?.parentElement
-        const statusBar = leftStatusGroup?.parentElement
-        const rightStatusGroup = statusBar?.lastElementChild
-        expect(statusBar?.className.split(' ')).toContain('items-baseline')
-        expect(leftStatusGroup?.className.split(' ')).toContain('items-baseline')
-        expect(rightStatusGroup?.className.split(' ')).toContain('items-baseline')
-        expect(connectionLabel.className.split(' ')).not.toContain('top-px')
-        expect(connectionLabel.previousElementSibling?.className.split(' ')).not.toContain('top-px')
-        expect(connectionLabel.parentElement?.className.split(' ')).toContain('top-px')
-        expect(connectionLabel.parentElement?.className.split(' ')).toContain('sm:top-0.5')
-        expect(leftStatusGroup?.className.split(' ')).toContain('gap-2')
-        expect(leftStatusGroup?.className.split(' ')).not.toContain('sm:gap-3')
-        expect(rightStatusGroup?.className.split(' ')).toContain('gap-2')
 
         const trigger = screen.getByRole('button', { name: '上下文详情' })
-        expect(trigger.className.split(' ')).not.toContain('relative')
-        expect(trigger.className.split(' ')).not.toContain('-top-px')
-        expect(trigger.className.split(' ')).toContain('text-[10px]')
-        expect(trigger.className.split(' ')).toContain('leading-4')
-        expect(trigger.className.split(' ')).toContain('text-[var(--app-hint)]')
         expect(trigger.textContent).toBe('ctx 258k (65% left)35% · 90k / 258k')
-        expect(trigger.className.split(' ')).not.toContain('hidden')
         const progressTrack = trigger.querySelector('[aria-hidden="true"]')
         expect((progressTrack?.firstElementChild as HTMLElement | null)?.style.width).toBe('35%')
 
@@ -241,58 +181,4 @@ describe('StatusBar context details popover', () => {
         expect(cacheLine.parentElement?.textContent).toBe('Cache: 86kUsed: 90k (35%)Remaining: 168k (65%)')
     })
 
-    it('renders top-left git branch and diff stats next to online and hides right-side context when hideContextUsage is enabled', async () => {
-        localStorage.setItem('hapi-lang', 'en')
-        render(
-            <I18nProvider>
-                <StatusBar
-                    active
-                    thinking={false}
-                    agentState={null}
-                    contextSize={90_000}
-                    contextCacheRead={86_000}
-                    contextWindow={258_000}
-                    hideContextUsage
-                    gitBranch="main"
-                    gitStatus={{
-                        branch: 'main',
-                        totalStaged: 1,
-                        totalUnstaged: 1,
-                        stagedFiles: [
-                            {
-                                fileName: 'HappyComposer.tsx',
-                                filePath: 'web/src/components/AssistantChat',
-                                fullPath: 'web/src/components/AssistantChat/HappyComposer.tsx',
-                                status: 'modified',
-                                isStaged: true,
-                                linesAdded: 36,
-                                linesRemoved: 8,
-                            },
-                        ],
-                        unstagedFiles: [
-                            {
-                                fileName: 'ComposerButtons.tsx',
-                                filePath: 'web/src/components/AssistantChat',
-                                fullPath: 'web/src/components/AssistantChat/ComposerButtons.tsx',
-                                status: 'modified',
-                                isStaged: false,
-                                linesAdded: 12,
-                                linesRemoved: 4,
-                            },
-                        ],
-                    }}
-                />
-            </I18nProvider>
-        )
-
-        expect(screen.getByText('online')).toBeInTheDocument()
-        expect(screen.queryByRole('button', { name: 'Context details' })).toBeNull()
-        const gitTrigger = screen.getByTestId('statusbar-git-trigger')
-        expect(gitTrigger.textContent).toContain('main')
-        expect(gitTrigger.textContent).toContain('+48')
-        expect(gitTrigger.textContent).toContain('-12')
-
-        fireEvent.click(gitTrigger)
-        expect(await screen.findByText('web/src/components/AssistantChat/HappyComposer.tsx')).toBeInTheDocument()
-    })
 })

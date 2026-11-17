@@ -572,7 +572,7 @@ describe('NewSession launch preferences', () => {
             agent: 'agy', model: 'gemini-3.6-flash-low', cursorSelectedBase: 'auto', machineId: 'machine-1',
             effort: 'auto', modelReasoningEffort: 'default', serviceTier: 'standard', collaborationMode: 'default',
             copilotAgentMode: 'interactive', yoloMode: false, codexFamilyPermissionMode: 'default',
-            grokPermissionMode: 'default', sessionType: 'simple', worktreeName: ''
+            grokPermissionMode: 'default', sessionType: 'simple', worktreeName: '', worktreeStartRef: ''
         })
         render(<NewSession api={api} machines={[machine]} initialMachineId="machine-1" initialDirectory="C:\repo" onSuccess={mocks.onSuccess} onCancel={() => {}} />)
         await waitFor(() => expect(screen.getByTestId('agy-model')).toHaveTextContent('gemini-3.6-flash-low'))
@@ -584,7 +584,7 @@ describe('NewSession launch preferences', () => {
             agent: 'agy', model: 'removed-model', cursorSelectedBase: 'auto', machineId: 'machine-1',
             effort: 'auto', modelReasoningEffort: 'default', serviceTier: 'standard', collaborationMode: 'default',
             copilotAgentMode: 'interactive', yoloMode: false, codexFamilyPermissionMode: 'default',
-            grokPermissionMode: 'default', sessionType: 'simple', worktreeName: ''
+            grokPermissionMode: 'default', sessionType: 'simple', worktreeName: '', worktreeStartRef: ''
         })
         render(<NewSession api={api} machines={[machine]} initialMachineId="machine-1" initialDirectory="C:\repo" onSuccess={mocks.onSuccess} onCancel={() => {}} />)
         await waitFor(() => expect(screen.getByTestId('agy-model')).toHaveTextContent('auto'))
@@ -652,6 +652,33 @@ describe('NewSession launch preferences', () => {
         await waitFor(() => expect(mocks.onSuccess).toHaveBeenCalledWith('agy-session'))
         expect(mocks.spawnSession).toHaveBeenCalledWith(expect.objectContaining({ agent: 'agy', model: 'gemini-3.6-flash-low' }))
         expect(loadPreferredLaunchSettings('machine-1', 'agy')?.model).toBe('gemini-3.6-flash-low')
+    })
+
+    it('prefills a branch worktree and forwards its start ref to spawn', async () => {
+        savePreferredAgent('claude')
+        mocks.spawnSession.mockResolvedValue({ type: 'success', sessionId: 'worktree-session' })
+        render(
+            <NewSession
+                api={api}
+                machines={[machine]}
+                initialMachineId="machine-1"
+                initialDirectory={'C:\\repo'}
+                initialSessionType="worktree"
+                initialWorktreeStartRef="origin/main"
+                initialWorktreeName="feature-x"
+                onSuccess={mocks.onSuccess}
+                onCancel={() => {}}
+            />
+        )
+
+        fireEvent.click(screen.getByTestId('create'))
+        await waitFor(() => expect(mocks.onSuccess).toHaveBeenCalledWith('worktree-session'))
+        expect(mocks.spawnSession).toHaveBeenCalledWith(expect.objectContaining({
+            directory: 'C:\\repo',
+            sessionType: 'worktree',
+            worktreeName: 'feature-x',
+            worktreeStartRef: 'origin/main'
+        }))
     })
 
     it('does not overwrite AGY model preference after a failed launch', async () => {
@@ -913,7 +940,8 @@ describe('NewSession launch preferences', () => {
             codexFamilyPermissionMode: 'default',
             grokPermissionMode: 'default',
             sessionType: 'simple',
-            worktreeName: ''
+            worktreeName: '',
+            worktreeStartRef: ''
         })
 
         render(

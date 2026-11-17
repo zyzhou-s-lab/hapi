@@ -9,6 +9,13 @@ import FilePage from './file'
 
 const goBackMock = vi.fn()
 const copyMock = vi.hoisted(() => vi.fn())
+const searchMock = vi.hoisted(() => ({
+    path: '',
+    staged: undefined as boolean | undefined,
+    scope: undefined as 'working' | 'staged' | 'unstaged' | 'branch' | undefined,
+    baseRef: undefined as string | undefined,
+}))
+const getGitDiffFileMock = vi.hoisted(() => vi.fn(async () => ({ success: true, stdout: '' })))
 
 const sampleMarkdown = '# Heading\n\n| Col A | Col B |\n| --- | --- |\n| one | two |'
 const filePath = 'docs/README.md'
@@ -19,16 +26,13 @@ const fileModified = 1_784_175_060_000
 
 vi.mock('@tanstack/react-router', () => ({
     useParams: () => ({ sessionId: 'session-1' }),
-    useSearch: () => ({
-        path: encodedPath,
-        staged: undefined,
-    }),
+    useSearch: () => searchMock,
 }))
 
 vi.mock('@/lib/app-context', () => ({
     useAppContext: () => ({
         api: {
-            getGitDiffFile: vi.fn(async () => ({ success: true, stdout: '' })),
+            getGitDiffFile: getGitDiffFileMock,
             readSessionFile: vi.fn(async () => ({
                 success: true,
                 content: encodedContent,
@@ -88,6 +92,10 @@ describe('FilePage markdown preview', () => {
         vi.clearAllMocks()
         window.localStorage.clear()
         window.sessionStorage.clear()
+        searchMock.path = encodedPath
+        searchMock.staged = undefined
+        searchMock.scope = undefined
+        searchMock.baseRef = undefined
     })
 
     it('renders markdown preview by default and toggles to source', async () => {
@@ -137,5 +145,27 @@ describe('FilePage markdown preview', () => {
         })
         const secondScrollRegion = document.querySelector('[data-hapi-file-scroll="true"]') as HTMLElement
         expect(secondScrollRegion.scrollTop).toBe(123)
+    })
+
+    it('uses the exact scoped comparison for the diff and scroll identity', async () => {
+        searchMock.scope = 'branch'
+        searchMock.baseRef = 'origin/main'
+
+        const firstRender = renderWithProviders()
+
+        await waitFor(() => {
+            expect(getGitDiffFileMock).toHaveBeenCalledWith(
+                'session-1',
+                filePath,
+                undefined,
+                { scope: 'branch', baseRef: 'origin/main' }
+            )
+        })
+
+        const scrollRegion = document.querySelector('[data-hapi-file-scroll="true"]') as HTMLElement
+        scrollRegion.scrollTop = 77
+        firstRender.unmount()
+
+        expect(Object.keys(sessionStorage).some((key) => key.includes(':branch:origin/main'))).toBe(true)
     })
 })

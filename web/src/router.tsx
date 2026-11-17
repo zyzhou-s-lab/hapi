@@ -12,6 +12,7 @@ import {
     useParams,
     useSearch,
 } from '@tanstack/react-router'
+import type { GitScope } from '@hapi/protocol/sourceControl'
 import { getScrollRestorationKey } from '@/lib/scrollRestorationKey'
 import {
     getSessionListSelectionNavigation,
@@ -27,7 +28,8 @@ import { LoadingState } from '@/components/LoadingState'
 import { useAppContext } from '@/lib/app-context'
 import { useAppGoBack } from '@/hooks/useAppGoBack'
 import { isTelegramApp } from '@/hooks/useTelegram'
-import { useSidebarResize } from '@/hooks/useSidebarResize'
+import { SidebarShell } from '@/fork-features/sidebar-shell/SidebarShell'
+import { SidebarFooterSettings } from '@/fork-features/sidebar-shell/SidebarFooterSettings'
 import { useHideArchivedSessions } from '@/hooks/useHideArchivedSessions'
 import { filterVisibleSessions } from '@/lib/sessionListFilters'
 import { useMessageWindowControls } from '@/hooks/queries/useMessages'
@@ -153,25 +155,6 @@ function FolderOpenIcon(props: { className?: string }) {
     )
 }
 
-function SettingsIcon(props: { className?: string }) {
-    return (
-        <svg
-            xmlns="http://www.w3.org/2000/svg"
-            width="20"
-            height="20"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            className={props.className}
-        >
-            <circle cx="12" cy="12" r="3" />
-            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z" />
-        </svg>
-    )
-}
 
 function SessionsPage() {
     return (
@@ -262,7 +245,6 @@ function SessionsPageContent() {
         const machineId = session.metadata?.machineId
         return (machineId && machineLabelsById[machineId]) || session.metadata?.host || ''
     }, [machineLabelsById])
-    const sidebar = useSidebarResize()
     const handleNewSessionInDirectory = useCallback((args: { machineId: string | null; directory: string }) => {
         navigate({
             to: '/sessions/new',
@@ -272,18 +254,28 @@ function SessionsPageContent() {
             ...PRESERVE_SESSION_SIDEBAR_SCROLL,
         })
     }, [navigate])
+    const handleNewSession = useCallback(() => navigate({
+        to: '/sessions/new',
+        ...PRESERVE_SESSION_SIDEBAR_SCROLL,
+    }), [navigate])
+    const handleSelectSession = useCallback((sessionId: string) => {
+        navigate(getSessionListSelectionNavigation(sessionId))
+    }, [navigate])
 
     return (
-        <>
-            <div className="flex h-full min-h-0">
-            <div
-                className={`${!isSessionsIndex || phonePane === 'work' ? 'hidden split:flex' : 'flex'} w-full shrink-0 flex-col bg-[var(--app-bg)]`}
-                style={{ '--sidebar-w': `${sidebar.width}px` } as React.CSSProperties}
-            >
-                <div className="flex min-h-0 flex-1 flex-col pt-[env(safe-area-inset-top)]">
+        <SidebarShell
+            mobileListVisible={isSessionsIndex && phonePane !== 'work'}
+            hasSessionTabs={hasSessionTabs}
+            onNewSession={handleNewSession}
+            footer={<SidebarFooterSettings />}
+            renderHeader={controls => (
+                <SessionTabsBar sessions={sessions} selectedSessionId={selectedSessionId} machineLabel={tabMachineLabel} home={tabsHome} leadingAction={controls} />
+            )}
+            sidebar={(
+                <>
                     {isSessionsIndex ? <PhoneWorkToggle /> : null}
                     {error ? (
-                        <div className="mx-auto w-full max-w-content px-3 py-2">
+                        <div className="mx-auto w-full max-w-content px-3 py-2 split:max-w-none">
                             <div className="text-sm text-red-600">{error}</div>
                         </div>
                     ) : null}
@@ -292,46 +284,32 @@ function SessionsPageContent() {
                         sessions={visibleSessions}
                         selectedSessionId={selectedSessionId}
                         scrollStability={sessionListScrollStability}
-                        onSelect={(sessionId) => navigate(getSessionListSelectionNavigation(sessionId))}
-                        onNewSession={() => navigate({
-                            to: '/sessions/new',
-                            ...PRESERVE_SESSION_SIDEBAR_SCROLL,
-                        })}
+                        onSelect={handleSelectSession}
+                        onNewSession={handleNewSession}
                         onNewSessionInDirectory={handleNewSessionInDirectory}
                         onBrowse={canBrowse ? () => navigate({ to: '/browse' }) : undefined}
                         onRefresh={handleRefresh}
                         isLoading={isLoading}
                         renderHeader={false}
                         headerActions={(
-                            <div className="flex items-center gap-2">
+                            <div className="flex items-center gap-1">
                                 {canBrowse && (
                                     <button
                                         type="button"
                                         onClick={() => navigate({ to: '/browse' })}
-                                        className="p-1.5 rounded-full text-[var(--app-hint)] hover:text-[var(--app-fg)] hover:bg-[var(--app-subtle-bg)] transition-colors"
+                                        className="flex h-7 w-7 items-center justify-center rounded-md text-[var(--app-hint)] hover:text-[var(--app-fg)] hover:bg-[var(--app-subtle-bg)] transition-colors"
                                         title={t('browse.nav')}
                                     >
-                                        <FolderOpenIcon className="h-5 w-5" />
+                                        <FolderOpenIcon className="h-4 w-4" />
                                     </button>
                                 )}
                                 <button
                                     type="button"
-                                    onClick={() => navigate({ to: '/settings' })}
-                                    className="p-1.5 rounded-full text-[var(--app-hint)] hover:text-[var(--app-fg)] hover:bg-[var(--app-subtle-bg)] transition-colors"
-                                    title={t('settings.title')}
-                                >
-                                    <SettingsIcon className="h-5 w-5" />
-                                </button>
-                                <button
-                                    type="button"
-                                    onClick={() => navigate({
-                                        to: '/sessions/new',
-                                        ...PRESERVE_SESSION_SIDEBAR_SCROLL,
-                                    })}
-                                    className="session-list-new-button flex h-9 w-9 items-center justify-center rounded-full text-[var(--app-link)] transition-colors"
+                                    onClick={handleNewSession}
+                                    className="session-list-new-button flex h-7 w-7 items-center justify-center rounded-md text-[var(--app-link)] hover:bg-[var(--app-subtle-bg)] transition-colors"
                                     title={t('sessions.new')}
                                 >
-                                    <PlusIcon className="h-5 w-5" />
+                                    <PlusIcon className="h-4 w-4" />
                                 </button>
                             </div>
                         )}
@@ -340,24 +318,11 @@ function SessionsPageContent() {
                         machineLabelsById={machineLabelsById}
                         machinesById={machinesById}
                     />
-                </div>
-            </div>
-
-            {/* Resize handle - desktop only */}
-            <div
-                className="sidebar-resize-handle hidden split:block shrink-0"
-                data-dragging={sidebar.isDragging || undefined}
-                onPointerDown={sidebar.onPointerDown}
-            />
-
-            <div data-session-tabs={hasSessionTabs || undefined} className={`${!isSessionsIndex || phonePane === 'work' ? 'flex' : 'hidden split:flex'} min-w-0 flex-1 flex-col bg-[var(--app-bg)]`}>
-                <SessionTabsBar sessions={sessions} selectedSessionId={selectedSessionId} machineLabel={tabMachineLabel} home={tabsHome} />
-                <div className="flex-1 min-h-0">
-                    <Outlet />
-                </div>
-            </div>
-            </div>
-        </>
+                </>
+            )}
+        >
+            <Outlet />
+        </SidebarShell>
     )
 }
 
@@ -1012,7 +977,14 @@ function NewSessionPage() {
     const queryClient = useQueryClient()
     const { machines, isLoading: machinesLoading, error: machinesError } = useMachines(api, true)
     const { t } = useTranslation()
-    const { directory: initialDirectory, machineId: initialMachineId, shareTransferId } = newSessionRoute.useSearch()
+    const {
+        directory: initialDirectory,
+        machineId: initialMachineId,
+        sessionType: initialSessionType,
+        worktreeStartRef: initialWorktreeStartRef,
+        worktreeName: initialWorktreeName,
+        shareTransferId
+    } = newSessionRoute.useSearch()
 
     const handleCancel = useCallback(() => {
         if (shareTransferId) {
@@ -1091,6 +1063,9 @@ function NewSessionPage() {
                     onChooseFolder={handleChooseFolder}
                     initialDirectory={initialDirectory}
                     initialMachineId={initialMachineId}
+                    initialSessionType={initialSessionType}
+                    initialWorktreeStartRef={initialWorktreeStartRef}
+                    initialWorktreeName={initialWorktreeName}
                 />
             </div>
         </div>
@@ -1174,10 +1149,31 @@ const sessionDetailRoute = createRoute({
     component: SessionDetailRoute,
 })
 
+const GIT_SCOPES: readonly GitScope[] = ['working', 'staged', 'unstaged', 'branch']
+
+function parseGitScope(value: unknown): GitScope | undefined {
+    return typeof value === 'string' && (GIT_SCOPES as readonly string[]).includes(value)
+        ? value as GitScope
+        : undefined
+}
+
+function parseGitBaseRef(value: unknown): string | undefined {
+    return typeof value === 'string' && value.length > 0 && value.length <= 256
+        ? value
+        : undefined
+}
+
+type SessionFilesSearch = {
+    tab?: 'changes' | 'directories'
+    query?: string
+    scope?: GitScope
+    baseRef?: string
+}
+
 const sessionFilesRoute = createRoute({
     getParentRoute: () => sessionDetailRoute,
     path: 'files',
-    validateSearch: (search: Record<string, unknown>): { tab?: 'changes' | 'directories'; query?: string } => {
+    validateSearch: (search: Record<string, unknown>): SessionFilesSearch => {
         const tabValue = typeof search.tab === 'string' ? search.tab : undefined
         const tab = tabValue === 'directories'
             ? 'directories'
@@ -1187,10 +1183,14 @@ const sessionFilesRoute = createRoute({
         const query = typeof search.query === 'string' && search.query.length > 0
             ? search.query
             : undefined
+        const scope = parseGitScope(search.scope)
+        const baseRef = parseGitBaseRef(search.baseRef)
 
         return {
             ...(tab ? { tab } : {}),
             ...(query ? { query } : {}),
+            ...(scope ? { scope } : {}),
+            ...(baseRef ? { baseRef } : {}),
         }
     },
     component: FilesPage,
@@ -1229,6 +1229,8 @@ const sessionTerminalRoute = createRoute({
 type SessionFileSearch = {
     path: string
     staged?: boolean
+    scope?: GitScope
+    baseRef?: string
     tab?: 'changes' | 'directories'
     query?: string
     origin?: 'chat' | 'config' | 'mcp'
@@ -1247,6 +1249,8 @@ const sessionFileRoute = createRoute({
             : search.staged === false || search.staged === 'false'
                 ? false
                 : undefined
+        const scope = parseGitScope(search.scope)
+        const baseRef = parseGitBaseRef(search.baseRef)
 
         const tabValue = typeof search.tab === 'string' ? search.tab : undefined
         const tab = tabValue === 'directories'
@@ -1266,6 +1270,12 @@ const sessionFileRoute = createRoute({
         const result: SessionFileSearch = { path }
         if (staged !== undefined) {
             result.staged = staged
+        }
+        if (scope !== undefined) {
+            result.scope = scope
+        }
+        if (baseRef !== undefined) {
+            result.baseRef = baseRef
         }
         if (tab !== undefined) {
             result.tab = tab
@@ -1291,6 +1301,9 @@ const sessionFileRoute = createRoute({
 type NewSessionSearch = {
     directory?: string
     machineId?: string
+    sessionType?: 'simple' | 'worktree'
+    worktreeStartRef?: string
+    worktreeName?: string
     shareTransferId?: string
 }
 
@@ -1304,6 +1317,15 @@ const newSessionRoute = createRoute({
         }
         if (typeof search.machineId === 'string' && search.machineId) {
             result.machineId = search.machineId
+        }
+        if (search.sessionType === 'simple' || search.sessionType === 'worktree') {
+            result.sessionType = search.sessionType
+        }
+        if (typeof search.worktreeStartRef === 'string' && search.worktreeStartRef.trim()) {
+            result.worktreeStartRef = search.worktreeStartRef.trim()
+        }
+        if (typeof search.worktreeName === 'string' && search.worktreeName.trim()) {
+            result.worktreeName = search.worktreeName.trim()
         }
         if (typeof search.shareTransferId === 'string' && search.shareTransferId) {
             result.shareTransferId = search.shareTransferId

@@ -509,6 +509,9 @@ func reduceTimeline(_ messages: [NormalizedMessage], context: ReducerContext) ->
             if msgEvent.type == "abort-restore" {
                 continue
             }
+            if msgEvent.type == "turn-lifecycle" {
+                continue
+            }
             if msgEvent.type == "turn-duration" {
                 let targetId = msgEvent["targetMessageId"]?.stringValue
                 let durationMs = Int((msgEvent["durationMs"]?.numberValue ?? 0).rounded())

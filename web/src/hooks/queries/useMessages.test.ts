@@ -2,6 +2,7 @@ import { act, renderHook } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ApiClient } from '@/api/client'
 import type { DecryptedMessage } from '@/types/api'
+import type * as MessageWindowStore from '@/lib/message-window-store'
 import { useMessageWindowControls, useMessages } from './useMessages'
 
 type Listener = () => void
@@ -89,7 +90,8 @@ const mockStore = vi.hoisted(() => {
     }
 })
 
-vi.mock('@/lib/message-window-store', () => ({
+vi.mock('@/lib/message-window-store', async (importOriginal) => ({
+    ...(await importOriginal<typeof MessageWindowStore>()),
     activateMessageWindow: mockStore.activateMessageWindow,
     cancelOlderMessageLoad: mockStore.cancelOlderMessageLoad,
     fetchOlderMessages: mockStore.fetchOlderMessages,

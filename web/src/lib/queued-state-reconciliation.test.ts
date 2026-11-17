@@ -1,7 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ApiClient } from '@/api/client'
 
-vi.mock('./message-window-store', () => ({
+vi.mock(import('./message-window-store'), async (importOriginal) => ({
+    ...(await importOriginal()),
     getQueuedReconcileCandidateLocalIds: vi.fn(),
     markMessagesConsumed: vi.fn(),
     markMessagesIndeterminate: vi.fn(),

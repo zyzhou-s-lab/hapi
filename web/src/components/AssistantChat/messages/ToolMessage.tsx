@@ -20,6 +20,7 @@ import { UserBubbleContent, getUserBubbleClassName, shouldShowMessageStatus } fr
 import { ImagePreview } from '@/components/ImagePreview'
 import { useTranslation } from '@/lib/use-translation'
 import { inlineMediaLabelKey, isInlineAudioMimeType, isInlineImageMimeType, isInlineVideoMimeType } from '@/lib/generatedInlineMedia'
+import { parsePromptKitSystemBanner, PromptKitSystemEventBanner } from '@/components/AssistantChat/messages/SystemMessage'
 
 function isToolCallBlock(value: unknown): value is ToolCallBlock {
     if (!isObject(value)) return false
@@ -401,6 +402,17 @@ function HappyNestedBlockList(props: {
                 if (block.kind === 'agent-event') {
                     if (!isEventVisibleForFlavor(block.event, ctx.metadata?.flavor)) return null
                     const presentation = getEventPresentation(block.event)
+                    const promptKitBanner = parsePromptKitSystemBanner(block.event, presentation.text)
+                    if (promptKitBanner) {
+                        return (
+                            <PromptKitSystemEventBanner
+                                key={`event:${block.id}`}
+                                banner={promptKitBanner}
+                                messageId={block.id}
+                                createdAt={block.createdAt}
+                            />
+                        )
+                    }
                     return (
                         <div key={`event:${block.id}`} className="py-1">
                             <div className="mx-auto w-fit max-w-[92%] px-2 text-center text-xs text-[var(--app-hint)] opacity-80">

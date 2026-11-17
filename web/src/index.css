@@ -1,5 +1,7 @@
 @import "tailwindcss";
 @import "katex/dist/katex.min.css" layer(base);
+@import "@fontsource-variable/source-serif-4/opsz.css" layer(base);
+@import "@fontsource-variable/source-serif-4/opsz-italic.css" layer(base);
 @config "../tailwind.config.ts";
 
 @layer base {
@@ -13,6 +15,7 @@
     --app-banner-bg: var(--tg-theme-button-color, #111827);
     --app-banner-text: var(--tg-theme-button-text-color, #ffffff);
     --app-secondary-bg: var(--tg-theme-secondary-bg-color, #f3f4f6);
+    --app-session-selected-bg: var(--app-bg);
 
     --app-dialog-bg: #ffffff;
     --app-chat-user-bg: #f2f4f6;
@@ -32,7 +35,7 @@
     --app-code-header-bg: #eceff2;
     --app-code-header-fg: #717784;
     --app-code-copy-hover-bg: rgba(17, 24, 39, 0.06);
-    --app-inline-code-border: transparent;
+    --app-inline-code-border: rgba(15, 23, 42, 0.08);
     --app-inline-code-fg: #2d333b;
     --app-md-quote-bg: #f1f3f5;
     --app-md-quote-border: #800020;
@@ -56,7 +59,7 @@
     --app-divider: rgba(15, 23, 42, 0.08);
     --app-subtle-bg: rgba(15, 23, 42, 0.04);
     --app-code-bg: #f5f6f7;
-    --app-inline-code-bg: #ebecef;
+    --app-inline-code-bg: rgba(15, 23, 42, 0.055);
 
     /* Diff colors (light) - from hapi-app */
     --app-diff-added-bg: #e6ffed;
@@ -86,24 +89,25 @@
     /* System faces only. rem values assume a 16px root; html font-size
        multiplies them by --app-font-scale, so user scaling stays one factor. */
     --app-font-sans: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, "PingFang SC", "Noto Sans CJK SC", "Noto Sans", sans-serif;
-    --app-font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+    --app-font-prose: "Source Serif 4 Variable", "Source Serif 4", "Iowan Old Style", "Charter", "Bitstream Charter", "Sitka Text", Cambria, Georgia, "Songti SC", "STSong", "Noto Serif CJK SC", "Source Han Serif SC", "Microsoft YaHei", serif;
+    --app-font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", "PingFang SC", "Microsoft YaHei", "Noto Sans CJK SC", monospace;
     --app-font-weight-regular: 400;
     --app-font-weight-medium: 500;
     /* 580 and 430 are the variable-font targets. A face with only 400/500/600/700
        snaps 580 to 600 and 430 to 400, which is the static semibold and regular. */
     --app-font-weight-semibold: 580;
     --app-font-weight-bold: 600;
-    --app-font-weight-prose: 430;
+    --app-font-weight-prose: 415;
     --app-font-size-nav: 0.875rem; /* 14 */
     --app-line-nav: 1.25rem; /* 20 */
-    --app-font-size-prose: 0.875rem; /* 14 */
-    --app-line-prose: 1.65rem; /* 26.4 */
+    --app-font-size-prose: 1rem; /* 16 */
+    --app-line-prose: 1.7rem; /* 27.2 */
     --app-font-size-input: 0.9375rem; /* 15 */
     --app-line-input: 1.5234375rem; /* 24.375 */
-    --app-font-size-code: 0.8125rem; /* 13 */
-    --app-line-code: 1.21875rem; /* 19.5 */
-    --app-font-size-code-inline: 0.7875rem; /* 12.6 */
-    --app-line-code-inline: 1.1875rem; /* 19 */
+    --app-font-size-code: 0.84375rem; /* 13.5 */
+    --app-line-code: 1.3125rem; /* 21 */
+    --app-font-size-code-inline: 0.875em; /* 14 at 16px prose, scales inside H1-H6 */
+    --app-line-code-inline: 1.35;
     --app-font-size-meta: 0.6875rem; /* 11 */
     --app-line-meta: 1.03125rem; /* 16.5 */
     --app-font-size-h1: 1.53125rem; /* 24.5 */
@@ -126,6 +130,7 @@
     --app-banner-bg: var(--tg-theme-button-color, #3A3A3C);
     --app-banner-text: var(--tg-theme-button-text-color, #ffffff);
     --app-secondary-bg: var(--tg-theme-secondary-bg-color, #2C2C2E);
+    --app-session-selected-bg: var(--app-secondary-bg);
 
     --app-dialog-bg: #202226;
     --app-chat-user-bg: #2b2f34;
@@ -145,7 +150,7 @@
     --app-code-header-bg: #353b43;
     --app-code-header-fg: #c4cbd6;
     --app-code-copy-hover-bg: rgba(255, 255, 255, 0.08);
-    --app-inline-code-border: transparent;
+    --app-inline-code-border: rgba(255, 255, 255, 0.1);
     --app-inline-code-fg: #f5f7fa;
     --app-md-quote-bg: #31363d;
     --app-md-quote-border: #800020;
@@ -168,7 +173,7 @@
     --app-divider: rgba(255, 255, 255, 0.08);
     --app-subtle-bg: rgba(255, 255, 255, 0.05);
     --app-code-bg: #2a2f35;
-    --app-inline-code-bg: #383e47;
+    --app-inline-code-bg: rgba(255, 255, 255, 0.08);
 
     /* Diff colors (dark) - from hapi-app */
     --app-diff-added-bg: #0d2e1f;
@@ -210,6 +215,7 @@
     --app-banner-bg: #1a1a1c;
     --app-banner-text: #f5f5f7;
     --app-secondary-bg: #0a0a0b;
+    --app-session-selected-bg: var(--app-secondary-bg);
 
     --app-dialog-bg: #0c0c0e;
     --app-chat-user-bg: #141414;
@@ -229,7 +235,7 @@
     --app-code-header-bg: #161618;
     --app-code-header-fg: #c4cbd6;
     --app-code-copy-hover-bg: rgba(255, 255, 255, 0.08);
-    --app-inline-code-border: transparent;
+    --app-inline-code-border: rgba(255, 255, 255, 0.12);
     --app-inline-code-fg: #f5f7fa;
     --app-md-quote-bg: #131316;
     --app-md-quote-border: #800020;
@@ -252,7 +258,7 @@
     --app-divider: rgba(255, 255, 255, 0.1);
     --app-subtle-bg: rgba(255, 255, 255, 0.06);
     --app-code-bg: #0e0e10;
-    --app-inline-code-bg: #1a1a1d;
+    --app-inline-code-bg: #18181b;
 
     /* Diff colors (oled) */
     --app-diff-added-bg: #07251a;
@@ -365,11 +371,46 @@ body {
 
 /* Role classes. Do not set `background` on select: the shorthand clears the
    native arrow. SelectControl paints its own chevron; raw selects keep the UA one. */
-.app-h1,
-.aui-md-h1 {
+.app-h1 {
     font-size: var(--app-font-size-h1);
     line-height: var(--app-line-h1);
     font-weight: var(--app-font-weight-bold);
+}
+
+.aui-md-h1 {
+    font-size: 1.55em;
+    line-height: 1.3;
+    font-weight: var(--app-font-weight-bold);
+}
+
+.aui-md-h2 {
+    font-size: 1.25em;
+    line-height: 1.35;
+    font-weight: var(--app-font-weight-bold);
+}
+
+.aui-md-h3 {
+    font-size: 1.1em;
+    line-height: 1.4;
+    font-weight: var(--app-font-weight-semibold);
+}
+
+.aui-md-h4 {
+    font-size: 1em;
+    line-height: 1.45;
+    font-weight: var(--app-font-weight-semibold);
+}
+
+.aui-md-h5 {
+    font-size: 0.9375em;
+    line-height: 1.45;
+    font-weight: var(--app-font-weight-semibold);
+}
+
+.aui-md-h6 {
+    font-size: 0.875em;
+    line-height: 1.45;
+    font-weight: var(--app-font-weight-semibold);
 }
 
 .app-dialog-title {
@@ -399,20 +440,41 @@ body {
     font-size: var(--app-font-size-code-inline);
     line-height: var(--app-line-code-inline);
     font-weight: var(--app-font-weight-prose);
-    overflow-wrap: anywhere;
+    overflow-wrap: break-word;
     box-decoration-break: clone;
     -webkit-box-decoration-break: clone;
 }
 
-.aui-md-table th,
+.aui-md-a:has(> .aui-md-code) {
+    text-decoration: none;
+}
+
+.aui-md-a:has(> .aui-md-code):hover .aui-md-code {
+    border-color: color-mix(in srgb, var(--app-fg) 24%, transparent);
+    background-color: color-mix(in srgb, var(--app-inline-code-bg) 82%, var(--app-fg) 8%);
+}
+
+.aui-md-table {
+    font-family: var(--app-font-sans);
+    font-variant-numeric: tabular-nums;
+}
+
+.aui-md-table th {
+    white-space: nowrap;
+}
+
 .aui-md-table td {
     overflow-wrap: break-word;
-    word-break: break-word;
+    word-break: normal;
 }
 
 .aui-md-table .aui-md-code {
-    overflow-wrap: anywhere;
-    word-break: break-all;
+    overflow-wrap: break-word;
+    word-break: normal;
+}
+
+.aui-md-table-wrapper + .aui-md-hr {
+    display: none;
 }
 
 #root {
@@ -488,7 +550,7 @@ html:has(.chat-scroll-y) #root {
 }
 
 @media (hover: hover) and (pointer: fine) {
-    .session-list-item:hover,
+    .session-list-item:not([aria-current="page"]):hover,
     .session-list-new-button:hover {
         background-color: var(--app-subtle-bg);
     }
@@ -535,22 +597,6 @@ html:has(.chat-scroll-y) #root {
 /* Match fixed sidebar controls to the space reserved for the left scrollbar. */
 .session-list-scrollbar-offset {
     padding-left: 8px;
-}
-
-/* Desktop sidebar: use custom width from CSS variable.
-   Kept in sync with the Tailwind `split` breakpoint (see tailwind.config.ts)
-   so the sidebar width/resize applies as soon as the split view appears on
-   compact tablets. */
-@media (min-width: 920px) {
-    /* Apply resizable width to sidebar.
-       Cap it against the viewport so a wide persisted width (up to 600px, from
-       resizing on desktop) can't crush the detail pane on a compact split.
-       424px = 420px min detail pane + 4px resize handle, which preserves the
-       previous 1024px worst case (1024 - 600 - 4 = 420) down to 920px. The cap
-       is a no-op on desktop where 100vw - 424px exceeds the stored width. */
-    div[style*="--sidebar-w"] {
-        width: min(var(--sidebar-w), calc(100vw - 424px)) !important;
-    }
 }
 
 /* Sidebar resize handle */
@@ -610,6 +656,12 @@ html:has(.chat-scroll-y) #root {
 .markdown-content :where(th, td) { border: 1px solid var(--app-border); padding: 0.25rem 0.5rem; }
 
 .aui-md,
+[data-testid="turn-answer-section"] {
+    font-family: var(--app-font-prose);
+    font-optical-sizing: auto;
+}
+
+.aui-md,
 .happy-chat-text {
     color: var(--app-fg);
     font-size: var(--app-chat-font-size);
@@ -621,6 +673,24 @@ html:has(.chat-scroll-y) #root {
     color: inherit;
 }
 
+.happy-user-bubble,
+.happy-user-bubble .aui-md,
+.aui-reasoning-content,
+.tool-result-quote,
+.tool-result-quote :where(.aui-md),
+[data-hapi-share-exclude="true"] :where(.aui-md),
+[data-testid="turn-execution-rail"],
+[data-testid="turn-execution-rail"] :where(.aui-md),
+[data-testid="turn-media-deliverables"] {
+    font-family: var(--app-font-sans);
+}
+
+.aui-reasoning-content {
+    color: var(--app-hint);
+    font-size: 0.84375rem;
+    line-height: 1.55;
+    font-weight: var(--app-font-weight-regular);
+}
 
 .tool-result-quote :where(.aui-md, .aui-md-p, .aui-md-li, .aui-md-td, .aui-md-th, .aui-md-strong, .aui-md-em, .aui-md-h1, .aui-md-h2, .aui-md-h3, .aui-md-h4, .aui-md-h5, .aui-md-h6) {
     color: inherit;
@@ -1197,6 +1267,84 @@ html[data-theme="oled"] .shiki span:not([data-line-number]) {
     stroke-dasharray: 12;
     stroke-dashoffset: 12;
     animation: turn-step-check-stroke-draw 980ms cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+
+/* coss right-edge Toast geometry; Base UI owns measurement and exit lifetime. */
+.coss-toast-viewport {
+    --toast-card-height: 5rem;
+}
+
+.coss-toast-popup {
+    --toast-gap: 0.75rem;
+    --toast-peek: 0.75rem;
+    --toast-tint: 1%;
+    --toast-y: calc(var(--toast-swipe-movement-y) + var(--toast-index) * var(--toast-peek));
+    right: 0;
+    top: 0;
+    z-index: calc(9999 - var(--toast-index));
+    height: var(--toast-card-height);
+    background: color-mix(in srgb, var(--app-dialog-bg), black calc(var(--toast-tint) * max(0, var(--toast-index, 0))));
+    transform: translateX(var(--toast-swipe-movement-x)) translateY(var(--toast-y));
+    transition: transform 0.5s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.5s, height 0.15s, background-color 0.5s;
+}
+
+[data-theme='dark'] .coss-toast-popup,
+[data-theme='oled'] .coss-toast-popup {
+    --toast-tint: 6%;
+}
+
+.coss-toast-popup::after {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 100%;
+    width: 100%;
+    height: calc(var(--toast-gap) + 1px);
+}
+
+.coss-toast-popup[data-limited] {
+    opacity: 0;
+    pointer-events: none;
+}
+
+.coss-toast-popup[data-expanded] {
+    --toast-y: calc(var(--toast-offset-y) + var(--toast-index) * var(--toast-gap) + var(--toast-swipe-movement-y));
+    background: var(--app-dialog-bg);
+}
+
+.coss-toast-popup[data-ending-style] {
+    opacity: 0;
+}
+
+.coss-toast-content {
+    height: calc(var(--toast-card-height) - 2px);
+    pointer-events: auto;
+    transition: opacity 0.25s;
+}
+
+.coss-toast-content[data-behind]:not([data-expanded]) {
+    opacity: 0;
+    pointer-events: none;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+    .coss-toast-popup[data-starting-style],
+    .coss-toast-popup[data-ending-style]:not([data-limited]):not([data-swipe-direction]),
+    .coss-toast-popup[data-ending-style][data-swipe-direction='right'] {
+        transform: translateX(calc(var(--toast-swipe-movement-x) + 100% + var(--toast-inset) + env(safe-area-inset-right))) translateY(var(--toast-y));
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .coss-toast-popup {
+        transition: opacity 0.5s, height 0.15s, background-color 0.5s;
+        /* Keep the coss in-place fade; the global motion reset disables travel elsewhere. */
+        transition-duration: 0.5s, 0.15s, 0.5s !important;
+    }
+
+    .coss-toast-popup[data-starting-style] {
+        opacity: 0;
+    }
 }
 }
 
