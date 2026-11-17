@@ -75,6 +75,7 @@ See `src/router.tsx` for route definitions.
 - Session-keyed chat remounts, drafts, subscriptions, raw-window caching and background tail synchronization are unchanged. Warm-switch measurements and the still-unmet 150ms painted/interactive / 100ms task targets are recorded in `docs/superpowers/specs/2026-11-13-chat-performance-benchmark-spec.md`.
 - A tail synchronization that invalidates a pending older page rechecks covered history when that request settles, even if synchronization already finished. Epoch-reset, exhausted/no-progress, backoff and user-cancellation pauses remain authoritative.
 - Composer for sending messages.
+- Sending to a resumable inactive session attempts recovery first. Recovery failures retain their API error code and show the hub's readable error in the composer; the draft is preserved and no message is submitted. Only `session_inactive` offers Reopen, and retrying Send can attempt recovery again.
 - Permission mode toggle (default/acceptEdits/auto/bypassPermissions/plan).
 - Model selection (default/sonnet/sonnet[1m]/opus/opus[1m]).
 - Session abort and mode switch controls.

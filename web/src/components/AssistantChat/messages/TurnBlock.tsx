@@ -119,7 +119,7 @@ function LiveTailTurnBlockBody(props: {
     )
     const streaming = props.auiRunning || props.hasRunningTool || isActiveSessionTailTurn
     const activeTodoText = streaming ? projectSessionTodoSnapshot(todosCtx?.todos).activeLabel : null
-    const fallbackTodos = (streaming || props.isLastMessage) ? (todosCtx?.todos ?? null) : null
+    const fallbackTodos = streaming ? (todosCtx?.todos ?? null) : null
     const invokedAt = props.custom?.invokedAt ?? (streaming ? (sessionStateCtx?.activeTurnStartedAt ?? props.createdAt) : undefined)
     const settledDurationMs = turnDurationMs({
         roundSummary: props.custom?.roundSummary,

@@ -19,10 +19,6 @@ import { reduceChatBlocks } from '@/chat/reducer'
 import { reconcileChatBlocks, type ChatBlocksById } from '@/chat/reconcile'
 
 const assistantUiMocks = vi.hoisted(() => ({
-    useExternalMessageConverter: vi.fn((input: {
-        callback: (entry: { block: VisibleChatBlock; threadMessageId: string }) => unknown
-        messages: { block: VisibleChatBlock; threadMessageId: string }[]
-    }) => input.messages.map(input.callback)),
     useExternalStoreRuntime: vi.fn((adapter: unknown) => adapter)
 }))
 
@@ -269,6 +265,7 @@ describe('useHappyRuntime event visibility', () => {
             metadata: { custom: { hubMessageId: 'server-msg-1', status: 'sent' } }
         })
     })
+
 })
 
 describe('hoistMidTurnTitleEvents', () => {
