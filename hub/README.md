@@ -76,6 +76,10 @@ bun install
 bun run dev:hub
 ```
 
+## Tests
+
+Run `bun run test:hub` from the repository root. Bun shares module mocks across test files; scope FCM access-token spies to each test and restore them afterward so configuration tests still exercise the real service-account loader.
+
 ## HTTP API
 
 See `src/web/routes/` for all endpoints.
