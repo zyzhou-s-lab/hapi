@@ -1,3 +1,5 @@
+import { splitAgyModelSelection } from './agyModels'
+
 export const CLAUDE_MODEL_LABELS = {
     fable: 'Fable',
     'fable[1m]': 'Fable 1M',
@@ -87,11 +89,22 @@ export const LEGACY_AGY_MODEL_LABELS = {
 export type AgyModelPreset = keyof typeof AGY_MODEL_LABELS
 export const AGY_MODEL_PRESETS = Object.keys(AGY_MODEL_LABELS) as AgyModelPreset[]
 
+const AGY_FAMILY_LABELS: ReadonlyMap<string, string> = (() => {
+    const labels = new Map<string, string>()
+    for (const [id, label] of Object.entries({ ...LEGACY_AGY_MODEL_LABELS, ...AGY_MODEL_LABELS })) {
+        const { model, effort } = splitAgyModelSelection(id)
+        if (!model || !effort || labels.has(model)) continue
+        labels.set(model, label.replace(/\s*\((?:Low|Medium|High|XHigh|Max)\)\s*$/i, ''))
+    }
+    return labels
+})()
+
 export function getAgyModelLabel(model: string): string | null {
     const trimmedModel = model.trim()
     if (!trimmedModel) return null
     return AGY_MODEL_LABELS[trimmedModel as AgyModelPreset]
         ?? LEGACY_AGY_MODEL_LABELS[trimmedModel as keyof typeof LEGACY_AGY_MODEL_LABELS]
+        ?? AGY_FAMILY_LABELS.get(trimmedModel)
         ?? null
 }
 

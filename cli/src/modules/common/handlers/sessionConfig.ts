@@ -12,6 +12,7 @@ export type SessionConfigContext = {
     flavor?: string | null
     startingMode?: string | null
     sessionId?: string
+    hapiMcpInjected?: boolean
     tools?: string[]
     skills?: LiveSessionConfig['skills']
     promptLive?: SessionPromptLive
@@ -39,6 +40,7 @@ export function registerSessionConfigHandlers(
                 flavor: context.flavor,
                 startingMode: context.startingMode,
                 sessionId: context.sessionId,
+                hapiMcpInjected: context.hapiMcpInjected,
                 tools: context.tools,
                 skills: context.skills,
                 promptLive: context.promptLive,

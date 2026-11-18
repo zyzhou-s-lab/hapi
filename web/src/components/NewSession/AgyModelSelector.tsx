@@ -1,3 +1,4 @@
+import { getAgyModelLabel } from '@hapi/protocol'
 import { useTranslation } from '@/lib/use-translation'
 import type { AgyModelSummary } from '@/types/api'
 
@@ -11,12 +12,36 @@ export type AgyModelSelectorProps = {
     onRetry?: () => void
 }
 
+function withSelectedModel(
+    models: AgyModelSummary[],
+    selectedModel: string | null,
+    notListedLabel: string
+): AgyModelSummary[] {
+    const trimmed = selectedModel?.trim()
+    if (!trimmed) return models
+    if (models.some((model) => model.modelId === trimmed)) return models
+    const label = getAgyModelLabel(trimmed)
+    return [
+        {
+            modelId: trimmed,
+            name: `${label ?? trimmed} (${notListedLabel})`
+        },
+        ...models
+    ]
+}
+
 export function AgyModelSelector(props: AgyModelSelectorProps) {
     const { t } = useTranslation()
 
     if (!props.machineId) {
         return null
     }
+
+    const options = withSelectedModel(
+        props.availableModels,
+        props.selectedModel,
+        t('newSession.agyModel.notListed')
+    )
 
     return (
         <div className="flex flex-col gap-2 px-3 py-3">
@@ -48,7 +73,7 @@ export function AgyModelSelector(props: AgyModelSelectorProps) {
                         </button>
                     ) : null}
                 </div>
-            ) : props.availableModels.length === 0 ? (
+            ) : options.length === 0 ? (
                 <div className="text-xs text-[var(--app-hint)]">
                     {t('newSession.agyModel.noModels')}
                 </div>
@@ -60,7 +85,7 @@ export function AgyModelSelector(props: AgyModelSelectorProps) {
                     className="w-full px-3 py-2 text-sm rounded-lg border border-[var(--app-divider)] bg-[var(--app-bg)] text-[var(--app-text)] focus:outline-none focus:ring-2 focus:ring-[var(--app-link)] disabled:opacity-50"
                 >
                     <option value="">{t('newSession.model.default')}</option>
-                    {props.availableModels.map((model) => (
+                    {options.map((model) => (
                         <option key={model.modelId} value={model.modelId}>
                             {model.name ?? model.modelId}
                         </option>

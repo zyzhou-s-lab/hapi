@@ -890,4 +890,63 @@ describe('usage service', () => {
         expect(store.usage.getEvents([target.id])).toHaveLength(1)
         store.close()
     })
+
+    it('aggregates agy round-summary usage without double-counting context-only token_count events', () => {
+        const store = new Store(':memory:')
+        try {
+            const session = store.sessions.getOrCreateSession(
+                'agy-usage-test',
+                { path: '/tmp', host: 'test', flavor: 'agy' },
+                null,
+                'default',
+                'gemini-4-argon-medium'
+            )
+
+            // Context-only token_count update carries zero input/output tokens.
+            addAgentMessage(store, session.id, {
+                type: 'codex',
+                data: {
+                    type: 'token_count',
+                    model: 'gemini-4-argon-medium',
+                    info: {
+                        total: { inputTokens: 0, outputTokens: 0 },
+                        contextTokens: 12_000,
+                        modelContextWindow: 1_048_576
+                    }
+                }
+            })
+
+            // Authoritative agy round summary reports cache-exclusive input_tokens.
+            addAgentMessage(store, session.id, {
+                type: 'codex',
+                data: {
+                    type: 'round-summary',
+                    summary: {
+                        provider: 'agy',
+                        model: 'gemini-4-argon-medium',
+                        agy_usage: {
+                            input_tokens: 150,
+                            output_tokens: 20,
+                            thinking_tokens: 5,
+                            cache_read_tokens: 50,
+                            total_tokens: 220
+                        },
+                        duration_ms: 800
+                    }
+                }
+            })
+
+            const result = getUsageSummary(store, 'default', 'all')
+            expect(result.totals.requests).toBe(1)
+            expect(result.totals.inputTokens).toBe(200)
+            expect(result.totals.outputTokens).toBe(20)
+            expect(result.totals.cacheReadTokens).toBe(50)
+            expect(result.totals.totalTokens).toBe(220)
+            expect(result.totals.uncachedTokens).toBe(170)
+            expect(result.byAgent.find((row) => row.key === 'agy')?.totalTokens).toBe(220)
+            expect(result.byModel.find((row) => row.key === 'gemini-4-argon-medium')?.totalTokens).toBe(220)
+        } finally {
+            store.close()
+        }
+    })
 })

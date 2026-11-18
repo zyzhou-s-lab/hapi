@@ -455,13 +455,22 @@ export function codexInjectedHooks(): SessionInventoryHook[] {
     ];
 }
 
-/** `mcp__<server>__<tool>`. The server is the text before the first `__`, so a name like `a__b` is reported as `a`. */
+/** `mcp__<server>__<tool>`, or `mcp_<server>_<tool>` for eager agy tools. */
 export function mcpServerNameFromTool(tool: string): string | undefined {
-    if (!tool.startsWith('mcp__')) return undefined;
-    const rest = tool.slice('mcp__'.length);
-    if (!rest) return undefined;
-    const server = rest.includes('__') ? rest.slice(0, rest.indexOf('__')) : rest;
-    return isSafeInventoryName(server) ? server : undefined;
+    if (tool.startsWith('mcp__')) {
+        const rest = tool.slice('mcp__'.length);
+        if (!rest) return undefined;
+        const server = rest.includes('__') ? rest.slice(0, rest.indexOf('__')) : rest;
+        return isSafeInventoryName(server) ? server : undefined;
+    }
+    if (tool.startsWith('mcp_')) {
+        const rest = tool.slice('mcp_'.length);
+        const idx = rest.indexOf('_');
+        if (idx <= 0 || idx >= rest.length - 1) return undefined;
+        const server = rest.slice(0, idx);
+        return isSafeInventoryName(server) ? server : undefined;
+    }
+    return undefined;
 }
 
 /** omp stores `mcp__<sanitized>_<tool>`, with every character outside `[A-Za-z0-9_]` replaced by `_`. Claude stores `mcp__<server>__<tool>`. */
@@ -470,11 +479,19 @@ export function sanitizeMcpServerToken(name: string): string {
 }
 
 export function mcpToolMatchesServer(tool: string, serverName: string): boolean {
-    if (!tool.startsWith('mcp__')) return false
     const sanitized = sanitizeMcpServerToken(serverName)
-    if (tool.startsWith(`mcp__${serverName}__`)) return true
-    if (tool.startsWith(`mcp__${sanitized}_`)) return true
-    return tool === `mcp__${serverName}` || tool === `mcp__${sanitized}`
+    if (tool.startsWith('mcp__')) {
+        if (tool.startsWith(`mcp__${serverName}__`)) return true
+        if (tool.startsWith(`mcp__${sanitized}_`)) return true
+        return tool === `mcp__${serverName}` || tool === `mcp__${sanitized}`
+    }
+    if (tool.startsWith(`mcp_${serverName}_`) && tool.length > `mcp_${serverName}_`.length) {
+        return true
+    }
+    if (tool.startsWith(`mcp_${sanitized}_`) && tool.length > `mcp_${sanitized}_`.length) {
+        return true
+    }
+    return false
 }
 
 /** The configured server with the longest sanitized name wins, so `android` does not steal `android-remote-control-mi10pro`. */
@@ -499,7 +516,12 @@ export function liveToolsForServer(serverName: string, tools: readonly string[] 
 
 function liveToolLabels(serverName: string, tools: readonly string[]): { name: string }[] {
     const sanitized = sanitizeMcpServerToken(serverName)
-    const prefixes = [`mcp__${serverName}__`, `mcp__${sanitized}_`]
+    const prefixes = [
+        `mcp__${serverName}__`,
+        `mcp__${sanitized}_`,
+        `mcp_${serverName}_`,
+        `mcp_${sanitized}_`,
+    ]
     const labels: { name: string }[] = []
     for (const tool of tools) {
         const prefix = prefixes.find((item) => tool.startsWith(item) && tool.length > item.length)
@@ -546,11 +568,14 @@ export function applyOmpProbeReport(
 /** Configured servers stay. A reported tool list sets `loaded` and adds servers that are running but not in a config file. */
 export function withMcpLoadState(servers: readonly SessionInventoryMcpServer[], tools: readonly string[] | undefined): SessionInventoryMcpServer[] {
     if (!tools) return [...servers];
+    const knownNames = servers.map((server) => server.name);
+    const known = new Set(knownNames);
     const loaded = new Set(tools.flatMap((tool) => {
+        const matched = knownNames.find((name) => liveToolsForServer(name, [tool], knownNames).length > 0);
+        if (matched) return [matched];
         const name = mcpServerNameFromTool(tool);
         return name ? [name] : [];
     }));
-    const known = new Set(servers.map((server) => server.name));
     const extras = [...loaded].filter((name) => !known.has(name)).map((name) => ({ name, source: 'tool' as const }));
     return dedupeServers([...servers, ...extras]).map((server) => ({ ...server, loaded: loaded.has(server.name) }));
 }
@@ -896,12 +921,92 @@ function loadCursorInventory(sessionId: string | undefined, cwd: string): LiveSe
     };
 }
 
+const AGY_CUSTOMIZATION_DIRS = ['.agents', '.agent', '_agents', '_agent'] as const;
+
+function readAgyConfigPluginStates(home: string): Map<string, boolean> {
+    const parsed = readJsonFile(join(home, '.gemini', 'config', 'config.json'), { allowSymlink: true });
+    const plugins = asRecord(asRecord(parsed).plugins);
+    const states = new Map<string, boolean>();
+    for (const [name, value] of Object.entries(plugins)) {
+        if (value && typeof value === 'object' && !Array.isArray(value)) {
+            const enabled = (value as Record<string, unknown>).enabled;
+            if (typeof enabled === 'boolean') {
+                states.set(name, enabled);
+            }
+        }
+    }
+    return states;
+}
+
+function isAgyPluginEnabled(
+    pluginDir: string,
+    dirName: string,
+    overrides: ReadonlyMap<string, boolean>
+): boolean {
+    if (overrides.has(dirName)) {
+        return overrides.get(dirName)!;
+    }
+    const manifest = readJsonFile(join(pluginDir, 'plugin.json'), { allowSymlink: true });
+    if (manifest && typeof manifest === 'object' && !Array.isArray(manifest)) {
+        if ((manifest as Record<string, unknown>).disabled === true) {
+            return false;
+        }
+    }
+    return true;
+}
+
+export function loadAgyPluginMcpPaths(cwd: string, home = homedir()): string[] {
+    const overrides = readAgyConfigPluginStates(home);
+    const pluginParents: string[] = [];
+    for (const dir of walkProjectDirs(cwd, home)) {
+        for (const cust of AGY_CUSTOMIZATION_DIRS) {
+            pluginParents.push(join(dir, cust, 'plugins'));
+        }
+    }
+    pluginParents.push(join(home, '.gemini', 'config', 'plugins'));
+
+    const paths: string[] = [];
+    const seen = new Set<string>();
+    for (const pluginsDir of pluginParents) {
+        try {
+            const entries = readdirSync(pluginsDir, { withFileTypes: true });
+            entries.sort((a, b) => a.name.localeCompare(b.name));
+            for (const entry of entries) {
+                if (!entry.isDirectory() && !entry.isSymbolicLink()) continue;
+                const pluginDir = join(pluginsDir, entry.name);
+                if (!isAgyPluginEnabled(pluginDir, entry.name, overrides)) continue;
+                const mcpPath = join(pluginDir, 'mcp_config.json');
+                if (seen.has(mcpPath)) continue;
+                seen.add(mcpPath);
+                paths.push(mcpPath);
+            }
+        } catch {
+            // Absent or unreadable plugins dir.
+        }
+    }
+    return paths;
+}
+
+export function loadAgyInventory(cwd: string, options?: { hapiMcpInjected?: boolean }): SessionInventoryPatch {
+    const userMcpPath = join(homedir(), '.gemini', 'config', 'mcp_config.json');
+    const servers = dedupeServers([
+        ...(options?.hapiMcpInjected !== false ? [{ name: 'hapi', source: 'injected' as const }] : []),
+        ...jsonServersFromFile(userMcpPath, cwd, 'user', true),
+        ...loadAgyPluginMcpPaths(cwd).flatMap((path) => jsonServersFromFile(path, cwd, 'plugin', true)),
+    ]);
+    return {
+        mcp: { kind: 'servers', servers },
+        hooks: { availability: 'none', items: [] },
+    };
+}
+
 function flavorInventory(input: {
     flavor: string;
     cwd: string;
     tools?: readonly string[];
     sessionId?: string;
     startingMode?: string | null;
+    hapiMcpInjected?: boolean;
 }): LiveSessionConfig {
     switch (input.flavor) {
         case 'claude':
@@ -921,9 +1026,10 @@ function flavorInventory(input: {
                 ...(bridgeInventory('opencode') ?? {}),
                 ...(input.startingMode === 'local' ? OPENCODE_HOOK_INVENTORY : {}),
             };
+        case 'agy':
+            return loadAgyInventory(input.cwd, { hapiMcpInjected: input.hapiMcpInjected });
         case 'pi':
         case 'dsh':
-        case 'agy':
             return EMPTY_FLAVOR_INVENTORY;
         default:
             return {};
@@ -1102,6 +1208,7 @@ export async function readLiveSessionConfig(input: {
     tools?: readonly string[];
     sessionId?: string;
     startingMode?: string | null;
+    hapiMcpInjected?: boolean;
     skills?: LiveSessionConfig['skills'];
     promptLive?: SessionPromptLive;
     fresh?: boolean;
@@ -1151,6 +1258,7 @@ export async function listedSessionConfigRealpaths(input: {
     tools?: readonly string[];
     sessionId?: string;
     startingMode?: string | null;
+    hapiMcpInjected?: boolean;
     skills?: LiveSessionConfig['skills'];
     promptLive?: SessionPromptLive;
 }): Promise<Set<string>> {

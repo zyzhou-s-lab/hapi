@@ -13,7 +13,7 @@ export function formatReasoningLabel(effort?: string | null, showLabel = true): 
 
 /**
  * Status metadata comes from different session fields by agent protocol:
- * Codex/OpenCode publish model reasoning effort, while Pi publishes effort.
+ * Codex/OpenCode publish model reasoning effort, while Pi and Antigravity publish effort.
  */
 export function getReasoningEffortForFlavor(
     agentFlavor: string | null | undefined,
@@ -23,7 +23,7 @@ export function getReasoningEffortForFlavor(
     if (agentFlavor === 'codex' || agentFlavor === 'opencode') {
         return modelReasoningEffort?.trim() || null
     }
-    if (agentFlavor === 'pi') {
+    if (agentFlavor === 'pi' || agentFlavor === 'agy') {
         return effort?.trim() || null
     }
     return null
@@ -35,8 +35,8 @@ export function shouldShowReasoningStatusLabel(
 ): boolean {
     // Codex/OpenCode retain their existing explicit default label when unset.
     if (agentFlavor === 'codex' || agentFlavor === 'opencode') return true
-    // Pi has no meaningful default for non-reasoning models; only show a real level.
-    return agentFlavor === 'pi' && Boolean(reasoningEffort?.trim())
+    // Pi and Antigravity only show a real selected reasoning effort level.
+    return (agentFlavor === 'pi' || agentFlavor === 'agy') && Boolean(reasoningEffort?.trim())
 }
 
 /** Codex-only aliases retained for tool-card and thread call sites. */

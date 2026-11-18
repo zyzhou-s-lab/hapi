@@ -17,3 +17,10 @@ export function usesCodexFamilyPermissionModes(
     return typeof flavor === 'string'
         && (CODEX_FAMILY_PERMISSION_AGENTS as readonly string[]).includes(flavor)
 }
+
+/** Flavors whose create-session form uses the shared native permission mode state & select (codex-family + agy). */
+export function usesSharedPermissionModeState(
+    flavor: string | null | undefined
+): boolean {
+    return flavor === 'agy' || usesCodexFamilyPermissionModes(flavor)
+}

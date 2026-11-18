@@ -159,6 +159,35 @@ describe('HappyComposer generic model/effort value buttons', () => {
         expect(screen.queryByRole('button', { name: 'High' })).toBeNull()
     })
 
+    it('shows the AGY model family and its available effort as separate controls', () => {
+        const onEffortChange = vi.fn()
+        renderComposer('agy', {
+            model: 'gemini-4-argon',
+            effort: 'medium',
+            availableModelOptions: [{ value: 'gemini-4-argon', label: 'Gemini 4 Argon' }],
+            availableEffortOptions: [{ value: 'medium', name: 'Medium' }, { value: 'high', name: 'High' }],
+            onEffortChange,
+        })
+        expect(screen.getByRole('button', { name: 'Gemini 4 Argon' })).toBeTruthy()
+        fireEvent.click(screen.getByRole('button', { name: 'Medium' }))
+        expect(screen.queryByRole('button', { name: 'Low' })).toBeNull()
+        fireEvent.click(screen.getByRole('button', { name: 'High' }))
+        expect(onEffortChange).toHaveBeenCalledWith('high')
+    })
+
+    it('hides effort for a fixed AGY model even if a stale effort is stored', () => {
+        renderComposer('agy', {
+            model: 'gpt-oss-120b-medium',
+            effort: 'high',
+            availableModelOptions: [{ value: 'gpt-oss-120b-medium', label: 'GPT-OSS 120B (Medium)' }],
+            availableEffortOptions: [],
+        })
+        expect(screen.getByRole('button', { name: 'GPT-OSS 120B (Medium)' })).toBeTruthy()
+        expect(screen.queryByRole('button', { name: 'High' })).toBeNull()
+        fireEvent.click(screen.getByRole('button', { name: 'Settings' }))
+        expect(screen.queryByText('Effort')).toBeNull()
+    })
+
     it('hides value buttons on narrow viewports, keeping settings', () => {
         runtime.narrowViewport = true
         renderComposer('claude')

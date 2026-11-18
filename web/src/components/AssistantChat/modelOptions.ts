@@ -1,4 +1,4 @@
-import { getAgyModelLabel } from '@hapi/protocol'
+import { getAgyModelChoices, getAgyModelLabel } from '@hapi/protocol'
 import { MODEL_OPTIONS } from '@/components/NewSession/types'
 import { CURSOR_AUTO_MODEL_LABEL } from '@/lib/cursorModelOptions'
 import { getClaudeComposerModelOptions, getNextClaudeComposerModel } from './claudeModelOptions'
@@ -93,9 +93,14 @@ function getAgyModelOptions(currentModel?: string | null, customOptions?: ModelO
         return withCurrentModelOption(concreteOptions, currentModel, getAgyModelLabel)
     }
 
-    const options = MODEL_OPTIONS.agy.filter((m) => m.value !== 'auto').map((m) => ({
-        value: m.value,
-        label: m.label
+    const options = getAgyModelChoices(
+        MODEL_OPTIONS.agy.filter((m) => m.value !== 'auto').map((m) => ({
+            modelId: m.value,
+            name: m.label
+        }))
+    ).map((m) => ({
+        value: m.modelId,
+        label: m.name
     }))
     return withCurrentModelOption(options, currentModel, getAgyModelLabel)
 }

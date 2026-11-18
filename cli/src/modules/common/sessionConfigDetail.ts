@@ -3,7 +3,7 @@ import { homedir } from 'node:os'
 import { basename, extname, isAbsolute, join, resolve, sep } from 'node:path'
 import { redactConfigSecrets, sessionConfigLock, type SessionConfigDetail, type SessionConfigItemSelector } from '@hapi/protocol/schemas'
 import { findSkill, skillWriteRoots, type SkillWriteRoot } from '@/modules/common/skills'
-import { commandBasename } from './sessionInventory'
+import { commandBasename, loadAgyPluginMcpPaths, sanitizeMcpServerToken } from './sessionInventory'
 import { readSessionPromptDetail, type SessionPromptLive } from './sessionPrompts'
 import {
     collectJsonObjects,
@@ -179,9 +179,16 @@ function claudeProjectKey(text: string, cwd: string, name: string): string | nul
 
 
 function toolsFromNames(serverName: string, tools: readonly string[] | undefined): Array<{ name: string; description?: string }> {
-    const prefix = `mcp__${serverName}__`
+    const sanitized = sanitizeMcpServerToken(serverName)
+    const prefixes = [
+        `mcp__${serverName}__`,
+        `mcp__${sanitized}_`,
+        `mcp_${serverName}_`,
+        `mcp_${sanitized}_`,
+    ]
     const names = (tools ?? []).flatMap((tool) => {
-        if (!tool.startsWith(prefix)) return []
+        const prefix = prefixes.find((item) => tool.startsWith(item))
+        if (!prefix) return []
         const name = tool.slice(prefix.length)
         return name && name.length <= 200 ? [name] : []
     })
@@ -397,6 +404,21 @@ function writeFailure(error: unknown): string {
 }
 
 function locateMcp(cwd: string, flavor: string, name: string, source: string, sessionId?: string): { enabled: boolean; command?: string; args?: string[]; url?: string } | null {
+    if (flavor === 'agy') {
+        if (source === 'user') {
+            const text = readText(join(homedir(), '.gemini', 'config', 'mcp_config.json'))
+            return text ? jsonServer(text, name) : null
+        }
+        if (source === 'plugin') {
+            for (const path of loadAgyPluginMcpPaths(cwd)) {
+                const text = readText(path)
+                const server = text ? jsonServer(text, name) : null
+                if (server) return server
+            }
+            return null
+        }
+        return null
+    }
     if (flavor === 'codex' && source === 'user') {
         const text = readText(codexConfigPath()) ?? ''
         const section = codexSection(text, `mcp_servers.${name}`)

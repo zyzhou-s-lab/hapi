@@ -8,6 +8,9 @@ describe('requiresFreshApproval', () => {
             'Delete Exploration',
             'mcp__hapi__delete_exploration',
             'mcp_hapi__delete-exploration',
+            'mcp_hapi_delete_exploration',
+            'Run mcp_hapi_delete_exploration',
+            'Run delete_exploration',
             'happy__delete_exploration',
             'hapi_delete_exploration',
         ]) {
@@ -19,6 +22,7 @@ describe('requiresFreshApproval', () => {
 
     it('turns a session grant into one approval and leaves other tools alone', () => {
         expect(freshApprovalDecision('mcp__hapi__delete_exploration', 'approved_for_session')).toBe('approved')
+        expect(freshApprovalDecision('Run mcp_hapi_delete_exploration', 'approved_for_session')).toBe('approved')
         expect(freshApprovalDecision('Bash', 'approved_for_session')).toBe('approved_for_session')
         expect(freshApprovalDecision('delete_exploration', 'denied')).toBe('denied')
     })

@@ -1,5 +1,20 @@
-import { getAgyModelLabel, getClaudeModelLabel } from '@hapi/protocol'
+import {
+    AGY_MODEL_LABELS,
+    AGY_MODEL_PRESETS,
+    getAgyModelChoices,
+    getAgyModelLabel,
+    getClaudeModelLabel,
+} from '@hapi/protocol'
 import type { UsageSnapshot } from '@hapi/protocol/schemas'
+
+const STATIC_AGY_FAMILY_LABELS = new Map(
+    getAgyModelChoices(
+        AGY_MODEL_PRESETS.map((modelId) => ({
+            modelId,
+            name: AGY_MODEL_LABELS[modelId]
+        }))
+    ).map((choice) => [choice.modelId, choice.name])
+)
 
 type SessionModelSource = {
     model?: string | null
@@ -28,7 +43,9 @@ export type SessionModelLabel = {
 }
 
 function getModelLabel(model: string): string | null {
-    return getAgyModelLabel(model) ?? getClaudeModelLabel(model)
+    return getAgyModelLabel(model)
+        ?? STATIC_AGY_FAMILY_LABELS.get(model.trim())
+        ?? getClaudeModelLabel(model)
 }
 
 export function getSessionModelLabel(
@@ -38,6 +55,9 @@ export function getSessionModelLabel(
     const explicitModel = typeof session.model === 'string' ? session.model.trim() : ''
     if (explicitModel) {
         const dynamicLabel = availableModels?.find((model) => model.modelId === explicitModel)?.name
+            ?? (availableModels?.length
+                ? getAgyModelChoices(availableModels).find((model) => model.modelId === explicitModel)?.name
+                : undefined)
         return {
             key: 'session.item.model',
             value: dynamicLabel ?? getModelLabel(explicitModel) ?? explicitModel

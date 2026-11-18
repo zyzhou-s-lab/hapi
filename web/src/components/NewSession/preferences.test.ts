@@ -161,7 +161,8 @@ describe('NewSession preferences', () => {
             model: 'gemini-5-future',
             cursorSelectedBase: 'auto',
             effort: 'auto',
-            modelReasoningEffort: 'default'
+            modelReasoningEffort: 'default',
+            permissionMode: 'request-review'
         })
     })
 
@@ -179,14 +180,23 @@ describe('NewSession preferences', () => {
             modelReasoningEffort: 'default',
             permissionMode: 'default'
         })
+        expect(resolvePreferredLaunchSettings('agy', {
+            model: 'auto',
+            cursorSelectedBase: 'auto',
+            effort: 'auto',
+            modelReasoningEffort: 'default',
+            permissionMode: 'bypassPermissions'
+        }).permissionMode).toBe('request-review')
     })
 
-    it('migrates the legacy YOLO preference for Codex only', () => {
+    it('migrates the legacy YOLO preference for Codex and Antigravity only', () => {
         savePreferredYoloMode(true)
 
         expect(resolvePreferredLaunchSettings('codex', null, true).permissionMode).toBe('yolo')
+        expect(resolvePreferredLaunchSettings('agy', null, true).permissionMode).toBe('always-proceed')
         expect(resolvePreferredLaunchSettings('copilot', null, true).permissionMode).toBe('default')
         expect(resolvePreferredLaunchSettings('codex', null, false).permissionMode).toBe('default')
+        expect(resolvePreferredLaunchSettings('agy', null, false).permissionMode).toBe('request-review')
     })
 
     it.each([

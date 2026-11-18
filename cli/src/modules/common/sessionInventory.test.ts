@@ -24,6 +24,7 @@ import {
     displayHomePath,
     listSessionAgents,
     listedSessionConfigRealpaths,
+    withMcpLoadState,
 } from './sessionInventory'
 
 /** True when the string contains a UTF-16 surrogate that is not half of a valid pair (renders as `�`). */
@@ -1021,6 +1022,111 @@ command = "my-hook --token abc"
             else process.env.PI_CODING_AGENT_DIR = previous
             rmSync(workspace, { recursive: true, force: true })
             rmSync(agent, { recursive: true, force: true })
+            clearProbeCache()
+        }
+    })
+
+    it('lists injected hapi plus user and plugin mcp_config.json servers for agy', async () => {
+        const home = mkdtempSync(join(tmpdir(), 'session-inventory-agy-home-'))
+        const workspace = join(home, 'workspace')
+        mkdirSync(join(workspace, '.git'), { recursive: true })
+        mkdirSync(join(home, '.gemini', 'config', 'plugins', 'global-plugin'), { recursive: true })
+        mkdirSync(join(home, '.gemini', 'config', 'plugins', 're-enabled-plugin'), { recursive: true })
+        mkdirSync(join(workspace, '.agents', 'plugins', 'demo-plugin'), { recursive: true })
+        mkdirSync(join(workspace, '.agents', 'plugins', 'disabled-plugin'), { recursive: true })
+        mkdirSync(join(workspace, '.agent', 'plugins', 'dot-agent-plugin'), { recursive: true })
+        mkdirSync(join(workspace, '_agents', 'plugins', 'underscore-agents-plugin'), { recursive: true })
+        mkdirSync(join(workspace, '_agent', 'plugins', 'underscore-agent-plugin'), { recursive: true })
+        mkdirSync(join(workspace, '.agents', 'plugins', 'config-disabled-plugin'), { recursive: true })
+
+        writeFileSync(join(home, '.gemini', 'config', 'config.json'), JSON.stringify({
+            plugins: {
+                'config-disabled-plugin': { enabled: false },
+                're-enabled-plugin': { enabled: true },
+            },
+        }))
+        writeFileSync(join(home, '.gemini', 'config', 'mcp_config.json'), JSON.stringify({
+            mcpServers: { userTool: { command: 'node', args: ['user.js'] } },
+        }))
+        writeFileSync(join(home, '.gemini', 'config', 'plugins', 'global-plugin', 'mcp_config.json'), JSON.stringify({
+            mcpServers: { globalPluginTool: { command: 'node', args: ['global.js'] } },
+        }))
+        writeFileSync(join(home, '.gemini', 'config', 'plugins', 're-enabled-plugin', 'plugin.json'), JSON.stringify({
+            name: 're-enabled-plugin',
+            disabled: true,
+        }))
+        writeFileSync(join(home, '.gemini', 'config', 'plugins', 're-enabled-plugin', 'mcp_config.json'), JSON.stringify({
+            mcpServers: { reEnabledTool: { command: 'node', args: ['re-enabled.js'] } },
+        }))
+        writeFileSync(join(workspace, '.agents', 'plugins', 'demo-plugin', 'mcp_config.json'), JSON.stringify({
+            mcpServers: { pluginTool: { command: 'node', args: ['plugin.js'] } },
+        }))
+        writeFileSync(join(workspace, '.agents', 'plugins', 'disabled-plugin', 'plugin.json'), JSON.stringify({
+            name: 'disabled-plugin',
+            disabled: true,
+        }))
+        writeFileSync(join(workspace, '.agents', 'plugins', 'disabled-plugin', 'mcp_config.json'), JSON.stringify({
+            mcpServers: { disabledPluginTool: { command: 'node', args: ['disabled.js'] } },
+        }))
+        writeFileSync(join(workspace, '.agents', 'plugins', 'config-disabled-plugin', 'mcp_config.json'), JSON.stringify({
+            mcpServers: { configDisabledTool: { command: 'node', args: ['config-disabled.js'] } },
+        }))
+        writeFileSync(join(workspace, '.agent', 'plugins', 'dot-agent-plugin', 'mcp_config.json'), JSON.stringify({
+            mcpServers: { dotAgentTool: { command: 'node', args: ['dot-agent.js'] } },
+        }))
+        writeFileSync(join(workspace, '_agents', 'plugins', 'underscore-agents-plugin', 'mcp_config.json'), JSON.stringify({
+            mcpServers: { underscoreAgentsTool: { command: 'node', args: ['underscore-agents.js'] } },
+        }))
+        writeFileSync(join(workspace, '_agent', 'plugins', 'underscore-agent-plugin', 'mcp_config.json'), JSON.stringify({
+            mcpServers: { underscoreAgentTool: { command: 'node', args: ['underscore-agent.js'] } },
+        }))
+
+        const prevHome = process.env.HOME
+        process.env.HOME = home
+        try {
+            const inventory = await readLiveSessionConfig({
+                flavor: 'agy',
+                cwd: workspace,
+                tools: ['mcp_hapi_send_file', 'mcp_t3-code_preview_open'],
+                probe: false,
+            })
+            expect(inventory.mcp?.servers.map((server) => ({
+                name: server.name,
+                source: server.source,
+                loaded: server.loaded,
+            }))).toEqual([
+                { name: 'dotAgentTool', source: 'plugin', loaded: false },
+                { name: 'globalPluginTool', source: 'plugin', loaded: false },
+                { name: 'hapi', source: 'injected', loaded: true },
+                { name: 'pluginTool', source: 'plugin', loaded: false },
+                { name: 'reEnabledTool', source: 'plugin', loaded: false },
+                { name: 't3-code', source: 'tool', loaded: true },
+                { name: 'underscoreAgentsTool', source: 'plugin', loaded: false },
+                { name: 'underscoreAgentTool', source: 'plugin', loaded: false },
+                { name: 'userTool', source: 'user', loaded: false },
+            ])
+
+            const legacyInventory = await readLiveSessionConfig({
+                flavor: 'agy',
+                cwd: workspace,
+                hapiMcpInjected: false,
+                tools: [],
+                probe: false,
+            })
+            expect(legacyInventory.mcp?.servers.some((server) => server.name === 'hapi')).toBe(false)
+            expect(mcpToolMatchesServer('mcp_t3-code_preview_open', 't3-code')).toBe(true)
+            expect(mcpToolMatchesServer('mcp_chrome_devtools_click_at', 'chrome-devtools')).toBe(true)
+            expect(mcpToolMatchesServer('mcp_hapi_send_file', 'hapi')).toBe(true)
+            expect(withMcpLoadState([{ name: 'chrome-devtools', source: 'user' }], ['mcp_chrome_devtools_click_at'])).toEqual([
+                { name: 'chrome-devtools', source: 'user', loaded: true },
+            ])
+            expect(withMcpLoadState([{ name: 'sqlite_helper', source: 'user' }], ['mcp_sqlite_helper_query'])).toEqual([
+                { name: 'sqlite_helper', source: 'user', loaded: true },
+            ])
+        } finally {
+            if (prevHome === undefined) delete process.env.HOME
+            else process.env.HOME = prevHome
+            rmSync(home, { recursive: true, force: true })
             clearProbeCache()
         }
     })

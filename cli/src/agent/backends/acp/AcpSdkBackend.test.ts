@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import agySteeredTurn from './__fixtures__/agy-steered-turn.json';
 import type { AgentMessage } from '@/agent/types';
+import { logger } from '@/ui/logger';
 import { AcpSdkBackend } from './AcpSdkBackend';
 import { AcpMessageHandler } from './AcpMessageHandler';
 import { buildAcpStdioSpawnOptions } from './AcpStdioTransport';
@@ -76,6 +78,40 @@ describe('AcpSdkBackend', () => {
         });
 
         expect(updates).toEqual([{ sessionId: 'session-1', title: 'Native session title' }]);
+    });
+
+    it('reports echoed user prompts after flushing the output before them', async () => {
+        const backend = new AcpSdkBackend({ command: 'agy' });
+        const events: string[] = [];
+        backend.setUserMessageChunkListener((text) => events.push(`echo:${text}`));
+        const backendInternal = backend as unknown as {
+            handleSessionUpdate: (params: unknown) => void;
+            sessionUpdateQueue: Promise<void>;
+            messageHandler: { handleUpdate: (update: unknown) => Promise<void>; drainBuffers: () => void } | null;
+        };
+        backendInternal.messageHandler = {
+            handleUpdate: async (update) => {
+                events.push(`update:${(update as { sessionUpdate: string }).sessionUpdate}`);
+            },
+            drainBuffers: () => events.push('drain')
+        };
+
+        backendInternal.handleSessionUpdate({
+            sessionId: 'session-1',
+            update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'Working' } }
+        });
+        backendInternal.handleSessionUpdate({
+            sessionId: 'session-1',
+            update: { sessionUpdate: 'user_message_chunk', content: { type: 'text', text: 'also lint' } }
+        });
+        await backendInternal.sessionUpdateQueue;
+
+        expect(events).toEqual([
+            'update:agent_message_chunk',
+            'update:user_message_chunk',
+            'drain',
+            'echo:also lint'
+        ]);
     });
 
     it('refreshes native titles through ACP session/list', async () => {
@@ -300,7 +336,10 @@ describe('AcpSdkBackend', () => {
                             }]
                         },
                         _meta: {
-                            availableCommands: [{ name: 'auto' }],
+                            availableCommands: [
+                                { name: 'auto', description: 'Auto-approve safe tool calls' },
+                                { name: '/swarm', description: 'Run a native swarm' }
+                            ],
                             'x.ai/sessionConfig': {
                                 options: [
                                     { id: 'high', category: 'mode', label: 'High Effort', selected: false },
@@ -337,6 +376,11 @@ describe('AcpSdkBackend', () => {
             ]
         });
         expect(backend.hasAvailableCommand(sessionId, 'auto')).toBe(true);
+        expect(backend.hasAvailableCommand(sessionId, 'swarm')).toBe(true);
+        expect(backend.getAvailableCommands(sessionId)).toEqual([
+            { name: 'auto', description: 'Auto-approve safe tool calls' },
+            { name: 'swarm', description: 'Run a native swarm' }
+        ]);
 
         await backend.setMode(sessionId, 'high');
 
@@ -1094,6 +1138,89 @@ describe('AcpSdkBackend', () => {
         expect(backend.supportsLoadSession()).toBe(false);
     });
 
+    it('supportsSessionResume reflects session capabilities', () => {
+        const backend = new AcpSdkBackend({ command: 'agy' });
+        const backendInternal = backend as unknown as {
+            initializeResult: {
+                protocolVersion: number;
+                agentCapabilities?: { sessionCapabilities?: Record<string, unknown> };
+            } | null;
+        };
+
+        backendInternal.initializeResult = {
+            protocolVersion: 1,
+            agentCapabilities: { sessionCapabilities: { resume: {} } }
+        };
+        expect(backend.supportsSessionResume()).toBe(true);
+
+        backendInternal.initializeResult = {
+            protocolVersion: 1,
+            agentCapabilities: { sessionCapabilities: { list: {} } }
+        };
+        expect(backend.supportsSessionResume()).toBe(false);
+    });
+
+    it('resumeSession sends session/resume and returns the native id', async () => {
+        const backend = new AcpSdkBackend({ command: 'agy' });
+        const calls: Array<{ method: string; params: unknown }> = [];
+        const backendInternal = backend as unknown as {
+            transport: {
+                sendRequest: (method: string, params: unknown) => Promise<unknown>;
+                close: () => Promise<void>;
+            } | null;
+        };
+        backendInternal.transport = {
+            sendRequest: async (method, params) => {
+                calls.push({ method, params });
+                return { configOptions: [] };
+            },
+            close: async () => {}
+        };
+
+        const sessionId = await backend.resumeSession({
+            sessionId: 'agy-session-1',
+            cwd: '/tmp/project',
+            mcpServers: []
+        });
+
+        expect(sessionId).toBe('agy-session-1');
+        expect(calls).toEqual([{
+            method: 'session/resume',
+            params: {
+                sessionId: 'agy-session-1',
+                cwd: '/tmp/project',
+                mcpServers: []
+            }
+        }]);
+    });
+
+    it('reports when the prompt is sent and answered, apart from its own waits', async () => {
+        const backend = new AcpSdkBackend({ command: 'agent' });
+        const events: string[] = [];
+        const backendInternal = backend as unknown as {
+            transport: { sendRequest: () => Promise<unknown>; close: () => Promise<void> } | null;
+            waitForSessionUpdateQuiet: (quietMs: number, timeoutMs: number) => Promise<void>;
+        };
+        backendInternal.waitForSessionUpdateQuiet = async () => { events.push('wait'); };
+        backendInternal.transport = {
+            sendRequest: async () => {
+                events.push('request');
+                return { stopReason: 'end_turn' };
+            },
+            close: async () => {}
+        };
+
+        await backend.prompt('session-1', [{ type: 'text', text: 'hello' }], () => {}, {
+            timing: {
+                onSent: () => events.push('sent'),
+                onAnswered: () => events.push('answered')
+            }
+        });
+        events.push('resolved');
+
+        expect(events).toEqual(['wait', 'request', 'sent', 'answered', 'wait', 'resolved']);
+    });
+
     it('setMode falls back to session/set_config_option when session/set_mode is missing', async () => {
         const backend = new AcpSdkBackend({ command: 'agent' });
         const calls: Array<{ method: string; params: unknown }> = [];
@@ -1328,6 +1455,114 @@ describe('AcpSdkBackend', () => {
 
         expect(() => backend.beginSoftSteerPrompt('session-1', [{ type: 'text', text: 'x' }]))
             .toThrow(/No active ACP prompt/);
+    });
+
+    it('logs why a soft-steer prompt failed', async () => {
+        const warn = vi.spyOn(logger, 'warn').mockImplementation(() => {});
+        const backend = new AcpSdkBackend({ command: 'agent' });
+        const backendInternal = backend as unknown as {
+            transport: {
+                sendRequestWithDispatch: () => { dispatched: Promise<void>; completed: Promise<unknown> };
+                sendNotification: () => void;
+                close: () => Promise<void>;
+            } | null;
+            isProcessingMessage: boolean;
+        };
+        backendInternal.isProcessingMessage = true;
+        const failure = Object.assign(new Error('waiting for a permission answer'), { code: -32603 });
+        backendInternal.transport = {
+            sendRequestWithDispatch: () => ({ dispatched: Promise.resolve(), completed: Promise.reject(failure) }),
+            sendNotification: () => {},
+            close: async () => {}
+        };
+
+        await expect(backend.beginSoftSteerPrompt('session-1', [{ type: 'text', text: 'pivot now' }]).completed)
+            .rejects.toBe(failure);
+
+        expect(warn).toHaveBeenCalledWith('[ACP] soft-steer session/prompt failed', {
+            message: 'waiting for a permission answer',
+            code: -32603
+        });
+        warn.mockRestore();
+    });
+
+    it('beginSoftSteerPrompt settles answered before it drains late output', async () => {
+        const backend = new AcpSdkBackend({ command: 'agent' });
+        const events: string[] = [];
+        const backendInternal = backend as unknown as {
+            transport: {
+                sendRequestWithDispatch: () => { dispatched: Promise<void>; completed: Promise<unknown> };
+                close: () => Promise<void>;
+            } | null;
+            isProcessingMessage: boolean;
+            waitForSessionUpdateQuiet: (quietMs: number, timeoutMs: number) => Promise<void>;
+            drainLateBuffers: () => Promise<void>;
+        };
+        backendInternal.isProcessingMessage = true;
+        let releaseDrain!: () => void;
+        backendInternal.waitForSessionUpdateQuiet = () => new Promise((resolve) => { releaseDrain = resolve; });
+        backendInternal.drainLateBuffers = async () => {};
+        backendInternal.transport = {
+            sendRequestWithDispatch: () => ({ dispatched: Promise.resolve(), completed: Promise.resolve({ stopReason: 'end_turn' }) }),
+            close: async () => {}
+        };
+
+        const steer = backend.beginSoftSteerPrompt('session-1', [{ type: 'text', text: 'pivot now' }]);
+        void steer.completed.then(() => events.push('completed'));
+        await steer.answered;
+        events.push('answered');
+        await vi.waitFor(() => expect(releaseDrain).toBeTypeOf('function'));
+        expect(events).toEqual(['answered']);
+        releaseDrain();
+        await steer.completed;
+        expect(events).toEqual(['answered', 'completed']);
+    });
+
+    it('beginSoftSteerPrompt reports the steered prompt usage with the latest context size', async () => {
+        // agy 1.5.2 answers each request of a steered turn with only its own share.
+        const steerResponse = agySteeredTurn.frames
+            .filter((frame) => frame.direction === 'agy->client' && 'result' in frame.message)
+            .map((frame) => (frame.message as { result: unknown }).result)
+            .at(-1);
+        const backend = new AcpSdkBackend({ command: 'agent' });
+        const backendInternal = backend as unknown as {
+            transport: {
+                sendRequestWithDispatch: (method: string, params: unknown, options?: { timeoutMs?: number }) => { dispatched: Promise<void>; completed: Promise<unknown> };
+                close: () => Promise<void>;
+            } | null;
+            isProcessingMessage: boolean;
+            latestUsageUpdate: { contextTokens: number | undefined; contextWindow: number | undefined } | null;
+            waitForSessionUpdateQuiet: (quietMs: number, timeoutMs: number) => Promise<void>;
+            drainLateBuffers: () => Promise<void>;
+        };
+        backendInternal.isProcessingMessage = true;
+        backendInternal.latestUsageUpdate = { contextTokens: 15_300, contextWindow: 1_000_000 };
+        backendInternal.transport = {
+            sendRequestWithDispatch: () => ({ dispatched: Promise.resolve(), completed: Promise.resolve(steerResponse) }),
+            close: async () => {}
+        };
+        backendInternal.waitForSessionUpdateQuiet = async () => {};
+        backendInternal.drainLateBuffers = async () => {};
+        const usages: unknown[] = [];
+
+        const stopReason = await backend.beginSoftSteerPrompt(
+            'session-1',
+            [{ type: 'text', text: 'pivot now' }],
+            { onUsage: (usage) => usages.push(usage) }
+        ).completed;
+
+        expect(stopReason).toBe('end_turn');
+        expect(usages).toEqual([{
+            type: 'usage',
+            inputTokens: 15286,
+            outputTokens: 14,
+            totalTokens: 15300,
+            thoughtTokens: 0,
+            cacheReadTokens: 0,
+            cacheCreationTokens: 0,
+            contextTokens: 15_300,
+            contextWindow: 1_000_000
+        }]);
     });
 
 
@@ -1781,5 +2016,123 @@ describe('AcpSdkBackend abortSoftSteers', () => {
 
         expect(() => backend.abortSoftSteers()).not.toThrow();
         expect(backend.processingMessage).toBe(false);
+    });
+});
+
+describe('AcpSdkBackend num_turns extraction (google-antigravity/antigravity-cli#1045)', () => {
+    const backend = new AcpSdkBackend({ command: 'agy', args: ['acp'] });
+
+    it('prefers usage.num_turns over the response top level and _meta', () => {
+        expect(backend.extractNumTurns({ stopReason: 'end_turn', usage: { num_turns: 7 } })).toBe(7);
+        expect(backend.extractNumTurns({ stopReason: 'end_turn', usage: { numTurns: 3 }, _meta: { num_turns: 9 } })).toBe(3);
+        expect(backend.extractNumTurns({ stopReason: 'end_turn', num_turns: 4 })).toBe(4);
+        expect(backend.extractNumTurns({ stopReason: 'end_turn', _meta: { numTurns: 5 } })).toBe(5);
+    });
+
+    it('ignores non-positive, garbage, and missing values', () => {
+        expect(backend.extractNumTurns({ stopReason: 'end_turn', usage: {} })).toBeUndefined();
+        expect(backend.extractNumTurns({ stopReason: 'end_turn', usage: { num_turns: 0 } })).toBeUndefined();
+        expect(backend.extractNumTurns({ stopReason: 'end_turn', usage: { num_turns: 'many' } })).toBeUndefined();
+        expect(backend.extractNumTurns({})).toBeUndefined();
+        expect(backend.extractNumTurns(null)).toBeUndefined();
+    });
+
+    it('rounds fractional numbers instead of dropping them', () => {
+        expect(backend.extractNumTurns({ usage: { num_turns: 2.9 } })).toBe(3);
+    });
+});
+
+describe('AcpSdkBackend synchronous tool metadata & usage preservation', () => {
+    it('attaches cached nativeName, nativeArgs, and rawInput to PermissionRequest before sessionUpdateQueue drains', async () => {
+        const backend = new AcpSdkBackend({ command: 'agy', args: ['acp'] });
+        const requests: Array<{
+            id: string;
+            toolCallId: string;
+            rawInput?: unknown;
+            nativeName?: string;
+            nativeArgs?: unknown;
+        }> = [];
+        backend.onPermissionRequest((request) => requests.push(request));
+
+        const backendInternal = backend as unknown as {
+            activeSessionId: string | null;
+            handleSessionUpdate: (params: unknown) => void;
+            handlePermissionRequest: (params: unknown, requestId: string | number | null) => Promise<unknown>;
+        };
+        backendInternal.activeSessionId = 'sess-1';
+
+        backendInternal.handleSessionUpdate({
+            sessionId: 'sess-1',
+            update: {
+                sessionUpdate: ACP_SESSION_UPDATE_TYPES.toolCall,
+                toolCallId: 'call-mcp-1',
+                name: 'call_mcp_tool',
+                args: { ServerName: 'hapi', ToolName: 'delete_exploration', Arguments: { lineId: 'line-1' } },
+                rawInput: { ServerName: 'hapi', ToolName: 'delete_exploration', Arguments: { lineId: 'line-1' } },
+                title: 'Run call_mcp_tool',
+                status: 'in_progress'
+            }
+        });
+
+        const permissionPromise = backendInternal.handlePermissionRequest({
+            sessionId: 'sess-1',
+            toolCall: {
+                toolCallId: 'call-mcp-1',
+                title: 'Run call_mcp_tool',
+                options: []
+            },
+            options: [{ optionId: 'allow_once', name: 'Allow', kind: 'allow_once' }]
+        }, 1);
+
+        expect(requests).toHaveLength(1);
+        expect(requests[0]).toMatchObject({
+            toolCallId: 'call-mcp-1',
+            nativeName: 'call_mcp_tool',
+            nativeArgs: { ServerName: 'hapi', ToolName: 'delete_exploration', Arguments: { lineId: 'line-1' } },
+            rawInput: { ServerName: 'hapi', ToolName: 'delete_exploration', Arguments: { lineId: 'line-1' } }
+        });
+
+        await backend.respondToPermission('sess-1', {
+            id: 'call-mcp-1',
+            sessionId: 'sess-1',
+            toolCallId: 'call-mcp-1',
+            options: []
+        }, { outcome: 'cancelled' });
+        await permissionPromise;
+    });
+
+    it('preserves latestUsageUpdate across a title-only session_info_update', () => {
+        const backend = new AcpSdkBackend({ command: 'agy', args: ['acp'] });
+        const backendInternal = backend as unknown as {
+            activeSessionId: string | null;
+            latestUsageUpdate: { contextTokens?: number; contextWindow?: number } | null;
+            handleSessionUpdate: (params: unknown) => void;
+        };
+        backendInternal.activeSessionId = 'sess-1';
+
+        backendInternal.handleSessionUpdate({
+            sessionId: 'sess-1',
+            update: {
+                sessionUpdate: ACP_SESSION_UPDATE_TYPES.usageUpdate,
+                used: 12_345,
+                size: 1_048_576
+            }
+        });
+        expect(backendInternal.latestUsageUpdate).toEqual({
+            contextTokens: 12_345,
+            contextWindow: 1_048_576
+        });
+
+        backendInternal.handleSessionUpdate({
+            sessionId: 'sess-1',
+            update: {
+                sessionUpdate: ACP_SESSION_UPDATE_TYPES.sessionInfoUpdate,
+                title: 'New Session Title'
+            }
+        });
+        expect(backendInternal.latestUsageUpdate).toEqual({
+            contextTokens: 12_345,
+            contextWindow: 1_048_576
+        });
     });
 });

@@ -1,0 +1,378 @@
+import { describe, expect, it, vi } from 'vitest'
+import type { AgentBackend, PermissionRequest } from '@/agent/types'
+import type { ApiSessionClient } from '@/api/apiSession'
+import type { PermissionMode } from '@hapi/protocol/types'
+import { AcpPermissionHandler } from './AcpPermissionHandler'
+
+function setup(mode: PermissionMode, options?: ConstructorParameters<typeof AcpPermissionHandler>[3]) {
+    let onRequest: ((request: PermissionRequest) => void) | null = null
+    const backend = {
+        onPermissionRequest: vi.fn((handler: (request: PermissionRequest) => void) => { onRequest = handler }),
+        respondToPermission: vi.fn(async () => {}),
+        cancelPrompt: vi.fn(async () => {})
+    }
+    const client = {
+        updateAgentState: vi.fn(),
+        rpcHandlerManager: { registerHandler: vi.fn() }
+    }
+    new AcpPermissionHandler(
+        client as unknown as ApiSessionClient,
+        backend as unknown as AgentBackend,
+        () => mode,
+        options
+    )
+    return { backend, client, request: (request: PermissionRequest) => onRequest!(request) }
+}
+
+function setupWithHandler(mode: PermissionMode, options?: ConstructorParameters<typeof AcpPermissionHandler>[3]) {
+    let onRequest: ((request: PermissionRequest) => void) | null = null
+    const backend = {
+        onPermissionRequest: vi.fn((h: (request: PermissionRequest) => void) => { onRequest = h }),
+        respondToPermission: vi.fn(async () => {}),
+        cancelPrompt: vi.fn(async () => {})
+    }
+    const client = {
+        updateAgentState: vi.fn(),
+        rpcHandlerManager: { registerHandler: vi.fn() }
+    }
+    const handler = new AcpPermissionHandler(
+        client as unknown as ApiSessionClient,
+        backend as unknown as AgentBackend,
+        () => mode,
+        options
+    )
+    return { backend, client, handler, request: (request: PermissionRequest) => onRequest!(request) }
+}
+
+const commandRequest: PermissionRequest = {
+    id: 'perm-1',
+    sessionId: 'acp-1',
+    toolCallId: 'call_1',
+    // agy titles a run_command request with the command line itself.
+    title: 'grep -n think notes.md',
+    kind: 'execute',
+    rawInput: { CommandLine: 'grep -n think notes.md' },
+    options: [
+        { optionId: 'allow', name: 'Allow', kind: 'allow_once' },
+        { optionId: 'deny', name: 'Deny', kind: 'reject_once' }
+    ]
+}
+
+describe('AcpPermissionHandler auto-approval rules', () => {
+    it('auto-approves a tool name hint by default', async () => {
+        const { backend, request } = setup('default')
+
+        request(commandRequest)
+
+        await vi.waitFor(() => expect(backend.respondToPermission).toHaveBeenCalledWith(
+            'acp-1',
+            commandRequest,
+            { outcome: 'selected', optionId: 'allow' }
+        ))
+    })
+
+    it('asks the user when the agent disables the name and id hints', () => {
+        const { backend, client, request } = setup('default', { autoApprovalRules: { alwaysToolNameHints: [], alwaysToolIdHints: [] } })
+
+        request(commandRequest)
+
+        expect(backend.respondToPermission).not.toHaveBeenCalled()
+        const update = client.updateAgentState.mock.calls[0]![0] as (state: object) => { requests: Record<string, unknown> }
+        expect(update({}).requests['perm-1']).toMatchObject({
+            tool: 'grep -n think notes.md',
+            toolCallId: 'call_1'
+        })
+    })
+
+    it('still approves everything in an always-approve mode without hints', async () => {
+        const { backend, request } = setup('always-proceed', { autoApprovalRules: { alwaysToolNameHints: [], alwaysToolIdHints: [] } })
+
+        request(commandRequest)
+
+        await vi.waitFor(() => expect(backend.respondToPermission).toHaveBeenCalledWith(
+            'acp-1',
+            commandRequest,
+            { outcome: 'selected', optionId: 'allow' }
+        ))
+    })
+
+    const offersAlways: PermissionRequest = {
+        ...commandRequest,
+        options: [
+            { optionId: 'always', name: 'Always allow', kind: 'allow_always' },
+            { optionId: 'once', name: 'Allow', kind: 'allow_once' },
+            { optionId: 'deny', name: 'Deny', kind: 'reject_once' }
+        ]
+    }
+
+    it('grants an always-approve request for the session by default', async () => {
+        const { backend, request } = setup('always-proceed')
+
+        request(offersAlways)
+
+        await vi.waitFor(() => expect(backend.respondToPermission).toHaveBeenCalledWith(
+            'acp-1', offersAlways, { outcome: 'selected', optionId: 'always' }
+        ))
+    })
+
+    it('answers automatic approvals once when the agent asks for it', async () => {
+        const { backend, request } = setup('always-proceed', { autoApproveOnce: true })
+
+        request(offersAlways)
+
+        await vi.waitFor(() => expect(backend.respondToPermission).toHaveBeenCalledWith(
+            'acp-1', offersAlways, { outcome: 'selected', optionId: 'once' }
+        ))
+    })
+
+    it('reports how long a request waited for the user, and only those', async () => {
+        const waits: string[] = []
+        const { request, handler } = setupWithHandler('request-review', {
+            autoApprovalRules: { alwaysToolNameHints: [], alwaysToolIdHints: [] },
+            onUserWait: () => {
+                waits.push('start')
+                return () => waits.push('end')
+            }
+        })
+
+        request(commandRequest)
+        await handler.cancelAll('Prompt finished')
+        await handler.cancelAll('Prompt finished')
+
+        expect(waits).toEqual(['start', 'end'])
+
+        const auto = setupWithHandler('always-proceed', { onUserWait: () => { throw new Error('not a user wait') } })
+        auto.request(commandRequest)
+    })
+
+    it('never auto-answers a request the agent marks as needing the user', () => {
+        const { backend, client, request } = setup('always-proceed', { requiresUser: () => true })
+
+        request(commandRequest)
+
+        expect(backend.respondToPermission).not.toHaveBeenCalled()
+        const update = client.updateAgentState.mock.calls[0]![0] as (state: object) => { requests: Record<string, unknown> }
+        expect(update({}).requests['perm-1']).toBeDefined()
+    })
+
+    it('preserves explicit approved_for_session in resolvePreDecided even when autoApproveOnce is true', () => {
+        const standingRequest: PermissionRequest = {
+            ...commandRequest,
+            options: [
+                { optionId: 'allow_once', name: 'Allow once', kind: 'allow_once' },
+                { optionId: 'allow_always', name: 'Allow for session', kind: 'allow_always' },
+                { optionId: 'deny', name: 'Deny', kind: 'reject_once' }
+            ]
+        }
+        const { backend, request } = setup('request-review', {
+            autoApproveOnce: true,
+            resolvePreDecided: () => 'approved_for_session'
+        })
+
+        request(standingRequest)
+
+        expect(backend.respondToPermission).toHaveBeenCalledWith(
+            'acp-1',
+            standingRequest,
+            { outcome: 'selected', optionId: 'allow_always' }
+        )
+    })
+
+    it('resolves agent-specific MCP titles via resolveToolCall without matching execute command lines', async () => {
+        const resolver = (request: PermissionRequest) => {
+            if (request.kind === 'execute') return null
+            if (request.title === 'Run mcp_hapi_skill_lookup') {
+                return { toolName: 'mcp__hapi__skill_lookup', toolInput: request.rawInput ?? {} }
+            }
+            return null
+        }
+
+        const mcpHarness = setup('request-review', {
+            autoApprovalRules: { alwaysToolNameHints: [], alwaysToolIdHints: [] },
+            resolveToolCall: resolver
+        })
+        const skillReq: PermissionRequest = {
+            id: 'perm-skill',
+            sessionId: 'acp-1',
+            toolCallId: 'call_skill',
+            title: 'Run mcp_hapi_skill_lookup',
+            kind: 'other',
+            rawInput: { name: 'swarm' },
+            options: [
+                { optionId: 'allow', name: 'Allow', kind: 'allow_once' },
+                { optionId: 'deny', name: 'Deny', kind: 'reject_once' }
+            ]
+        }
+        mcpHarness.request(skillReq)
+        await vi.waitFor(() => expect(mcpHarness.backend.respondToPermission).toHaveBeenCalledWith(
+            'acp-1',
+            skillReq,
+            { outcome: 'selected', optionId: 'allow' }
+        ))
+
+        const shellHarness = setup('request-review', {
+            autoApprovalRules: { alwaysToolNameHints: [], alwaysToolIdHints: [] },
+            resolveToolCall: resolver
+        })
+        shellHarness.request({
+            ...commandRequest,
+            id: 'perm-exec',
+            title: 'Run mcp_hapi_skill_lookup',
+            kind: 'execute',
+            rawInput: { CommandLine: 'Run mcp_hapi_skill_lookup' }
+        })
+        expect(shellHarness.backend.respondToPermission).not.toHaveBeenCalled()
+    })
+})
+
+describe('AcpPermissionHandler questions for the user', () => {
+    const questionInput = { questions: [{ question: 'RED or BLUE?', header: null, options: [{ label: 'RED', description: null }], multiSelect: false }] }
+
+    function answerQuestion(client: ReturnType<typeof setupWithHandler>['client'], response: Record<string, unknown>) {
+        const register = client.rpcHandlerManager.registerHandler.mock.calls[0]!
+        const permissionRpc = register[1] as (payload: unknown) => Promise<void>
+        return permissionRpc(response)
+    }
+
+    it.each(['request-review', 'always-proceed', 'yolo', 'bypassPermissions'] as const)(
+        'waits for the user in %s and returns their answers',
+        async (mode) => {
+            const waits: string[] = []
+            const { client, handler, backend } = setupWithHandler(mode, {
+                onUserWait: () => {
+                    waits.push('start')
+                    return () => waits.push('end')
+                }
+            })
+            const answer = handler.askUser('call_q', 'AskUserQuestion', questionInput)
+            expect(handler.hasPendingRequests()).toBe(true)
+            const update = client.updateAgentState.mock.calls.at(-1)![0] as (state: object) => { requests: Record<string, { tool: string }> }
+            expect(update({}).requests['call_q']).toMatchObject({ tool: 'AskUserQuestion', arguments: questionInput })
+
+            await answerQuestion(client, { id: 'call_q', approved: true, answers: { '0': ['RED'] } })
+
+            await expect(answer).resolves.toEqual({ decision: 'approved', answers: { '0': ['RED'] } })
+            expect(handler.hasPendingRequests()).toBe(false)
+            expect(backend.respondToPermission).not.toHaveBeenCalled()
+            expect(waits).toEqual(['start', 'end'])
+        }
+    )
+
+    it('reports a declined question, and cancels an open one when everything is cancelled', async () => {
+        const { client, handler } = setupWithHandler('request-review')
+        const declined = handler.askUser('call_a', 'AskUserQuestion', questionInput)
+        await answerQuestion(client, { id: 'call_a', approved: false, decision: 'denied' })
+        await expect(declined).resolves.toEqual({ decision: 'denied' })
+
+        const open = handler.askUser('call_b', 'AskUserQuestion', questionInput)
+        await handler.cancelAll('User aborted')
+        await expect(open).resolves.toEqual({ decision: 'abort' })
+        expect(handler.hasPendingRequests()).toBe(false)
+    })
+
+    it('cancels an open question even when replying to a permission request fails', async () => {
+        const { backend, handler, request } = setupWithHandler('request-review', {
+            autoApprovalRules: { alwaysToolNameHints: [], alwaysToolIdHints: [] }
+        })
+        request(commandRequest)
+        const open = handler.askUser('call_b', 'AskUserQuestion', questionInput)
+        backend.respondToPermission.mockRejectedValueOnce(new Error('agy is gone'))
+
+        await expect(handler.cancelAll('Antigravity stopped')).rejects.toThrow('agy is gone')
+        await expect(open).resolves.toEqual({ decision: 'abort' })
+    })
+
+    it('retireUserQuestion removes a pending request without recording a canceled completion', () => {
+        const waits: string[] = []
+        const { client, handler } = setupWithHandler('request-review', {
+            onUserWait: () => {
+                waits.push('start')
+                return () => waits.push('end')
+            }
+        })
+        void handler.askUser('call_retire', 'Read', { file_path: 'README.md' })
+        expect(handler.hasPendingRequests()).toBe(true)
+
+        let state: { requests?: Record<string, unknown>; completedRequests?: Record<string, unknown> } = {}
+        for (const [updater] of client.updateAgentState.mock.calls) {
+            state = (updater as (current: typeof state) => typeof state)(state)
+        }
+        expect(state.requests?.['call_retire']).toBeDefined()
+
+        client.updateAgentState.mockClear()
+        handler.retireUserQuestion('call_retire')
+
+        expect(handler.hasPendingRequests()).toBe(false)
+        expect(waits).toEqual(['start', 'end'])
+        for (const [updater] of client.updateAgentState.mock.calls) {
+            state = (updater as (current: typeof state) => typeof state)(state)
+        }
+        expect(state.requests?.['call_retire']).toBeUndefined()
+        expect(state.completedRequests?.['call_retire']).toBeUndefined()
+    })
+
+    it('downgrades approved_for_session to approved when askUser prompts for delete_exploration', async () => {
+        const { client, handler } = setupWithHandler('always-proceed')
+        const answerPromise = handler.askUser('perm-del-1', 'mcp__hapi__delete_exploration', { lineId: 'line-1' })
+        await answerQuestion(client, { id: 'perm-del-1', approved: true, decision: 'approved_for_session' })
+        await expect(answerPromise).resolves.toEqual({ decision: 'approved' })
+    })
+
+    it('downgrades approved_for_session to approved for unattributed call_mcp_tool wrappers and passes toolCallId to onExplicitToolApproval', async () => {
+        const approvals: Array<{ toolName: string; toolInput: unknown; toolCallId: string }> = []
+        const { backend, client, request } = setupWithHandler('request-review', {
+            autoApprovalRules: { alwaysToolNameHints: [], alwaysToolIdHints: [] },
+            onExplicitToolApproval: (toolName, toolInput, toolCallId) => {
+                approvals.push({ toolName, toolInput, toolCallId })
+            }
+        })
+
+        const wrapperRequest: PermissionRequest = {
+            ...commandRequest,
+            id: 'perm-wrapper-1',
+            toolCallId: 'call_wrapper_1',
+            title: 'Run call_mcp_tool',
+            kind: 'other',
+            rawInput: {},
+            options: [
+                { optionId: 'always', name: 'Always allow', kind: 'allow_always' },
+                { optionId: 'once', name: 'Allow', kind: 'allow_once' },
+                { optionId: 'deny', name: 'Deny', kind: 'reject_once' }
+            ]
+        }
+        request(wrapperRequest)
+        await answerQuestion(client, { id: 'perm-wrapper-1', approved: true, decision: 'approved_for_session' })
+
+        expect(backend.respondToPermission).toHaveBeenCalledWith(
+            'acp-1',
+            wrapperRequest,
+            { outcome: 'selected', optionId: 'once' }
+        )
+        expect(approvals).toEqual([
+            { toolName: 'Run call_mcp_tool', toolInput: {}, toolCallId: 'call_wrapper_1' }
+        ])
+
+        const preDecidedApprovals: Array<{ toolName: string; toolInput: unknown; toolCallId: string }> = []
+        const preHarness = setup('request-review', {
+            resolvePreDecided: () => 'approved_for_session',
+            onExplicitToolApproval: (toolName, toolInput, toolCallId) => {
+                preDecidedApprovals.push({ toolName, toolInput, toolCallId })
+            }
+        })
+        const rawCallMcpReq: PermissionRequest = {
+            ...wrapperRequest,
+            id: 'perm-wrapper-pre',
+            toolCallId: 'call_wrapper_pre',
+            title: 'call_mcp_tool'
+        }
+        preHarness.request(rawCallMcpReq)
+        expect(preHarness.backend.respondToPermission).toHaveBeenCalledWith(
+            'acp-1',
+            rawCallMcpReq,
+            { outcome: 'selected', optionId: 'once' }
+        )
+        expect(preDecidedApprovals).toEqual([
+            { toolName: 'call_mcp_tool', toolInput: {}, toolCallId: 'call_wrapper_pre' }
+        ])
+    })
+})

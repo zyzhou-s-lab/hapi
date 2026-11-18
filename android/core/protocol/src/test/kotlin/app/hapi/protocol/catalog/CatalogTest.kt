@@ -66,7 +66,7 @@ class CatalogTest {
             PermissionModes.forFlavor("opencode").map { it.wireId }
         )
         assertEquals(
-            listOf("request-review", "always-proceed"),
+            listOf("request-review", "acceptEdits", "auto", "plan", "always-proceed"),
             PermissionModes.forFlavor("agy").map { it.wireId }
         )
         assertEquals(
@@ -104,6 +104,7 @@ class CatalogTest {
 
     @Test
     fun `flavor capabilities and labels match flavors-ts`() {
+        assertTrue(Flavors.supportsEffort("agy"))
         assertTrue(Flavors.supportsEffort("claude"))
         assertTrue(Flavors.supportsEffort("grok"))
         assertTrue(Flavors.supportsEffort("pi"))

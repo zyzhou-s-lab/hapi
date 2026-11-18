@@ -565,6 +565,14 @@ normal same-account refresh retains warmth. Telegram automatic auth has no logou
 
 Remove these seams together if upstream supplies equivalent logout and retirement.
 
+## Antigravity ACP launcher fork MCP hooks (2026-11-18)
+
+| Files | Missing upstream seam | Why it cannot move out | Runtime path | Sync verification |
+|---|---|---|---|---|
+| `cli/src/agy/agyAcpRemoteLauncher.ts` | `buildHapiMcpBridge` has no external option-injector API | The ACP launcher must wire fork-owned `skillLookup` (`#176`), `confirmDeleteExploration` (`#203`, scoped per-call `lineId` credit), and `enableChangeTitle` + `onChangeTitle` (`titleSync.markManualTitle()`) when spawning the HAPI MCP bridge and gating ACP permission/tool events | `agy acp` MCP bridge / permission request → fork HAPI MCP hooks → scoped `delete_exploration` / `skill_lookup` / `change_title` | `TMPDIR=/tmp bun run --cwd cli test -- src/agy/agyAcpRemoteLauncher.test.ts src/agy/agyReactiveWakeup.test.ts` |
+
+See also the **Inline generated media** table above (`cli/src/agent/backends/acp/AcpMessageHandler.ts` `#175` `InlineMediaSource`).
+
 ## Verification record
 
 | Date | Operation | Result |

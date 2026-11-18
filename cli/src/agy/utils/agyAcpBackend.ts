@@ -1,0 +1,43 @@
+import { AcpSdkBackend } from '@/agent/backends/acp';
+import { getAgentLaunchCommand } from '@/agent/agentLaunchCommand';
+
+/**
+ * GEMINI_FORCE_FILE_STORAGE reads the saved OAuth token instead of a flaky
+ * keyring. SSH session markers would switch agy to a degraded auth path, but
+ * the agent socket stays for tool subprocesses.
+ */
+export function buildAgyAcpEnv(source: NodeJS.ProcessEnv = process.env): Record<string, string> {
+    const env: Record<string, string> = {};
+    for (const [key, value] of Object.entries(source)) {
+        if (value !== undefined) env[key] = value;
+    }
+    env.GEMINI_FORCE_FILE_STORAGE = 'true';
+    for (const key of ['SSH_CLIENT', 'SSH_CONNECTION', 'SSH_TTY']) {
+        delete env[key];
+    }
+    return env;
+}
+
+export type AgyAcpBackendOptions = {
+    skipPermissions?: boolean;
+};
+
+export function buildAgyAcpArgs(opts?: AgyAcpBackendOptions): string[] {
+    return opts?.skipPermissions
+        ? ['acp', '--dangerously-skip-permissions']
+        : ['acp'];
+}
+
+export function createAgyAcpBackend(opts?: AgyAcpBackendOptions): AcpSdkBackend {
+    return new AcpSdkBackend({
+        command: getAgentLaunchCommand('agy'),
+        args: buildAgyAcpArgs(opts),
+        env: buildAgyAcpEnv(),
+        flavor: 'agy',
+        // agy streams agent_message_chunk as pure deltas; overlap-dedupe would eat
+        // a repeated character at a chunk boundary (73-8 + 800 -> 73-800).
+        textChunkMode: 'delta',
+        // agy then asks its ask_question questions as form elicitations.
+        elicitationForm: true
+    });
+}

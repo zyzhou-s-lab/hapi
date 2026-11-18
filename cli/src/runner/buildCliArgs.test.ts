@@ -25,6 +25,16 @@ describe('buildCliArgs', () => {
         expect(args).toContain('--yolo')
     })
 
+    it('passes the Antigravity permission mode chosen at create time', () => {
+        const args = buildCliArgs('agy', {
+            directory: '/tmp',
+            permissionMode: 'plan',
+        })
+        expect(args.slice(args.indexOf('--permission-mode'), args.indexOf('--permission-mode') + 2))
+            .toEqual(['--permission-mode', 'plan'])
+        expect(args).not.toContain('--yolo')
+    })
+
     it('ignores invalid permission mode without yolo fallback', () => {
         const args = buildCliArgs('claude', {
             directory: '/tmp',

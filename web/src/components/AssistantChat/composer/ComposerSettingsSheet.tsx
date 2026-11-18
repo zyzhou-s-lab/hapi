@@ -426,9 +426,9 @@ export function useComposerSettingsSheet(params: UseComposerSettingsSheetParams)
     const claudeEffortOptions = useMemo(
         () => agentFlavor === 'pi'
             ? getPiThinkingLevelOptions(effort, selectedPiModel?.thinkingLevelMap)
-            : (agentFlavor === 'grok' || agentFlavor === 'omp') && availableEffortOptions && availableEffortOptions.length > 0
+            : (agentFlavor === 'grok' || agentFlavor === 'omp' || agentFlavor === 'agy') && availableEffortOptions && availableEffortOptions.length > 0
                 ? [
-                    ...(agentFlavor === 'grok' ? [{ value: null, label: 'Default' }] : []),
+                    ...(agentFlavor === 'grok' || agentFlavor === 'agy' ? [{ value: null, label: 'Default' }] : []),
                     ...availableEffortOptions.map((option) => ({
                         value: option.value,
                         label: option.name ?? option.value,
@@ -663,7 +663,12 @@ export function useComposerSettingsSheet(params: UseComposerSettingsSheetParams)
     // fallback levels would mutate a set_thinking_level the model may reject.
     const piEffortUnavailable = agentFlavor === 'pi'
         && (!selectedPiModel || selectedPiModel.reasoning === false)
-    const showEffortSettings = Boolean(onEffortChange && supportsEffort(agentFlavor) && !piEffortUnavailable)
+    const showEffortSettings = Boolean(
+        onEffortChange
+        && supportsEffort(agentFlavor)
+        && !piEffortUnavailable
+        && (agentFlavor !== 'agy' || availableEffortOptions?.length)
+    )
     const showFastModeSettings = Boolean(onServiceTierChange)
     const showSettingsButton = Boolean(
         showCollaborationSettings
@@ -710,6 +715,7 @@ export function useComposerSettingsSheet(params: UseComposerSettingsSheetParams)
     const effortValueLabel = useMemo(() => {
         if (isNarrowViewport) return undefined
         if (!onEffortChange || !supportsEffort(agentFlavor)) return undefined
+        if (agentFlavor === 'agy' && !availableEffortOptions?.length) return undefined
         // Pi: without a resolved catalog entry there is no capability map to
         // derive levels from; hide the button until the selected model is known.
         if (agentFlavor === 'pi') {
@@ -723,7 +729,7 @@ export function useComposerSettingsSheet(params: UseComposerSettingsSheetParams)
         }
         const option = claudeEffortOptions.find((candidate) => candidate.value === effort)
         return option?.label ?? (effort ? effort : undefined)
-    }, [isNarrowViewport, onEffortChange, agentFlavor, selectedPiModel, effort, claudeEffortOptions])
+    }, [isNarrowViewport, onEffortChange, agentFlavor, selectedPiModel, effort, claudeEffortOptions, availableEffortOptions])
 
     // Wrapper for DOM onClick consumers: never leak the MouseEvent into the
     // `section` parameter (the gear must always open the full sheet).

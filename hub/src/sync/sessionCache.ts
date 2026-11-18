@@ -576,6 +576,22 @@ export class SessionCache {
         })
     }
 
+    setBackgroundTaskCount(sessionId: string, count: number): void {
+        const session = this.sessions.get(sessionId)
+        if (!session) return
+
+        const prev = session.backgroundTaskCount ?? 0
+        const next = Math.max(0, Math.floor(count))
+        if (next === prev) return
+
+        session.backgroundTaskCount = next
+        this.publisher.emit({
+            type: 'session-updated',
+            sessionId,
+            data: { backgroundTaskCount: next } satisfies SessionPatch
+        })
+    }
+
     recordSessionActivity(sessionId: string, updatedAt: number): void {
         if (!Number.isFinite(updatedAt)) {
             return

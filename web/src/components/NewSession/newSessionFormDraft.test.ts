@@ -12,6 +12,13 @@ describe('newSessionFormDraft', () => {
         clearNewSessionFormDraft()
     })
 
+    it('restores an Antigravity draft from the YOLO-toggle era with a mode agy accepts', () => {
+        sessionStorage.setItem('hapi:new-session-form-draft', JSON.stringify({ agent: 'agy', model: 'auto', yoloMode: false }))
+        expect(loadNewSessionFormDraft()).toMatchObject({ codexFamilyPermissionMode: 'request-review' })
+        sessionStorage.setItem('hapi:new-session-form-draft', JSON.stringify({ agent: 'agy', model: 'auto', yoloMode: true }))
+        expect(loadNewSessionFormDraft()).toMatchObject({ codexFamilyPermissionMode: 'always-proceed' })
+    })
+
     it('round-trips cursor model fields through sessionStorage', () => {
         saveNewSessionFormDraft({
             agent: 'cursor',

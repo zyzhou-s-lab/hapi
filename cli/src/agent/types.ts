@@ -41,6 +41,24 @@ export type AgentUsage = {
     costUsd?: number;
 };
 
+export type AgentRoundModelUsage = {
+    inputTokens: number;
+    outputTokens: number;
+    cacheReadInputTokens: number;
+    cacheCreationInputTokens: number;
+};
+
+export type AgentRoundSummary = {
+    usage: AgentRoundModelUsage;
+    modelUsage: Record<string, AgentRoundModelUsage>;
+    totalCostUsd?: number;
+    numTurns: number;
+    durationMs: number;
+    /** Assistant output + reasoning and provider-active time, excluding tools/compaction. */
+    generationMs?: number;
+    generationOutputTokens?: number;
+};
+
 export type AgentMessage =
     | { type: 'text'; text: string; id?: string; live?: boolean; streamSnapshot?: boolean; model?: string; usage?: AgentUsage }
     | { type: 'reasoning'; text: string; id?: string; live?: boolean; model?: string; usage?: AgentUsage }
@@ -55,12 +73,16 @@ export type AgentMessage =
         model?: string;
         usage?: AgentUsage;
         progress?: unknown;
+        // The agent's own tool name and args, when it sends them next to the
+        // standard fields (agy does: `name`, `args`).
+        nativeName?: string;
+        nativeArgs?: unknown;
     }
     | { type: 'tool_result'; id: string; output: unknown; status: 'completed' | 'failed' }
     | ({ type: 'usage' } & AgentUsage)
     | { type: 'plan'; items: PlanItem[] }
     | { type: 'generated_image'; imageId: string; fileName: string; mimeType: string; source?: InlineMediaSource }
-    | { type: 'turn_complete'; stopReason: string }
+    | { type: 'turn_complete'; stopReason: string; numTurns?: number }
     | { type: 'error'; message: string };
 
 export type PermissionOption = {
@@ -77,12 +99,36 @@ export type PermissionRequest = {
     kind?: string;
     rawInput?: unknown;
     rawOutput?: unknown;
+    nativeName?: string;
+    nativeArgs?: unknown;
     options: PermissionOption[];
 };
 
 export type PermissionResponse =
     | { outcome: 'selected'; optionId: string }
     | { outcome: 'cancelled' };
+
+/** Agent-initiated `elicitation/create` in form mode (structured user input). */
+export type FormElicitationRequest = {
+    sessionId: string;
+    /** Tool call that triggered the form, when the agent links one. */
+    toolCallId?: string;
+    message: string;
+    /** JSON-Schema-like object schema; shape is owned by the agent. */
+    requestedSchema: unknown;
+};
+
+export type FormElicitationContent = Record<string, string | number | boolean | string[]>;
+
+/**
+ * `decline` is the user refusing to answer; `cancel` covers every other
+ * non-answer: dismissed, aborted, or unavailable. Agents may record the two
+ * differently.
+ */
+export type FormElicitationResponse =
+    | { action: 'accept'; content: FormElicitationContent }
+    | { action: 'decline' }
+    | { action: 'cancel' };
 
 export type AgentSessionModelDescriptor = {
     modelId: string;
@@ -113,6 +159,12 @@ export interface AgentBackend {
     cancelPrompt(sessionId: string): Promise<void>;
     respondToPermission(sessionId: string, request: PermissionRequest, response: PermissionResponse): Promise<void>;
     onPermissionRequest(handler: (request: PermissionRequest) => void): void;
+    /**
+     * Register the handler for agent form elicitations. The returned promise
+     * stays pending until the user answers; backends settle it with `cancel`
+     * on abort and disconnect.
+     */
+    onFormElicitation?(handler: (request: FormElicitationRequest) => Promise<FormElicitationResponse>): void;
     disconnect(): Promise<void>;
 }
 

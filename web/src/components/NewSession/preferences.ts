@@ -1,6 +1,8 @@
 import {
     CREATABLE_AGENT_FLAVORS,
+    getDefaultPermissionModeForFlavor,
     getPermissionModesForFlavor,
+    resolveHapiYoloPermissionMode,
     type PermissionMode
 } from '@hapi/protocol'
 import {
@@ -11,7 +13,7 @@ import {
     type CodexReasoningEffort,
     type LaunchEffort
 } from './types'
-import { usesCodexFamilyPermissionModes } from '@/lib/codexFamilyPermissionAgents'
+import { usesSharedPermissionModeState } from '@/lib/codexFamilyPermissionAgents'
 
 const AGENT_STORAGE_KEY = 'hapi:newSession:agent'
 const YOLO_STORAGE_KEY = 'hapi:newSession:yolo'
@@ -151,15 +153,21 @@ export function resolvePreferredLaunchSettings(
             'default'
         )
         : (preferred?.modelReasoningEffort ?? 'default')
-    const supportsCodexFamilyPermissionMode = usesCodexFamilyPermissionModes(agent)
+    const supportsSharedPermissionMode = usesSharedPermissionModeState(agent)
     const availablePermissionModes = getPermissionModesForFlavor(agent)
     const preferredPermissionMode = preferred?.permissionMode
-    const permissionMode = supportsCodexFamilyPermissionMode
+    const defaultPermissionMode = getDefaultPermissionModeForFlavor(agent)
+    const legacyYoloMode = (agent === 'codex' || agent === 'agy') && legacyCodexYolo
+        ? resolveHapiYoloPermissionMode(agent)
+        : undefined
+    const permissionMode = supportsSharedPermissionMode
         ? preferredPermissionMode && availablePermissionModes.includes(preferredPermissionMode)
             ? preferredPermissionMode
-            : agent === 'codex' && legacyCodexYolo
-                ? 'yolo'
-                : 'default'
+            : preferredPermissionMode !== undefined
+                ? defaultPermissionMode
+                : legacyYoloMode && availablePermissionModes.includes(legacyYoloMode)
+                    ? legacyYoloMode
+                    : defaultPermissionMode
         : undefined
 
     return {

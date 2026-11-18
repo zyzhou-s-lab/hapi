@@ -100,6 +100,44 @@ function parseUsageEvent(session: StoredSession, message: StoredMessage): UsageE
         }
     }
 
+    if (payload.type === 'codex' && data.type === 'round-summary') {
+        const summary = asRecord(data.summary)
+        const agyUsage = summary?.provider === 'agy' ? asRecord(summary.agy_usage) : null
+        if (!agyUsage) return null
+        const rawInputTokens = firstCount(agyUsage, 'input_tokens', 'inputTokens')
+        const outputTokens = firstCount(agyUsage, 'output_tokens', 'outputTokens')
+        const cacheReadTokens = firstCount(agyUsage, 'cache_read_tokens', 'cacheReadTokens')
+        const cacheCreationTokens = firstCount(agyUsage, 'cache_creation_tokens', 'cacheCreationTokens')
+        if (rawInputTokens + outputTokens + cacheReadTokens + cacheCreationTokens <= 0) return null
+        const inputTokens = normalizeInputTokens(
+            agyUsage,
+            rawInputTokens,
+            cacheReadTokens,
+            cacheCreationTokens,
+            'excludes-cache'
+        )
+        const model = typeof summary?.model === 'string' && summary.model.trim()
+            ? summary.model.trim()
+            : null
+        return {
+            sessionId: session.id,
+            sourceKey: `delta|${message.id}`,
+            sourceSeq: message.seq,
+            createdAt: message.createdAt,
+            agent: 'agy',
+            model,
+            kind: 'delta',
+            inputTokens,
+            outputTokens,
+            cacheReadTokens,
+            cacheCreationTokens,
+            lastInputTokens: inputTokens,
+            lastOutputTokens: outputTokens,
+            lastCacheReadTokens: cacheReadTokens,
+            lastCacheCreationTokens: cacheCreationTokens
+        }
+    }
+
     // Codex forwards cumulative thread totals plus the most recent request.
     // ACP-compatible backends wrap per-request usage in `total`, so only Codex
     // should be diffed as a cumulative stream.

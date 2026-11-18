@@ -21,7 +21,7 @@ vi.mock('./AcpStdioTransport', () => {
         });
         close = vi.fn(async () => {});
     }
-    return { AcpStdioTransport: MockAcpStdioTransport };
+    return { AcpStdioTransport: MockAcpStdioTransport, isAcpIndeterminateError: () => false };
 });
 
 import { AcpSdkBackend } from './AcpSdkBackend';
@@ -42,5 +42,18 @@ describe('AcpSdkBackend.initialize', () => {
                 })
             })
         });
+    });
+
+    it('advertises form elicitation only when enabled', async () => {
+        transportState.calls.length = 0;
+        await new AcpSdkBackend({ command: 'opencode', args: ['acp'] }).initialize();
+        await new AcpSdkBackend({ command: 'opencode', args: ['acp'], elicitationForm: true }).initialize();
+
+        const capabilities = transportState.calls
+            .filter((call) => call.method === 'initialize')
+            .map((call) => (call.params as { clientCapabilities: Record<string, unknown> }).clientCapabilities);
+        expect(capabilities).toHaveLength(2);
+        expect(capabilities[0]).not.toHaveProperty('elicitation');
+        expect(capabilities[1]).toMatchObject({ elicitation: { form: {} } });
     });
 });

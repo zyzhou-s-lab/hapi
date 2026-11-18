@@ -50,7 +50,7 @@ function OptionRow(props: {
     )
 }
 
-function computeAnswersForQuestion(
+export function computeAnswersForQuestion(
     question: AskUserQuestionQuestion,
     selectedOptionIndices: number[],
     otherSelected: boolean,
@@ -76,7 +76,7 @@ function computeAnswersForQuestion(
     }
 
     const other = otherText.trim()
-    if (otherSelected && other.length > 0) {
+    if (question.allowFreeText !== false && otherSelected && other.length > 0) {
         answers.push(other)
     }
 
@@ -197,6 +197,15 @@ export function AskUserQuestionFooter(props: {
         setLoading(false)
     }
 
+    // Dismisses the question without answering it (agy's "esc Skip"): the
+    // backend maps the denial to a decline / cancel for the agent.
+    const skip = async () => {
+        if (loading || props.disabled) return
+        setLoading(true)
+        await run(() => props.api.denyPermission(props.sessionId, permission.id), 'success')
+        setLoading(false)
+    }
+
     const next = () => {
         if (questions.length === 0) return
         const a = validateQuestion(clampedStep)
@@ -283,7 +292,20 @@ export function AskUserQuestionFooter(props: {
     }
 
     return (
-        <div className="rounded-2xl border border-[var(--app-border)] bg-[var(--app-bg)] p-3">
+        <div
+            className="rounded-2xl border border-[var(--app-border)] bg-[var(--app-bg)] p-3"
+            onKeyDown={(e) => {
+                if (e.key !== 'Escape' || e.defaultPrevented || e.nativeEvent.isComposing) return
+                e.preventDefault()
+                // Esc in a text field only leaves it, so typed text isn't discarded.
+                const target = e.target
+                if (target instanceof HTMLTextAreaElement || target instanceof HTMLInputElement) {
+                    target.blur()
+                    return
+                }
+                void skip()
+            }}
+        >
             <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
                     <div className="flex items-center gap-2">
@@ -354,16 +376,18 @@ export function AskUserQuestionFooter(props: {
                             )
                         })}
 
-                        <OptionRow
-                            checked={otherSelectedByQuestion[clampedStep] ?? false}
-                            mode={mode}
-                            disabled={props.disabled || loading}
-                            title={t('tool.other')}
-                            description={t('tool.otherDescription')}
-                            onClick={() => toggleOther(clampedStep)}
-                        />
+                        {questions[clampedStep]?.allowFreeText ? (
+                            <OptionRow
+                                checked={otherSelectedByQuestion[clampedStep] ?? false}
+                                mode={mode}
+                                disabled={props.disabled || loading}
+                                title={t('tool.other')}
+                                description={t('tool.otherDescription')}
+                                onClick={() => toggleOther(clampedStep)}
+                            />
+                        ) : null}
 
-                        {(otherSelectedByQuestion[clampedStep] ?? false) ? (
+                        {questions[clampedStep]?.allowFreeText && (otherSelectedByQuestion[clampedStep] ?? false) ? (
                             <textarea
                                 value={otherTextByQuestion[clampedStep] ?? ''}
                                 onChange={(e) => updateOtherText(clampedStep, e.target.value)}
@@ -393,6 +417,16 @@ export function AskUserQuestionFooter(props: {
                 </div>
 
                 <div className="flex items-center gap-2">
+                    <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        disabled={props.disabled || loading}
+                        onClick={skip}
+                        className={questionNavButtonClassName}
+                    >
+                        {t('tool.skip')}
+                    </Button>
                     {questions.length > 1 && clampedStep < questions.length - 1 ? (
                         <Button
                             type="button"

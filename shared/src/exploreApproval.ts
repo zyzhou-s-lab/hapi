@@ -19,6 +19,9 @@ const FRESH_APPROVAL_PREFIXES = [
  */
 export function requiresFreshApproval(toolName: string): boolean {
     let name = toolName.trim().toLowerCase().replace(/[\s-]+/g, '_')
+    if (name.startsWith('run_')) {
+        name = name.slice('run_'.length)
+    }
     for (const prefix of FRESH_APPROVAL_PREFIXES) {
         if (name.startsWith(prefix)) {
             name = name.slice(prefix.length)

@@ -175,6 +175,18 @@ describe('listSkills', () => {
         expect(skills.map((skill) => skill.name)).toEqual(['custom-codex', 'custom-system'])
     })
 
+    it('lists Antigravity (agy) user and project skills across .gemini and .agent roots', async () => {
+        const repoRoot = join(sandboxDir, 'agy-repo')
+        await mkdir(join(repoRoot, '.git'), { recursive: true })
+        await writeSkill(join(homeDir, '.gemini', 'config', 'skills', 'agy-config-skill'), 'agy-config-skill', 'AGY config skill')
+        await writeSkill(join(homeDir, '.gemini', 'antigravity-cli', 'skills', 'agy-cli-skill'), 'agy-cli-skill', 'AGY CLI skill')
+        await writeSkill(join(repoRoot, '.agent', 'skills', 'agy-project-skill'), 'agy-project-skill', 'AGY project skill')
+
+        const skills = await listSkills(repoRoot, { flavor: 'agy' })
+
+        expect(skills.map((skill) => skill.name)).toEqual(['agy-cli-skill', 'agy-config-skill', 'agy-project-skill'])
+    })
+
     it('includes installed marketplace skills for the requested flavor', async () => {
         const claudeInstallPath = join(homeDir, '.claude', 'plugins', 'cache', 'owner', 'claude-plugin', '1.0.0')
         const codexInstallPath = join(homeDir, '.codex', 'plugins', 'cache', 'owner', 'codex-plugin', '1.0.0')

@@ -9,7 +9,7 @@ import type { SyncEvent } from '../../../sync/syncEngine'
 import { TodosSchema } from '../../../sync/todos'
 import { applyTodoMessageContent } from '../../../fork-features/task-panel/taskProjection'
 import { extractTeamStateFromMessageContent, applyTeamStateDelta } from '../../../sync/teams'
-import { extractBackgroundTaskDelta } from '../../../sync/backgroundTasks'
+import { extractBackgroundTaskDelta, extractBackgroundTasksSnapshot } from '../../../sync/backgroundTasks'
 import { shouldRecordSessionActivity } from '../../../sync/sessionActivity'
 import type { CliSocketWithData } from '../../socketTypes'
 import type { SessionEndReason } from '@hapi/protocol'
@@ -99,6 +99,7 @@ export type SessionHandlersDeps = {
     onSessionEnd?: (payload: SessionEndPayload) => void
     onWebappEvent?: (event: SyncEvent) => void
     onBackgroundTaskDelta?: (sessionId: string, delta: { started: number; completed: number }) => void
+    onBackgroundTaskCount?: (sessionId: string, count: number) => void
     onSessionActivity?: (sessionId: string, updatedAt: number) => void
     /** Delegates session-end immediate-queue sweep to the MessageService layer. */
     onSweepImmediateQueued?: (sessionId: string, now: number) => void
@@ -108,7 +109,7 @@ export type SessionHandlersDeps = {
 }
 
 export function registerSessionHandlers(socket: CliSocketWithData, deps: SessionHandlersDeps): void {
-    const { store, resolveSessionAccess, emitAccessError, onSessionAlive, onSessionReady, onSessionEnd, onWebappEvent, onBackgroundTaskDelta, onSessionActivity, onSweepImmediateQueued, onMessagesConsumed } = deps
+    const { store, resolveSessionAccess, emitAccessError, onSessionAlive, onSessionReady, onSessionEnd, onWebappEvent, onBackgroundTaskDelta, onBackgroundTaskCount, onSessionActivity, onSweepImmediateQueued, onMessagesConsumed } = deps
 
     const publishMessage = (sid: string, msg: StoredMessage): void => {
         const message = {
@@ -213,6 +214,12 @@ export function registerSessionHandlers(socket: CliSocketWithData, deps: Session
             return
         }
         if (isRedundantGoalStatusEventContent(content)) {
+            committed()
+            return
+        }
+        const bgSnapshot = extractBackgroundTasksSnapshot(content)
+        if (bgSnapshot !== null) {
+            onBackgroundTaskCount?.(sid, bgSnapshot.length)
             committed()
             return
         }

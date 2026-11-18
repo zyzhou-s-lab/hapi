@@ -46,10 +46,12 @@ export interface HapiMcpBridge {
 export interface HapiMcpBridgeOptions {
     emitTitleSummary?: boolean;
     enableChangeTitle?: boolean;
+    onChangeTitle?: (title: string) => void;
     skillLookup?: {
         workingDirectory: string;
         flavor: string;
     };
+    confirmDeleteExploration?: (args: Record<string, unknown>) => Promise<boolean>;
 }
 
 /**
@@ -80,7 +82,9 @@ export async function buildHapiMcpBridge(
     const happyServer = await startHappyServer(client, {
         emitTitleSummary: options.emitTitleSummary,
         enableChangeTitle: options.enableChangeTitle,
-        skillLookup: options.skillLookup
+        onChangeTitle: options.onChangeTitle,
+        skillLookup: options.skillLookup,
+        ...(options.confirmDeleteExploration ? { confirmDeleteExploration: options.confirmDeleteExploration } : {})
     });
     const bridgeCommand = getHappyCliCommand([
         'mcp',

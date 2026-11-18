@@ -25,6 +25,54 @@ describe('AcpMessageHandler', () => {
         vi.restoreAllMocks();
     });
 
+    it('carries the agent\'s own tool name and args on tool calls and their updates', () => {
+        const messages: AgentMessage[] = [];
+        const handler = new AcpMessageHandler((message) => messages.push(message));
+        const args = { CommandLine: 'ls -la', toolSummary: 'List files' };
+
+        handler.handleUpdate({
+            sessionUpdate: ACP_SESSION_UPDATE_TYPES.toolCall,
+            toolCallId: 'tool-n',
+            name: 'run_command',
+            args,
+            title: 'ls -la',
+            kind: 'execute',
+            rawInput: args,
+            status: 'in_progress'
+        });
+        // A later update that omits the name keeps the stored one.
+        handler.handleUpdate({
+            sessionUpdate: ACP_SESSION_UPDATE_TYPES.toolCallUpdate,
+            toolCallId: 'tool-n',
+            title: 'ls -la',
+            kind: 'execute',
+            rawInput: args,
+            status: 'in_progress'
+        });
+
+        const calls = messages.filter((m): m is Extract<AgentMessage, { type: 'tool_call' }> => m.type === 'tool_call');
+        expect(calls).toHaveLength(2);
+        for (const call of calls) {
+            expect(call).toMatchObject({ nativeName: 'run_command', nativeArgs: args });
+        }
+    });
+
+    it('leaves nativeName off tool calls from agents that do not send a name', () => {
+        const messages: AgentMessage[] = [];
+        const handler = new AcpMessageHandler((message) => messages.push(message));
+
+        handler.handleUpdate({
+            sessionUpdate: ACP_SESSION_UPDATE_TYPES.toolCall,
+            toolCallId: 'tool-o',
+            title: 'Read',
+            rawInput: { path: 'README.md' },
+            status: 'in_progress'
+        });
+
+        expect(messages[0]).not.toHaveProperty('nativeName');
+        expect(messages[0]).not.toHaveProperty('nativeArgs');
+    });
+
     it('does not synthesize {status} output when tool completes without payload', () => {
         const messages: AgentMessage[] = [];
         const handler = new AcpMessageHandler((message) => messages.push(message));
@@ -1603,6 +1651,122 @@ describe('AcpMessageHandler', () => {
             expect(result.output).toEqual({ stdout: 'file.txt\n' });
         });
 
+        describe('rawOutput carrying only metadata', () => {
+            function runUpdate(toolCallId: string, update: Record<string, unknown>): AgentMessage[] {
+                const messages: AgentMessage[] = [];
+                const handler = new AcpMessageHandler((message) => messages.push(message));
+                handler.handleUpdate({
+                    sessionUpdate: ACP_SESSION_UPDATE_TYPES.toolCall,
+                    toolCallId,
+                    title: 'bash',
+                    rawInput: { command: 'echo ok' },
+                    status: 'in_progress'
+                });
+                handler.handleUpdate({
+                    sessionUpdate: ACP_SESSION_UPDATE_TYPES.toolCallUpdate,
+                    toolCallId,
+                    ...update
+                });
+                return messages;
+            }
+
+            it('uses normalized content text as output and keeps metadata', () => {
+                const metadata = { status: 'completed', truncated: false, exit: 0 };
+                const messages = runUpdate('meta-1', {
+                    status: 'completed',
+                    content: [{ type: 'content', content: { type: 'text', text: 'ok' } }],
+                    rawOutput: { metadata }
+                });
+
+                const result = getToolResult(messages, 'meta-1');
+                expect(result.status).toBe('completed');
+                expect(result.output).toEqual({ output: 'ok', metadata });
+            });
+
+            it('keeps metadata and an empty output when content is an empty array', () => {
+                const metadata = { truncated: false };
+                const messages = runUpdate('meta-2', {
+                    status: 'completed',
+                    content: [],
+                    rawOutput: { metadata }
+                });
+
+                expect(getToolResult(messages, 'meta-2').output).toEqual({ output: '', metadata });
+            });
+
+            it('merges a single diff block with metadata', () => {
+                const metadata = { truncated: false };
+                const messages = runUpdate('meta-3', {
+                    status: 'completed',
+                    content: [{ type: 'diff', path: 'a.ts', oldText: 'a', newText: 'b', _meta: { kind: 'modify' } }],
+                    rawOutput: { metadata }
+                });
+
+                expect(getToolResult(messages, 'meta-3').output).toEqual({
+                    path: 'a.ts',
+                    oldText: 'a',
+                    newText: 'b',
+                    kind: 'modify',
+                    metadata
+                });
+            });
+
+            it('keeps rawOutput unchanged when content cannot be normalized', () => {
+                const rawOutput = { metadata: { truncated: false } };
+                const messages = runUpdate('meta-4', {
+                    status: 'completed',
+                    content: [{ type: 'image', url: 'https://example.com/a.png' }],
+                    rawOutput
+                });
+
+                expect(getToolResult(messages, 'meta-4').output).toEqual(rawOutput);
+            });
+
+            it('keeps rawOutput unchanged when it carries output next to metadata', () => {
+                const rawOutput = { stdout: 'file.txt\n', metadata: { exit: 0 } };
+                const messages = runUpdate('meta-5', {
+                    status: 'completed',
+                    content: [{ type: 'content', content: { type: 'text', text: 'should be ignored' } }],
+                    rawOutput
+                });
+
+                expect(getToolResult(messages, 'meta-5').output).toEqual(rawOutput);
+            });
+
+            it('keeps rawOutput unchanged when content is absent', () => {
+                const rawOutput = { metadata: { truncated: false } };
+                const messages = runUpdate('meta-6', { status: 'completed', rawOutput });
+
+                expect(getToolResult(messages, 'meta-6').output).toEqual(rawOutput);
+            });
+
+            it('reports failed status with the content text and metadata', () => {
+                const metadata = { status: 'error', exit: 1 };
+                const messages = runUpdate('meta-7', {
+                    status: 'failed',
+                    content: [{ type: 'content', content: { type: 'text', text: 'command not found' } }],
+                    rawOutput: { metadata }
+                });
+
+                const result = getToolResult(messages, 'meta-7');
+                expect(result.status).toBe('failed');
+                expect(result.output).toEqual({ output: 'command not found', metadata });
+            });
+
+            it('keeps an error rawOutput unchanged on failure', () => {
+                const rawOutput = { error: 'boom' };
+                const messages = runUpdate('meta-8', {
+                    status: 'failed',
+                    content: [{ type: 'content', content: { type: 'text', text: 'ignored' } }],
+                    rawOutput
+                });
+
+                const result = getToolResult(messages, 'meta-8');
+                expect(result.status).toBe('failed');
+                expect(result.output).toEqual(rawOutput);
+            });
+        });
+
         it('passes through non-array content value unchanged when rawOutput is absent', () => {
             // If an ACP agent sends content as a non-array value (e.g. a plain string or
             // object), normalizeAcpToolContent returns null and we fall back to the
@@ -2506,5 +2670,393 @@ describe('AcpMessageHandler', () => {
             expect(messages[imageIndex].source).toEqual({ ingress: 'acp', flavor: 'cursor' });
         }
         clearGeneratedImages();
+    });
+});
+
+describe('AcpMessageHandler idle text flush', () => {
+    beforeEach(() => {
+        vi.useFakeTimers();
+    });
+
+    afterEach(() => {
+        vi.useRealTimers();
+    });
+
+    function textMessages(messages: AgentMessage[]): Array<Extract<AgentMessage, { type: 'text' }>> {
+        return messages.filter((message): message is Extract<AgentMessage, { type: 'text' }> =>
+            message.type === 'text'
+        );
+    }
+
+    it('flushes buffered text after the idle interval without a boundary event', async () => {
+        const messages: AgentMessage[] = [];
+        const handler = new AcpMessageHandler((message) => messages.push(message), {
+            textChunkMode: 'delta',
+            textIdleFlushMs: 1000
+        });
+
+        await handler.handleUpdate({
+            sessionUpdate: ACP_SESSION_UPDATE_TYPES.agentMessageChunk,
+            content: { type: 'text', text: 'hello world' }
+        });
+
+        await vi.advanceTimersByTimeAsync(999);
+        expect(messages).toEqual([]);
+
+        await vi.advanceTimersByTimeAsync(1);
+        expect(messages).toEqual([{ type: 'text', text: 'hello world', id: expect.any(String), streamSnapshot: true, live: true }]);
+
+        await vi.advanceTimersByTimeAsync(10000);
+        expect(textMessages(messages)).toHaveLength(1);
+    });
+
+    it('postpones the idle flush while updates keep arriving', async () => {
+        const messages: AgentMessage[] = [];
+        const handler = new AcpMessageHandler((message) => messages.push(message), {
+            textChunkMode: 'delta',
+            textIdleFlushMs: 1000
+        });
+
+        await handler.handleUpdate({
+            sessionUpdate: ACP_SESSION_UPDATE_TYPES.agentMessageChunk,
+            content: { type: 'text', text: 'hello ' }
+        });
+
+        await vi.advanceTimersByTimeAsync(600);
+        await handler.handleUpdate({
+            sessionUpdate: ACP_SESSION_UPDATE_TYPES.agentMessageChunk,
+            content: { type: 'text', text: 'world' }
+        });
+
+        await vi.advanceTimersByTimeAsync(600);
+        expect(messages).toEqual([]);
+
+        await vi.advanceTimersByTimeAsync(400);
+        expect(messages).toEqual([{ type: 'text', text: 'hello world', id: expect.any(String), streamSnapshot: true, live: true }]);
+    });
+
+    it('finalizes an idled segment under the same stream id at the boundary', async () => {
+        const messages: AgentMessage[] = [];
+        const handler = new AcpMessageHandler((message) => messages.push(message), {
+            textChunkMode: 'delta',
+            textIdleFlushMs: 1000
+        });
+
+        await handler.handleUpdate({
+            sessionUpdate: ACP_SESSION_UPDATE_TYPES.agentMessageChunk,
+            content: { type: 'text', text: 'hello' }
+        });
+
+        await vi.advanceTimersByTimeAsync(1000);
+        const [snapshot] = textMessages(messages);
+        expect(snapshot).toEqual({
+            type: 'text',
+            text: 'hello',
+            id: expect.any(String),
+            streamSnapshot: true,
+            live: true
+        });
+
+        handler.flushText();
+        const text = textMessages(messages);
+        expect(text).toHaveLength(2);
+        expect(text[1]).toEqual({
+            type: 'text',
+            text: 'hello',
+            id: snapshot.id,
+            streamSnapshot: true
+        });
+
+        handler.drainBuffers();
+        expect(textMessages(messages)).toHaveLength(2);
+    });
+
+    it('cancels the idle timer when a tool call closes the text segment', async () => {
+        const messages: AgentMessage[] = [];
+        const handler = new AcpMessageHandler((message) => messages.push(message), {
+            textChunkMode: 'delta',
+            textIdleFlushMs: 1000
+        });
+
+        await handler.handleUpdate({
+            sessionUpdate: ACP_SESSION_UPDATE_TYPES.agentMessageChunk,
+            content: { type: 'text', text: 'hello' }
+        });
+
+        await handler.handleUpdate({
+            sessionUpdate: ACP_SESSION_UPDATE_TYPES.toolCall,
+            toolCallId: 'tool-1',
+            title: 'Read',
+            rawInput: { path: 'README.md' },
+            status: 'in_progress'
+        });
+
+        expect(messages.map((m) => m.type)).toEqual(['text', 'tool_call']);
+
+        await vi.advanceTimersByTimeAsync(5000);
+        expect(messages).toHaveLength(2);
+    });
+
+    it('dedupe mode streams full-text snapshots under one stream id', async () => {
+        const messages: AgentMessage[] = [];
+        const handler = new AcpMessageHandler((message) => messages.push(message), {
+            textIdleFlushMs: 1000
+        });
+
+        await handler.handleUpdate({
+            sessionUpdate: ACP_SESSION_UPDATE_TYPES.agentMessageChunk,
+            content: { type: 'text', text: 'Hello world.' }
+        });
+        await vi.advanceTimersByTimeAsync(1000);
+
+        await handler.handleUpdate({
+            sessionUpdate: ACP_SESSION_UPDATE_TYPES.agentMessageChunk,
+            content: { type: 'text', text: 'Hello world. And more.' }
+        });
+        await vi.advanceTimersByTimeAsync(1000);
+
+        handler.flushText();
+
+        const text = textMessages(messages);
+        expect(text).toHaveLength(3);
+        expect(text[0].text).toEqual('Hello world.');
+        expect(text[1].text).toEqual('Hello world. And more.');
+        expect(text[2].text).toEqual('Hello world. And more.');
+        expect(text[0].id).toEqual(expect.any(String));
+        expect(text[1].id).toEqual(text[0].id);
+        expect(text[2].id).toEqual(text[0].id);
+        expect(text[2].streamSnapshot).toBe(true);
+    });
+
+    it('stays silent when no text is buffered', async () => {
+        const messages: AgentMessage[] = [];
+        const handler = new AcpMessageHandler((message) => messages.push(message), {
+            textIdleFlushMs: 1000
+        });
+
+        await handler.handleUpdate({
+            sessionUpdate: ACP_SESSION_UPDATE_TYPES.agentThoughtChunk,
+            content: { type: 'text', text: 'thinking' }
+        });
+
+        await vi.advanceTimersByTimeAsync(10000);
+        expect(messages.filter((m) => m.type === 'text')).toEqual([]);
+    });
+
+    it('is disabled when textIdleFlushMs is zero', async () => {
+        const messages: AgentMessage[] = [];
+        const handler = new AcpMessageHandler((message) => messages.push(message), {
+            textChunkMode: 'delta',
+            textIdleFlushMs: 0
+        });
+
+        await handler.handleUpdate({
+            sessionUpdate: ACP_SESSION_UPDATE_TYPES.agentMessageChunk,
+            content: { type: 'text', text: 'hello' }
+        });
+
+        await vi.advanceTimersByTimeAsync(10000);
+        expect(textMessages(messages)).toHaveLength(0);
+
+        handler.flushText();
+        expect(messages).toEqual([{ type: 'text', text: 'hello' }]);
+    });
+
+    it('re-asserts the same snapshot for a repeated cumulative chunk', async () => {
+        const messages: AgentMessage[] = [];
+        const handler = new AcpMessageHandler((message) => messages.push(message), {
+            textIdleFlushMs: 1000
+        });
+
+        await handler.handleUpdate({
+            sessionUpdate: ACP_SESSION_UPDATE_TYPES.agentMessageChunk,
+            content: { type: 'text', text: 'abc' }
+        });
+        await vi.advanceTimersByTimeAsync(1000);
+
+        await handler.handleUpdate({
+            sessionUpdate: ACP_SESSION_UPDATE_TYPES.agentMessageChunk,
+            content: { type: 'text', text: 'abc' }
+        });
+        await vi.advanceTimersByTimeAsync(1000);
+
+        const text = textMessages(messages);
+        expect(text).toHaveLength(2);
+        expect(text[0].id).toEqual(expect.any(String));
+        expect(text[1].id).toEqual(text[0].id);
+        expect(text[1].text).toEqual('abc');
+    });
+
+    it('settles a prepend-then-append rewrite on the full answer under one stream id', async () => {
+        const messages: AgentMessage[] = [];
+        const handler = new AcpMessageHandler((message) => messages.push(message), {
+            textIdleFlushMs: 1000
+        });
+
+        await handler.handleUpdate({
+            sessionUpdate: ACP_SESSION_UPDATE_TYPES.agentMessageChunk,
+            content: { type: 'text', text: 'world' }
+        });
+        await vi.advanceTimersByTimeAsync(1000);
+
+        await handler.handleUpdate({
+            sessionUpdate: ACP_SESSION_UPDATE_TYPES.agentMessageChunk,
+            content: { type: 'text', text: 'hello world' }
+        });
+        await handler.handleUpdate({
+            sessionUpdate: ACP_SESSION_UPDATE_TYPES.agentMessageChunk,
+            content: { type: 'text', text: 'hello world!' }
+        });
+        await vi.advanceTimersByTimeAsync(1000);
+
+        handler.flushText();
+
+        const text = textMessages(messages);
+        expect(text).toHaveLength(3);
+        const id = text[0].id;
+        expect(id).toEqual(expect.any(String));
+        for (const message of text) {
+            expect(message.id).toEqual(id);
+        }
+        expect(text[0].text).toEqual('world');
+        expect(text[1].text).toEqual('hello world!');
+        expect(text[2].text).toEqual('hello world!');
+        expect(text.some((message) => message.text === 'hello ')).toBe(false);
+    });
+
+    it('defers an incomplete internal envelope until a boundary flush drops it', async () => {
+        const messages: AgentMessage[] = [];
+        const handler = new AcpMessageHandler((message) => messages.push(message), {
+            textChunkMode: 'delta',
+            textIdleFlushMs: 1000
+        });
+
+        await handler.handleUpdate({
+            sessionUpdate: ACP_SESSION_UPDATE_TYPES.agentMessageChunk,
+            content: { type: 'text', text: '{"type":"ou' }
+        });
+        await vi.advanceTimersByTimeAsync(1000);
+        expect(textMessages(messages)).toEqual([]);
+
+        await handler.handleUpdate({
+            sessionUpdate: ACP_SESSION_UPDATE_TYPES.agentMessageChunk,
+            content: { type: 'text', text: 'tput","data":{"parentUuid":null,"sessionId":"s","userType":"x"}}' }
+        });
+        handler.drainBuffers();
+        expect(textMessages(messages)).toEqual([]);
+    });
+
+    it('still flushes a complete JSON answer at idle', async () => {
+        const messages: AgentMessage[] = [];
+        const handler = new AcpMessageHandler((message) => messages.push(message), {
+            textChunkMode: 'delta',
+            textIdleFlushMs: 1000
+        });
+
+        await handler.handleUpdate({
+            sessionUpdate: ACP_SESSION_UPDATE_TYPES.agentMessageChunk,
+            content: { type: 'text', text: '{"a":1}' }
+        });
+        await vi.advanceTimersByTimeAsync(1000);
+        expect(textMessages(messages)).toEqual([{ type: 'text', text: '{"a":1}', id: expect.any(String), streamSnapshot: true, live: true }]);
+    });
+
+    it('keeps reasoning above the answer when a trailing thought arrives after text', async () => {
+        const messages: AgentMessage[] = [];
+        const handler = new AcpMessageHandler((message) => messages.push(message), {
+            textChunkMode: 'delta',
+            textIdleFlushMs: 1000
+        });
+
+        await handler.handleUpdate({
+            sessionUpdate: ACP_SESSION_UPDATE_TYPES.agentMessageChunk,
+            content: { type: 'text', text: 'the answer' }
+        });
+        await vi.advanceTimersByTimeAsync(100);
+        await handler.handleUpdate({
+            sessionUpdate: ACP_SESSION_UPDATE_TYPES.agentThoughtChunk,
+            content: { type: 'text', text: 'trailing thought' }
+        });
+
+        await vi.advanceTimersByTimeAsync(1000);
+        expect(textMessages(messages)).toEqual([]);
+
+        handler.drainBuffers();
+
+        const ordered = messages.filter((message) => message.type === 'text' || message.type === 'reasoning');
+        const reasoningIndex = ordered.findIndex(
+            (message) => message.type === 'reasoning' && message.text.includes('trailing thought')
+        );
+        const textIndex = ordered.findIndex((message) => message.type === 'text');
+        expect(reasoningIndex).toBeGreaterThanOrEqual(0);
+        expect(textIndex).toBeGreaterThan(reasoningIndex);
+        expect(ordered[textIndex]).toEqual({ type: 'text', text: 'the answer' });
+    });
+
+    it('still flushes brace-leading text that cannot be a control envelope', async () => {
+        const messages: AgentMessage[] = [];
+        const handler = new AcpMessageHandler((message) => messages.push(message), {
+            textChunkMode: 'delta',
+            textIdleFlushMs: 1000
+        });
+
+        await handler.handleUpdate({
+            sessionUpdate: ACP_SESSION_UPDATE_TYPES.agentMessageChunk,
+            content: { type: 'text', text: '{"name":"hapi",' }
+        });
+
+        await vi.advanceTimersByTimeAsync(1000);
+        expect(textMessages(messages)).toEqual([{ type: 'text', text: '{"name":"hapi",', id: expect.any(String), streamSnapshot: true, live: true }]);
+    });
+
+    it('defers a control envelope whose data key arrives before type', async () => {
+        const messages: AgentMessage[] = [];
+        const handler = new AcpMessageHandler((message) => messages.push(message), {
+            textChunkMode: 'delta',
+            textIdleFlushMs: 1000
+        });
+
+        await handler.handleUpdate({
+            sessionUpdate: ACP_SESSION_UPDATE_TYPES.agentMessageChunk,
+            content: { type: 'text', text: '{"data":{"parentUuid":null,"sessionId":"s","userType":"x"},' }
+        });
+        await vi.advanceTimersByTimeAsync(1000);
+        expect(textMessages(messages)).toEqual([]);
+
+        await handler.handleUpdate({
+            sessionUpdate: ACP_SESSION_UPDATE_TYPES.agentMessageChunk,
+            content: { type: 'text', text: '"type":"output"}' }
+        });
+        await vi.advanceTimersByTimeAsync(1000);
+        expect(textMessages(messages)).toEqual([]);
+
+        handler.drainBuffers();
+        expect(textMessages(messages)).toEqual([]);
+    });
+
+    it('keeps one stream id across an idle gap inside an open code fence', async () => {
+        const messages: AgentMessage[] = [];
+        const handler = new AcpMessageHandler((message) => messages.push(message), {
+            textChunkMode: 'delta',
+            textIdleFlushMs: 1000
+        });
+
+        await handler.handleUpdate({
+            sessionUpdate: ACP_SESSION_UPDATE_TYPES.agentMessageChunk,
+            content: { type: 'text', text: '```js\nconst a = 1;\n' }
+        });
+        await vi.advanceTimersByTimeAsync(1000);
+
+        await handler.handleUpdate({
+            sessionUpdate: ACP_SESSION_UPDATE_TYPES.agentMessageChunk,
+            content: { type: 'text', text: 'console.log(a);\n```' }
+        });
+        await vi.advanceTimersByTimeAsync(1000);
+
+        const text = textMessages(messages);
+        expect(text).toHaveLength(2);
+        expect(text[0].id).toEqual(expect.any(String));
+        expect(text[1].id).toEqual(text[0].id);
+        expect(text[1].text).toEqual('```js\nconst a = 1;\nconsole.log(a);\n```');
     });
 });

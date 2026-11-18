@@ -31,6 +31,16 @@ describe('Gemini CLI sunset (read-only, not creatable)', () => {
 })
 
 describe('getPermissionModesForFlavor', () => {
+    test("returns the agy ACP session modes plus HAPI auto-approval", () => {
+        expect(getPermissionModesForFlavor('agy')).toEqual([
+            'request-review',
+            'acceptEdits',
+            'auto',
+            'plan',
+            'always-proceed'
+        ])
+    })
+
     test("returns the conservative Grok modes", () => {
         expect(getPermissionModesForFlavor('grok')).toEqual([
             'default',
@@ -149,7 +159,8 @@ describe('claude auto permission mode', () => {
 })
 
 describe('isSteeringSupportedForFlavor', () => {
-    it('supports codex, cursor and pi', () => {
+    it('supports agy, codex, cursor and pi', () => {
+        expect(isSteeringSupportedForFlavor('agy')).toBe(true)
         expect(isSteeringSupportedForFlavor('codex')).toBe(true)
         expect(isSteeringSupportedForFlavor('cursor')).toBe(true)
         expect(isSteeringSupportedForFlavor('pi')).toBe(true)
@@ -161,9 +172,16 @@ describe('isSteeringSupportedForFlavor', () => {
 })
 
 describe('isSteeringSupportedForSession', () => {
-    it('supports codex and pi sessions', () => {
+    it('supports agy acp, codex and pi sessions', () => {
+        expect(isSteeringSupportedForSession({ flavor: 'agy', agyProtocol: 'acp' })).toBe(true)
         expect(isSteeringSupportedForSession({ flavor: 'codex' })).toBe(true)
         expect(isSteeringSupportedForSession({ flavor: 'pi' })).toBe(true)
+    })
+
+    it('steers agy sessions only while they run on agy acp', () => {
+        expect(isSteeringSupportedForSession({ flavor: 'agy', agyProtocol: 'acp' })).toBe(true)
+        expect(isSteeringSupportedForSession({ flavor: 'agy' })).toBe(false)
+        expect(isSteeringSupportedForSession({ flavor: 'agy', agyProtocol: null })).toBe(false)
     })
 
     it('supports Cursor ACP sessions', () => {

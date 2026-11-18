@@ -46,6 +46,7 @@ export type SocketServerDeps = {
     onSessionEnd?: (payload: { sid: string; time: number }) => void
     onMachineAlive?: (payload: { machineId: string; time: number; health?: unknown }) => void
     onBackgroundTaskDelta?: (sessionId: string, delta: { started: number; completed: number }) => void
+    onBackgroundTaskCount?: (sessionId: string, count: number) => void
     onSessionActivity?: (sessionId: string, updatedAt: number) => void
     onSweepImmediateQueued?: (sessionId: string, now: number) => void
     onMessagesConsumed?: (sessionId: string) => void
@@ -155,6 +156,7 @@ export function createSocketServer(deps: SocketServerDeps): {
         onMachineAlive: deps.onMachineAlive,
         onWebappEvent: deps.onWebappEvent,
         onBackgroundTaskDelta: deps.onBackgroundTaskDelta,
+        onBackgroundTaskCount: deps.onBackgroundTaskCount,
         onSessionActivity: deps.onSessionActivity,
         onSweepImmediateQueued: deps.onSweepImmediateQueued,
         onMessagesConsumed: deps.onMessagesConsumed

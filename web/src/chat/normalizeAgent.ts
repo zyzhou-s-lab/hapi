@@ -101,12 +101,45 @@ function normalizeRoundSummary(value: unknown): RoundSummary | undefined {
         return undefined
     }
 
+    const generationMs = nonNegativeSafeInteger(value.generation_ms)
+    const generationOutputTokens = nonNegativeSafeInteger(value.generation_output_tokens)
+    const generation = generationMs !== undefined && generationMs > 0
+        && generationOutputTokens !== undefined && generationOutputTokens > 0
+        ? { generationMs, generationOutputTokens } : {}
+
     return {
         usage,
         modelUsage,
         totalCostUsd: totalCostUsd && totalCostUsd > 0 ? totalCostUsd : undefined,
         numTurns: numTurns && numTurns > 0 ? numTurns : undefined,
-        durationMs
+        durationMs,
+        ...generation
+    }
+}
+
+function normalizeAgyRoundSummary(value: Record<string, unknown>): RoundSummary | undefined {
+    const raw = value.agy_usage
+    const agyUsage: NonNullable<RoundSummary['agyUsage']> = {}
+    if (isObject(raw) && !Array.isArray(raw)) {
+        for (const key of ['input_tokens', 'output_tokens', 'thinking_tokens', 'cache_read_tokens', 'total_tokens'] as const) {
+            const token = nonNegativeSafeInteger(raw[key])
+            if (token !== undefined) agyUsage[key] = token
+        }
+    }
+    const durationMs = nonNegativeNumber(value.duration_ms)
+    const model = asString(value.model)
+    const numTurns = nonNegativeSafeInteger(value.num_turns)
+    const hasUsage = Object.keys(agyUsage).length > 0
+    if (!hasUsage && durationMs === undefined) return undefined
+    const generationMs = nonNegativeSafeInteger(value.generation_ms)
+    const generationOutputTokens = nonNegativeSafeInteger(value.generation_output_tokens)
+    return {
+        provider: 'agy',
+        modelUsage: model ? { [model]: {} } : {},
+        ...(hasUsage ? { agyUsage } : {}),
+        ...(numTurns !== undefined && numTurns > 0 ? { numTurns } : {}),
+        ...(durationMs !== undefined ? { durationMs } : {}),
+        ...(generationMs && generationOutputTokens ? { generationMs, generationOutputTokens } : {})
     }
 }
 
@@ -1139,6 +1172,23 @@ export function normalizeAgentRecord(
             }
         }
 
+        if (data.type === 'round-summary' && isObject(data.summary) && data.summary.provider === 'agy') {
+            const summary = normalizeAgyRoundSummary(data.summary)
+            if (!summary) return null
+            return {
+                id: messageId,
+                localId,
+                createdAt,
+                role: 'event',
+                content: {
+                    type: 'turn-summary',
+                    summary
+                },
+                isSidechain: false,
+                meta
+            }
+        }
+
         if (data.type === 'message' && typeof data.message === 'string') {
             const usage = normalizeCodexTokenUsage(data.usage) ?? undefined
             const streamId = asString(data.id)
@@ -1247,6 +1297,7 @@ export function normalizeAgentRecord(
 
         if (data.type === 'token_count') {
             const usage = normalizeCodexTokenUsage(data.info, data)
+            const model = asString(data.model)
             return usage ? {
                 id: messageId,
                 localId,
@@ -1254,7 +1305,8 @@ export function normalizeAgentRecord(
                 role: 'event',
                 content: {
                     type: 'token-count',
-                    info: data.info
+                    info: data.info,
+                    ...(model ? { model } : {})
                 },
                 isSidechain: false,
                 meta,
