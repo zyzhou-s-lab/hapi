@@ -1,14 +1,38 @@
 import { describe, expect, it } from 'vitest'
 import type { GitRepositoryStatus } from '@hapi/protocol/sourceControl'
-import { getGitActionBlock, getPrimaryGitAction } from './actions'
+import {
+    buildGitMenuItems,
+    getGitActionBlock,
+    getPrimaryGitAction,
+    resolveQuickGitAction
+} from './actions'
 
 export const repository: GitRepositoryStatus = {
-    repoRoot: '/project', branch: 'feature', head: 'abc',
-    indexDigest: 'a'.repeat(64), worktreeDigest: 'b'.repeat(64),
-    defaultBranch: 'origin/trunk', baseRef: 'origin/trunk', mergeBase: 'base', branchChangedFiles: 0,
-    upstream: 'origin/feature', remote: 'origin', ahead: 0, behind: 0,
-    dirty: false, scope: 'working', files: [], stagedFiles: [], unstagedFiles: [],
-    refs: [], worktrees: [], pullRequest: null, ghAvailable: true, ghAuthenticated: true,
+    repoRoot: '/project',
+    branch: 'feature',
+    head: 'abc',
+    indexDigest: 'a'.repeat(64),
+    worktreeDigest: 'b'.repeat(64),
+    defaultBranch: 'origin/trunk',
+    baseRef: 'origin/trunk',
+    mergeBase: 'base',
+    branchChangedFiles: 0,
+    upstream: 'origin/feature',
+    remote: 'origin',
+    remotes: ['origin'],
+    isDefaultBranch: false,
+    ahead: 0,
+    behind: 0,
+    dirty: false,
+    scope: 'working',
+    files: [],
+    stagedFiles: [],
+    unstagedFiles: [],
+    refs: [],
+    worktrees: [],
+    pullRequest: null,
+    ghAvailable: true,
+    ghAuthenticated: true,
 }
 
 describe('Git action eligibility', () => {
@@ -28,17 +52,19 @@ describe('Git action eligibility', () => {
         expect(getGitActionBlock('pull', { ...repository, dirty: true }, true, false)).toBe('dirty')
     })
 
-    it('checks offline and activity before any write, including staging', () => {
+    it('checks offline, activity, and conflicts before any write', () => {
         expect(getGitActionBlock('stage', repository, false, false)).toBe('offline')
         expect(getGitActionBlock('stage', repository, true, true)).toBe('busy')
-        expect(getGitActionBlock('commit', { ...repository, blockedReason: 'merge in progress' }, true, false)).toBe('busy')
+        expect(getGitActionBlock('commit', { ...repository, blockedReason: 'Unresolved merge conflicts block commit and publication.' }, true, false)).toBe('conflicts')
         expect(getGitActionBlock('stage', repository, true, false)).toBeNull()
     })
 
-    it('keeps detached and no-remote local commits available without enabling publication', () => {
+    it('blocks detached HEAD commits and publication while allowing checkout and branch creation', () => {
         const detached = { ...repository, branch: null, remote: null, dirty: true }
-        expect(getGitActionBlock('commit', detached, true, false)).toBeNull()
+        expect(getGitActionBlock('commit', detached, true, false)).toBe('detached')
         expect(getGitActionBlock('push', detached, true, false)).toBe('detached')
+        expect(getGitActionBlock('create-branch', detached, true, false)).toBeNull()
+        expect(getGitActionBlock('checkout', { ...repository, branch: null, dirty: false }, true, false)).toBeNull()
         expect(getGitActionBlock('push', { ...repository, remote: null }, true, false)).toBe('remote')
         expect(getGitActionBlock('pr', { ...repository, ghAuthenticated: false }, true, false)).toBe('auth')
     })
@@ -48,7 +74,61 @@ describe('Git action eligibility', () => {
             expect(getPrimaryGitAction({ ...repository, scope, branchChangedFiles: 2 })).toBe('pr')
         }
         expect(getPrimaryGitAction({ ...repository, branchChangedFiles: null })).toBeNull()
-        expect(getPrimaryGitAction({ ...repository, branchChangedFiles: 2, pullRequest: { url: 'https://github.com/example/repo/pull/1', number: 1, title: 'Existing' } })).toBeNull()
+        expect(getPrimaryGitAction({
+            ...repository,
+            branchChangedFiles: 2,
+            pullRequest: { url: 'https://github.com/example/repo/pull/1', number: 1, title: 'Existing', state: 'open' }
+        })).toBeNull()
+    })
+
+    it('resolves smart quick actions matching T3 Code states', () => {
+        expect(resolveQuickGitAction({ ...repository, branch: 'trunk', isDefaultBranch: true }, true, false)).toMatchObject({
+            labelKey: 'sourceControl.quick.commit',
+            disabled: true,
+            block: 'clean'
+        })
+        expect(resolveQuickGitAction({ ...repository, dirty: true }, true, false)).toMatchObject({
+            action: 'commit-push-pr',
+            labelKey: 'sourceControl.quick.commitPushPr',
+            opensDialog: true,
+            disabled: false
+        })
+        expect(resolveQuickGitAction({ ...repository, branch: 'trunk', isDefaultBranch: true, dirty: true }, true, false)).toMatchObject({
+            action: 'commit-push',
+            labelKey: 'sourceControl.quick.commitPush',
+            opensDialog: true,
+            disabled: false
+        })
+        expect(resolveQuickGitAction({ ...repository, ahead: 2 }, true, false)).toMatchObject({
+            action: 'push-pr',
+            labelKey: 'sourceControl.quick.pushPr',
+            opensDialog: true,
+            disabled: false
+        })
+        expect(resolveQuickGitAction({ ...repository, behind: 1 }, true, false)).toMatchObject({
+            action: 'pull',
+            labelKey: 'sourceControl.quick.pull',
+            opensDialog: false,
+            disabled: false
+        })
+    })
+
+    it('builds the 3-item dropdown menu on clean branches and hides Create PR only for open PRs', () => {
+        const mergedPrOnMain: GitRepositoryStatus = {
+            ...repository,
+            branch: 'trunk',
+            isDefaultBranch: true,
+            pullRequest: { url: 'https://github.com/example/repo/pull/50', number: 50, title: 'Merged PR', state: 'merged' }
+        }
+        expect(buildGitMenuItems(mergedPrOnMain, true, false).map((item) => item.id)).toEqual(['commit', 'push', 'pr'])
+
+        const openPr = {
+            ...repository,
+            pullRequest: { url: 'https://github.com/example/repo/pull/51', number: 51, title: 'Open PR', state: 'open' as const }
+        }
+        expect(buildGitMenuItems(openPr, true, false).map((item) => item.id)).toEqual(['commit', 'push'])
+
+        const behind = { ...repository, behind: 1 }
+        expect(buildGitMenuItems(behind, true, false).map((item) => item.id)).toEqual(['commit', 'pull', 'push', 'pr'])
     })
 })
-

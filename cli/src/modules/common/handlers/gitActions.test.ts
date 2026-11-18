@@ -438,10 +438,114 @@ exit 1
     })
 
     it('redacts credentials from command diagnostics', () => {
-            const sanitized = sanitizeGitOutput("fatal: unable to access 'https://user:pw-fake@example.test/repo' password=plain-secret ghp_0123456789abcdef0123")
-            expect(sanitized).not.toContain('pw-fake')
-            expect(sanitized).not.toContain('plain-secret')
-            expect(sanitized).not.toContain('ghp_0123456789abcdef0123')
-            expect(sanitized).toContain('https://***@example.test/repo')
+        const sanitized = sanitizeGitOutput("fatal: unable to access 'https://user:pw-fake@example.test/repo' password=plain-secret ghp_0123456789abcdef0123")
+        expect(sanitized).not.toContain('pw-fake')
+        expect(sanitized).not.toContain('plain-secret')
+        expect(sanitized).not.toContain('ghp_0123456789abcdef0123')
+        expect(sanitized).toContain('https://***@example.test/repo')
+    })
+
+    it('stages selected paths and unstages deselected paths in a one-shot commit', async () => {
+        const root = await createRepo('hapi-git-oneshot-')
+        await writeFile(join(root, 'a.txt'), 'one\n')
+        await writeFile(join(root, 'b.txt'), 'one\n')
+        await commitAll(root, 'init')
+
+        await writeFile(join(root, 'a.txt'), 'two\n')
+        await runGit(root, ['add', 'a.txt'])
+        await writeFile(join(root, 'b.txt'), 'two\n')
+        await writeFile(join(root, 'c.txt'), 'new\n')
+
+        const repository = await readStatus(root)
+        const result = await act(root, requestFor(repository, 'commit', {
+            paths: ['b.txt', 'c.txt'],
+            message: 'one-shot selected commit'
+        }))
+
+        expect(result.success).toBe(true)
+        expect(result.steps.map((step) => step.action)).toEqual(['stage', 'commit'])
+
+        const committed = (await runGit(root, ['show', '--name-only', '--format=', 'HEAD']))
+            .split('\n')
+            .filter(Boolean)
+            .sort()
+        expect(committed).toEqual(['b.txt', 'c.txt'])
+
+        const after = await readStatus(root)
+        expect(after.stagedFiles).toEqual([])
+        expect(after.unstagedFiles.map((file) => file.path)).toEqual(['a.txt'])
+    })
+
+    it('targets explicit GitHub repo slug in multi-remote repos and detects merged PRs on default branch', async () => {
+        const root = await createRepo('hapi-git-gh-multi-')
+        await writeFile(join(root, 'a.txt'), 'one\n')
+        const headOid = await commitAll(root, 'merge pr #50')
+        await runGit(root, ['remote', 'add', 'mine', 'https://github.com/zyzhou-s-lab/hapi.git'])
+        await runGit(root, ['remote', 'add', 'origin', 'https://github.com/mouriya-s-lab/hapi.git'])
+        await runGit(root, ['update-ref', 'refs/remotes/mine/main', headOid])
+        await runGit(root, ['config', 'branch.main.remote', 'mine'])
+        await runGit(root, ['config', 'branch.main.merge', 'refs/heads/main'])
+
+        const tools = await mkdtemp(join(tmpdir(), 'hapi-git-gh-multi-bin-'))
+        roots.push(tools)
+        const log = join(tools, 'gh.log')
+        const fakeGh = join(tools, 'gh')
+        await writeFile(fakeGh, `#!/bin/sh
+printf '%s\\n' "$*" >> "${log}"
+if [ "$1" = "--version" ]; then echo "gh version 9.9.9"; exit 0; fi
+if [ "$1" = "auth" ] && [ "$2" = "status" ]; then echo "Logged in"; exit 0; fi
+if [ "$1" = "pr" ] && [ "$2" = "view" ]; then
+  echo "no pull requests found for branch \\"$3\\"" >&2
+  exit 1
+fi
+if [ "$1" = "pr" ] && [ "$2" = "list" ]; then
+  echo '[{"url":"https://github.com/zyzhou-s-lab/hapi/pull/50","number":50,"title":"feat(agy): backport","state":"MERGED","isDraft":false,"mergeCommit":{"oid":"${headOid}"},"statusCheckRollup":[{"__typename":"CheckRun","status":"COMPLETED","conclusion":"SUCCESS"}]}]'
+  exit 0
+fi
+exit 1
+`)
+        await chmod(fakeGh, 0o755)
+
+        const contextResult = await resolveRepositoryContext(root, root)
+        expect(contextResult.context).toBeDefined()
+        const ghState = await readGitHubState(contextResult.context!, READ_TIMEOUT_MS, fakeGh, {
+            branch: 'main',
+            head: headOid,
+            isDefaultBranch: true,
+            remotes: ['mine', 'origin'],
+            preferredRemote: 'mine',
+            defaultBranch: 'mine/main'
         })
+        expect(ghState.pullRequest).toMatchObject({
+            number: 50,
+            state: 'merged',
+            checks: 'passing'
+        })
+        const calls = await readFile(log, 'utf8')
+        expect(calls).toContain('pr view main -R zyzhou-s-lab/hapi')
+        expect(calls).toContain('pr list -R zyzhou-s-lab/hapi --state merged')
+    })
+
+    it('switches and creates branches when tracked files are clean and blocks checkout when dirty', async () => {
+        const root = await createRepo('hapi-git-switch-')
+        await writeFile(join(root, 'a.txt'), 'one\n')
+        await commitAll(root, 'init')
+
+        const initial = await readStatus(root)
+        const created = await act(root, requestFor(initial, 'create-branch', { targetRef: 'feat/topic' }))
+        expect(created.success).toBe(true)
+        expect(created.branch).toBe('feat/topic')
+
+        await writeFile(join(root, 'untracked.txt'), 'ok\n')
+        const onFeature = await readStatus(root)
+        const switchedBack = await act(root, requestFor(onFeature, 'checkout', { targetRef: 'main' }))
+        expect(switchedBack.success).toBe(true)
+        expect(switchedBack.branch).toBe('main')
+
+        await writeFile(join(root, 'a.txt'), 'dirty\n')
+        const dirty = await readStatus(root)
+        const blocked = await act(root, requestFor(dirty, 'checkout', { targetRef: 'feat/topic' }))
+        expect(blocked.success).toBe(false)
+        expect(blocked.error).toContain('Commit or discard local changes')
+    })
 })

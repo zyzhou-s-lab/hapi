@@ -5,6 +5,8 @@ import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { afterEach, describe, expect, it } from 'vitest'
 import {
+    classifyGitHubChecks,
+    parseGitHubRepoSlug,
     readRepositoryStatus,
     readScopedFileDiff,
     resolveRepositoryContext,
@@ -325,6 +327,70 @@ describe('git repository status and scoped diffs', () => {
         })
         expect(branchResult.repository).toBeUndefined()
         expect(branchResult.error).toContain('No base branch selected')
+        expect(repository.changesSummary).toEqual({
+            insertions: 0,
+            deletions: 0,
+            baseRef: null
+        })
+    })
+
+    it('resolves default branch without remote HEAD symrefs and sums committed + uncommitted + untracked changesSummary', async () => {
+        const parent = await mkdtemp(join(tmpdir(), 'hapi-git-multiremote-'))
+        roots.push(parent)
+        await runGit(parent, ['init', '-q', '--bare', 'origin.git'])
+        await runGit(parent, ['init', '-q', '--bare', 'mine.git'])
+        const originBare = join(parent, 'origin.git')
+        const mineBare = join(parent, 'mine.git')
+
+        const work = join(parent, 'work')
+        await runGit(parent, ['init', '-q', '-b', 'main', work])
+        await runGit(work, ['config', 'user.name', 'HAPI Test'])
+        await runGit(work, ['config', 'user.email', 'hapi@example.test'])
+        await writeFile(join(work, 'base.txt'), 'line1\n')
+        await commitAll(work, 'base')
+        await runGit(work, ['remote', 'add', 'origin', originBare])
+        await runGit(work, ['remote', 'add', 'mine', mineBare])
+        await runGit(work, ['push', '-q', '-u', 'mine', 'main'])
+        await runGit(work, ['push', '-q', 'origin', 'main'])
+
+        const cleanMain = await readStatus(work)
+        expect(cleanMain.repository.defaultBranch).toBe('mine/main')
+        expect(cleanMain.repository.remote).toBe('mine')
+        expect(cleanMain.repository.isDefaultBranch).toBe(true)
+        expect(cleanMain.repository.changesSummary).toEqual({
+            insertions: 0,
+            deletions: 0,
+            baseRef: 'mine/main'
+        })
+
+        await runGit(work, ['checkout', '-q', '-b', 'feat/work'])
+        await writeFile(join(work, 'committed.txt'), 'a\nb\n')
+        await commitAll(work, 'committed change')
+        await writeFile(join(work, 'base.txt'), 'line1\nline2\n')
+        await writeFile(join(work, 'untracked.txt'), 'u1\nu2\nu3\n')
+
+        const feature = await readStatus(work)
+        expect(feature.repository.defaultBranch).toBe('mine/main')
+        expect(feature.repository.isDefaultBranch).toBe(false)
+        expect(feature.repository.changesSummary).toEqual({
+            insertions: 6,
+            deletions: 0,
+            baseRef: 'mine/main'
+        })
+    })
+
+    it('parses GitHub remote slugs and classifies check rollups', () => {
+        expect(parseGitHubRepoSlug('https://github.com/zyzhou-s-lab/hapi.git')).toBe('zyzhou-s-lab/hapi')
+        expect(parseGitHubRepoSlug('git@github.com:pingdotgg/t3code.git')).toBe('pingdotgg/t3code')
+        expect(parseGitHubRepoSlug('ssh://git@ghe.example.com/org/repo.git')).toBe('ghe.example.com/org/repo')
+        expect(parseGitHubRepoSlug('/tmp/local/origin.git')).toBeNull()
+        expect(parseGitHubRepoSlug('file:///tmp/origin.git')).toBeNull()
+
+        expect(classifyGitHubChecks([])).toBeNull()
+        expect(classifyGitHubChecks([{ __typename: 'CheckRun', status: 'COMPLETED', conclusion: 'SUCCESS' }])).toBe('passing')
+        expect(classifyGitHubChecks([{ __typename: 'CheckRun', status: 'IN_PROGRESS', conclusion: null }])).toBe('pending')
+        expect(classifyGitHubChecks([{ __typename: 'CheckRun', status: 'COMPLETED', conclusion: 'FAILURE' }])).toBe('failing')
+        expect(classifyGitHubChecks([{ __typename: 'StatusContext', state: 'ERROR' }])).toBe('failing')
     })
 
     it('changes index and worktree digests only when the corresponding state changes', async () => {

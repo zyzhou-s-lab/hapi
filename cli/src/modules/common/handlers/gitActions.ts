@@ -19,10 +19,12 @@ import {
     truncateOutput
 } from './gitExec'
 import {
+    findRemoteForUpstream,
     isWithinWorkingDirectory,
     localBranchName,
     parseGitHubPullRequest,
     readActionState,
+    resolveRemoteGitHubSlug,
     resolveRepositoryContext,
     type ActionState,
     type RepositoryContext
@@ -34,7 +36,7 @@ export type GitActionExecutorOptions = {
     ghCommand?: string
 }
 
-type StepAction = 'stage' | 'commit' | 'push' | 'pull' | 'pr'
+type StepAction = 'stage' | 'commit' | 'push' | 'pull' | 'pr' | 'checkout' | 'create-branch'
 
 type ActionRun = {
     context: RepositoryContext
@@ -53,6 +55,7 @@ type StepOutcome =
         ok: true
         output: string
         head?: string | null
+        branch?: string | null
         indexDigest?: string
         worktreeDigest?: string
         pullRequestUrl?: string
@@ -80,8 +83,11 @@ const ACTION_PLANS: Record<GitActionKind, StepAction[]> = {
     push: ['push'],
     pull: ['pull'],
     pr: ['pr'],
+    'push-pr': ['push', 'pr'],
     'commit-push': ['commit', 'push'],
-    'commit-push-pr': ['commit', 'push', 'pr']
+    'commit-push-pr': ['commit', 'push', 'pr'],
+    checkout: ['checkout'],
+    'create-branch': ['create-branch']
 }
 
 function validateExpectedState(state: ActionState, request: GitActionRequest): string | null {
@@ -215,6 +221,31 @@ async function stageStep(run: ActionRun): Promise<StepOutcome> {
     )
     if (!selected.pathspecs || selected.pathspecs.length === 0) {
         return { ok: false, error: selected.error ?? 'Select at least one file to stage.' }
+    }
+
+    if (run.request.action !== 'stage') {
+        const selectedSet = new Set(selected.pathspecs)
+        const toUnstage = new Set<string>()
+        for (const entry of before.staged) {
+            if (!isWithinWorkingDirectory(run.context.repoRoot, entry.path, run.workingDirectory)) continue
+            const isSelected = selectedSet.has(entry.path)
+                || (entry.oldPath !== undefined && selectedSet.has(entry.oldPath))
+            if (!isSelected) {
+                toUnstage.add(entry.path)
+                if (entry.oldPath && isWithinWorkingDirectory(run.context.repoRoot, entry.oldPath, run.workingDirectory)) {
+                    toUnstage.add(entry.oldPath)
+                }
+            }
+        }
+        if (toUnstage.size > 0) {
+            const unstageArgs = before.head
+                ? ['--literal-pathspecs', 'reset', '-q', 'HEAD', '--', ...toUnstage]
+                : ['--literal-pathspecs', 'rm', '--cached', '-q', '--', ...toUnstage]
+            const unstageResult = await runGit(unstageArgs, run.context.repoRoot, LOCAL_WRITE_TIMEOUT_MS)
+            if (!unstageResult.success) {
+                return { ok: false, error: sanitizeGitOutput(commandOutput(unstageResult) || 'Unable to unstage deselected files') }
+            }
+        }
     }
 
     const result = await runGit(
@@ -483,7 +514,25 @@ async function pullRequestStep(run: ActionRun): Promise<StepOutcome> {
         }
     }
 
-    const view = await runCommand(run.ghCommand, ['pr', 'view', '--json', 'url,number,title'], {
+    const remoteResult = selectRemote(state, run.request.remote)
+    const pushSlug = remoteResult.remote
+        ? await resolveRemoteGitHubSlug(run.context.repoRoot, remoteResult.remote, READ_TIMEOUT_MS)
+        : null
+    const baseRef = run.request.baseRef ?? state.defaultBranch
+    const baseRemote = baseRef ? findRemoteForUpstream(baseRef, state.remotes) : null
+    const baseSlug = baseRemote && baseRemote !== remoteResult.remote
+        ? await resolveRemoteGitHubSlug(run.context.repoRoot, baseRemote, READ_TIMEOUT_MS)
+        : null
+    const targetSlug = baseSlug ?? pushSlug
+    const pushOwner = pushSlug?.split('/').slice(-2, -1)[0]
+    const headArg = baseSlug && pushSlug && baseSlug !== pushSlug && pushOwner
+        ? `${pushOwner}:${state.branch}`
+        : state.branch
+    const viewArgs = targetSlug
+        ? ['pr', 'view', headArg, '-R', targetSlug, '--json', 'url,number,title']
+        : ['pr', 'view', '--json', 'url,number,title']
+
+    const view = await runCommand(run.ghCommand, viewArgs, {
         cwd: run.context.repoRoot,
         timeoutMs: GH_TIMEOUT_MS
     })
@@ -499,7 +548,6 @@ async function pullRequestStep(run: ActionRun): Promise<StepOutcome> {
         }
     }
 
-    const baseRef = run.request.baseRef ?? state.defaultBranch
     if (!baseRef) {
         return {
             ok: false,
@@ -518,9 +566,17 @@ async function pullRequestStep(run: ActionRun): Promise<StepOutcome> {
         return { ok: false, error: 'Enter a pull request title.' }
     }
 
+    const createArgs = [
+        'pr', 'create',
+        ...(targetSlug ? ['-R', targetSlug] : []),
+        '--base', base,
+        '--head', headArg,
+        '--title', title,
+        '--body', run.request.body ?? ''
+    ]
     const create = await runCommand(
         run.ghCommand,
-        ['pr', 'create', '--base', base, '--head', state.branch, '--title', title, '--body', run.request.body ?? ''],
+        createArgs,
         { cwd: run.context.repoRoot, timeoutMs: GH_TIMEOUT_MS }
     )
     if (!create.success) {
@@ -530,7 +586,7 @@ async function pullRequestStep(run: ActionRun): Promise<StepOutcome> {
         }
     }
 
-    const postView = await runCommand(run.ghCommand, ['pr', 'view', '--json', 'url,number,title'], {
+    const postView = await runCommand(run.ghCommand, viewArgs, {
         cwd: run.context.repoRoot,
         timeoutMs: GH_TIMEOUT_MS
     })
@@ -545,6 +601,106 @@ async function pullRequestStep(run: ActionRun): Promise<StepOutcome> {
     return { ok: true, output: `Created pull request: ${url}`, pullRequestUrl: url }
 }
 
+async function hasLocalBranch(repoRoot: string, name: string): Promise<boolean> {
+    const check = await runGit(['show-ref', '--verify', '--quiet', `refs/heads/${name}`], repoRoot, READ_TIMEOUT_MS)
+    return check.success
+}
+
+async function checkoutStep(run: ActionRun): Promise<StepOutcome> {
+    const targetRef = run.request.targetRef?.trim()
+    if (!targetRef || targetRef.startsWith('-')) {
+        return { ok: false, error: 'Enter a valid branch name.' }
+    }
+    const verified = await refreshState(run)
+    if (!verified.state) return { ok: false, error: verified.error ?? 'Unable to verify repository state' }
+    const state = verified.state
+
+    if (state.unmerged) {
+        return { ok: false, error: 'Unresolved merge conflicts block switching branches.' }
+    }
+    if (state.trackedDirty) {
+        return { ok: false, error: 'Commit or discard local changes before switching branches.' }
+    }
+
+    let args: string[]
+    if (await hasLocalBranch(run.context.repoRoot, targetRef)) {
+        args = ['switch', targetRef]
+    } else {
+        const matchedRemote = findRemoteForUpstream(targetRef, state.remotes)
+        if (matchedRemote) {
+            const localName = targetRef.slice(matchedRemote.length + 1)
+            if (localName && await hasLocalBranch(run.context.repoRoot, localName)) {
+                args = ['switch', localName]
+            } else {
+                args = ['switch', '--track', targetRef]
+            }
+        } else {
+            args = ['switch', targetRef]
+        }
+    }
+
+    const result = await runGit(args, run.context.repoRoot, LOCAL_WRITE_TIMEOUT_MS)
+    if (!result.success) {
+        return { ok: false, error: sanitizeGitOutput(commandOutput(result) || 'git switch failed') }
+    }
+
+    const after = await readActionState(run.context)
+    if (!after.state) {
+        return { ok: false, error: after.error ?? 'Unable to read repository state after switching branches' }
+    }
+    run.state = after.state
+    return {
+        ok: true,
+        output: sanitizeGitOutput(commandOutput(result) || `Switched to ${after.state.branch ?? targetRef}.`),
+        head: after.state.head,
+        branch: after.state.branch,
+        indexDigest: after.state.indexDigest,
+        worktreeDigest: after.state.worktreeDigest
+    }
+}
+
+async function createBranchStep(run: ActionRun): Promise<StepOutcome> {
+    const targetRef = run.request.targetRef?.trim()
+    if (!targetRef || targetRef.startsWith('-')) {
+        return { ok: false, error: 'Enter a valid branch name.' }
+    }
+    const checkFormat = await runGit(['check-ref-format', '--branch', targetRef], run.context.repoRoot, READ_TIMEOUT_MS)
+    if (!checkFormat.success) {
+        return { ok: false, error: `Invalid branch name '${targetRef}'.` }
+    }
+    const startPoint = run.request.startPoint?.trim()
+    if (startPoint && startPoint.startsWith('-')) {
+        return { ok: false, error: 'Invalid start point reference.' }
+    }
+
+    const verified = await refreshState(run)
+    if (!verified.state) return { ok: false, error: verified.error ?? 'Unable to verify repository state' }
+    const state = verified.state
+    if (state.unmerged) {
+        return { ok: false, error: 'Unresolved merge conflicts block creating a branch.' }
+    }
+
+    const args = startPoint ? ['switch', '-c', targetRef, startPoint] : ['switch', '-c', targetRef]
+    const result = await runGit(args, run.context.repoRoot, LOCAL_WRITE_TIMEOUT_MS)
+    if (!result.success) {
+        return { ok: false, error: sanitizeGitOutput(commandOutput(result) || 'git switch -c failed') }
+    }
+
+    const after = await readActionState(run.context)
+    if (!after.state) {
+        return { ok: false, error: after.error ?? 'Unable to read repository state after creating branch' }
+    }
+    run.state = after.state
+    return {
+        ok: true,
+        output: sanitizeGitOutput(commandOutput(result) || `Created and switched to ${after.state.branch ?? targetRef}.`),
+        head: after.state.head,
+        branch: after.state.branch,
+        indexDigest: after.state.indexDigest,
+        worktreeDigest: after.state.worktreeDigest
+    }
+}
+
 async function executeStep(action: StepAction, run: ActionRun): Promise<StepOutcome> {
     switch (action) {
         case 'stage':
@@ -557,6 +713,10 @@ async function executeStep(action: StepAction, run: ActionRun): Promise<StepOutc
             return await pullStep(run)
         case 'pr':
             return await pullRequestStep(run)
+        case 'checkout':
+            return await checkoutStep(run)
+        case 'create-branch':
+            return await createBranchStep(run)
     }
 }
 
@@ -609,8 +769,17 @@ export async function runGitAction(
 
         const steps: GitActionStep[] = []
         let pullRequestUrl: string | undefined
+        let branch: string | null | undefined
 
-        for (const action of ACTION_PLANS[request.action]) {
+        const basePlan = ACTION_PLANS[request.action]
+        const stepsPlan: StepAction[] = (
+            (request.action === 'commit' || request.action === 'commit-push' || request.action === 'commit-push-pr')
+            && request.paths !== undefined
+        )
+            ? ['stage', ...basePlan]
+            : basePlan
+
+        for (const action of stepsPlan) {
             const outcome = await executeStep(action, run)
             if (!outcome.ok) {
                 const head = await readCurrentHead(context)
@@ -623,6 +792,10 @@ export async function runGitAction(
             })
             if (outcome.head !== undefined) {
                 run.expectedHead = outcome.head
+            }
+            if (outcome.branch !== undefined) {
+                run.expectedBranch = outcome.branch
+                branch = outcome.branch
             }
             if (outcome.indexDigest) {
                 run.expectedIndex = outcome.indexDigest
@@ -640,6 +813,7 @@ export async function runGitAction(
             success: true,
             steps,
             head,
+            ...(branch !== undefined ? { branch } : {}),
             ...(pullRequestUrl ? { pullRequestUrl } : {})
         }
     })

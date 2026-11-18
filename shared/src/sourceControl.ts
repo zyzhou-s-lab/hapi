@@ -25,7 +25,25 @@ export type GitChange = {
 
 export type GitRef = { name: string; remote: boolean; current: boolean }
 export type GitWorktree = { path: string; branch: string | null; head: string | null }
-export type GitPullRequest = { url: string; number: number; title: string }
+export type GitPullRequestState = 'open' | 'merged' | 'closed'
+export type GitPullRequestChecks = 'passing' | 'failing' | 'pending' | null
+export type GitPullRequest = {
+    url: string
+    number: number
+    title: string
+    state?: GitPullRequestState
+    isDraft?: boolean
+    checks?: GitPullRequestChecks
+    baseRefName?: string
+    headRefName?: string
+}
+export type GitChangesSummary = {
+    insertions: number
+    deletions: number
+    /** Base ref compared against (e.g. 'mine/main'); null means uncommitted changes vs HEAD. */
+    baseRef: string | null
+    unknown?: boolean
+}
 
 export type GitRepositoryStatus = {
     repoRoot: string
@@ -42,6 +60,8 @@ export type GitRepositoryStatus = {
     branchChangedFiles: number | null
     upstream: string | null
     remote: string | null
+    remotes?: string[]
+    isDefaultBranch?: boolean
     ahead: number
     behind: number
     dirty: boolean
@@ -49,6 +69,7 @@ export type GitRepositoryStatus = {
     files: GitChange[]
     stagedFiles: GitChange[]
     unstagedFiles: GitChange[]
+    changesSummary?: GitChangesSummary
     refs: GitRef[]
     worktrees: GitWorktree[]
     pullRequest: GitPullRequest | null
@@ -61,7 +82,7 @@ export type GitRepositoryStatus = {
 export type GitRepositoryResponse = CommandResponse & { repository?: GitRepositoryStatus }
 
 export const GitActionKindSchema = z.enum([
-    'stage', 'commit', 'push', 'pull', 'pr', 'commit-push', 'commit-push-pr'
+    'stage', 'commit', 'push', 'pull', 'pr', 'push-pr', 'commit-push', 'commit-push-pr', 'checkout', 'create-branch'
 ])
 export type GitActionKind = z.infer<typeof GitActionKindSchema>
 
@@ -75,13 +96,15 @@ export const GitActionRequestSchema = z.object({
     message: z.string().max(100_000).optional(),
     remote: z.string().min(1).max(256).optional(),
     baseRef: z.string().min(1).max(256).optional(),
+    targetRef: z.string().min(1).max(256).optional(),
+    startPoint: z.string().min(1).max(256).optional(),
     title: z.string().max(1000).optional(),
     body: z.string().max(100_000).optional(),
     confirmDefaultBranch: z.boolean().optional()
 })
 export type GitActionRequest = z.infer<typeof GitActionRequestSchema>
 export type GitActionStep = {
-    action: 'stage' | 'commit' | 'push' | 'pull' | 'pr'
+    action: 'stage' | 'commit' | 'push' | 'pull' | 'pr' | 'checkout' | 'create-branch'
     success: boolean
     output: string
 }
@@ -90,5 +113,6 @@ export type GitActionResponse = {
     steps: GitActionStep[]
     error?: string
     head?: string | null
+    branch?: string | null
     pullRequestUrl?: string
 }

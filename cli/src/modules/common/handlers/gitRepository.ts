@@ -3,7 +3,10 @@ import { lstat, realpath } from 'node:fs/promises'
 import { basename, dirname, isAbsolute, relative, resolve, sep } from 'node:path'
 import type {
     GitChange,
+    GitChangesSummary,
     GitPullRequest,
+    GitPullRequestChecks,
+    GitPullRequestState,
     GitRef,
     GitRepositoryStatus,
     GitScope,
@@ -435,21 +438,34 @@ export async function detectDefaultBranch(
     repoRoot: string,
     remotes: string[],
     trackingRemote: string | null,
-    timeoutMs = READ_TIMEOUT_MS
+    timeoutMs = READ_TIMEOUT_MS,
+    options?: { currentBranch?: string | null; upstream?: string | null }
 ): Promise<string | null> {
     if (remotes.length === 0) return null
     const result = await runGit(
-        ['for-each-ref', '--format=%(refname)%00%(symref)', 'refs/remotes'],
+        ['for-each-ref', '--format=%(refname)%00%(symref)%00%(upstream:short)', 'refs/remotes', 'refs/heads/main', 'refs/heads/master'],
         repoRoot,
         timeoutMs
     )
     if (!result.success) return null
 
     const candidates: Array<{ remote: string; target: string }> = []
+    const remoteBranches = new Set<string>()
+    const localUpstreams = new Map<string, string>()
     for (const line of result.stdout.split('\n')) {
         if (!line) continue
-        const [refname, symref] = line.split('\0')
-        if (!refname || !symref) continue
+        const [refname, symref, upstreamShort] = line.split('\0')
+        if (!refname) continue
+        if (refname.startsWith('refs/heads/')) {
+            if (upstreamShort) {
+                localUpstreams.set(refname.slice('refs/heads/'.length), upstreamShort)
+            }
+            continue
+        }
+        if (refname.startsWith('refs/remotes/') && !refname.endsWith('/HEAD')) {
+            remoteBranches.add(refname.slice('refs/remotes/'.length))
+        }
+        if (!symref) continue
         const match = /^refs\/remotes\/(.+)\/HEAD$/.exec(refname)
         if (!match) continue
         const target = symref.startsWith('refs/remotes/')
@@ -461,7 +477,47 @@ export async function detectDefaultBranch(
     const preferred = candidates.find((candidate) => candidate.remote === trackingRemote)
         ?? candidates.find((candidate) => candidate.remote === 'origin')
         ?? candidates[0]
-    return preferred?.target ?? null
+    if (preferred?.target) return preferred.target
+
+    const remotePriority: string[] = []
+    for (const candidate of [trackingRemote, 'origin', ...remotes]) {
+        if (candidate && remotes.includes(candidate) && !remotePriority.includes(candidate)) {
+            remotePriority.push(candidate)
+        }
+    }
+    if (
+        (options?.currentBranch === 'main' || options?.currentBranch === 'master')
+        && options.upstream
+        && remoteBranches.has(options.upstream)
+    ) {
+        return options.upstream
+    }
+    if (!trackingRemote) {
+        for (const branchName of ['main', 'master']) {
+            const localUpstream = localUpstreams.get(branchName)
+            if (localUpstream && remoteBranches.has(localUpstream)) {
+                return localUpstream
+            }
+        }
+    }
+    for (const branchName of ['main', 'master']) {
+        for (const remote of remotePriority) {
+            const ref = `${remote}/${branchName}`
+            if (remoteBranches.has(ref)) return ref
+        }
+    }
+    return null
+}
+
+export function resolvePreferredRemote(
+    remotes: string[],
+    trackingRemote: string | null,
+    defaultBranch: string | null
+): string | null {
+    if (remotes.length === 0) return null
+    return trackingRemote
+        ?? findRemoteForUpstream(defaultBranch, remotes)
+        ?? (remotes.includes('origin') ? 'origin' : remotes[0] ?? null)
 }
 
 async function listRefs(
@@ -564,13 +620,159 @@ export function localBranchName(defaultBranch: string | null, remotes: string[])
     return defaultBranch
 }
 
+const FAILING_CHECK_CONCLUSIONS = new Set([
+    'FAILURE',
+    'TIMED_OUT',
+    'CANCELLED',
+    'ACTION_REQUIRED',
+    'STARTUP_FAILURE',
+    'STALE'
+])
+const FAILING_CHECK_STATES = new Set(['FAILURE', 'ERROR'])
+const PENDING_CHECK_STATES = new Set(['PENDING', 'EXPECTED'])
+const PR_VIEW_FIELDS = 'url,number,title,state,isDraft,baseRefName,headRefName,statusCheckRollup'
+const PR_LIST_FIELDS = `${PR_VIEW_FIELDS},mergeCommit`
+const PR_NOT_FOUND_PATTERN = /no pull requests? found|could not find a pull request|no open pull requests/i
+
+export function parseGitHubRepoSlug(remoteUrl: string): string | null {
+    const trimmed = remoteUrl.trim()
+    if (!trimmed || trimmed.includes('\\') || trimmed.startsWith('/') || trimmed.startsWith('.') || trimmed.startsWith('file://')) {
+        return null
+    }
+    let host: string | undefined
+    let path: string | undefined
+    const urlMatch = /^https?:\/\/(?:[^/@]+@)?([^/:]+)(?::\d+)?\/(.+?)(?:\.git)?\/?$/i.exec(trimmed)
+    if (urlMatch) {
+        host = urlMatch[1]
+        path = urlMatch[2]
+    } else {
+        const sshSchemeMatch = /^ssh:\/\/(?:[^/@]+@)?([^/:]+)(?::\d+)?\/(.+?)(?:\.git)?\/?$/i.exec(trimmed)
+        if (sshSchemeMatch) {
+            host = sshSchemeMatch[1]
+            path = sshSchemeMatch[2]
+        } else {
+            const scpMatch = /^(?:[^/@]+@)?([^/:]+):([^/].*?)(?:\.git)?\/?$/.exec(trimmed)
+            if (scpMatch) {
+                host = scpMatch[1]
+                path = scpMatch[2]
+            }
+        }
+    }
+    if (!host || !path || !host.includes('.')) return null
+    const segments = path.replace(/^\/+/, '').replace(/\/+$/, '').split('/').filter(Boolean)
+    if (segments.length < 2) return null
+    const slug = segments.slice(0, 2).join('/')
+    return host.toLowerCase() === 'github.com' ? slug : `${host}/${slug}`
+}
+
+export async function resolveRemoteGitHubSlug(
+    repoRoot: string,
+    remote: string,
+    timeoutMs = READ_TIMEOUT_MS
+): Promise<string | null> {
+    const urlResult = await runGit(['remote', 'get-url', remote], repoRoot, timeoutMs)
+    if (!urlResult.success) return null
+    return parseGitHubRepoSlug(urlResult.stdout)
+}
+
+export function classifyGitHubChecks(rollup: unknown): GitPullRequestChecks {
+    if (!Array.isArray(rollup) || rollup.length === 0) return null
+    let hasPending = false
+    for (const item of rollup) {
+        if (!item || typeof item !== 'object') continue
+        const entry = item as Record<string, unknown>
+        const conclusion = typeof entry.conclusion === 'string' ? entry.conclusion.toUpperCase() : null
+        const status = typeof entry.status === 'string' ? entry.status.toUpperCase() : null
+        const state = typeof entry.state === 'string' ? entry.state.toUpperCase() : null
+
+        if ((conclusion && FAILING_CHECK_CONCLUSIONS.has(conclusion)) || (state && FAILING_CHECK_STATES.has(state))) {
+            return 'failing'
+        }
+        const isCheckRun = entry.__typename === 'CheckRun' || 'status' in entry || 'conclusion' in entry
+        if (isCheckRun) {
+            if (status !== 'COMPLETED' || !conclusion) {
+                hasPending = true
+            }
+        } else if (state && PENDING_CHECK_STATES.has(state)) {
+            hasPending = true
+        }
+    }
+    return hasPending ? 'pending' : 'passing'
+}
+
+function normalizePullRequestState(value: unknown): GitPullRequestState | undefined {
+    if (typeof value !== 'string') return undefined
+    const upper = value.toUpperCase()
+    if (upper === 'OPEN') return 'open'
+    if (upper === 'MERGED') return 'merged'
+    if (upper === 'CLOSED') return 'closed'
+    return undefined
+}
+
+export function normalizeGitHubPullRequest(parsed: unknown): GitPullRequest | null {
+    if (!parsed || typeof parsed !== 'object') return null
+    const record = parsed as Record<string, unknown>
+    if (typeof record.url !== 'string' || typeof record.number !== 'number' || typeof record.title !== 'string') {
+        return null
+    }
+    const state = normalizePullRequestState(record.state) ?? 'open'
+    const checks = classifyGitHubChecks(record.statusCheckRollup)
+    return {
+        url: record.url,
+        number: record.number,
+        title: record.title,
+        state,
+        ...(typeof record.isDraft === 'boolean' ? { isDraft: record.isDraft } : {}),
+        checks,
+        ...(typeof record.baseRefName === 'string' && record.baseRefName ? { baseRefName: record.baseRefName } : {}),
+        ...(typeof record.headRefName === 'string' && record.headRefName ? { headRefName: record.headRefName } : {})
+    }
+}
+
 export function parseGitHubPullRequest(raw: string): GitPullRequest | null {
     try {
-        const parsed = JSON.parse(raw) as { url?: unknown; number?: unknown; title?: unknown }
-        if (typeof parsed.url !== 'string' || typeof parsed.number !== 'number' || typeof parsed.title !== 'string') {
-            return null
+        return normalizeGitHubPullRequest(JSON.parse(raw))
+    } catch {
+        return null
+    }
+}
+
+async function resolveCandidateGitHubSlugs(
+    repoRoot: string,
+    options: { remotes?: string[]; preferredRemote?: string | null; defaultBranch?: string | null },
+    timeoutMs: number
+): Promise<string[]> {
+    const remotes = options.remotes ?? []
+    if (remotes.length === 0) return []
+    const defaultRemote = findRemoteForUpstream(options.defaultBranch ?? null, remotes)
+    const orderedRemotes: string[] = []
+    for (const candidate of [options.preferredRemote, defaultRemote, 'origin', ...remotes]) {
+        if (candidate && remotes.includes(candidate) && !orderedRemotes.includes(candidate)) {
+            orderedRemotes.push(candidate)
         }
-        return { url: parsed.url, number: parsed.number, title: parsed.title }
+    }
+    const slugs: string[] = []
+    for (const remote of orderedRemotes) {
+        const slug = await resolveRemoteGitHubSlug(repoRoot, remote, timeoutMs)
+        if (slug && !slugs.includes(slug)) {
+            slugs.push(slug)
+        }
+    }
+    return slugs
+}
+
+function findMergedPrForHead(raw: string, head: string): GitPullRequest | null {
+    try {
+        const list = JSON.parse(raw) as unknown
+        if (!Array.isArray(list)) return null
+        for (const item of list) {
+            if (!item || typeof item !== 'object') continue
+            const mergeCommit = (item as { mergeCommit?: { oid?: unknown } | null }).mergeCommit
+            if (mergeCommit && mergeCommit.oid === head) {
+                return normalizeGitHubPullRequest(item)
+            }
+        }
+        return null
     } catch {
         return null
     }
@@ -579,7 +781,15 @@ export function parseGitHubPullRequest(raw: string): GitPullRequest | null {
 export async function readGitHubState(
     context: RepositoryContext,
     timeoutMs = READ_TIMEOUT_MS,
-    ghCommand = 'gh'
+    ghCommand = 'gh',
+    options?: {
+        branch?: string | null
+        head?: string | null
+        isDefaultBranch?: boolean
+        remotes?: string[]
+        preferredRemote?: string | null
+        defaultBranch?: string | null
+    }
 ): Promise<GitHubState> {
     const version = await runCommand(ghCommand, ['--version'], {
         cwd: context.repoRoot,
@@ -602,25 +812,72 @@ export async function readGitHubState(
         }
     }
 
-    const view = await runCommand(ghCommand, ['pr', 'view', '--json', 'url,number,title'], {
-        cwd: context.repoRoot,
-        timeoutMs: Math.min(timeoutMs, GH_PROBE_TIMEOUT_MS)
-    })
-    if (view.success) {
+    const probeTimeout = Math.min(timeoutMs, GH_PROBE_TIMEOUT_MS)
+    const slugs = await resolveCandidateGitHubSlugs(context.repoRoot, options ?? {}, timeoutMs)
+    if (slugs.length === 0) {
+        const view = await runCommand(ghCommand, ['pr', 'view', '--json', PR_VIEW_FIELDS], {
+            cwd: context.repoRoot,
+            timeoutMs: probeTimeout
+        })
+        if (view.success) {
+            return {
+                available: true,
+                authenticated: true,
+                pullRequest: parseGitHubPullRequest(view.stdout)
+            }
+        }
+        if (PR_NOT_FOUND_PATTERN.test(view.stderr)) {
+            return { available: true, authenticated: true, pullRequest: null }
+        }
         return {
             available: true,
             authenticated: true,
-            pullRequest: parseGitHubPullRequest(view.stdout)
+            pullRequest: null,
+            pullRequestError: sanitizeGitOutput(view.stderr || 'Unable to read the pull request')
         }
     }
-    if (/no pull requests? found|could not find a pull request|no open pull requests/i.test(view.stderr)) {
-        return { available: true, authenticated: true, pullRequest: null }
+
+    let lastError: string | undefined
+    if (options?.branch) {
+        for (const slug of slugs) {
+            const view = await runCommand(ghCommand, ['pr', 'view', options.branch, '-R', slug, '--json', PR_VIEW_FIELDS], {
+                cwd: context.repoRoot,
+                timeoutMs: probeTimeout
+            })
+            if (view.success) {
+                const pullRequest = parseGitHubPullRequest(view.stdout)
+                if (pullRequest) {
+                    return { available: true, authenticated: true, pullRequest }
+                }
+            } else if (!PR_NOT_FOUND_PATTERN.test(view.stderr)) {
+                lastError = sanitizeGitOutput(view.stderr || 'Unable to read the pull request')
+            }
+        }
     }
+
+    if (options?.head && options.isDefaultBranch) {
+        for (const slug of slugs) {
+            const list = await runCommand(
+                ghCommand,
+                ['pr', 'list', '-R', slug, '--state', 'merged', '--search', options.head, '--limit', '5', '--json', PR_LIST_FIELDS],
+                { cwd: context.repoRoot, timeoutMs: probeTimeout }
+            )
+            if (list.success) {
+                const matched = findMergedPrForHead(list.stdout, options.head)
+                if (matched) {
+                    return { available: true, authenticated: true, pullRequest: matched }
+                }
+            } else {
+                lastError = lastError ?? sanitizeGitOutput(list.stderr || 'Unable to list pull requests')
+            }
+        }
+    }
+
     return {
         available: true,
         authenticated: true,
         pullRequest: null,
-        pullRequestError: sanitizeGitOutput(view.stderr || 'Unable to read the pull request')
+        ...(lastError ? { pullRequestError: lastError } : {})
     }
 }
 
@@ -650,6 +907,75 @@ async function readBranchStats(
     return { stats: stats.stats ?? new Map() }
 }
 
+function sumVisibleStats(
+    stats: Map<string, Numstat>,
+    repoRoot: string,
+    workingDirectory: string
+): { insertions: number; deletions: number; unknown: boolean } {
+    let insertions = 0
+    let deletions = 0
+    let unknown = false
+    for (const [path, stat] of stats) {
+        if (!isWithinWorkingDirectory(repoRoot, path, workingDirectory)) continue
+        if (stat.additions !== null && stat.deletions !== null) {
+            insertions += stat.additions
+            deletions += stat.deletions
+        } else if (!stat.binary) {
+            unknown = true
+        }
+    }
+    return { insertions, deletions, unknown }
+}
+
+async function computeChangesSummary(input: {
+    repoRoot: string
+    workingDirectory: string
+    timeoutMs: number
+    scope: GitScope
+    status: ParsedStatus
+    mergeBase: string | null
+    baseRef: string | null
+    scopeStatsMap?: Map<string, Numstat>
+    untrackedStats: Map<string, Numstat>
+}): Promise<GitChangesSummary> {
+    if (input.baseRef && input.mergeBase) {
+        const branchTree = await readNumstat(
+            input.repoRoot,
+            ['diff', '--no-ext-diff', input.mergeBase],
+            input.timeoutMs
+        )
+        if (!branchTree.error && branchTree.stats) {
+            const combined = mergeStats(branchTree.stats, input.untrackedStats)
+            const totals = sumVisibleStats(combined, input.repoRoot, input.workingDirectory)
+            return {
+                insertions: totals.insertions,
+                deletions: totals.deletions,
+                baseRef: input.baseRef,
+                ...(totals.unknown ? { unknown: true } : {})
+            }
+        }
+    }
+
+    const workingStats = input.scope === 'working'
+        ? input.scopeStatsMap
+        : (await loadScopeStats({
+            repoRoot: input.repoRoot,
+            timeoutMs: input.timeoutMs,
+            scope: 'working',
+            status: input.status,
+            mergeBase: input.mergeBase,
+            baseRef: input.baseRef,
+            untrackedStats: input.untrackedStats
+        })).stats
+    const totals = sumVisibleStats(workingStats ?? new Map(), input.repoRoot, input.workingDirectory)
+    return {
+        insertions: totals.insertions,
+        deletions: totals.deletions,
+        baseRef: null,
+        ...(totals.unknown ? { unknown: true } : {})
+    }
+}
+
 export async function readRepositoryStatus(
     context: RepositoryContext,
     workingDirectory: string,
@@ -666,9 +992,19 @@ export async function readRepositoryStatus(
 
     const remotes = await listRemotes(repoRoot, timeoutMs)
     const trackingRemote = findRemoteForUpstream(status.upstream, remotes)
-    const defaultBranch = await detectDefaultBranch(repoRoot, remotes, trackingRemote, timeoutMs)
-    const remote = trackingRemote ?? (remotes.length === 1 ? remotes[0] : null)
+    const defaultBranch = await detectDefaultBranch(repoRoot, remotes, trackingRemote, timeoutMs, {
+        currentBranch: status.branch,
+        upstream: status.upstream
+    })
+    const remote = resolvePreferredRemote(remotes, trackingRemote, defaultBranch)
     const baseRef = options.baseRef ?? defaultBranch
+    const defaultLocal = localBranchName(defaultBranch, remotes)
+    const isDefaultBranch = Boolean(
+        status.branch
+        && (defaultLocal
+            ? status.branch === defaultLocal
+            : remotes.length > 0 && (status.branch === 'main' || status.branch === 'master'))
+    )
 
     const visibleEntries = status.entries.filter((entry) => (
         isWithinWorkingDirectory(repoRoot, entry.path, workingDirectory)
@@ -765,13 +1101,31 @@ export async function readRepositoryStatus(
         ])
     }
 
-    const [refs, worktrees, digests, github] = await Promise.all([
+    const [refs, worktrees, digests, github, changesSummary] = await Promise.all([
         listRefs(repoRoot, remotes, status.branch, timeoutMs),
         listWorktrees(repoRoot, timeoutMs),
         computeStateDigests(repoRoot, status.entries, timeoutMs),
         options.includeGitHub === false
             ? Promise.resolve<GitHubState>({ available: false, authenticated: false, pullRequest: null })
-            : readGitHubState(context, timeoutMs)
+            : readGitHubState(context, timeoutMs, 'gh', {
+                branch: status.branch,
+                head: status.head,
+                isDefaultBranch,
+                remotes,
+                preferredRemote: remote,
+                defaultBranch
+            }),
+        computeChangesSummary({
+            repoRoot,
+            workingDirectory,
+            timeoutMs,
+            scope,
+            status,
+            mergeBase,
+            baseRef,
+            scopeStatsMap: scopeStats.stats,
+            untrackedStats: indexLayer.untrackedStats
+        })
     ])
 
     if ('error' in digests) {
@@ -800,6 +1154,8 @@ export async function readRepositoryStatus(
         branchChangedFiles,
         upstream: status.upstream,
         remote,
+        remotes,
+        isDefaultBranch,
         ahead: status.ahead,
         behind: status.behind,
         dirty: visibleEntries.length > 0,
@@ -807,6 +1163,7 @@ export async function readRepositoryStatus(
         files,
         stagedFiles,
         unstagedFiles,
+        changesSummary,
         refs,
         worktrees,
         pullRequest: github.pullRequest,
@@ -933,7 +1290,10 @@ export async function readActionState(context: RepositoryContext): Promise<{ sta
 
     const remotes = await listRemotes(context.repoRoot)
     const trackingRemote = findRemoteForUpstream(status.upstream, remotes)
-    const defaultBranch = await detectDefaultBranch(context.repoRoot, remotes, trackingRemote)
+    const defaultBranch = await detectDefaultBranch(context.repoRoot, remotes, trackingRemote, READ_TIMEOUT_MS, {
+        currentBranch: status.branch,
+        upstream: status.upstream
+    })
     const staged = status.entries.filter((entry) => entry.x !== '.' && entry.x !== '?')
     const unstaged = status.entries.filter((entry) => entry.y !== '.' && entry.x !== '?')
     const untracked = status.entries.filter((entry) => entry.x === '?')
@@ -954,7 +1314,7 @@ export async function readActionState(context: RepositoryContext): Promise<{ sta
             upstream: status.upstream,
             ahead: status.ahead,
             behind: status.behind,
-            remote: trackingRemote ?? (remotes.length === 1 ? remotes[0] : null),
+            remote: resolvePreferredRemote(remotes, trackingRemote, defaultBranch),
             remotes,
             defaultBranch
         }
