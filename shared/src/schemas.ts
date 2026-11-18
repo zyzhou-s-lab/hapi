@@ -115,6 +115,9 @@ export const MetadataSchema = z.object({
     opencodeSessionId: z.string().optional(),
     grokSessionId: z.string().optional(),
     agySessionId: z.string().optional(),
+    /** Set while an agy session runs on `agy acp`; absent otherwise. */
+    agyProtocol: z.literal('acp').optional(),
+    acpManualTitle: z.boolean().optional(),
     cursorSessionId: z.string().optional(),
     cursorSessionProtocol: z.enum(['acp', 'stream-json']).optional(),
     // Drives the web `CursorMigrationBanner`:
@@ -230,7 +233,8 @@ export type Metadata = z.infer<typeof MetadataSchema>
 export const AgentStateRequestSchema = z.object({
     tool: z.string(),
     arguments: z.unknown(),
-    createdAt: z.number().nullish()
+    createdAt: z.number().nullish(),
+    toolCallId: z.string().optional()
 })
 
 export type AgentStateRequest = z.infer<typeof AgentStateRequestSchema>

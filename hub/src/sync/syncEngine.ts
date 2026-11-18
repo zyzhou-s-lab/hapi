@@ -627,6 +627,10 @@ export class SyncEngine {
         this.sessionCache.applyBackgroundTaskDelta(sessionId, delta)
     }
 
+    handleBackgroundTaskCount(sessionId: string, count: number): void {
+        this.sessionCache.setBackgroundTaskCount(sessionId, count)
+    }
+
     recordSessionActivity(sessionId: string, updatedAt: number): void {
         this.sessionCache.recordSessionActivity(sessionId, updatedAt)
     }
@@ -1078,7 +1082,12 @@ export class SyncEngine {
             return { status: 'failed', error: 'Session not found', localId: null }
         }
         if (!isSteeringSupportedForSession(session.metadata)) {
-            return { status: 'failed', error: 'Steering is only supported for Pi, Codex, and Cursor ACP sessions', localId: null }
+            // An agy session gets its ACP marker only once its CLI has picked
+            // the transport, a few seconds after spawn.
+            const error = session.metadata?.flavor === 'agy'
+                ? 'Antigravity is not running on agy acp (yet); Steer is not available'
+                : 'Steering is only supported for Pi, Codex, Antigravity, and Cursor ACP sessions'
+            return { status: 'failed', error, localId: null }
         }
         if (session.agentState?.controlledByUser === true) {
             return { status: 'failed', error: 'Steering is only available for remote sessions', localId: null }

@@ -1396,6 +1396,7 @@ describe('normalizeDecryptedMessage', () => {
                 type: 'codex',
                 data: {
                     type: 'token_count',
+                    model: 'gemini-4-argon-medium',
                     info: {
                         total: { inputTokens: 120, outputTokens: 30 },
                         contextTokens: 4096,
@@ -1407,6 +1408,10 @@ describe('normalizeDecryptedMessage', () => {
         })
         expect(normalizeDecryptedMessage(usage)).toMatchObject({
             role: 'event',
+            content: {
+                type: 'token-count',
+                model: 'gemini-4-argon-medium'
+            },
             usage: {
                 input_tokens: 120,
                 output_tokens: 30,

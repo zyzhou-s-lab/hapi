@@ -1,8 +1,10 @@
 import {
     CREATABLE_AGENT_FLAVORS,
     GROK_PERMISSION_MODES,
+    getDefaultPermissionModeForFlavor,
     getPermissionModesForFlavor,
     normalizeCopilotAgentMode,
+    resolveHapiYoloPermissionMode,
     type CodexCollaborationMode,
     type CopilotAgentMode,
     type GrokPermissionMode,
@@ -79,10 +81,11 @@ export function loadNewSessionFormDraft(): NewSessionFormDraft | null {
                 if (agentPreserved && parsedMode && modes.includes(parsedMode)) {
                     return parsedMode
                 }
-                if (agentPreserved && parsed.yoloMode && modes.includes('yolo')) {
-                    return 'yolo'
+                const yoloBridgeMode = resolveHapiYoloPermissionMode(restoredAgent)
+                if (agentPreserved && parsedMode === undefined && parsed.yoloMode && yoloBridgeMode && modes.includes(yoloBridgeMode)) {
+                    return yoloBridgeMode
                 }
-                return 'default'
+                return getDefaultPermissionModeForFlavor(restoredAgent)
             })(),
             grokPermissionMode: agentPreserved
                 && GROK_PERMISSION_MODES.includes(parsed.grokPermissionMode as GrokPermissionMode)

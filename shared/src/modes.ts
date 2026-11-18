@@ -19,8 +19,12 @@ export const CREATABLE_AGENT_FLAVORS: readonly AgentFlavor[] = AGENT_FLAVORS.fil
     (flavor) => flavor !== 'gemini'
 )
 
-export const AGY_PERMISSION_MODES = ['request-review', 'always-proceed'] as const
+export const AGY_PERMISSION_MODES = ['request-review', 'acceptEdits', 'auto', 'plan', 'always-proceed'] as const
 export type AgyPermissionMode = typeof AGY_PERMISSION_MODES[number]
+
+export function getDefaultPermissionModeForFlavor(flavor?: string | null): PermissionMode {
+    return flavor === 'agy' ? 'request-review' : 'default'
+}
 
 export const CLAUDE_PERMISSION_MODES = ['default', 'acceptEdits', 'auto', 'bypassPermissions', 'plan'] as const
 export type ClaudePermissionMode = typeof CLAUDE_PERMISSION_MODES[number]
@@ -200,10 +204,13 @@ export function getCodexCollaborationModeOptions(): CodexCollaborationModeOption
  * - Cursor ACP: concurrent `session/prompt` soft-send (no cancel). Legacy
  *   stream-json Cursor sessions are NOT steerable — gate with
  *   {@link isSteeringSupportedForSession}.
+ * - Antigravity: concurrent ACP `session/prompt` (`agy acp`); agy answers the
+ *   interrupted request at once and folds the steer in after any running
+ *   tool call finishes. Only sessions marked `agyProtocol: 'acp'` steer.
  *
  * Claude / others: not supported (no reachable soft-steer path) — UI hides Steer.
  */
-export const STEERING_SUPPORTED_FLAVORS = ['codex', 'cursor', 'pi'] as const
+export const STEERING_SUPPORTED_FLAVORS = ['agy', 'codex', 'cursor', 'pi'] as const
 
 export function isSteeringSupportedForFlavor(flavor?: string | null): boolean {
     return (STEERING_SUPPORTED_FLAVORS as readonly string[]).includes(flavor ?? '')
@@ -212,7 +219,8 @@ export function isSteeringSupportedForFlavor(flavor?: string | null): boolean {
 /**
  * Session-aware steer gate. Prefer this over {@link isSteeringSupportedForFlavor}
  * when metadata is available: legacy Cursor stream-json sessions advertise
- * flavor `cursor` but cannot steer.
+ * flavor `cursor` but cannot steer, and legacy Antigravity stream-json sessions
+ * lack `agyProtocol: 'acp'`.
  *
  * Matches CLI legacy detection: explicit `stream-json`, or a pre-ACP session
  * that has `cursorSessionId` without `cursorSessionProtocol: 'acp'`.
@@ -221,9 +229,13 @@ export function isSteeringSupportedForSession(metadata?: {
     flavor?: string | null
     cursorSessionId?: string | null
     cursorSessionProtocol?: 'acp' | 'stream-json' | null
+    agyProtocol?: 'acp' | null
 } | null): boolean {
     if (metadata?.flavor === 'codex' || metadata?.flavor === 'pi') {
         return true
+    }
+    if (metadata?.flavor === 'agy') {
+        return metadata.agyProtocol === 'acp'
     }
     if (metadata?.flavor !== 'cursor') {
         return false

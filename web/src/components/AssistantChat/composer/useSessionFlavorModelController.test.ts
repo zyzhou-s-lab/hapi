@@ -471,4 +471,48 @@ describe('useSessionFlavorModelController', () => {
 
         expect(result.current.onModelChange).toBeUndefined()
     })
+
+    it('groups AGY multi-variant models into families and sends effort atomically on switch', async () => {
+        mocks.agyModelsState = {
+            availableModels: [
+                { modelId: 'gemini-4-argon-medium', name: 'Gemini 4 Argon (Medium)' },
+                { modelId: 'gemini-4-argon-high', name: 'Gemini 4 Argon (High)' },
+                { modelId: 'gpt-oss-120b-medium', name: 'GPT-OSS 120B (Medium)' },
+            ],
+            currentModelId: null,
+            isLoading: false,
+            error: null,
+            refetch: vi.fn(),
+        }
+        const session = createBaseSession({
+            model: 'gemini-4-argon-medium',
+            effort: null,
+            metadata: { path: '/workspace', host: 'c1', machineId: 'machine-1', flavor: 'agy' },
+        })
+
+        const { result } = renderHook(() =>
+            useSessionFlavorModelController({ api, session, onRefresh })
+        )
+
+        expect(result.current.model).toBe('gemini-4-argon')
+        expect(result.current.effort).toBe('medium')
+        expect(result.current.availableModelOptions).toEqual([
+            { value: 'gemini-4-argon', label: 'Gemini 4 Argon' },
+            { value: 'gpt-oss-120b-medium', label: 'GPT-OSS 120B (Medium)' },
+        ])
+        expect(result.current.availableEffortOptions).toEqual([
+            { value: 'medium', name: 'Medium' },
+            { value: 'high', name: 'High' },
+        ])
+
+        await act(async () => {
+            await result.current.onEffortChange?.('high')
+        })
+        expect(mocks.setModel).toHaveBeenCalledWith('gemini-4-argon', { effort: 'high' })
+
+        await act(async () => {
+            await result.current.onModelChange?.('gpt-oss-120b-medium')
+        })
+        expect(mocks.setModel).toHaveBeenCalledWith('gpt-oss-120b-medium', { effort: null })
+    })
 })

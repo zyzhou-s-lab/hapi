@@ -165,6 +165,70 @@ function triggerIncomingUserMessage(
     })
 }
 
+describe('ApiSessionClient input buffered during initialization', () => {
+    function message(text: string, localId: string, seq: number) {
+        return {
+            id: `message-${seq}`, seq, localId,
+            content: { role: 'user', content: { type: 'text', text }, meta: { sentFrom: 'webapp' } },
+        }
+    }
+
+    it.each([false, true])('cancels buffered input before a user-message handler is ready (callback=%s)', async (withCallback) => {
+        socketHarness.sockets.length = 0
+        const client = new ApiSessionClient('token', createSession({ namespace: 'default' }))
+        const socket = socketHarness.sockets[0]!
+        const update = socket.listeners.get('update')![0]!
+        const cancel = vi.fn(() => false)
+        if (withCallback) client.onCancelQueuedMessage(cancel)
+        await update({ body: { t: 'new-message', message: message('cancel me', 'local-1', 1) } })
+        await update({ body: { t: 'new-message', message: message('keep me', 'local-2', 2) } })
+        const ack = vi.fn()
+
+        await update({ body: { t: 'cancel-queued-message', localId: 'local-1' } }, ack)
+        expect(ack).toHaveBeenCalledWith({ removed: true, inFlight: false, indeterminate: false, consumed: false })
+        expect(cancel).not.toHaveBeenCalled()
+        const onMessage = vi.fn()
+        client.onUserMessage(onMessage)
+        expect(onMessage).toHaveBeenCalledTimes(1)
+        expect(onMessage).toHaveBeenCalledWith(expect.objectContaining({ content: { type: 'text', text: 'keep me' } }), 'local-2')
+        client.close()
+    })
+
+    it.each([false, true])('replaces buffered input on retry without flushing twice (callback=%s)', async (withCallback) => {
+        socketHarness.sockets.length = 0
+        const client = new ApiSessionClient('token', createSession({ namespace: 'default' }))
+        const socket = socketHarness.sockets[0]!
+        const update = socket.listeners.get('update')![0]!
+        const cancel = vi.fn(() => 'consumed' as const)
+        if (withCallback) client.onCancelQueuedMessage(cancel)
+        await update({ body: { t: 'new-message', message: message('original', 'local-1', 1) } })
+        const ack = vi.fn()
+        await update({ body: { t: 'retry-queued-message', localId: 'local-1', message: message('replacement', 'local-1', 1) } }, ack)
+        expect(ack).toHaveBeenCalledWith({ removed: false, accepted: true })
+        expect(cancel).not.toHaveBeenCalled()
+        const onMessage = vi.fn()
+        client.onUserMessage(onMessage)
+        expect(onMessage).toHaveBeenCalledTimes(1)
+        expect(onMessage).toHaveBeenCalledWith(expect.objectContaining({ content: { type: 'text', text: 'replacement' } }), 'local-1')
+        client.close()
+    })
+
+    it.each(['in-flight', 'consumed', 'indeterminate'] as const)('keeps %s cancellation semantics after input leaves the buffer', async (result) => {
+        socketHarness.sockets.length = 0
+        const client = new ApiSessionClient('token', createSession({ namespace: 'default' }))
+        const update = socketHarness.sockets[0]!.listeners.get('update')![0]!
+        const cancel = vi.fn(async () => result)
+        client.onCancelQueuedMessage(cancel)
+        const ack = vi.fn()
+        await update({ body: { t: 'cancel-queued-message', localId: 'local-1' } }, ack)
+        expect(cancel).toHaveBeenCalledWith('local-1')
+        expect(ack).toHaveBeenCalledWith({
+            removed: false, inFlight: result === 'in-flight', indeterminate: result === 'indeterminate', consumed: result === 'consumed',
+        })
+        client.close()
+    })
+})
+
 describe('ApiSessionClient lazy materialization', () => {
     it('does not connect or materialize without a real user message', async () => {
         socketHarness.sockets.length = 0
@@ -412,40 +476,6 @@ describe('ApiSessionClient lazy materialization', () => {
         await expect(client.flush({ timeoutMs: 20 })).resolves.toBe(false)
 
         expect(socket.connectCalls).toBeGreaterThan(0)
-        client.close()
-    })
-})
-
-describe('ApiSessionClient agy transcript messages', () => {
-    it('renders only the USER_REQUEST body, not the sections agy appends', () => {
-        socketHarness.sockets.length = 0
-        const client = new ApiSessionClient('token', createSession({ namespace: 'default' }))
-        const socket = socketHarness.sockets[0]
-        if (!socket) throw new Error('expected socket')
-
-        // The shape agy actually writes for every terminal-typed message.
-        client.sendAgySessionMessage({
-            step_index: 0,
-            source: 'USER_EXPLICIT',
-            type: 'USER_INPUT',
-            status: 'DONE',
-            created_at: '2026-08-04T00:00:00Z',
-            content: [
-                '<USER_REQUEST>',
-                'hi',
-                '</USER_REQUEST>',
-                '<ADDITIONAL_METADATA>',
-                'The current local time is: 2026-08-04T09:00:00+09:00.',
-                '</ADDITIONAL_METADATA>',
-                '<USER_SETTINGS_CHANGE>',
-                'The user changed setting `Model Selection` from None to Gemini 3.6 Flash (Low).',
-                '</USER_SETTINGS_CHANGE>',
-            ].join('\n'),
-        } as never)
-
-        const emitted = socket.emitted.find((entry) => entry.event === 'message')
-        expect(emitted).toBeDefined()
-        expect((emitted!.args[0] as any).message.content.text).toBe('hi')
         client.close()
     })
 })
@@ -1069,14 +1099,9 @@ describe('canonical session source binding and ordered delivery', () => {
 
         client.sendAgentMessage({ type: 'message', message: 'contextless-agent' })
         client.sendSessionEvent({ type: 'message', message: 'contextless-event' })
-        client.sendAgySessionMessage({
-            type: 'PLANNER_RESPONSE',
-            content: 'contextless-agy',
-            model: 'gemini'
-        } as never)
 
         const messages = socket.emitted.filter((entry) => entry.event === 'message')
-        expect(messages).toHaveLength(3)
+        expect(messages).toHaveLength(2)
         for (const emitted of messages) {
             const payload = emitted.args[0] as {
                 message: { meta?: { sourceInstanceId?: string; sourceGeneration?: number } }

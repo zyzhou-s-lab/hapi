@@ -212,4 +212,37 @@ describe('buildMessageMetadataLabels', () => {
             'Round: 0.0s'
         ])
     })
+
+    it('renders the agy usage breakdown, cache share, round time, turn count, and tok/s', () => {
+        expect(buildMessageMetadataLabels({
+            roundSummary: {
+                provider: 'agy',
+                modelUsage: { 'gemini-3-flash-low': {} },
+                agyUsage: { input_tokens: 30_458, output_tokens: 58, thinking_tokens: 120, cache_read_tokens: 10_000, total_tokens: 30_636 },
+                durationMs: 9_500
+            }
+        })).toEqual([
+            'Model: gemini-3-flash-low',
+            'Tokens: 30.6k (30.5k in · 58 out · 120 thinking)',
+            'Cached input: 24.7%',
+            'Round: 9.5s'
+        ])
+
+        expect(buildMessageMetadataLabels({
+            roundSummary: {
+                provider: 'agy',
+                modelUsage: {},
+                agyUsage: { input_tokens: 4_422, output_tokens: 58, thinking_tokens: 12, total_tokens: 35_530 },
+                durationMs: 14_900,
+                numTurns: 3,
+                generationMs: 2_500,
+                generationOutputTokens: 70
+            }
+        }).at(-1)).toBe('Round: 14.9s · 3 turns · 28.0 tok/s')
+
+        expect(buildMessageMetadataLabels({
+            model: 'fallback-model',
+            roundSummary: { provider: 'agy', modelUsage: {}, agyUsage: { input_tokens: 15_172, output_tokens: 44, cache_read_tokens: 0 } }
+        })).toEqual(['Model: fallback-model', 'Tokens: 15.2k in · 44 out'])
+    })
 })

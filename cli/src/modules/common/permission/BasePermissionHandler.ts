@@ -32,18 +32,38 @@ const AUTO_APPROVE_TOOL_NAME_HINTS = [
     'save_memory'
 ];
 const AUTO_APPROVE_TOOL_ID_HINTS = ['change_title', 'display_image', 'display_video', 'send_file', 'save_memory'];
+const READ_ONLY_HAPI_MCP_TOOLS = [
+    'skill_lookup',
+    'list_peers',
+    'query_training_run',
+    'list_training_runs',
+    'get_hypothesis',
+    'list_explorations',
+    'get_exploration',
+    'list_linked_sessions',
+    'list_verification_cards',
+    'list_references',
+] as const;
+
 const AUTO_APPROVE_EXACT_TOOL_NAMES = new Set([
     'skill_lookup',
-    'hapi_skill_lookup',
-    'happy__skill_lookup',
-    'mcp__hapi__skill_lookup',
     // Discovery shortlist only (id/active/flavor/name) - same as ping-peer --list.
     'list_peers',
-    'hapi_list_peers',
-    'happy__list_peers',
-    'mcp__hapi__list_peers',
     // ACP permission requests often surface MCP tool title, not the snake_case name.
-    'list peer sessions'
+    'list peer sessions',
+    // Safe session metadata update; exact match so agy modes with empty name hints still auto-approve.
+    'change_title',
+    'change chat title',
+    'mcp__hapi__change_title',
+    'mcp_hapi_change_title',
+    'hapi_change_title',
+    'happy__change_title',
+    ...READ_ONLY_HAPI_MCP_TOOLS.flatMap((tool) => [
+        `mcp__hapi__${tool}`,
+        `mcp_hapi_${tool}`,
+        `hapi_${tool}`,
+        `happy__${tool}`,
+    ]),
 ]);
 // ping_peer / inspect_peer intentionally omitted from always-approve: they can
 // resume+inject into another session or read peer histories, so permission
@@ -180,7 +200,8 @@ export abstract class BasePermissionHandler<TResponse extends { id: string }, TR
         id: string,
         toolName: string,
         input: unknown,
-        handlers: { resolve: (value: TResult) => void; reject: (error: Error) => void }
+        handlers: { resolve: (value: TResult) => void; reject: (error: Error) => void },
+        toolCallId?: string
     ): void {
         this.pendingRequests.set(id, { ...handlers, toolName, input });
         this.onRequestRegistered(id, toolName, input);
@@ -190,6 +211,7 @@ export abstract class BasePermissionHandler<TResponse extends { id: string }, TR
                 ...currentState.requests,
                 [id]: {
                     tool: toolName,
+                    ...(toolCallId ? { toolCallId } : {}),
                     arguments: input,
                     createdAt: Date.now()
                 }

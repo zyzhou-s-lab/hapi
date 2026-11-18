@@ -66,8 +66,8 @@ DecryptedMessage.content
    │   ├─ payload {type:'text', text, attachments?} → user text (+ attachments)
    │   └─ anything else                    → user text (stringified payload)
    └─ role: 'agent' — dispatch on payload.type
-       ├─ 'codex'   → generic agent family        (payload.data.type dispatch)
-       ├─ 'output'  → Claude SDK passthrough + agy (payload.data.type dispatch)
+       ├─ 'codex'   → generic agent family        (payload.data.type dispatch, incl. agy 1.5.0+ acp)
+       ├─ 'output'  → Claude SDK passthrough + legacy agy stream-json (payload.data.type dispatch)
        ├─ 'event'   → AgentEvent union             (payload.data)
        └─ unknown   → agent text (stringified payload)
 ```
@@ -88,7 +88,7 @@ Reference: `web/src/chat/normalizeUser.ts`.
 
 ## `role: 'agent'` — family `'codex'`
 
-`payload.type === 'codex'` (`AGENT_MESSAGE_PAYLOAD_TYPE`, `shared/src/modes.ts:8`) is the **generic agent envelope** used by the non-Claude-SDK flavors (codex, gemini, cursor, copilot, grok, opencode, pi, kimi; agy uses the `'output'` family below). Dispatch on `payload.data.type` (`web/src/chat/normalizeAgent.ts`):
+`payload.type === 'codex'` (`AGENT_MESSAGE_PAYLOAD_TYPE`, `shared/src/modes.ts:8`) is the **generic agent envelope** used by the non-Claude-SDK flavors (codex, gemini, cursor, copilot, grok, opencode, pi, kimi, and agy on `1.5.0+` `agy acp` when `metadata.agyProtocol === 'acp'`; legacy agy `< 1.5.0` or ACP fallback uses the `'output'` family below). Dispatch on `payload.data.type` (`web/src/chat/normalizeAgent.ts`):
 
 | `data.type` | Payload fields | Renders as |
 |---|---|---|
@@ -100,7 +100,8 @@ Reference: `web/src/chat/normalizeUser.ts`.
 | `generated-image` | `imageId`/`image_id`, `fileName`/`file_name`, `mimeType`/`mime_type`, `id?`, `source?` | Inline generated image (fetch via the images REST endpoint). Missing `imageId` ⇒ drop. |
 | `context_compacted` | `trigger?`, `preTokens`/`pre_tokens` | `compact` event row. |
 | `compact-summary` | `summary`, `tokensBefore?`, `estimatedTokensAfter?` | `compact-summary` event row. |
-| `token_count` | `info: {last \| total \| …}`, `thread_id?`, `scope?` | Usage sample (event). Prefer `info.last*` over `info.total*`; `context_tokens` falls back to `input_tokens`; `modelContextWindow` → `context_window`. Unparseable usage ⇒ drop. |
+| `token_count` | `info: {last \| total \| …}`, `model?`, `thread_id?`, `scope?` | Usage sample (event). Prefer `info.last*` over `info.total*`; `context_tokens` falls back to `input_tokens`; `modelContextWindow` → `context_window`; optional `model` preserved on normalized `token-count`. Unparseable usage ⇒ drop. |
+| `round-summary` | `summary: {provider?, agy_usage?, usage?, modelUsage?, ...}` | `turn-summary` event row (`RoundSummary`, carrying `agyUsage` when `provider === 'agy'`). |
 | `thread_goal_updated` | `goal {threadId, objective, status, tokenBudget?, tokensUsed?, timeUsedSeconds?, createdAt?, updatedAt?}`, `threadId?`, `turnId?` | `thread-goal-updated` event. `status` ∈ `active\|paused\|budgetLimited\|usageLimited\|blocked\|complete`; invalid goal ⇒ drop. |
 | `thread_goal_cleared` | `threadId?` | `thread-goal-cleared` event. |
 | `plan` | `entries`/`items`/`steps`: list of steps | Synthetic completed `update_plan` tool pair (cursor flavor). Steps accept `step\|content\|text\|title\|description` + `status\|state` (normalized to `pending\|in_progress\|completed`). Empty plan ⇒ drop. |
@@ -162,7 +163,9 @@ Despite the name, these arrive through the agent path (tool results and system-i
 
 `data.summary: string` ⇒ conversation-summary content block.
 
-### agy (Antigravity) — also in the `'output'` family
+### agy (Antigravity legacy `stream-json`) — also in the `'output'` family
+
+Used when `metadata.agyProtocol !== 'acp'` (`agy < 1.5.0` or ACP startup fallback); live `agy 1.5.0+` (`agy acp`) uses the `'codex'` family above.
 
 | `data.type` | Renders as |
 |---|---|

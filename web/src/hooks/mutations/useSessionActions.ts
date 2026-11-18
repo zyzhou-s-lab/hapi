@@ -1,3 +1,4 @@
+import { useCallback } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { isPermissionModeAllowedForFlavor } from '@hapi/protocol'
 import type { ApiClient } from '@/api/client'
@@ -23,7 +24,7 @@ export function useSessionActions(
     setPermissionMode: (mode: PermissionMode) => Promise<void>
     setCollaborationMode: (mode: CodexCollaborationMode) => Promise<void>
     setCopilotAgentMode: (mode: CopilotAgentMode) => Promise<void>
-    setModel: (model: { provider: string; modelId: string } | string | null) => Promise<void>
+    setModel: (model: { provider: string; modelId: string } | string | null, options?: { effort: string | null }) => Promise<void>
     setResumeWithSessionModel: (enabled: boolean) => Promise<void>
     setModelReasoningEffort: (modelReasoningEffort: string | null) => Promise<void>
     setEffort: (effort: string | null) => Promise<void>
@@ -176,17 +177,26 @@ export function useSessionActions(
 
     const modelMutation = useMutation({
         mutationKey: sessionModelMutationKey(sessionId ?? ''),
-        mutationFn: async (model: { provider: string; modelId: string } | string | null) => {
+        mutationFn: async (args: {
+            model: { provider: string; modelId: string } | string | null
+            options?: { effort: string | null }
+        }) => {
             if (!api || !sessionId) {
                 throw new Error('Session unavailable')
             }
-            await api.setModel(sessionId, model)
+            await api.setModel(sessionId, args.model, args.options)
         },
         onSuccess: async () => {
             await invalidateSession()
             await invalidateCursorModels()
         },
     })
+
+    const setModel = useCallback(
+        (model: { provider: string; modelId: string } | string | null, options?: { effort: string | null }) =>
+            modelMutation.mutateAsync({ model, options }),
+        [modelMutation.mutateAsync]
+    )
 
     const resumeWithSessionModelMutation = useMutation({
         mutationFn: async (enabled: boolean) => {
@@ -324,7 +334,7 @@ export function useSessionActions(
         setPermissionMode: permissionMutation.mutateAsync,
         setCollaborationMode: collaborationMutation.mutateAsync,
         setCopilotAgentMode: copilotAgentModeMutation.mutateAsync,
-        setModel: modelMutation.mutateAsync,
+        setModel,
         setResumeWithSessionModel: resumeWithSessionModelMutation.mutateAsync,
         setModelReasoningEffort: modelReasoningEffortMutation.mutateAsync,
         setEffort: effortMutation.mutateAsync,

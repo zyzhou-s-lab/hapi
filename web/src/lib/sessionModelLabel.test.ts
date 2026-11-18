@@ -25,9 +25,23 @@ describe('getSessionModelLabel', () => {
             key: 'session.item.model',
             value: 'Orchestrator (Carbon)'
         })
+        expect(getSessionModelLabel({ model: 'gemini-4-argon' })).toEqual({
+            key: 'session.item.model',
+            value: 'Gemini 4 Argon'
+        })
         expect(getSessionModelLabel({ model: 'gemini-3.5-flash-medium' })).toEqual({
             key: 'session.item.model',
             value: 'Gemini 3.5 Flash (Medium)'
+        })
+        expect(getSessionModelLabel(
+            { model: 'gemini-4-argon' },
+            [
+                { modelId: 'gemini-4-argon-medium', name: 'Gemini 4 Argon (Live) (Medium)' },
+                { modelId: 'gemini-4-argon-high', name: 'Gemini 4 Argon (Live) (High)' },
+            ]
+        )).toEqual({
+            key: 'session.item.model',
+            value: 'Gemini 4 Argon (Live)'
         })
         expect(getSessionModelLabel(
             { model: 'gemini-pro-orchestrator' },

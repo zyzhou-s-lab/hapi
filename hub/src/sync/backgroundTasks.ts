@@ -1,6 +1,39 @@
 import { isObject } from '@hapi/protocol'
 import { unwrapRoleWrappedRecordEnvelope } from '@hapi/protocol/messages'
 
+export type BackgroundTaskSnapshotItem = {
+    taskId: string
+    taskType?: string
+    description?: string
+}
+
+/**
+ * Extract full background task snapshots emitted by ACP agents (e.g. agy)
+ * or Claude system/background_tasks_changed control messages.
+ */
+export function extractBackgroundTasksSnapshot(messageContent: unknown): BackgroundTaskSnapshotItem[] | null {
+    const record = unwrapRoleWrappedRecordEnvelope(messageContent)
+    if (!record || record.role !== 'agent') return null
+    if (!isObject(record.content) || record.content.type !== 'output') return null
+
+    const data = isObject(record.content.data) ? record.content.data : null
+    if (!data || data.type !== 'system' || data.subtype !== 'background_tasks_changed') return null
+    if (!Array.isArray(data.tasks)) return null
+
+    const items: BackgroundTaskSnapshotItem[] = []
+    for (const item of data.tasks) {
+        if (!isObject(item) || typeof item.task_id !== 'string' || item.task_id.length === 0) {
+            continue
+        }
+        items.push({
+            taskId: item.task_id,
+            ...(typeof item.task_type === 'string' ? { taskType: item.task_type } : {}),
+            ...(typeof item.description === 'string' ? { description: item.description } : {})
+        })
+    }
+    return items
+}
+
 /**
  * Extract background task start/completion signals from a message.
  *

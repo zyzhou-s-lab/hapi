@@ -1,6 +1,6 @@
 # hapi CLI
 
-Run Claude Code, Codex, Cursor Agent, Grok Build, OpenCode, or DeepSeek Harness sessions from your terminal and control them remotely through the hapi hub.
+Run Claude Code, Codex, Cursor Agent, Grok Build, OpenCode, Antigravity, or DeepSeek Harness sessions from your terminal and control them remotely through the hapi hub.
 
 ## What it does
 
@@ -9,6 +9,7 @@ Run Claude Code, Codex, Cursor Agent, Grok Build, OpenCode, or DeepSeek Harness 
 - Starts Cursor Agent mode for Cursor CLI sessions.
 - Starts Grok Build locally or via ACP for remote sessions.
 - Starts OpenCode mode via ACP and its plugin hook system.
+- Starts Antigravity mode remotely over `agy acp` (with persistent stream-json fallback).
 - Starts DeepSeek Harness through an external ACP stdio server.
 - Provides an MCP stdio bridge for external tools.
 - Manages a background runner for long-running sessions.
@@ -34,6 +35,7 @@ Run Claude Code, Codex, Cursor Agent, Grok Build, OpenCode, or DeepSeek Harness 
 - `hapi grok` - Start Grok Build mode. See `src/grok/runGrok.ts`.
 - `hapi opencode` - Start OpenCode mode via ACP. See `src/opencode/runOpencode.ts`.
   Note: OpenCode supports local and remote modes; local mode streams via OpenCode plugins.
+- `hapi agy` - Start Antigravity mode (remote-only; uses `agy acp` on agy 1.5.0+ with persistent stream-json fallback). See `src/agy/runAgy.ts`.
 - `hapi dsh` - Start DeepSeek Harness through ACP. See `src/dsh/runDsh.ts`.
   DSH is remote-only and its ACP server must be configured separately.
 - `hapi resume [sessionId]` - List resumable sessions for this machine or resume one locally.

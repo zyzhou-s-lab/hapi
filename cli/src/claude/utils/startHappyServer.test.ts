@@ -204,6 +204,55 @@ describe('startHappyServer skill_lookup', () => {
         ])
     })
 
+    it('gates delete_exploration through confirmDeleteExploration when provided', async () => {
+        const confirmDeleteExploration = vi.fn(async () => false)
+        const sessionClient = {
+            updateMetadata: vi.fn(),
+            sendAgentMessage: vi.fn(),
+            sendClaudeSessionMessage: vi.fn(),
+            getMetadata: vi.fn(() => null)
+        } as unknown as ApiSessionClient
+        const server = await startHappyServer(sessionClient, { confirmDeleteExploration })
+        stopServer = server.stop
+        const mcp = new Client({ name: 'hapi-test', version: '1.0.0' })
+        client = mcp
+
+        await mcp.connect(new StreamableHTTPClientTransport(new URL(server.url)))
+        const denied = await mcp.callTool({
+            name: 'delete_exploration',
+            arguments: { lineId: 'line-1' }
+        }) as ToolResult
+        expect(confirmDeleteExploration).toHaveBeenCalledWith({ lineId: 'line-1' })
+        expect(denied.isError).toBe(true)
+        expect(denied.content?.[0]?.text).toBe('delete_exploration was not approved')
+    })
+
+    it('invokes onChangeTitle when change_title succeeds', async () => {
+        const onChangeTitle = vi.fn()
+        const sendClaudeSessionMessage = vi.fn()
+        const sessionClient = {
+            updateMetadata: vi.fn(),
+            sendAgentMessage: vi.fn(),
+            sendClaudeSessionMessage,
+        } as unknown as ApiSessionClient
+        const server = await startHappyServer(sessionClient, { onChangeTitle })
+        stopServer = server.stop
+        const mcp = new Client({ name: 'hapi-test', version: '1.0.0' })
+        client = mcp
+
+        await mcp.connect(new StreamableHTTPClientTransport(new URL(server.url)))
+        const result = await mcp.callTool({
+            name: 'change_title',
+            arguments: { title: 'Manual session title' }
+        }) as ToolResult
+        expect(result.isError).toBe(false)
+        expect(sendClaudeSessionMessage).toHaveBeenCalledWith(expect.objectContaining({
+            type: 'summary',
+            summary: 'Manual session title',
+        }))
+        expect(onChangeTitle).toHaveBeenCalledWith('Manual session title')
+    })
+
 })
 
 describe('toClaudeAllowedHapiMcpTools', () => {

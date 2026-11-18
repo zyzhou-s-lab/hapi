@@ -2,6 +2,7 @@ import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState, ty
 import type { ApiClient } from '@/api/client'
 import type { CodexDuplicateSessionGroup, CodexLocalSessionSummary, Machine, PiLocalSessionSummary } from '@/types/api'
 import type { CodexCollaborationMode, GrokPermissionMode, PermissionMode, CopilotAgentMode } from '@hapi/protocol'
+import { getAgyModelChoices, getDefaultPermissionModeForFlavor, splitAgyModelSelection } from '@hapi/protocol'
 import { codexModelAdvertisesFastTier } from '@/components/AssistantChat/codexFastMode'
 import { usePlatform } from '@/hooks/usePlatform'
 import { useMachinePathsExists } from '@/hooks/useMachinePathsExists'
@@ -69,7 +70,7 @@ import {
 } from './preferences'
 import { SessionTypeSelector } from './SessionTypeSelector'
 import { PermissionField } from './PermissionField'
-import { usesCodexFamilyPermissionModes } from '@/lib/codexFamilyPermissionAgents'
+import { usesSharedPermissionModeState } from '@/lib/codexFamilyPermissionAgents'
 import { CodexSessionSyncDialog } from '@/components/CodexSessionSyncDialog'
 import { PiSessionImportDialog } from '@/components/PiSessionImportDialog'
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
@@ -106,11 +107,12 @@ export function NewSession(props: {
     const [isDirectoryFocused, setIsDirectoryFocused] = useState(false)
     const [agent, setAgent] = useState<AgentType>(loadPreferredAgent)
     const [legacyCodexYolo] = useState(
-        () => loadPreferredAgent() === 'codex' && loadPreferredYoloMode()
+        () => (loadPreferredAgent() === 'codex' || loadPreferredAgent() === 'agy') && loadPreferredYoloMode()
     )
     const [model, setModel] = useState('auto')
     const [cursorSelectedBase, setCursorSelectedBase] = useState('auto')
     const pendingCursorBaseRef = useRef<string | null>(null)
+    const agyModelPickedByUserRef = useRef(false)
     const [effort, setEffort] = useState<LaunchEffort>('auto')
     const [modelReasoningEffort, setModelReasoningEffort] = useState<CodexReasoningEffort>('default')
     const [opencodeSelectedModel, setOpencodeSelectedModel] = useState<string | null | undefined>(undefined)
@@ -118,7 +120,9 @@ export function NewSession(props: {
     const [collaborationMode, setCollaborationMode] = useState<CodexCollaborationMode>('default')
     const [copilotAgentMode, setCopilotAgentMode] = useState<CopilotAgentMode>('interactive')
     const [yoloMode, setYoloMode] = useState(loadPreferredYoloMode)
-    const [codexFamilyPermissionMode, setCodexFamilyPermissionMode] = useState<PermissionMode>('default')
+    const [codexFamilyPermissionMode, setCodexFamilyPermissionMode] = useState<PermissionMode>(
+        () => getDefaultPermissionModeForFlavor(agent)
+    )
     const [grokPermissionMode, setGrokPermissionMode] = useState<GrokPermissionMode>('default')
     const [sessionType, setSessionType] = useState<SessionType>(props.initialSessionType ?? 'simple')
     const [worktreeName, setWorktreeName] = useState(props.initialWorktreeName ?? '')
@@ -175,7 +179,7 @@ export function NewSession(props: {
         setEffort('auto')
         setModelReasoningEffort('default')
         setGrokPermissionMode('default')
-        setCodexFamilyPermissionMode('default')
+        setCodexFamilyPermissionMode(getDefaultPermissionModeForFlavor(agent))
         setServiceTier('standard')
         setCollaborationMode('default')
         setCopilotAgentMode('interactive')
@@ -675,6 +679,15 @@ export function NewSession(props: {
         machineId,
         enabled: agent === 'agy' && Boolean(machineId)
     })
+    const agyModelChoices = useMemo(
+        () => getAgyModelChoices(agyModelsState.availableModels),
+        [agyModelsState.availableModels]
+    )
+    const agySelectedChoice = agyModelChoices.find((choice) => choice.modelId === agySelectedModel)
+    const agyEffortOptions = agySelectedChoice?.supportedEfforts.map((level) => ({
+        value: level,
+        label: level === 'xhigh' ? 'XHigh' : level.charAt(0).toUpperCase() + level.slice(1)
+    })) ?? []
     const piModelsState = usePiModelsForMachine({
         api: props.api,
         machineId,
@@ -761,6 +774,7 @@ export function NewSession(props: {
         if (preserveRestoredDraftRef.current) {
             return
         }
+        agyModelPickedByUserRef.current = false
         // Reset selection when agent / machine changes. The default is "Default"
         // (null → no --model → agy uses its own default); we intentionally do NOT
         // auto-pick the first model, so the user's explicit "Default" choice
@@ -773,19 +787,43 @@ export function NewSession(props: {
             agent !== 'agy'
             || agyModelsState.isLoading
             || agyModelsState.error
-            || agySelectedModel === null
         ) {
             return
         }
-        if (!agyModelsState.availableModels.some((candidate) => candidate.modelId === agySelectedModel)) {
-            setAgySelectedModel(null)
+        if (agyModelsState.availableModels.length === 0) {
+            if (agySelectedModel !== null && !agyModelPickedByUserRef.current) {
+                setAgySelectedModel(null)
+                if (effort !== 'auto') setEffort('auto')
+            }
+            return
         }
+        if (agySelectedModel === null) {
+            if (effort !== 'auto') setEffort('auto')
+            return
+        }
+        const selection = splitAgyModelSelection(agySelectedModel)
+        const choice = agyModelChoices.find((candidate) => candidate.modelId === agySelectedModel)
+            ?? agyModelChoices.find((candidate) => candidate.modelId === selection.model)
+        if (!choice) {
+            if (!agyModelPickedByUserRef.current) {
+                setAgySelectedModel(null)
+                setEffort('auto')
+            }
+            return
+        }
+        if (choice.modelId !== agySelectedModel) setAgySelectedModel(choice.modelId)
+        const nextEffort = effort === 'auto' && choice.modelId !== agySelectedModel
+            ? selection.effort ?? 'auto'
+            : effort
+        setEffort(choice.supportedEfforts.some((level) => level === nextEffort) ? nextEffort : 'auto')
     }, [
         agent,
         agyModelsState.availableModels,
         agyModelsState.error,
         agyModelsState.isLoading,
-        agySelectedModel
+        agyModelChoices,
+        agySelectedModel,
+        effort
     ])
 
     useEffect(() => {
@@ -860,8 +898,8 @@ export function NewSession(props: {
         setCursorSelectedBase(preferred.cursorSelectedBase)
         setEffort(preferred.effort)
         setModelReasoningEffort(preferred.modelReasoningEffort)
-        if (usesCodexFamilyPermissionModes(agent)) {
-            setCodexFamilyPermissionMode(preferred.permissionMode ?? 'default')
+        if (usesSharedPermissionModeState(agent)) {
+            setCodexFamilyPermissionMode(preferred.permissionMode ?? getDefaultPermissionModeForFlavor(agent))
         }
         setOpencodeSelectedModel(
             agent === 'opencode' && preferred.model !== 'auto' ? preferred.model : null
@@ -1529,13 +1567,20 @@ export function NewSession(props: {
                 : agent === 'agy'
                     ? (agySelectedModel ?? undefined)
                     : (model !== 'auto' ? model : undefined)
-            const resolvedEffort = (agent === 'claude' || agent === 'grok' || agent === 'pi') && effort !== 'auto'
+            const resolvedEffort = (
+                agent === 'claude'
+                || agent === 'grok'
+                || agent === 'pi'
+                || (agent === 'agy'
+                    && agySelectedModel !== null
+                    && (!agySelectedChoice || agySelectedChoice.supportedEfforts.some((level) => level === effort)))
+            ) && effort !== 'auto'
                 ? effort
                 : undefined
             const resolvedModelReasoningEffort = (agent === 'codex' || agent === 'opencode') && modelReasoningEffort !== 'default'
                 ? modelReasoningEffort
                 : undefined
-            const usesCodexFamilyPermissions = usesCodexFamilyPermissionModes(agent)
+            const usesSharedPermissions = usesSharedPermissionModeState(agent)
             const preferredLaunchSettings = {
                 model: agent === 'agy'
                     ? (agySelectedModel ?? 'auto')
@@ -1545,7 +1590,7 @@ export function NewSession(props: {
                 cursorSelectedBase,
                 effort,
                 modelReasoningEffort,
-                ...(usesCodexFamilyPermissions ? { permissionMode: codexFamilyPermissionMode } : {})
+                ...(usesSharedPermissions ? { permissionMode: codexFamilyPermissionMode } : {})
             }
             const resolvedServiceTier = agent === 'codex' && showCodexFastMode
                 ? serviceTier
@@ -1626,10 +1671,10 @@ export function NewSession(props: {
                 model: resolvedModel,
                 effort: resolvedEffort,
                 modelReasoningEffort: resolvedModelReasoningEffort,
-                yolo: agent === 'dsh' || agent === 'grok' || usesCodexFamilyPermissions ? undefined : yoloMode,
+                yolo: agent === 'dsh' || agent === 'grok' || usesSharedPermissions ? undefined : yoloMode,
                 permissionMode: agent === 'grok'
                     ? grokPermissionMode
-                    : usesCodexFamilyPermissions
+                    : usesSharedPermissions
                         ? codexFamilyPermissionMode
                         : undefined,
                 sessionType,
@@ -1810,9 +1855,14 @@ export function NewSession(props: {
                     machineId={machineId}
                     isLoading={agyModelsState.isLoading}
                     error={agyModelsState.error}
-                    availableModels={agyModelsState.availableModels}
+                    availableModels={agyModelChoices}
                     selectedModel={agySelectedModel}
-                    onModelChange={setAgySelectedModel}
+                    onModelChange={(modelId) => {
+                        agyModelPickedByUserRef.current = modelId !== null
+                        setAgySelectedModel(modelId)
+                        const levels = agyModelChoices.find((choice) => choice.modelId === modelId)?.supportedEfforts ?? []
+                        if (!levels.some((level) => level === effort)) setEffort('auto')
+                    }}
                     onRetry={agyModelsState.refetch}
                 />
             ) : agent === 'opencode' ? (
@@ -1921,6 +1971,7 @@ export function NewSession(props: {
                     onReasoningEffortChange={setModelReasoningEffort}
                     isDisabled={isFormDisabled || (agent === 'codex' && codexModelsState.isLoading)}
                     grokOptions={agent === 'grok' ? grokEffortOptions : undefined}
+                    agyOptions={agyEffortOptions}
                     codexReasoningOptions={agent === 'codex' ? codexReasoningEffortOptions : undefined}
                     piSelectedModel={agent === 'pi' ? piSelectedModel : null}
                 />

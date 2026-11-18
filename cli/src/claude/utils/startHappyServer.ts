@@ -34,10 +34,12 @@ import { EXPLORE_TOOLS, callExploreTool, exploreToolDescription, exploreToolSche
 type StartHappyServerOptions = {
     emitTitleSummary?: boolean;
     enableChangeTitle?: boolean;
+    onChangeTitle?: (title: string) => void;
     skillLookup?: {
         workingDirectory: string;
         flavor: string;
     };
+    confirmDeleteExploration?: (args: Record<string, unknown>) => Promise<boolean>;
 };
 
 /** Registered on the MCP server, but never pre-approved via Claude --allowedTools. */
@@ -66,7 +68,9 @@ function createHapiMcpServer(
     client: ApiSessionClient,
     emitTitleSummary: boolean,
     enableChangeTitle: boolean,
-    skillLookup: StartHappyServerOptions['skillLookup']
+    skillLookup: StartHappyServerOptions['skillLookup'],
+    confirmDeleteExploration?: StartHappyServerOptions['confirmDeleteExploration'],
+    onChangeTitle?: StartHappyServerOptions['onChangeTitle']
 ): McpServer {
     const handler = async (title: string) => {
         logger.debug('[hapiMCP] Changing title to:', title);
@@ -78,6 +82,7 @@ function createHapiMcpServer(
                     leafUuid: randomUUID()
                 });
             }
+            onChangeTitle?.(title);
 
             return { success: true };
         } catch (error) {
@@ -553,6 +558,15 @@ function createHapiMcpServer(
             title: exploreToolTitle(name),
             inputSchema: exploreToolSchemas[name],
         }, async (args: Record<string, unknown>) => {
+            if (name === 'delete_exploration' && confirmDeleteExploration) {
+                const approved = await confirmDeleteExploration(args);
+                if (!approved) {
+                    return {
+                        content: [{ type: 'text' as const, text: 'delete_exploration was not approved' }],
+                        isError: true,
+                    };
+                }
+            }
             const machineId = typeof args.machineId === 'string' && args.machineId.trim()
                 ? args.machineId.trim()
                 : (await readSettings()).machineId;
@@ -587,7 +601,14 @@ export async function startHappyServer(client: ApiSessionClient, options: StartH
     const mcps = new Map<string, McpServer>();
 
     const createMcpTransport = () => {
-        const mcp = createHapiMcpServer(client, emitTitleSummary, enableChangeTitle, options.skillLookup);
+        const mcp = createHapiMcpServer(
+            client,
+            emitTitleSummary,
+            enableChangeTitle,
+            options.skillLookup,
+            options.confirmDeleteExploration,
+            options.onChangeTitle
+        );
         const transport = new StreamableHTTPServerTransport({
             sessionIdGenerator: () => randomUUID(),
             onsessioninitialized: (sessionId) => {

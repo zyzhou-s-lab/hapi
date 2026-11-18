@@ -795,4 +795,64 @@ describe('cli session handlers', () => {
             })
         } finally { store.close() }
     })
+
+    it('updates backgroundTaskCount from background_tasks_changed snapshots without storing message rows', () => {
+        const store = new Store(':memory:')
+        try {
+            const session = store.sessions.getOrCreateSession('bg-snapshot-session', { flavor: 'agy' }, null, 'default')
+            const socket = new FakeSocket()
+            const counts: Array<{ sid: string; count: number }> = []
+            const deltas: Array<{ sid: string; delta: { started: number; completed: number } }> = []
+            registerSessionHandlers(socket as unknown as CliSocketWithData, {
+                store,
+                resolveSessionAccess: () => ({ ok: true, value: session }),
+                emitAccessError: () => { throw new Error('unexpected access error') },
+                onBackgroundTaskDelta: (sid, delta) => deltas.push({ sid, delta }),
+                onBackgroundTaskCount: (sid, count) => counts.push({ sid, count })
+            })
+
+            const sendSnapshot = (taskIds: string[], localId: string) => {
+                let ack: unknown
+                socket.trigger('message', {
+                    sid: session.id,
+                    localId,
+                    message: {
+                        role: 'agent',
+                        content: {
+                            type: 'output',
+                            data: {
+                                type: 'system',
+                                subtype: 'background_tasks_changed',
+                                uuid: localId,
+                                tasks: taskIds.map((task_id) => ({ task_id, task_type: 'local_bash' }))
+                            }
+                        }
+                    }
+                }, response => { ack = response })
+                return ack
+            }
+
+            expect(sendSnapshot(['t1', 't2'], 'bg-snap-1')).toMatchObject({ ok: true, committed: true, eventId: 'bg-snap-1' })
+            expect(sendSnapshot([], 'bg-snap-2')).toMatchObject({ ok: true, committed: true, eventId: 'bg-snap-2' })
+            expect(counts).toEqual([
+                { sid: session.id, count: 2 },
+                { sid: session.id, count: 0 }
+            ])
+            expect(store.messages.getAllMessages(session.id)).toHaveLength(0)
+
+            // Existing Claude background-task delta extraction stays intact.
+            socket.trigger('message', {
+                sid: session.id,
+                message: {
+                    role: 'agent',
+                    content: {
+                        type: 'output',
+                        data: { type: 'tool_result', content: 'Command running in background with ID: bash-1' }
+                    }
+                }
+            })
+            expect(deltas).toEqual([{ sid: session.id, delta: { started: 1, completed: 0 } }])
+            expect(store.messages.getAllMessages(session.id)).toHaveLength(1)
+        } finally { store.close() }
+    })
 })

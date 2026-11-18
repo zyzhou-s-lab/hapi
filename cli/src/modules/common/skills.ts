@@ -58,6 +58,8 @@ function getAgentConfigDir(flavor?: string): string {
             return process.env.CODEX_HOME || join(getHomeDirectory(), '.codex');
         case 'grok':
             return process.env.GROK_HOME || join(getHomeDirectory(), '.grok');
+        case 'agy':
+            return join(getHomeDirectory(), '.gemini', 'config');
         default:
             return join(getHomeDirectory(), `.${normalizedFlavor}`);
     }
@@ -78,6 +80,10 @@ export function getUserSkillsRoots(flavor?: string): string[] {
             break;
         case 'copilot':
             roots.push(join(getAgentConfigDir(flavor), 'skills'));
+            break;
+        case 'agy':
+            roots.push(join(getAgentConfigDir(flavor), 'skills'));
+            roots.push(join(home, '.gemini', 'antigravity-cli', 'skills'));
             break;
     }
     return roots;
@@ -103,6 +109,11 @@ function getProjectSkillsRoots(directory: string, flavor?: string): string[] {
             roots.push(join(directory, '.copilot', 'skills'));
             roots.push(join(directory, '.github', 'skills'));
             break;
+        case 'agy':
+            roots.push(join(directory, '.agent', 'skills'));
+            roots.push(join(directory, '_agents', 'skills'));
+            roots.push(join(directory, '_agent', 'skills'));
+            break;
     }
     return roots;
 }
@@ -124,6 +135,8 @@ function userSkillWriteRoots(): string[] {
         join(process.env.CODEX_HOME?.trim() || join(home, '.codex'), 'skills'),
         join(process.env.GROK_HOME?.trim() || join(home, '.grok'), 'skills'),
         join(home, '.copilot', 'skills'),
+        join(home, '.gemini', 'config', 'skills'),
+        join(home, '.gemini', 'antigravity-cli', 'skills'),
     ];
 }
 
@@ -148,6 +161,9 @@ function projectWriteRoots(workingDirectory: string | undefined): SkillWriteRoot
 function projectSkillRoots(directory: string): SkillWriteRoot[] {
     return [
         join(directory, '.agents', 'skills'),
+        join(directory, '.agent', 'skills'),
+        join(directory, '_agents', 'skills'),
+        join(directory, '_agent', 'skills'),
         join(directory, '.omp', 'skills'),
         join(directory, '.omp', 'agent', 'skills'),
         join(directory, '.claude', 'skills'),

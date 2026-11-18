@@ -265,4 +265,59 @@ describe('session config detail', () => {
             else process.env.HOME = originalHome
         }
     })
+
+    it('matches sanitized agy eager MCP tool names and toggles agy user and project skills', async () => {
+        const home = mkdtempSync(join(tmpdir(), 'hapi-agy-skill-home-'))
+        const cwd = mkdtempSync(join(tmpdir(), 'hapi-agy-skill-cwd-'))
+        tempDirs.push(home, cwd)
+        const originalHome = process.env.HOME
+        process.env.HOME = home
+        try {
+            mkdirSync(join(home, '.gemini', 'config', 'skills', 'agy-user'), { recursive: true })
+            writeFileSync(join(home, '.gemini', 'config', 'mcp_config.json'), JSON.stringify({
+                mcpServers: { 'chrome-devtools': { command: 'npx', args: ['chrome-devtools-mcp'] } }
+            }))
+            writeFileSync(
+                join(home, '.gemini', 'config', 'skills', 'agy-user', 'SKILL.md'),
+                '---\nname: agy-user\ndescription: User skill\n---\n# Body\n'
+            )
+            mkdirSync(join(cwd, '.agent', 'skills', 'agy-proj'), { recursive: true })
+            writeFileSync(
+                join(cwd, '.agent', 'skills', 'agy-proj', 'SKILL.md'),
+                '---\nname: agy-proj\ndescription: Project skill\n---\n# Project\n'
+            )
+
+            const mcpDetail = await readSessionConfigDetail({
+                cwd,
+                flavor: 'agy',
+                tools: ['mcp_chrome_devtools_click_at', 'mcp_chrome_devtools_navigate_page'],
+                selector: { kind: 'mcp', name: 'chrome-devtools', source: 'user' },
+            })
+            expect(mcpDetail).toMatchObject({
+                kind: 'mcp',
+                name: 'chrome-devtools',
+                mutable: false,
+                tools: [{ name: 'click_at' }, { name: 'navigate_page' }]
+            })
+
+            await expect(writeSessionConfigEnabled({
+                cwd,
+                flavor: 'agy',
+                enabled: false,
+                selector: { kind: 'skill', name: 'agy-user', source: 'user' },
+            })).resolves.toEqual({ enabled: false })
+            expect(readFileSync(join(home, '.gemini', 'config', 'skills', 'agy-user', 'SKILL.md'), 'utf8')).toContain('disabled: true')
+
+            await expect(writeSessionConfigEnabled({
+                cwd,
+                flavor: 'agy',
+                enabled: false,
+                selector: { kind: 'skill', name: 'agy-proj', source: 'project' },
+            })).resolves.toEqual({ enabled: false })
+            expect(readFileSync(join(cwd, '.agent', 'skills', 'agy-proj', 'SKILL.md'), 'utf8')).toContain('disabled: true')
+        } finally {
+            if (originalHome === undefined) delete process.env.HOME
+            else process.env.HOME = originalHome
+        }
+    })
 })

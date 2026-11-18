@@ -1,6 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from '@tanstack/react-router'
-import { getAgyModelLabel } from '@hapi/protocol'
+import {
+    AGY_MODEL_LABELS,
+    AGY_MODEL_PRESETS,
+    getAgyModelChoices,
+    getAgyModelLabel,
+    splitAgyModelSelection,
+} from '@hapi/protocol'
 import type { ApiClient } from '@/api/client'
 import type { CodexCollaborationMode, CopilotAgentMode, PermissionMode, PiModelSummary, Session } from '@/types/api'
 import { usePlatform } from '@/hooks/usePlatform'
@@ -221,9 +227,14 @@ export function useSessionFlavorModelController(rawProps: {
             return undefined
         }
         if (agyModelsState.availableModels.length > 0) {
-            return agyModelsState.availableModels.map((model) => ({
+            return getAgyModelChoices(
+                agyModelsState.availableModels.map((model) => ({
+                    modelId: model.modelId,
+                    name: model.name ?? getAgyModelLabel(model.modelId) ?? model.modelId
+                }))
+            ).map((model) => ({
                 value: model.modelId,
-                label: model.name ?? getAgyModelLabel(model.modelId) ?? model.modelId
+                label: model.name
             }))
         }
         if (agyModelsState.isLoading) {
@@ -237,6 +248,27 @@ export function useSessionFlavorModelController(rawProps: {
         agyModelsState.availableModels,
         agyModelsState.isLoading,
     ])
+    const agyChoices = useMemo(() => getAgyModelChoices(
+        agyModelsState.availableModels.length > 0
+            ? agyModelsState.availableModels.map((model) => ({
+                modelId: model.modelId,
+                name: model.name ?? getAgyModelLabel(model.modelId) ?? model.modelId
+            }))
+            : AGY_MODEL_PRESETS.map((modelId) => ({ modelId, name: AGY_MODEL_LABELS[modelId] }))
+    ), [agyModelsState.availableModels])
+    const agySelection = splitAgyModelSelection(props.session.model)
+    const agySelectedChoice = agyChoices.find((choice) => choice.modelId === props.session.model)
+        ?? agyChoices.find((choice) => choice.modelId === agySelection.model)
+    const agyCurrentModel = agySelectedChoice?.modelId ?? props.session.model
+    const agyCurrentEffort = agySelectedChoice?.supportedEfforts.length
+        ? props.session.effort ?? agySelection.effort
+        : null
+    const agyEffortOptions = useMemo(() => (
+        agySelectedChoice?.supportedEfforts.map((level) => ({
+            value: level,
+            name: level === 'xhigh' ? 'XHigh' : level.charAt(0).toUpperCase() + level.slice(1)
+        })) ?? []
+    ), [agySelectedChoice])
     const ccSwitchProvidersState = useCcSwitchProviders({
         api: props.api,
         machineId: sessionMachineId,
@@ -470,13 +502,25 @@ export function useSessionFlavorModelController(rawProps: {
                 model,
                 previousModelReasoningEffort
             ) === false
+        // Sent in the same request so the session never runs the new AGY model
+        // with an effort it does not offer.
+        const agyNextChoice = agentFlavor === 'agy' && typeof model === 'string'
+            ? agyChoices.find((choice) => choice.modelId === model)
+            : undefined
+        const agyEffortChange = agentFlavor === 'agy'
+            ? {
+                effort: agyNextChoice?.supportedEfforts.some((level) => level === agyCurrentEffort)
+                    ? agyCurrentEffort
+                    : null
+            }
+            : undefined
 
         try {
             await applyModelChangeWithReasoningRollback({
                 model,
                 previousModelReasoningEffort,
                 shouldClearReasoningEffort,
-                setModel,
+                setModel: (nextModel) => agyEffortChange ? setModel(nextModel, agyEffortChange) : setModel(nextModel),
                 setModelReasoningEffort
             })
             if (agentFlavor === 'omp') {
@@ -493,6 +537,8 @@ export function useSessionFlavorModelController(rawProps: {
         }
     }, [
         agentFlavor,
+        agyChoices,
+        agyCurrentEffort,
         codexModelsState.models,
         props.session.modelReasoningEffort,
         ompModelsState,
@@ -596,9 +642,13 @@ export function useSessionFlavorModelController(rawProps: {
 
     const handleEffortChange = useCallback(async (effort: string | null) => {
         try {
-            await setEffort(effort)
-            if (agentFlavor === 'omp') {
-                await ompThinkingState.refetch()
+            if (agentFlavor === 'agy') {
+                await setModel(agyCurrentModel ?? null, { effort })
+            } else {
+                await setEffort(effort)
+                if (agentFlavor === 'omp') {
+                    await ompThinkingState.refetch()
+                }
             }
             haptic.notification('success')
             props.onRefresh()
@@ -606,7 +656,7 @@ export function useSessionFlavorModelController(rawProps: {
             haptic.notification('error')
             console.error('Failed to set effort:', e)
         }
-    }, [agentFlavor, ompThinkingState, setEffort, props.onRefresh, haptic])
+    }, [agentFlavor, agyCurrentModel, ompThinkingState, setModel, setEffort, props.onRefresh, haptic])
 
     const handleServiceTierChange = useCallback(async (serviceTier: string | null) => {
         try {
@@ -679,12 +729,14 @@ export function useSessionFlavorModelController(rawProps: {
     ), [agentFlavor, codexReasoningEffortOptions, opencodeReasoningEffortState.options])
 
     const availableEffortOptions = useMemo(() => (
-        agentFlavor === 'omp' && ompThinkingState.options.length > 0
-            ? ompThinkingState.options
-            : agentFlavor === 'grok' && grokEffortState.options.length > 0
-                ? grokEffortState.options
-                : undefined
-    ), [agentFlavor, grokEffortState.options, ompThinkingState.options])
+        agentFlavor === 'agy'
+            ? agyEffortOptions
+            : agentFlavor === 'omp' && ompThinkingState.options.length > 0
+                ? ompThinkingState.options
+                : agentFlavor === 'grok' && grokEffortState.options.length > 0
+                    ? grokEffortState.options
+                    : undefined
+    ), [agentFlavor, agyEffortOptions, grokEffortState.options, ompThinkingState.options])
 
     const onCcSwitchProviderChange = useCallback((providerId: string) => {
         void handleCcSwitchProviderChange(providerId)
@@ -736,17 +788,21 @@ export function useSessionFlavorModelController(rawProps: {
         permissionMode: props.session.permissionMode,
         collaborationMode: codexCollaborationModeSupported ? props.session.collaborationMode : undefined,
         copilotAgentMode: agentFlavor === 'copilot' ? props.session.copilotAgentMode : undefined,
-        model: agentFlavor === 'omp'
-            ? props.session.model ?? (ompModelsState.currentModel
-                ? `${ompModelsState.currentModel.provider}/${ompModelsState.currentModel.modelId}`
-                : null)
-            : props.session.model,
+        model: agentFlavor === 'agy'
+            ? agyCurrentModel
+            : agentFlavor === 'omp'
+                ? props.session.model ?? (ompModelsState.currentModel
+                    ? `${ompModelsState.currentModel.provider}/${ompModelsState.currentModel.modelId}`
+                    : null)
+                : props.session.model,
         modelReasoningEffort: agentFlavor === 'codex' || agentFlavor === 'opencode' ? props.session.modelReasoningEffort : undefined,
-        effort: agentFlavor === 'omp'
-            ? props.session.metadata?.ompThinking?.configured
-                ?? ompThinkingState.state?.configured
-                ?? props.session.effort
-            : props.session.effort,
+        effort: agentFlavor === 'agy'
+            ? agyCurrentEffort
+            : agentFlavor === 'omp'
+                ? props.session.metadata?.ompThinking?.configured
+                    ?? ompThinkingState.state?.configured
+                    ?? props.session.effort
+                : props.session.effort,
         resumeWithSessionModel: props.session.resumeWithSessionModel,
         serviceTier: effectiveCodexServiceTier,
         availableModelOptions,
@@ -812,12 +868,16 @@ export function useSessionFlavorModelController(rawProps: {
             && (agentFlavor !== 'opencode' || opencodeReasoningEffortState.options.length > 0)
             ? handleModelReasoningEffortChange
             : undefined,
-        onEffortChange: agentFlavor === 'grok' || agentFlavor === 'omp'
-            ? (props.session.active && !controlledByUser
-                && (agentFlavor === 'omp' ? ompThinkingState.options.length > 0 : grokEffortState.options.length > 0)
+        onEffortChange: agentFlavor === 'agy'
+            ? (props.session.active && !controlledByUser && agyEffortOptions.length > 0
                 ? handleEffortChange
                 : undefined)
-            : handleEffortChange,
+            : agentFlavor === 'grok' || agentFlavor === 'omp'
+                ? (props.session.active && !controlledByUser
+                    && (agentFlavor === 'omp' ? ompThinkingState.options.length > 0 : grokEffortState.options.length > 0)
+                    ? handleEffortChange
+                    : undefined)
+                : handleEffortChange,
         onServiceTierChange: agentFlavor === 'codex'
             && props.session.active
             && !controlledByUser

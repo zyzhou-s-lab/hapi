@@ -146,6 +146,9 @@ describe('bootstrapExistingSession', () => {
 
         session.metadata = {
             ...existingMetadata,
+            acpManualTitle: true,
+            agySessionId: 'agy-thread-1',
+            agyProtocol: 'acp',
             claudeSessionId: 'claude-thread-1',
             codexSessionId: 'codex-thread-1',
             geminiSessionId: 'gemini-thread-1',
@@ -197,6 +200,9 @@ describe('bootstrapExistingSession', () => {
         })
 
         expect(result.metadata).toEqual(expect.objectContaining({
+            acpManualTitle: true,
+            agySessionId: 'agy-thread-1',
+            agyProtocol: 'acp',
             claudeSessionId: 'claude-thread-1',
             codexSessionId: 'codex-thread-1',
             geminiSessionId: 'gemini-thread-1',

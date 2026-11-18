@@ -46,9 +46,15 @@ describe('PermissionField', () => {
         expect(screen.getByText(/applies native Yolo mode/i)).toBeInTheDocument()
     })
 
-    it('maps agy YOLO to its native always-proceed mode', () => {
-        renderField({ agent: 'agy' })
-        expect(screen.getByText(/applies native Always Proceed mode/i)).toBeInTheDocument()
+    it('renders the Antigravity permission modes as a native select', () => {
+        const onChange = vi.fn()
+        renderField({ agent: 'agy', nativeValue: 'request-review', autoPermissionModeSupported: false, onNativeChange: onChange })
+        expect(screen.queryByRole('switch')).toBeNull()
+        expect(screen.getAllByRole('option').map(option => (option as HTMLOptionElement).value))
+            .toEqual(['request-review', 'acceptEdits', 'auto', 'plan', 'always-proceed'])
+        expect(screen.getByRole('option', { name: 'Auto' })).not.toBeDisabled()
+        fireEvent.change(screen.getByRole('combobox'), { target: { value: 'plan' } })
+        expect(onChange).toHaveBeenCalledWith('plan')
     })
 
     it('reports Pi permission as managed instead of offering a silent YOLO toggle', () => {

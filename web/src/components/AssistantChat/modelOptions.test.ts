@@ -51,6 +51,13 @@ describe('getModelOptionsForFlavor', () => {
         ])
     })
 
+    it('groups static AGY model effort variants into a single family while keeping single-variant entries', () => {
+        const options = getModelOptionsForFlavor('agy', null)
+        expect(options).toContainEqual({ value: 'gemini-4-argon', label: 'Gemini 4 Argon' })
+        expect(options).toContainEqual({ value: 'gpt-oss-120b-medium', label: 'GPT-OSS 120B (Medium)' })
+        expect(options.some((option) => option.value === 'gemini-4-argon-high')).toBe(false)
+    })
+
     it('returns Gemini model options for gemini flavor', () => {
         const options = getModelOptionsForFlavor('gemini')
         expect(options[0]).toEqual({ value: null, label: 'Default' })
