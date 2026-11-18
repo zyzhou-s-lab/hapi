@@ -123,6 +123,15 @@ function answerValues(answer: unknown): string[] {
         .filter((value) => value.length > 0);
 }
 
+function findMatchingChoice(question: AgyQuestion, value: string, shown: string[] | undefined): Choice | undefined {
+    // By position only when the card showed exactly the form's options.
+    const shownIndex = shown && shown.length === question.choices.length
+        ? shown.findIndex((label) => label.trim() === value)
+        : -1;
+    return question.choices.find((candidate) => candidate.label.trim() === value)
+        ?? (shownIndex >= 0 ? question.choices[shownIndex] : undefined);
+}
+
 /**
  * The card's answers (option labels plus any typed text, per question index)
  * in agy's shape: the chosen option values, and free text under `qN_other`
@@ -141,13 +150,7 @@ export function agyQuestionContent(
         const chosen: string[] = [];
         const typed: string[] = [];
         for (const value of values) {
-            const shown = shownLabels?.[index];
-            // By position only when the card showed exactly the form's options.
-            const shownIndex = shown && shown.length === question.choices.length
-                ? shown.findIndex((label) => label.trim() === value)
-                : -1;
-            const choice = question.choices.find((candidate) => candidate.label.trim() === value)
-                ?? (shownIndex >= 0 ? question.choices[shownIndex] : undefined);
+            const choice = findMatchingChoice(question, value, shownLabels?.[index]);
             if (choice) chosen.push(choice.value);
             else typed.push(value);
         }
@@ -155,4 +158,17 @@ export function agyQuestionContent(
         if (typed.length > 0 && question.otherKey) content[question.otherKey] = typed.join(', ');
     });
     return content;
+}
+
+/** True when any question received free text whose form lacks a `qN_other` field. */
+export function hasDroppedAgyFreeText(
+    questions: AgyQuestion[],
+    answers: Record<string, unknown> | undefined,
+    shownLabels?: string[][]
+): boolean {
+    return questions.some((question, index) => {
+        if (question.otherKey !== null) return false;
+        const values = answerValues(answers?.[String(index)]);
+        return values.some((value) => !findMatchingChoice(question, value, shownLabels?.[index]));
+    });
 }

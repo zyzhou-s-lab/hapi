@@ -5287,4 +5287,161 @@ describe('AgyAcpRemoteLauncher reactive wakeup integration', () => {
         queue.close();
         await runPromise;
     });
+
+    it('re-asks with allowFreeText=false instead of silently declining when a parked ask_question received Other text but the form has no qN_other', async () => {
+        const backend = new WakeupTestBackend();
+        const { session, queue, client } = makeHarness('always-proceed');
+
+        backend.promptScripts.push(async (onUpdate) => {
+            onUpdate({ type: 'text', text: 'Checking in background...' });
+            onUpdate({ type: 'turn_complete', stopReason: 'end_turn' });
+            writeTranscript(tempBrainDir, backend.sessionIdToCreate, [
+                { step_index: 0, source: 'USER_EXPLICIT', type: 'USER_INPUT', content: 'deploy' },
+                { step_index: 1, source: 'MODEL', type: 'PLANNER_RESPONSE', status: 'DONE', content: 'Checking in background...' }
+            ]);
+        });
+
+        let elicitationResponse: FormElicitationResponse | null = null;
+        backend.promptScripts.push(async (onUpdate) => {
+            const questionPayload = [{
+                is_multi_select: false,
+                options: ['(Recommended) RED', 'BLUE'],
+                question: 'Do you prefer RED or BLUE?'
+            }];
+            onUpdate({
+                type: 'tool_call',
+                id: 'call_q',
+                name: 'ask_question',
+                title: 'Run ask_question',
+                status: 'pending',
+                input: { questions: questionPayload },
+                nativeName: 'ask_question',
+                nativeArgs: { questions: questionPayload }
+            });
+            elicitationResponse = await backend.formElicitationHandler!({
+                sessionId: backend.sessionIdToCreate,
+                toolCallId: 'call_q',
+                message: 'The agent has a question.',
+                requestedSchema: {
+                    type: 'object',
+                    properties: {
+                        q1: {
+                            type: 'string',
+                            title: 'Do you prefer RED or BLUE?',
+                            oneOf: [
+                                { const: '1', title: '1. (Recommended) RED' },
+                                { const: '2', title: '2. BLUE' }
+                            ]
+                        }
+                    },
+                    required: ['q1']
+                }
+            });
+            onUpdate({
+                type: 'tool_result',
+                id: 'call_q',
+                status: 'completed',
+                output: 'BLUE'
+            });
+            onUpdate({ type: 'text', text: 'Proceeding with BLUE.' });
+            onUpdate({ type: 'turn_complete', stopReason: 'end_turn' });
+        });
+
+        const launcher = new AgyAcpRemoteLauncher(session, {
+            createBackend: () => backend as unknown as AcpSdkBackend,
+            brainDir: tempBrainDir,
+            reactivePollMs: 15,
+            reactiveSettleMs: 25,
+            reactiveToolParkMs: 40
+        });
+        const runPromise = launcher.launch();
+
+        queue.push('deploy', { permissionMode: 'always-proceed' }, 'msg-1');
+        await vi.waitFor(() => {
+            expect(client.sendSessionEvent).toHaveBeenCalledWith({ type: 'ready' });
+        });
+        client.sendSessionEvent.mockClear();
+
+        const { compactPath } = agyTranscriptPaths(tempBrainDir, backend.sessionIdToCreate)!;
+        appendFileSync(
+            compactPath,
+            [
+                JSON.stringify({
+                    step_index: 2,
+                    source: 'SYSTEM',
+                    type: 'SYSTEM_MESSAGE',
+                    status: 'DONE',
+                    content: '<SYSTEM_MESSAGE>Precheck done</SYSTEM_MESSAGE>'
+                }),
+                JSON.stringify({
+                    step_index: 3,
+                    source: 'MODEL',
+                    type: 'PLANNER_RESPONSE',
+                    status: 'DONE',
+                    tool_calls: [{
+                        name: 'ask_question',
+                        args: {
+                            questions: JSON.stringify([{
+                                is_multi_select: false,
+                                options: ['(Recommended) RED', 'BLUE'],
+                                question: 'Do you prefer RED or BLUE?'
+                            }])
+                        }
+                    }]
+                })
+            ].join('\n') + '\n',
+            'utf8'
+        );
+
+        const syntheticQuestionId = `agy-wakeup-${backend.sessionIdToCreate}-3-0`;
+        await vi.waitFor(() => {
+            expect(client.getAgentState().requests?.[syntheticQuestionId]).toBeDefined();
+        });
+        expect((client.getAgentState().requests?.[syntheticQuestionId] as {
+            arguments?: { questions?: Array<{ allowFreeText?: boolean }> };
+        })?.arguments?.questions?.[0]?.allowFreeText).toBeUndefined();
+
+        const permHandler = client.rpcHandlerManager.handlers.get(RPC_METHODS.Permission);
+        await permHandler!({
+            id: syntheticQuestionId,
+            approved: true,
+            decision: 'approved',
+            answers: { '0': ['GREEN'] }
+        });
+
+        // Form has no q1_other: launcher must re-ask on call_q with allowFreeText=false instead of declining!
+        await vi.waitFor(() => {
+            expect(client.getAgentState().requests?.call_q).toMatchObject({
+                tool: 'AskUserQuestion',
+                arguments: {
+                    questions: [{
+                        question: 'Do you prefer RED or BLUE?',
+                        options: [
+                            { label: '1. (Recommended) RED', description: null },
+                            { label: '2. BLUE', description: null }
+                        ],
+                        allowFreeText: false
+                    }]
+                }
+            });
+        });
+
+        await permHandler!({
+            id: 'call_q',
+            approved: true,
+            decision: 'approved',
+            answers: { '0': ['2. BLUE'] }
+        });
+
+        await vi.waitFor(() => {
+            expect(client.sendSessionEvent).toHaveBeenCalledWith({ type: 'ready' });
+        });
+        expect(elicitationResponse).toEqual({
+            action: 'accept',
+            content: { q1: '2' }
+        });
+
+        queue.close();
+        await runPromise;
+    });
 });

@@ -67,6 +67,7 @@ import { readAgyConversationTitle } from './agyNativeTitle';
 import {
     QUESTION_TOOL_NAME,
     agyQuestionContent,
+    hasDroppedAgyFreeText,
     parseAgyQuestionForm,
     questionCardInput,
     questionCardInputFromToolCall
@@ -1085,14 +1086,7 @@ export class AgyAcpRemoteLauncher extends RemoteLauncherBase {
         if (isQuestion) {
             const parsedInput = questionCardInputFromToolCall(parkedCall.decodedArgs);
             cardToolName = QUESTION_TOOL_NAME;
-            cardToolInput = parsedInput
-                ? {
-                    questions: parsedInput.questions.map((q) => ({
-                        ...q,
-                        allowFreeText: true
-                    }))
-                }
-                : parkedCall.decodedArgs;
+            cardToolInput = parsedInput ?? parkedCall.decodedArgs;
         } else {
             const mapped = mapAgyToolCall(slice.parkedToolCall, this.knownMcpServers);
             cardToolName = mapped.name;
@@ -2430,7 +2424,14 @@ export class AgyAcpRemoteLauncher extends RemoteLauncherBase {
                 pendingParked.decisionConsumed = true;
                 if (pendingParked.decision === 'denied') return { action: 'decline' };
                 const content = agyQuestionContent(form.questions, pendingParked.answers, pendingParked.shownLabels);
-                return Object.keys(content).length > 0 ? { action: 'accept', content } : { action: 'decline' };
+                if (
+                    Object.keys(content).length > 0
+                    && !hasDroppedAgyFreeText(form.questions, pendingParked.answers, pendingParked.shownLabels)
+                ) {
+                    return { action: 'accept', content };
+                }
+                // Parked answer used free text rejected by the real schema (or mapped to nothing):
+                // fall through and re-ask with the form's actual allowFreeText flags.
             }
         }
 

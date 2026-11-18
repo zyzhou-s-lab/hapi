@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
     agyQuestionContent,
+    hasDroppedAgyFreeText,
     parseAgyQuestionForm,
     questionCardInput,
     questionCardInputFromToolCall
@@ -144,5 +145,17 @@ describe('agy question form', () => {
         expect(questionCardInputFromToolCall({ questions: JSON.stringify(questions) })).toEqual(expected);
         expect(questionCardInputFromToolCall({ questions: 'not json' })).toBeNull();
         expect(questionCardInputFromToolCall(undefined)).toBeNull();
+    });
+
+    it('detects when free-text answers would be dropped because the form has no qN_other', () => {
+        const withOther = parseAgyQuestionForm(singleChoice)!;
+        expect(hasDroppedAgyFreeText(withOther.questions, { '0': ['GREEN'] })).toBe(false);
+
+        const withoutOtherParams = structuredClone(singleChoice) as any;
+        delete withoutOtherParams.requestedSchema.properties.q1_other;
+        const withoutOther = parseAgyQuestionForm(withoutOtherParams)!;
+        expect(hasDroppedAgyFreeText(withoutOther.questions, { '0': ['GREEN'] })).toBe(true);
+        expect(hasDroppedAgyFreeText(withoutOther.questions, { '0': ['BLUE', 'custom'] })).toBe(true);
+        expect(hasDroppedAgyFreeText(withoutOther.questions, { '0': ['BLUE'] })).toBe(false);
     });
 });
