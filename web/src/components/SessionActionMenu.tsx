@@ -7,6 +7,7 @@ import {
     useState,
     type CSSProperties
 } from 'react'
+import { createPortal } from 'react-dom'
 import { useTranslation } from '@/lib/use-translation'
 import { HoverTooltip } from '@/components/HoverTooltip'
 import { safeCopyToClipboard } from '@/lib/clipboard'
@@ -416,7 +417,7 @@ sessionPinned = false,
         return () => window.cancelAnimationFrame(frame)
     }, [isOpen])
 
-    if (!isOpen) return null
+    if (!isOpen || typeof document === 'undefined') return null
 
     const menuStyle: CSSProperties | undefined = menuPosition
         ? {
@@ -431,7 +432,7 @@ sessionPinned = false,
     const baseItemClassName =
         'flex w-full items-center gap-3 rounded-md py-2 pl-3 pr-[42px] text-left text-base transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-link)]'
 
-    return (
+    return createPortal(
         <div
             ref={menuRef}
             className="fixed z-50 box-border w-max max-w-[calc(100vw-16px)] rounded-lg border border-[var(--app-border)] bg-[var(--app-bg)] p-1 shadow-lg animate-menu-pop"
@@ -613,6 +614,7 @@ sessionPinned = false,
                     </>
                 )}
             </div>
-        </div>
+        </div>,
+        document.body
     )
 }

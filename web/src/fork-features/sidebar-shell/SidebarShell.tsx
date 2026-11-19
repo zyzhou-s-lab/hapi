@@ -123,6 +123,11 @@ export function SidebarShell(props: {
                 style={{ '--sidebar-w': `${resize.width}px` } as CSSProperties}
                 inert={desktop && collapsed}
                 aria-hidden={desktop && collapsed || undefined}
+                onTransitionEnd={event => {
+                    if (event.target === paneRef.current && event.propertyName === 'width') {
+                        setMotionEnabled(false)
+                    }
+                }}
             >
                 <div className="fork-sidebar-content flex min-h-0 flex-1 flex-col">
                     <div className="flex min-h-0 flex-1 flex-col pt-[env(safe-area-inset-top)]">{props.sidebar}</div>

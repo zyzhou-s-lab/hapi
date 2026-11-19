@@ -157,4 +157,31 @@ describe('SidebarShell', () => {
         expect(shortcut(document.body)).toBe(false)
         expect(screen.getByRole('button', { name: 'Expand sidebar' })).toHaveAttribute('aria-expanded', 'false')
     })
+
+    it('clears data-sidebar-motion after the pane width transition ends', () => {
+        const dispatchTransitionEnd = (target: HTMLElement, propertyName: string) => {
+            // jsdom lacks TransitionEvent, so fireEvent.transitionEnd drops propertyName.
+            const event = new Event('transitionend', { bubbles: true })
+            Object.defineProperty(event, 'propertyName', { value: propertyName })
+            fireEvent(target, event)
+        }
+
+        const { container } = mountShell()
+        const shell = container.querySelector('.fork-sidebar-shell') as HTMLElement
+        const pane = container.querySelector('.fork-sidebar-pane') as HTMLElement
+        const content = container.querySelector('.fork-sidebar-content') as HTMLElement
+
+        expect(shell).not.toHaveAttribute('data-sidebar-motion')
+
+        fireEvent.click(screen.getByRole('button', { name: 'Collapse sidebar' }))
+        expect(shell).toHaveAttribute('data-sidebar-motion', 'true')
+
+        // Non-width transitions on the pane and transitions bubbling from children stay ignored.
+        dispatchTransitionEnd(pane, 'visibility')
+        dispatchTransitionEnd(content, 'width')
+        expect(shell).toHaveAttribute('data-sidebar-motion', 'true')
+
+        dispatchTransitionEnd(pane, 'width')
+        expect(shell).not.toHaveAttribute('data-sidebar-motion')
+    })
 })

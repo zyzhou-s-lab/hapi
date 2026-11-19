@@ -318,3 +318,30 @@ describe('SessionActionMenu - Copy reference action', () => {
         })
     })
 })
+
+describe('SessionActionMenu - portal isolation', () => {
+    it('portals the menu to document.body outside transformed or overflow-hidden ancestors', () => {
+        render(
+            <I18nProvider>
+                <div data-testid="clipped-wrapper" style={{ transform: 'translateX(0)', overflow: 'hidden' }}>
+                    <SessionActionMenu
+                        isOpen={true}
+                        onClose={vi.fn()}
+                        sessionId="sess-123"
+                        sessionTitle="Test session"
+                        sessionActive={false}
+                        onRename={vi.fn()}
+                        onArchive={vi.fn()}
+                        onReopen={vi.fn()}
+                        onDelete={vi.fn()}
+                        anchorPoint={{ x: 0, y: 0 }}
+                    />
+                </div>
+            </I18nProvider>
+        )
+
+        const menu = screen.getByRole('menu')
+        expect(document.body).toContainElement(menu)
+        expect(screen.getByTestId('clipped-wrapper')).not.toContainElement(menu)
+    })
+})

@@ -14,15 +14,19 @@
         /* Reserve 420px for detail and 4px for the handle on compact split views. */
         --sidebar-expanded-width: min(var(--sidebar-w), calc(100vw - 424px));
         width: var(--sidebar-expanded-width);
-        overflow: hidden;
+        overflow: visible;
         visibility: visible;
         transition: width var(--sidebar-motion-duration) var(--sidebar-motion-ease), visibility 0s;
+    }
+
+    .fork-sidebar-shell[data-sidebar-collapsed] > .fork-sidebar-pane,
+    .fork-sidebar-shell[data-sidebar-motion]:not([data-sidebar-dragging]) > .fork-sidebar-pane {
+        overflow: hidden;
     }
 
     .fork-sidebar-content {
         width: var(--sidebar-expanded-width);
         opacity: 1;
-        transform: translateX(0);
         transition: opacity var(--sidebar-motion-duration) var(--sidebar-motion-ease), transform var(--sidebar-motion-duration) var(--sidebar-motion-ease);
     }
 
@@ -93,6 +97,10 @@
 @media (prefers-reduced-motion: reduce) {
     .fork-sidebar-shell {
         --sidebar-motion-duration: 0s !important;
+    }
+
+    .fork-sidebar-shell:not([data-sidebar-collapsed]) > .fork-sidebar-pane {
+        overflow: visible;
     }
 
     .fork-sidebar-pane,
