@@ -33,6 +33,39 @@ export function hasOpenPullRequest(repo: GitRepositoryStatus): boolean {
     return repo.pullRequest !== null && (repo.pullRequest.state ?? 'open') === 'open'
 }
 
+export function supportsExtendedGitActions(repo: GitRepositoryStatus): boolean {
+    return repo.changesSummary !== undefined
+        || repo.remotes !== undefined
+        || repo.isDefaultBranch !== undefined
+}
+
+export function splitRemoteRef(
+    refName: string,
+    repo: Pick<GitRepositoryStatus, 'remote' | 'remotes' | 'upstream' | 'defaultBranch'>
+): { remote: string; branch: string } | null {
+    const candidates = new Set<string>(repo.remotes ?? [])
+    if (repo.remote) candidates.add(repo.remote)
+    if (candidates.size === 0) {
+        for (const hint of [repo.upstream, repo.defaultBranch]) {
+            if (!hint) continue
+            const slash = hint.indexOf('/')
+            if (slash > 0) candidates.add(hint.slice(0, slash))
+        }
+    }
+    for (const remote of [...candidates].sort((a, b) => b.length - a.length)) {
+        if (refName.startsWith(`${remote}/`) && refName.length > remote.length + 1) {
+            return { remote, branch: refName.slice(remote.length + 1) }
+        }
+    }
+    if (candidates.size === 0) {
+        const slash = refName.indexOf('/')
+        if (slash > 0 && slash < refName.length - 1) {
+            return { remote: refName.slice(0, slash), branch: refName.slice(slash + 1) }
+        }
+    }
+    return null
+}
+
 export function isRepositoryDefaultBranch(repo: GitRepositoryStatus): boolean {
     if (repo.isDefaultBranch !== undefined) return repo.isDefaultBranch
     if (!repo.branch) return false
@@ -92,6 +125,9 @@ export function getGitActionBlock(
     if (!online) return 'offline'
     if (busy) return 'busy'
     if (repo.blockedReason && /conflict/i.test(repo.blockedReason)) return 'conflicts'
+    if ((action === 'checkout' || action === 'create-branch' || action === 'push-pr') && !supportsExtendedGitActions(repo)) {
+        return 'busy'
+    }
     if (action === 'checkout') {
         return hasTrackedDirtyChanges(repo) ? 'dirty' : null
     }
@@ -128,6 +164,9 @@ export function getGitActionBlock(
         if (!repo.ghAvailable) return 'gh'
         if (!repo.ghAuthenticated) return 'auth'
         if (!repo.baseRef && !repo.defaultBranch) return 'base'
+        if (action === 'pr' && !supportsExtendedGitActions(repo) && !repo.upstream) {
+            return 'upstream'
+        }
         if (action === 'pr' && repo.upstream && repo.ahead <= 0 && (repo.branchChangedFiles ?? 0) <= 0) {
             return 'clean'
         }
@@ -262,7 +301,7 @@ export function resolveQuickGitAction(
         && !defaultBranch
         && (repo.branchChangedFiles ?? 1) > 0
     if (repo.ahead > 0 || unpublishedBranchWithDelta) {
-        if (hasOpenPr || defaultBranch || !ghReady) {
+        if (hasOpenPr || defaultBranch || !ghReady || !supportsExtendedGitActions(repo)) {
             const block = getGitActionBlock('push', repo, online, busy)
             return {
                 id: 'quick',
@@ -355,7 +394,7 @@ export function buildGitMenuItems(
         })
 
         if (!hasOpenPullRequest(repo)) {
-            const prAction: GitActionKind = repo.ahead > 0 || !repo.upstream ? 'push-pr' : 'pr'
+            const prAction: GitActionKind = supportsExtendedGitActions(repo) && (repo.ahead > 0 || !repo.upstream) ? 'push-pr' : 'pr'
             const prBlock = getGitActionBlock(prAction, repo, online, busy)
             items.push({
                 id: 'pr',

@@ -9,8 +9,9 @@ import type { Session } from '@/types/api'
 import { SourceControl } from './SourceControl'
 
 const navigate = vi.hoisted(() => vi.fn())
+const narrowViewport = vi.hoisted(() => ({ value: false }))
 vi.mock('@tanstack/react-router', () => ({ useNavigate: () => navigate }))
-vi.mock('@/hooks/useNarrowViewport', () => ({ useNarrowViewport: () => false }))
+vi.mock('@/hooks/useNarrowViewport', () => ({ useNarrowViewport: () => narrowViewport.value }))
 
 const trackedFile = {
     path: 'docs/experiments',
@@ -84,6 +85,7 @@ const session = {
 beforeEach(() => {
     localStorage.clear()
     localStorage.setItem('hapi-lang', 'en')
+    narrowViewport.value = false
     navigate.mockClear()
 })
 
@@ -252,5 +254,148 @@ describe('SourceControl 4-row T3-aligned card', () => {
             expectedHead: 'abc',
             expectedBranch: 'main'
         })))
+    })
+
+    it('hides redundant primary remote-tracking refs in unfiltered list and suppresses Switch on checked-out targets', async () => {
+        const multiRemoteRepo: GitRepositoryStatus = {
+            ...cleanMainRepository,
+            refs: [
+                { name: 'main', remote: false, current: true },
+                { name: 'mine/main', remote: true, current: false },
+                { name: 'origin/main', remote: true, current: false },
+                { name: 'origin/topic', remote: true, current: false }
+            ]
+        }
+        renderControl(multiRemoteRepo)
+        fireEvent.click(screen.getByTestId('statusbar-git-trigger'))
+        const card = await screen.findByRole('dialog', { name: 'Git' })
+        await within(card).findByText('#50')
+
+        fireEvent.click(within(card).getByRole('button', { name: 'main' }))
+        expect(screen.queryByRole('button', { name: 'mine/main Remote' })).not.toBeInTheDocument()
+        expect(screen.getByRole('button', { name: 'origin/main Remote' })).toBeVisible()
+        expect(screen.queryByRole('button', { name: 'Switch current checkout to origin/main' })).not.toBeInTheDocument()
+        expect(screen.getByRole('button', { name: 'Switch current checkout to origin/topic' })).toBeVisible()
+
+        fireEvent.change(screen.getByRole('searchbox', { name: 'Search branches and worktrees' }), {
+            target: { value: 'mine/main' }
+        })
+        expect(screen.getByRole('button', { name: 'mine/main Remote' })).toBeVisible()
+        expect(screen.queryByRole('button', { name: 'Switch current checkout to mine/main' })).not.toBeInTheDocument()
+    })
+
+    it('gates fork.59 branch actions and performs two-step stage + commit on legacy CLI sessions', async () => {
+        const {
+            changesSummary: _summary,
+            remotes: _remotes,
+            isDefaultBranch: _isDefault,
+            ...legacyFields
+        } = cleanMainRepository
+        const legacyDirtyRepo: GitRepositoryStatus = {
+            ...legacyFields,
+            branch: 'main',
+            upstream: 'origin/main',
+            remote: 'origin',
+            defaultBranch: 'origin/main',
+            baseRef: 'origin/main',
+            dirty: true,
+            pullRequest: null,
+            files: [untrackedFile],
+            stagedFiles: [],
+            unstagedFiles: [untrackedFile],
+            refs: [
+                { name: 'main', remote: false, current: true },
+                { name: 'origin/main', remote: true, current: false },
+                { name: 'origin/topic', remote: true, current: false }
+            ]
+        }
+        const stagedDigest = 'c'.repeat(64)
+        let currentRepo = legacyDirtyRepo
+        const getGitRepository = vi.fn(async () => ({
+            success: true,
+            stdout: '',
+            stderr: '',
+            exitCode: 0,
+            repository: currentRepo
+        }))
+        const runGitAction = vi.fn(async (_id: string, req: GitActionRequest): Promise<GitActionResponse> => {
+            if (req.action === 'stage') {
+                currentRepo = {
+                    ...legacyDirtyRepo,
+                    indexDigest: stagedDigest,
+                    stagedFiles: [{ ...untrackedFile, staged: true, unstaged: false, untracked: false, status: 'A' }],
+                    unstagedFiles: [],
+                    files: [{ ...untrackedFile, staged: true, unstaged: false, untracked: false, status: 'A' }]
+                }
+                return { success: true, steps: [{ action: 'stage', success: true, output: 'Staged 1 path.' }], head: 'abc' }
+            }
+            return {
+                success: true,
+                steps: [
+                    { action: 'commit', success: true, output: 'Committed' },
+                    { action: 'push', success: true, output: 'Pushed' }
+                ],
+                head: 'def'
+            }
+        })
+        const api = {
+            getGitRepository,
+            getSessions: async () => ({ sessions: [] }),
+            runGitAction
+        } as unknown as ApiClient
+        const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+        render(
+            <QueryClientProvider client={queryClient}>
+                <I18nProvider>
+                    <SourceControl api={api} session={session} />
+                </I18nProvider>
+            </QueryClientProvider>
+        )
+
+        fireEvent.click(screen.getByTestId('statusbar-git-trigger'))
+        const card = await screen.findByRole('dialog', { name: 'Git' })
+        await within(card).findByRole('button', { name: 'Commit & push' })
+
+        fireEvent.click(within(card).getByRole('button', { name: 'main' }))
+        expect(screen.queryByRole('button', { name: 'Switch current checkout to origin/topic' })).not.toBeInTheDocument()
+        fireEvent.change(screen.getByRole('searchbox', { name: 'Search branches and worktrees' }), {
+            target: { value: 'feat/new-branch' }
+        })
+        expect(screen.queryByRole('button', { name: 'Create branch "feat/new-branch"' })).not.toBeInTheDocument()
+
+        fireEvent.click(within(card).getByRole('button', { name: 'Commit & push' }))
+        await screen.findByRole('dialog')
+        fireEvent.change(screen.getByLabelText('Commit message'), {
+            target: { value: 'chore: stage untracked on legacy cli' }
+        })
+        fireEvent.click(screen.getByRole('checkbox'))
+        fireEvent.click(screen.getByRole('button', { name: 'Commit & push' }))
+
+        await waitFor(() => expect(runGitAction).toHaveBeenCalledTimes(2))
+        expect(runGitAction.mock.calls[0]?.[1]).toMatchObject({
+            action: 'stage',
+            paths: ['notes.md'],
+            expectedIndexDigest: 'a'.repeat(64)
+        })
+        expect(runGitAction.mock.calls[1]?.[1]).toMatchObject({
+            action: 'commit-push',
+            message: 'chore: stage untracked on legacy cli',
+            expectedIndexDigest: stagedDigest,
+            confirmDefaultBranch: true
+        })
+        expect(runGitAction.mock.calls[1]?.[1]).not.toHaveProperty('paths')
+    })
+
+    it('does not autofocus the branch searchbox on narrow mobile viewports', async () => {
+        narrowViewport.value = true
+        renderControl()
+        fireEvent.click(screen.getByTestId('statusbar-git-trigger'))
+
+        const sheet = await screen.findByRole('dialog', { name: 'Git' })
+        fireEvent.click(await within(sheet).findByRole('button', { name: 'main' }))
+
+        const searchbox = await within(sheet).findByRole('searchbox', { name: 'Search branches and worktrees' })
+        expect(searchbox).toBeVisible()
+        expect(searchbox).not.toHaveFocus()
     })
 })

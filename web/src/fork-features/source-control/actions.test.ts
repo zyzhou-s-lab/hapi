@@ -4,7 +4,9 @@ import {
     buildGitMenuItems,
     getGitActionBlock,
     getPrimaryGitAction,
-    resolveQuickGitAction
+    resolveQuickGitAction,
+    splitRemoteRef,
+    supportsExtendedGitActions
 } from './actions'
 
 export const repository: GitRepositoryStatus = {
@@ -130,5 +132,42 @@ describe('Git action eligibility', () => {
 
         const behind = { ...repository, behind: 1 }
         expect(buildGitMenuItems(behind, true, false).map((item) => item.id)).toEqual(['commit', 'pull', 'push', 'pr'])
+    })
+
+    it('detects legacy CLI payloads, splits remote refs, and degrades unsupported fork.59 actions', () => {
+        const { remotes: _remotes, isDefaultBranch: _isDefault, changesSummary: _summary, ...legacyBase } = repository
+        const legacyAhead: GitRepositoryStatus = { ...legacyBase, ahead: 2 }
+
+        expect(supportsExtendedGitActions(legacyAhead)).toBe(false)
+        expect(supportsExtendedGitActions(repository)).toBe(true)
+
+        expect(splitRemoteRef('origin/feat/foo', legacyAhead)).toEqual({ remote: 'origin', branch: 'feat/foo' })
+        expect(splitRemoteRef('mine/main', {
+            remote: 'mine',
+            remotes: ['mine', 'origin'],
+            upstream: 'mine/main',
+            defaultBranch: 'mine/main'
+        })).toEqual({ remote: 'mine', branch: 'main' })
+
+        expect(getGitActionBlock('checkout', legacyAhead, true, false)).toBe('busy')
+        expect(getGitActionBlock('create-branch', legacyAhead, true, false)).toBe('busy')
+        expect(getGitActionBlock('push-pr', legacyAhead, true, false)).toBe('busy')
+        expect(resolveQuickGitAction(legacyAhead, true, false)).toMatchObject({
+            action: 'push',
+            labelKey: 'sourceControl.quick.push',
+            opensDialog: false,
+            disabled: false
+        })
+
+        expect(buildGitMenuItems(legacyAhead, true, false).find((item) => item.id === 'pr')).toMatchObject({
+            action: 'pr',
+            disabled: false
+        })
+        const legacyUnpublished: GitRepositoryStatus = { ...legacyAhead, upstream: null }
+        expect(buildGitMenuItems(legacyUnpublished, true, false).find((item) => item.id === 'pr')).toMatchObject({
+            action: 'pr',
+            disabled: true,
+            block: 'upstream'
+        })
     })
 })

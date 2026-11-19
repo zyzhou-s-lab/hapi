@@ -13,7 +13,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { PRESERVE_SESSION_SIDEBAR_SCROLL } from '@/lib/sessionNavigation'
 import { useTranslation } from '@/lib/use-translation'
 import { encodeBase64 } from '@/lib/utils'
-import { getRepositoryDirtyFiles, isRepositoryDefaultBranch } from './actions'
+import { getRepositoryDirtyFiles, isRepositoryDefaultBranch, supportsExtendedGitActions } from './actions'
 
 export type GitDialogAction = 'commit' | 'commit-push' | 'commit-push-pr' | 'push' | 'pr' | 'push-pr'
 
@@ -78,7 +78,9 @@ function GitActionDialogBody({
     const { t } = useTranslation()
     const navigate = useNavigate()
     const defaultBranch = isRepositoryDefaultBranch(repo)
+    const extendedActions = supportsExtendedGitActions(repo)
     const dirtyFiles = useMemo(() => getRepositoryDirtyFiles(repo), [repo])
+    const isLockedStaged = (file: GitChange) => !extendedActions && file.staged && !file.unstaged && !file.untracked
     const baseOptions = useMemo(() => {
         const names = new Set<string>()
         const preferred = repo.baseRef ?? repo.defaultBranch
@@ -147,34 +149,67 @@ function GitActionDialogBody({
         setError(null)
         setSteps([])
 
-        const request: GitActionRequest = {
-            action: dialogAction,
-            expectedHead: repo.head,
-            expectedBranch: repo.branch,
-            expectedIndexDigest: repo.indexDigest,
-            expectedWorktreeDigest: repo.worktreeDigest,
-            ...(isCommitAction
-                ? {
-                    paths: selectedFiles.map((file) => file.path),
-                    message: message.trim()
-                }
-                : {}),
-            ...(repo.remote ? { remote: repo.remote } : {}),
-            ...(includesPr
-                ? {
-                    baseRef: baseRef.trim(),
-                    title: resolvedPrTitle,
-                    ...(prBody.trim() ? { body: prBody.trim() } : {})
-                }
-                : {}),
-            ...(dialogAction === 'push' || (dialogAction === 'commit-push' && defaultBranch)
-                ? { confirmDefaultBranch: true }
-                : {})
-        }
-
         try {
+            let priorSteps: GitActionStep[] = []
+            let activeRepo = repo
+
+            if (isCommitAction && !extendedActions) {
+                const pathsToStage = selectedFiles
+                    .filter((file) => !file.staged || file.unstaged || file.untracked)
+                    .map((file) => file.path)
+                if (pathsToStage.length > 0) {
+                    const stageResponse = await api.runGitAction(sessionId, {
+                        action: 'stage',
+                        expectedHead: repo.head,
+                        expectedBranch: repo.branch,
+                        expectedIndexDigest: repo.indexDigest,
+                        expectedWorktreeDigest: repo.worktreeDigest,
+                        paths: pathsToStage
+                    })
+                    priorSteps = stageResponse.steps
+                    setSteps(priorSteps)
+                    if (!stageResponse.success) {
+                        setError(stageResponse.error ?? t('sourceControl.failed'))
+                        await onMutated()
+                        return
+                    }
+                    const refreshed = await api.getGitRepository(sessionId, { scope: 'working' })
+                    if (!refreshed.success || !refreshed.repository) {
+                        setError(refreshed.error ?? t('sourceControl.failed'))
+                        await onMutated()
+                        return
+                    }
+                    activeRepo = refreshed.repository
+                }
+            }
+
+            const request: GitActionRequest = {
+                action: dialogAction,
+                expectedHead: activeRepo.head,
+                expectedBranch: activeRepo.branch,
+                expectedIndexDigest: activeRepo.indexDigest,
+                expectedWorktreeDigest: activeRepo.worktreeDigest,
+                ...(isCommitAction
+                    ? {
+                        ...(extendedActions ? { paths: selectedFiles.map((file) => file.path) } : {}),
+                        message: message.trim()
+                    }
+                    : {}),
+                ...(repo.remote ? { remote: repo.remote } : {}),
+                ...(includesPr
+                    ? {
+                        baseRef: baseRef.trim(),
+                        title: resolvedPrTitle,
+                        ...(prBody.trim() ? { body: prBody.trim() } : {})
+                    }
+                    : {}),
+                ...(dialogAction === 'push' || (dialogAction === 'commit-push' && defaultBranch)
+                    ? { confirmDefaultBranch: true }
+                    : {})
+            }
+
             const response = await api.runGitAction(sessionId, request)
-            setSteps(response.steps)
+            setSteps([...priorSteps, ...response.steps])
             await onMutated()
             if (response.success) {
                 onSuccess(dialogAction, response)
@@ -253,7 +288,9 @@ function GitActionDialogBody({
                                         checked={allSelected}
                                         onChange={() => {
                                             setExcludedPaths(
-                                                allSelected ? new Set(dirtyFiles.map((file) => file.path)) : new Set()
+                                                allSelected
+                                                    ? new Set(dirtyFiles.filter((file) => !isLockedStaged(file)).map((file) => file.path))
+                                                    : new Set()
                                             )
                                         }}
                                         className="h-3.5 w-3.5 accent-[var(--app-button)]"
@@ -299,6 +336,7 @@ function GitActionDialogBody({
                                                         type="checkbox"
                                                         aria-label={file.path}
                                                         checked={!excluded}
+                                                        disabled={isLockedStaged(file)}
                                                         onChange={() => toggleFile(file.path)}
                                                         className="h-3.5 w-3.5 shrink-0 accent-[var(--app-button)]"
                                                     />

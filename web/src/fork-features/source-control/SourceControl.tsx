@@ -21,6 +21,8 @@ import {
     getGitActionBlock,
     hasTrackedDirtyChanges,
     resolveQuickGitAction,
+    splitRemoteRef,
+    supportsExtendedGitActions,
     type GitQuickIcon
 } from './actions'
 import { GitActionDialogs, type GitDialogAction } from './GitActionDialogs'
@@ -383,6 +385,7 @@ export function SourceControl(props: { api: ApiClient; session: Session; backgro
     }
 
     const summary = repo ? resolveChangesSummary(repo) : null
+    const extendedActions = repo ? supportsExtendedGitActions(repo) : false
     const quick = repo ? resolveQuickGitAction(repo, props.session.active, busy) : null
     const menuItems = repo ? buildGitMenuItems(repo, props.session.active, busy) : []
     const trackedDirty = repo ? hasTrackedDirtyChanges(repo) : false
@@ -396,6 +399,14 @@ export function SourceControl(props: { api: ApiClient; session: Session; backgro
         return set
     }, [repo?.worktrees])
 
+    const localBranchNames = useMemo(() => {
+        const set = new Set<string>(worktreeBranches)
+        for (const ref of repo?.refs ?? []) {
+            if (!ref.remote) set.add(ref.name)
+        }
+        return set
+    }, [repo?.refs, worktreeBranches])
+
     const defaultLocalName = repo ? getDefaultLocalName(repo) : null
     const normalizedSearch = search.trim().toLowerCase()
     const matchingWorktrees = useMemo(() => {
@@ -407,15 +418,27 @@ export function SourceControl(props: { api: ApiClient; session: Session; backgro
 
     const matchingRefs = useMemo(() => {
         if (!repo) return []
-        return repo.refs.filter((ref) => (
-            (ref.remote || !worktreeBranches.has(ref.name))
-            && ref.name.toLowerCase().includes(normalizedSearch)
-        ))
-    }, [normalizedSearch, repo, worktreeBranches])
+        const remotesCount = repo.remotes?.length ?? (repo.remote ? 1 : 0)
+        return repo.refs.filter((ref) => {
+            if (!ref.name.toLowerCase().includes(normalizedSearch)) return false
+            if (!ref.remote) return !worktreeBranches.has(ref.name)
+            if (normalizedSearch.length === 0) {
+                const parsed = splitRemoteRef(ref.name, repo)
+                if (parsed && localBranchNames.has(parsed.branch)) {
+                    const isPrimaryTracking = ref.name === repo.upstream
+                        || remotesCount <= 1
+                        || (repo.remote !== null && parsed.remote === repo.remote)
+                    if (isPrimaryTracking) return false
+                }
+            }
+            return true
+        })
+    }, [localBranchNames, normalizedSearch, repo, worktreeBranches])
 
     const sanitizedNewBranch = search.trim().replace(/\s+/g, '-')
     const canOfferCreateBranch = Boolean(
         repo
+        && extendedActions
         && sanitizedNewBranch.length > 0
         && !worktreeBranches.has(sanitizedNewBranch)
         && !repo.refs.some((ref) => ref.name === sanitizedNewBranch)
@@ -461,7 +484,7 @@ export function SourceControl(props: { api: ApiClient; session: Session; backgro
                 placeholder={t('sourceControl.searchRefs')}
                 value={search}
                 onChange={(event) => setSearch(event.target.value)}
-                autoFocus
+                autoFocus={!narrow}
             />
             <div className="max-h-56 space-y-0.5 overflow-y-auto">
                 {matchingWorktrees.map((worktree) => {
@@ -512,6 +535,9 @@ export function SourceControl(props: { api: ApiClient; session: Session; backgro
                         : ref.remote
                             ? 'sourceControl.remoteRef'
                             : 'sourceControl.localRef'
+                    const parsedRemote = ref.remote ? splitRemoteRef(ref.name, repo) : null
+                    const targetAlreadyCheckedOut = parsedRemote !== null && worktreeBranches.has(parsedRemote.branch)
+                    const canSwitchRef = extendedActions && props.session.active && !busy && !trackedDirty && !targetAlreadyCheckedOut
                     return (
                         <div key={ref.name} className="flex items-center gap-1">
                             <button
@@ -525,7 +551,7 @@ export function SourceControl(props: { api: ApiClient; session: Session; backgro
                                     {t(badgeKey)}
                                 </span>
                             </button>
-                            {props.session.active && !busy && !trackedDirty ? (
+                            {canSwitchRef ? (
                                 <button
                                     type="button"
                                     aria-label={t('sourceControl.switchToRef', { ref: ref.name })}
